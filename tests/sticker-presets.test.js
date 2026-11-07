@@ -76,12 +76,15 @@ test('开启后后台导入，分类及图片字节不变，构造阶段不落�
   }
 });
 
-test('真实预设包经启动后台导入后，HTTP 图库可见三类各九张且健康检查可用', async () => {
+test('升级保留旧图库，手动导入接口添加 27 张并刷新 HTTP 图库', async () => {
   const { startServer } = require('../server');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-presets-http-'));
   let inst;
   try {
     fs.cpSync(path.join(ROOT, 'assets', 'stickers'), path.join(root, 'assets', 'stickers'), { recursive: true });
+    const existing = path.join(root, 'data', 'stickers', '开心', 'user.gif');
+    fs.mkdirSync(path.dirname(existing), { recursive: true });
+    fs.writeFileSync(existing, GIF);
     fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({
       server: { port: 0, openBrowser: false }, watchConfig: false, log: { level: 'error' },
       features: { stickers: true, memorySnapshot: false, mediaCleanup: false, envContext: false },
@@ -96,8 +99,20 @@ test('真实预设包经启动后台导入后，HTTP 图库可见三类各九张
     }
     assert.equal(state.maintenance?.phase, 'done');
     assert.deepEqual(state.maintenance.errors, []);
+    const before = await (await fetch(inst.url + '/api/stickers/status')).json();
+    assert.deepEqual(before.emotions.map(category => category.count), [0, 0, 1]);
+    const importPresets = async () => {
+      const response = await fetch(inst.url + '/api/stickers/import-presets', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+    assert.deepEqual(await importPresets(), { ok: true, copied: 27 });
     const status = await (await fetch(inst.url + '/api/stickers/status')).json();
-    assert.deepEqual(status.emotions.map(category => [category.label, category.count]), [['傲娇', 9], ['炸毛', 9], ['开心', 9]]);
+    assert.deepEqual(status.emotions.map(category => [category.label, category.count]), [['傲娇', 9], ['炸毛', 9], ['开心', 10]]);
+    assert.deepEqual(await importPresets(), { ok: true, copied: 0 });
+    assert.deepEqual(fs.readFileSync(existing), GIF);
   } finally {
     if (inst) await inst.close();
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 6, retryDelay: 60 });
@@ -115,23 +130,29 @@ test('不覆盖已有同名图，删除预设后重启也不复活', async t => 
   const conflict = path.join(f.dir, f.files[0].file);
   fs.mkdirSync(path.dirname(conflict), { recursive: true });
   fs.writeFileSync(conflict, 'existing-user-image');
-  await new StickerService(f.config).startMaintenanceNow();
+  const service = new StickerService(f.config);
+  await service.startMaintenanceNow();
+  assert.equal(await service.importPresets({ manual: true }), f.files.length - 1);
   assert.equal(fs.readFileSync(conflict, 'utf8'), 'existing-user-image');
   const deleted = path.join(f.dir, f.files[1].file);
   assert.equal(fs.existsSync(deleted), true);
   fs.unlinkSync(deleted);
   await new StickerService(f.config).startMaintenanceNow();
+  assert.equal(await service.importPresets({ manual: true }), 0);
   assert.equal(fs.existsSync(deleted), false);
   assert.equal(fs.readFileSync(conflict, 'utf8'), 'existing-user-image');
 });
 
-test('已有用户图库保留，可对自定义图库路径初始化', async t => {
+test('升级遇到自定义路径中的已有图库，保留原图并等待手动导入', async t => {
   const f = fixture(t);
   f.config.sticker.dir = 'my-library';
   const dir = path.join(f.root, 'my-library');
   fs.mkdirSync(path.join(dir, '开心'), { recursive: true });
   fs.writeFileSync(path.join(dir, '开心', 'user.gif'), GIF);
-  await new StickerService(f.config).startMaintenanceNow();
+  const service = new StickerService(f.config);
+  await service.startMaintenanceNow();
+  for (const item of f.files) assert.equal(fs.existsSync(path.join(dir, item.file)), false);
+  assert.equal(await service.importPresets({ manual: true }), f.files.length);
   assert.deepEqual(fs.readFileSync(path.join(dir, '开心', 'user.gif')), GIF);
   for (const item of f.files) assert.deepEqual(fs.readFileSync(path.join(dir, item.file)), GIF);
   assert.equal(fs.existsSync(path.join(f.root, 'data')), false);
@@ -144,12 +165,12 @@ test('预设损坏会报错但不影响旧图库，不标记完成，修复后�
   fs.mkdirSync(path.join(f.dir, '开心'), { recursive: true });
   const user = path.join(f.dir, '开心', 'user.gif');
   fs.writeFileSync(user, GIF);
-  const state = await new StickerService(f.config).startMaintenanceNow();
-  assert.ok(state.errors.length > 0);
+  const service = new StickerService(f.config);
+  await service.startMaintenanceNow();
+  await assert.rejects(service.importPresets({ manual: true }), /预设表情包校验失败/);
   assert.deepEqual(fs.readFileSync(user), GIF);
   fs.writeFileSync(file, GIF);
-  const next = await new StickerService(f.config).startMaintenanceNow();
-  assert.deepEqual(next.errors, []);
+  await service.importPresets({ manual: true });
   for (const item of f.files) assert.deepEqual(fs.readFileSync(path.join(f.dir, item.file)), GIF);
 });
 

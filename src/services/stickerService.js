@@ -35,6 +35,7 @@ class StickerService {
       done: 0, total: 0, errors: [], startedAt: 0, finishedAt: 0,
     };
     this._maintenanceTimer = null;
+    this._importingPresets = false;
     this._statusCache = { at: 0, key: '', value: null };
     // 构造函数的契约：**零磁盘 I/O**。这里只把开关状态读进内存，
     // 连 generation 都直接定好（否则 reconcile 会当成「刚被打开」而去排维护）。
@@ -95,6 +96,25 @@ class StickerService {
     return { ...this.maintenance };
   }
 
+  async importPresets({ manual = false } = {}) {
+    if (manual) {
+      this.requireEnabled();
+      if (this._importingPresets || ['pending', 'running'].includes(this.maintenance.phase)) {
+        throw fail('图库正在整理，请稍后再导入', 409);
+      }
+    }
+    if (this._importingPresets) return 0;
+    this._importingPresets = true;
+    try {
+      const copied = await installPresets(this.config, this.config.root, { manual });
+      if (copied && this.logger) this.logger.info(`预设表情包已导入：${copied} 张（不覆盖已有图片）`);
+      return copied;
+    } finally {
+      this._importingPresets = false;
+      this.invalidateStatus();
+    }
+  }
+
   async _runMaintenance() {
     const state = this.maintenance;
     const startedAt = Date.now();
@@ -106,8 +126,7 @@ class StickerService {
     try {
       this.restoreBuiltinDirs();
       try {
-        const installed = await installPresets(this.config, this.config.root);
-        if (installed && this.logger) this.logger.info(`预设表情包已导入：${installed} 张（不覆盖已有图片）`);
+        await this.importPresets();
       } catch (err) {
         const detail = '预设表情包导入失败：' + describeError(err);
         state.errors.push(detail);

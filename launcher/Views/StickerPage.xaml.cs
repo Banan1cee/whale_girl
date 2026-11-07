@@ -43,6 +43,7 @@ namespace WhaleLauncher.Views
         private string _current = "";
         private bool _loading;
         private bool _savingCollect;
+        private bool _importingPresets;
         private bool _loaded;
         private readonly SemaphoreSlim _refreshLock = new(1);
         private bool _refreshPending;          // 上一轮还没跑完时点的刷新，跑完补一次
@@ -110,6 +111,7 @@ namespace WhaleLauncher.Views
             var online = _sup.NodeRunning;
             ChkEnabled.IsEnabled = TxtDir.IsEnabled = online;
             ChkCollect.IsEnabled = online && !_savingCollect;
+            if (!online) BtnImportPresets.IsEnabled = false;
 
             var view = new ViewData();
             var tFetch = Stopwatch.StartNew();
@@ -169,6 +171,8 @@ namespace WhaleLauncher.Views
             TxtDemandValue.Text = Math.Round(SldDemand.Value) + "%";
             var frequencyEnabled = view.Online && view.Enabled;
             SldDemand.IsEnabled = ChkEnsure.IsEnabled = BtnSaveDemand.IsEnabled = frequencyEnabled;
+            BtnImportPresets.IsEnabled = frequencyEnabled && !_importingPresets
+                && view.MaintPhase != "running" && view.MaintPhase != "pending";
             DemandHint.Opacity = frequencyEnabled ? 1 : 0.55;
 
             // 分类集合没变就不重排页签（重排会把用户正在点的按钮换掉）
@@ -691,6 +695,24 @@ namespace WhaleLauncher.Views
         }
 
         /// <summary>上传：选 1~5 张 ≤4MB 的图片存进当前分类（只存不发）。</summary>
+        private async void OnImportPresets(object sender, RoutedEventArgs e)
+        {
+            if (_importingPresets) return;
+            _importingPresets = true;
+            BtnImportPresets.IsEnabled = false;
+            try
+            {
+                var res = await Api.Post(_sup.Url, "/api/stickers/import-presets", "{}");
+                _nextRefresh = DateTime.MinValue;
+                _importingPresets = false;
+                await RefreshAsync();
+                var copied = res.Long("copied");
+                MessageBox.Show(!res.Ok ? "导入失败：" + res.Error
+                    : copied > 0 ? $"已导入 {copied} 张预设表情包。" : "没有需要导入的新预设表情包。", "预设表情包");
+            }
+            finally { _importingPresets = false; }
+        }
+
         private async void OnUpload(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrEmpty(_current))

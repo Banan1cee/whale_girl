@@ -36,8 +36,8 @@
 
                 <!-- 第 1 行：开关 / 测试标题，左右对齐 -->
                 <WrapPanel Grid.Row="0" Grid.Column="0">
-                    <CheckBox x:Name="ChkEnabled" Content="启用表情包（首次开启会导入内置预设）" VerticalAlignment="Center" Click="OnToggleEnabled" />
-                    <TextBlock Text="开启后，微信强制前台发送" Style="{StaticResource Small}"
+                    <CheckBox x:Name="ChkEnabled" Content="启用表情包" VerticalAlignment="Center" Click="OnToggleEnabled" />
+                    <TextBlock Text="开启后，微信会先尝试前台发送" Style="{StaticResource Small}"
                                Margin="10,0,0,0" VerticalAlignment="Center" />
                     <TextBlock x:Name="DirHint" Style="{StaticResource Small}" Margin="14,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                 </WrapPanel>
@@ -104,6 +104,9 @@
                     ToolTip="只从列表里去掉，文件夹和图片都保留" />
             <Button Content="上传图片…" Style="{StaticResource Ghost}" Margin="10,0,0,0" Click="OnUpload"
                     ToolTip="选 1~5 张图片存进当前分类（单张 4MB 以内，不会发消息）" />
+            <Button x:Name="BtnImportPresets" Content="导入预设表情包" Style="{StaticResource Ghost}"
+                    Margin="6,0,0,0" Click="OnImportPresets" IsEnabled="False"
+                    ToolTip="启动鲸鲸并开启表情包后可用。空图库会自动导入；已有图库可点这里添加，保留原图。" />
             <Button x:Name="BtnOpenCat" Content="打开本分类文件夹" Style="{StaticResource Ghost}" Margin="6,0,0,0"
                     Click="OnOpenCategoryFolder" ToolTip="打开当前分类的文件夹，把图拖进去即可" />
             <TextBlock x:Name="QueueInfo" Style="{StaticResource Small}" Margin="14,0,0,0" VerticalAlignment="Center" />
