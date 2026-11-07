@@ -60,6 +60,11 @@ module.exports = function register(router) {
           { ok: false, error: (err && err.message) || '读取表情包状态失败' }));
     }
 
+    if (pathname === '/api/stickers/import-presets' && method === 'POST') {
+      return service.importPresets({ manual: true })
+        .then((copied) => json(res, 200, { ok: true, copied }));
+    }
+
     // 控制台缩略图：只回传表情包目录里的真图，不能读任意文件
     if (pathname === '/api/stickers/image' && method === 'GET') {
       const url = new URL(req.url, 'http://localhost');

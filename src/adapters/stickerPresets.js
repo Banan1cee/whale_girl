@@ -6,8 +6,8 @@ const crypto = require('node:crypto');
 const stickers = require('./stickers');
 const { readJson } = require('../infra/jsonFile');
 
-/** 只在后台维护时初始化一次；用户删过的预设不能在每次启动时复活。 */
-async function installPresets(config, root = config.root || process.cwd()) {
+/** 首次只为完全空的图库自动导入；已有图库由用户手动导入。 */
+async function installPresets(config, root = config.root || process.cwd(), { manual = false } = {}) {
   if (!stickers.isOn(config)) return 0;
   const assets = path.join(root, 'assets', 'stickers');
   const manifestFile = path.join(assets, 'manifest.json');
@@ -40,6 +40,8 @@ async function installPresets(config, root = config.root || process.cwd()) {
   }
 
   stickers.safeDirectory(dir);
+  // 扫整个图库，根目录散图、旧分类和自定义分类也算用户已有的内容。
+  if (!manual && (await stickers.listImagesAsync(dir)).length > 0) return 0;
   let copied = 0;
   for (const item of manifest.files) {
     if (!stickers.isOn(config)) return copied;
