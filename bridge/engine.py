@@ -83,6 +83,7 @@ CARE_ONLY_MASTER = True
 CARE_ALLOW_OTHERS = False
 CARE_QUIET_MIN = 20.0
 STICKER_TEST_ON = False
+STICKER_COLLECT = False
 ACCOUNT_WANTED = ''
 REMINDER_RUNNER = None
 from send_state import SEND_STATE, ChatIdentityError, DraftDirtyError, _chat_identity_level, _SendStateScope
@@ -153,6 +154,7 @@ try:
     CARE_ALLOW_OTHERS = _as_bool(_care.get('allowOthers', False), False)
     CARE_QUIET_MIN = _as_float(_care.get('quietAfterMinutes', 20) or 0, 20.0)
     STICKER_TEST_ON = _as_bool((_cfg.get('features') or {}).get('stickers', False), False)
+    STICKER_COLLECT = _as_bool((_cfg.get('sticker') or {}).get('collectReceived', False), False)
     MASTER_WXID = (((_cfg.get('persona') or {}).get('master') or {}).get('wxids') or [''])[0]
 except Exception as _boot_cfg_err:
     try:
@@ -221,7 +223,7 @@ def reload_config(path=None):
     """
     global QUOTE_REPLY, KEYBOARD_FALLBACK, BACKGROUND_SEND, LOW_BATTERY_PCT, GOODNIGHT_TEXT
     global BG_SEND, PIPELINE_WORKERS, PIPELINE_QUEUE_LIMIT
-    global ACCOUNT_GUARD, WINDOW_HWND, STICKER_TEST_ON
+    global ACCOUNT_GUARD, WINDOW_HWND, STICKER_TEST_ON, STICKER_COLLECT
     global CARE_ENABLED, CARE_QUIET_MIN
     global STALE_AFTER, SYSTEM_SENDER_NAMES, BASE_SYSTEM_SENDERS, MASTER_WXID
     global VOICE_ENABLED, VOICE_BASE_URL, VOICE_MODEL, VOICE_API_KEY, VOICE_TIMEOUT, VOICE_MAX_SECONDS
@@ -234,6 +236,7 @@ def reload_config(path=None):
         return False
     try:
         STICKER_TEST_ON = _as_bool((cfg.get('features') or {}).get('stickers', False), False)
+        STICKER_COLLECT = _as_bool((cfg.get('sticker') or {}).get('collectReceived', False), False)
     except Exception:
         pass
     w = cfg.get('wechat') or {}

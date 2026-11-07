@@ -59,6 +59,7 @@ namespace WhaleLauncher
             VersionText.Text = ver.Length > 0 ? "v" + ver : "v?";
 
             foreach (var k in NavKeys) Nav.Items.Add(k);
+            Nav.Items.Add(new NavEntry { Key = "朋友圈", Label = "朋友圈", Icon = NavKeys[2].Icon });
             Nav.Items.Insert(3, new NavEntry { Key = "语音发送", Label = "语音发送", Icon = Geometry.Parse("M9 3h6v12H9z M5 10v3a7 7 0 0 0 14 0v-3 M12 20v3 M8 23h8") });
             Nav.SelectedIndex = 0;
 
@@ -557,6 +558,7 @@ namespace WhaleLauncher
                 case "人设": return new PersonaPage(_sup);
                 case "表情包": return new StickerPage(_sup);
                 case "语音发送": return new VoiceSendPage(_sup);
+                case "朋友圈": return new MomentsPage(_sup);
                 case "主动与提醒": return new ReminderPage(_sup);
                 case "微信桥接": return new BridgePage(_sup);
                 case "诊断": return new DiagPage(_sup);
