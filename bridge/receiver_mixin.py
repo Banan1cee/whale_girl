@@ -142,11 +142,18 @@ class ReceiverMixin:
         """表情包 → 文字描述；失败返回空串（调用方跳过，不回话）。"""
         try:
             import base64
-            from emoji_vision import load_preview
+            from emoji_vision import load_preview, save_original
 
+            def collect_original(raw, image_format):
+                if not G.STICKER_COLLECT:
+                    return
+                try:
+                    save_original(G.os.path.join(G.ROOT, 'data', '收集的表情包'), raw, image_format)
+                except Exception as exc:
+                    G.log('表情包收集失败 type=%s code=%s status=%s detail=保存原图失败' % (type(exc).__name__, getattr(exc, 'errno', '') or '', getattr(exc, 'status_code', '') or ''))
             preview = None
             for attempt in range(4):
-                preview = load_preview(self.db.account_dir, msg.get('content'), allow_network=attempt == 3)
+                preview = load_preview(self.db.account_dir, msg.get('content'), allow_network=attempt == 3, on_original=collect_original if G.STICKER_COLLECT else None)
                 if preview:
                     break
                 if attempt < 3:

@@ -243,7 +243,26 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
         G.threading.Thread(target=self.listener_watch, daemon=True).start()
         G.threading.Thread(target=self.contacts_sync_once, daemon=True).start()
         G.REMINDER_RUNNER = self.start_reminder_watch()
-        G.log('朋友圈读取通道未启动 type=%s' % type(exc).__name__)
+        moments_reader = None
+        try:
+            from moments import MomentsReader
+
+            def moments_interact(action, query):
+                from moments_actions import perform
+                from wechatauto import WeChat
+                with self.send_lock:
+                    # game_running 已随「打游戏就休息」一起删除（见 tests/scripts.test.js），
+                    # 这里再调它就是 NameError；全屏 / 账号闸仍然照拦。
+                    if self.foreground_is_fullscreen() or (not self.account_send_allowed('朋友圈')):
+                        return False
+                    with self.gui_lock:
+                        if self.gui is None:
+                            return False
+                        self.bind_gui_window(self.gui)
+                        return perform(WeChat(gui=self.gui, db=self.db).Moment, action, query)
+            moments_reader = MomentsReader(self.db, G.LOCAL_HTTP, self.bot_url.rsplit('/webhook', 1)[0], {'x-bot-token': self.token, 'x-whale-bridge': '1'}, G.log, interact=moments_interact).start()
+        except Exception as exc:
+            G.log('朋友圈读取通道未启动 type=%s' % type(exc).__name__)
         G.log('已启动。鲸鲸地址：', self.bot_url)
         try:
             import json as _json, datetime as _dt
@@ -257,6 +276,8 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
                 G.time.sleep(1)
         except KeyboardInterrupt:
             G.log('正在退出…')
+            if moments_reader is not None:
+                moments_reader.stop()
             if G.REMINDER_RUNNER is not None:
                 try:
                     G.REMINDER_RUNNER.stop()
