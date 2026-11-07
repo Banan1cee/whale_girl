@@ -2,7 +2,7 @@
 
 const { saveSettings } = require('../infra/config');
 const personaStore = require('../persona/store');
-const { checkPersonaTokens, PERSONA_MAX_TOKENS } = require('../persona/tokenCheck');
+const { checkPersonaTokens } = require('../persona/tokenCheck');
 const { LIMITS } = require('../memory/constants');
 
 /* ---------------- 人设调教（/api/persona 用） ---------------- */
@@ -20,7 +20,7 @@ async function applyPersonaPatch(runtime, body) {
   if (body.appearance !== undefined) patch.appearance = str(body.appearance, 400);
   if (body.personality !== undefined) patch.personality = str(body.personality, 500);
   if (body.background !== undefined) patch.background = str(body.background, 500);
-  if (body.customPrompt !== undefined) patch.customPrompt = str(body.customPrompt, 6000);
+  if (body.customPrompt !== undefined) patch.customPrompt = String(body.customPrompt ?? '').trim();
   if (body.age !== undefined) patch.age = Math.max(1, Math.min(120, Number(body.age) || 23));
   if (body.preset !== undefined) patch.preset = str(body.preset, 20);
   if (body.text !== undefined) patch.text = str(body.text, 300);
@@ -39,11 +39,11 @@ async function applyPersonaPatch(runtime, body) {
   const tokenCheck = await checkPersonaTokens(runtime, patch);
   if (tokenCheck.overLimit) {
     runtime.logger.warn(
-      `人设太长，拒绝保存：${tokenCheck.tokens} token（上限 ${PERSONA_MAX_TOKENS}，${tokenCheck.exact ? '官方计数' : '估算'}）`
+      `人设太长，拒绝保存：${tokenCheck.tokens} token（上限 ${tokenCheck.limit}，${tokenCheck.exact ? '官方计数' : '估算'}）`
     );
     return {
       ok: false,
-      error: `人设太长：约 ${tokenCheck.tokens} token，超过上限 ${PERSONA_MAX_TOKENS}。`
+      error: `人设太长：${tokenCheck.exact ? '' : '约 '}${tokenCheck.tokens} token，超过当前上限 ${tokenCheck.limit}。`
         + `单人设（system）不计入对话预算，但单轮合计不能超过 ${LIMITS.hardTotalTokens.toLocaleString('en-US')} token，请精简设定或自定义提示词。`,
       tokenCheck,
     };
@@ -59,7 +59,7 @@ async function applyPersonaPatch(runtime, body) {
   }
   runtime.logger.info('人设调教：已保存 ' + Object.keys(patch).join(','));
   runtime.logger.info(
-    `人设 token：${tokenCheck.tokens}（${tokenCheck.exact ? '官方计数' : '估算'}，上限 ${PERSONA_MAX_TOKENS}）`
+    `人设 token：${tokenCheck.tokens}（${tokenCheck.exact ? '官方计数' : '估算'}，上限 ${tokenCheck.limit}）`
   );
   return {
     ok: true,

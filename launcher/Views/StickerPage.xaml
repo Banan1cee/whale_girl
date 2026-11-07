@@ -36,7 +36,7 @@
 
                 <!-- 第 1 行：开关 / 测试标题，左右对齐 -->
                 <WrapPanel Grid.Row="0" Grid.Column="0">
-                    <CheckBox x:Name="ChkEnabled" Content="启用表情包（实验性）" VerticalAlignment="Center" Click="OnToggleEnabled" />
+                    <CheckBox x:Name="ChkEnabled" Content="启用表情包（首次开启会导入内置预设）" VerticalAlignment="Center" Click="OnToggleEnabled" />
                     <TextBlock Text="开启后，微信强制前台发送" Style="{StaticResource Small}"
                                Margin="10,0,0,0" VerticalAlignment="Center" />
                     <TextBlock x:Name="DirHint" Style="{StaticResource Small}" Margin="14,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
@@ -82,6 +82,12 @@
                     </WrapPanel>
                     <TextBlock x:Name="DemandHint" Style="{StaticResource Small}" Margin="0,6,0,0" TextWrapping="Wrap"
                                Text="0 = 只靠模型自觉；70% ≈ 一半多轮次提醒；100% = 每轮都提醒。勾选「必发」后，命中轮次即使模型没写标记也会补一张（难过/求助除外）。" />
+                    <WrapPanel Margin="0,10,0,0">
+                        <CheckBox x:Name="ChkCollect" Content="自动收集收到的表情包" Click="OnToggleCollect" VerticalAlignment="Center" />
+                        <Button Content="打开收集文件夹" Style="{StaticResource Ghost}" Margin="10,0,0,0" Click="OnOpenCollected" />
+                    </WrapPanel>
+                    <TextBlock Text="原图去重，动图保留。独立于发送开关，收到的表情包保存在单独的文件夹里。" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                    <TextBlock x:Name="CollectStatus" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,4,0,0" />
                 </StackPanel>
 
                 <Border Grid.Row="0" Grid.RowSpan="3" Grid.Column="1" Width="1"

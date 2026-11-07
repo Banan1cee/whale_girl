@@ -53,7 +53,8 @@
         <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,8">
             <TextBlock DockPanel.Dock="Left" Text="微信 · 桥接" Style="{StaticResource H1}" VerticalAlignment="Center" />
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="⟳ 刷新账号" Style="{StaticResource Ghost}" Click="OnRefreshAccounts" />
+                <Button Content="发言范围 · 黑白名单" Style="{StaticResource Ghost}" Click="OnChatPolicy" />
+                <Button Content="⟳ 刷新账号" Style="{StaticResource Ghost}" Margin="8,0,0,0" Click="OnRefreshAccounts" />
                 <Button Content="⟳ 重启桥接" Style="{StaticResource Ghost}" Margin="8,0,0,0" Click="OnRestartBridge" />
             </StackPanel>
         </DockPanel>

@@ -19,26 +19,13 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "examples"))
+sys.path.insert(0, os.path.join(ROOT, "bridge"))
+from ffmpeg_runtime import find_ffmpeg
+from uia_boot import is_wechat_main_title
 
 
 def hr(title):
     print("\n== %s ==" % title)
-
-
-def find_ffmpeg():
-    """和桥接里的 ensure_ffmpeg_env 同一套逻辑：PATH 没有就找常见安装位置。"""
-    import shutil
-    exe = shutil.which("ffmpeg")
-    if exe:
-        return exe
-    for d in (r"C:\ffmpeg\bin", r"D:\ffmpeg\bin", r"E:\ffmpeg\bin", r"F:\ffmpeg\bin",
-              os.path.join(ROOT, "runtime", "ffmpeg", "bin"),
-              os.path.expandvars(r"%LOCALAPPDATA%\Programs\ffmpeg\bin")):
-        p = os.path.join(d, "ffmpeg.exe")
-        if os.path.isfile(p):
-            os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
-            return p
-    return ""
 
 
 def main():
@@ -49,7 +36,7 @@ def main():
     print("程序目录:", ROOT)
     print("路径含非 ASCII 字符(中文):", "是 ← 这一条会让热激活必然失败" if any(ord(c) > 127 for c in ROOT) else "否")
     print("python:", sys.version.split()[0], "| 64 位:", sys.maxsize > 2 ** 32)
-    print("ffmpeg:", find_ffmpeg() or "没找到（看图会失败）")
+    print("ffmpeg:", find_ffmpeg(ROOT) or "没找到（看图会失败）")
 
     hr("微信主窗")
     import win32gui
@@ -60,14 +47,14 @@ def main():
         nonlocal hwnd
         try:
             cls = (win32gui.GetClassName(h) or "").lower()
-            if ("qwindowicon" in cls or "mmui::mainwindow" in cls) and win32gui.GetWindowText(h) == "微信":
+            if ("qwindowicon" in cls or "mmui::mainwindow" in cls) and is_wechat_main_title(win32gui.GetWindowText(h)):
                 hwnd = h
         except Exception:
             pass
 
     win32gui.EnumWindows(cb, None)
     if not hwnd:
-        print("!! 找不到标题为「微信」的主窗。先把微信窗口点出来（别只留托盘）再跑。")
+        print("!! 找不到微信主窗（微信 / WeChat / Weixin）。先把主窗口打开再跑。")
         return 2
     _, pid = win32process.GetWindowThreadProcessId(hwnd)
     print("hwnd=%d  pid=%d  class=%s" % (hwnd, pid, win32gui.GetClassName(hwnd)))

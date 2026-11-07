@@ -59,6 +59,7 @@ const FIELDS = {
   'sticker.demandChance': { type: 'float', min: 0, max: 1 },
   // 命中提醒的轮次，模型没写标记也由程序补一张（1.0 + 开启才约等于每轮都发）。
   'sticker.ensureSend': { type: 'bool' },
+  'sticker.collectReceived': { type: 'bool' },
 
   // ---- 记忆（旧键，运行时只读 constants.js）----
   // 唯一生效的可调项：对话预算（不含 system prompt）。没有上限：
@@ -100,6 +101,7 @@ const FIELDS = {
   'wechat.backgroundSend': { type: 'bool' },
   'wechat.keyboardFallback': { type: 'bool' },
   'wechat.quoteReply': { type: 'bool' },
+  'wechat.whitelistOnly': { type: 'bool' },
   'wechat.accountGuard': { type: 'bool' },
   'wechat.bgSend.enabled': { type: 'bool' },
   'wechat.bgSend.charGapMs': { type: 'int', min: 20, max: 80 },

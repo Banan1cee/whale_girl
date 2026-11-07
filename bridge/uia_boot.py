@@ -25,7 +25,7 @@ import subprocess
 import threading
 import time
 from ctypes import wintypes
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 # 树里出现这些类名，才算「会话列表真的物化了」。只看根窗口类名不算。
 TREE_MARKERS = (
@@ -46,6 +46,11 @@ _BAD_CLASS = (
 
 
 # ── 挑窗口 ─────────────────────────────────────────────────────────
+def is_wechat_main_title(title: str) -> bool:
+    """只匹配客户端的主窗标题，避免把设置、登录提示和独立聊天窗算进去。"""
+    return (title or "").strip().casefold() in ("微信", "weixin", "wechat")
+
+
 def _iter_windows() -> List[dict]:
     """所有候选主窗（不过滤 PID 有没有 Weixin.dll）。"""
     try:
@@ -96,7 +101,7 @@ def _iter_windows() -> List[dict]:
     return out
 
 
-def pick_window(prefer_hwnd: int = 0) -> Optional[dict]:
+def pick_window(prefer_hwnd: int = 0, *, strict: bool = False) -> Optional[dict]:
     """挑一个「PID 里真的加载了 Weixin.dll」的微信主窗。
 
     优先级：调用方钉住的窗口 → 标题正好是「微信」→ 前台 → 面积大。
@@ -114,6 +119,10 @@ def pick_window(prefer_hwnd: int = 0) -> Optional[dict]:
 
     scored = []
     for w in wins:
+        if strict and w["hwnd"] != prefer_hwnd:
+            continue
+        if "login" in w["cls"].lower():
+            continue
         mod = G._weixin_dll_module(w["pid"])
         if not mod:
             continue
@@ -130,7 +139,7 @@ def pick_window(prefer_hwnd: int = 0) -> Optional[dict]:
         score = 0
         if prefer_hwnd and w["hwnd"] == int(prefer_hwnd):
             score += 10 ** 9
-        if w["title"] == "微信":
+        if is_wechat_main_title(w["title"]):
             score += 10 ** 6
         if w["foreground"]:
             score += 10 ** 4
@@ -276,8 +285,8 @@ def restore_wechat(win: dict, log=None, wait: float = 15.0) -> bool:
     ok = False
     while time.time() < deadline:
         # 唤起之后微信可能换了新窗口（旧句柄留着但没树），所以每轮重新挑一次
-        w2 = pick_window(prefer_hwnd=hwnd)
-        if w2 and tree_state(w2["hwnd"], timeout=0.5) == "ok":
+        w2 = pick_window(prefer_hwnd=hwnd, strict=True)
+        if w2 and w2["pid"] == win["pid"] and tree_state(hwnd, timeout=0.5) == "ok":
             win.update(w2)
             hwnd = w2["hwnd"]
             ok = True
@@ -479,7 +488,7 @@ def _keep_visible(win: dict, log=None) -> None:
 
 
 def ensure(prefer_hwnd: int = 0, log=None, max_candidates: int = 6,
-           settle: float = 1.2) -> dict:
+           settle: float = 1.2, *, strict: bool = False) -> dict:
     """确保 UIA 树可用。返回 {ok, reason, hwnd, pid, version, rva, tree}。
 
     reason 取值：
@@ -497,7 +506,7 @@ def ensure(prefer_hwnd: int = 0, log=None, max_candidates: int = 6,
             except Exception:
                 pass
 
-    win = pick_window(prefer_hwnd)
+    win = pick_window(prefer_hwnd, strict=strict)
     if not win:
         say("UIA 自检：没找到微信主窗，请手动打开已登录的微信；不会另启微信进程")
         return {"ok": False, "reason": "no_window"}
@@ -562,8 +571,8 @@ def ensure(prefer_hwnd: int = 0, log=None, max_candidates: int = 6,
             if wrote:
                 _write_byte(handle, addr, current)   # 不对就还原，别留副作用
         # 唤起/写字节都可能慢一拍：最后再挑一次窗口确认一遍，别急着判死
-        w2 = pick_window()
-        if w2 and tree_state(w2["hwnd"], timeout=1.0) == "ok":
+        w2 = pick_window(prefer_hwnd, strict=strict)
+        if w2 and (not strict or w2["pid"] == pid) and tree_state(w2["hwnd"], timeout=1.0) == "ok":
             win.update(w2)
             say(f"UIA 自检：延迟生效，微信 {version} 控件树已就绪")
             return {"ok": True, "reason": "restored", "hwnd": w2["hwnd"], "pid": w2["pid"],

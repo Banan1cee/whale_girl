@@ -65,3 +65,42 @@ test('自定义人设中的旧名字不盖过当前设置，主人称呼不授�
   assert.match(master.system, /旧名字与旧称呼仅是历史，不沿用/);
   assert.match(make(false).system, /当前发言者不是主人|没有命令权/);
 });
+
+test('18,000 字提示词完整保存、进入实际对话，导入预设也不截断', async (t) => {
+  const app = await boot(t);
+  const end = '结尾识别码保留在提示词中';
+  const prompt = '鲸'.repeat(18000 - end.length) + end;
+  const saved = await post(app, '/api/persona', { customPrompt: prompt });
+  assert.equal(saved.persona.customPrompt, prompt);
+  const loaded = await (await fetch(app.url + '/api/persona')).json();
+  assert.equal(loaded.persona.customPrompt, prompt);
+  const msg = { platform: 'web', chatType: 'private', chatId: 'long-prompt', senderId: 'tester', senderName: '测试', text: '在吗' };
+  const key = app.runtime.bot.sessionKey(msg);
+  app.runtime.store.ensureSession(key, msg);
+  app.runtime.store.appendMessage(key, { role: 'user', text: '前一轮对话识别码', uid: 'tester' });
+  const decision = await app.runtime.bot.decide(msg);
+  assert.equal(decision.action, 'reply');
+  assert.ok(decision.system.startsWith(prompt));
+  assert.ok(decision.turns.some((turn) => turn.content.includes('前一轮对话识别码')));
+  assert.equal(decision.budget.dialogueBudget, 5500);
+
+  const dir = path.join(app.root, 'assets', 'personas');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'long-prompt.json'), JSON.stringify({ id: 'long-prompt', customPrompt: prompt }));
+  assert.equal((await post(app, '/api/persona/preset', { id: 'long-prompt' })).persona.customPrompt, prompt);
+});
+
+test('提示词超过预留对话预算后的 token 上限时明确拒绝并保留旧人设', async (t) => {
+  const app = await boot(t);
+  await post(app, '/api/persona', { customPrompt: '原提示词' });
+  await post(app, '/api/config', { patch: { 'memory.dialogueBudget': 20000 } });
+  const response = await fetch(app.url + '/api/persona', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ customPrompt: '长'.repeat(72000) }),
+  });
+  const rejected = await response.json();
+  assert.equal(response.status, 400);
+  assert.equal(rejected.tokenCheck.limit, 44000);
+  assert.match(rejected.error, /44000/);
+  assert.equal(app.runtime.config.persona.customPrompt, '原提示词');
+});

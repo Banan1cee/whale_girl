@@ -22,13 +22,13 @@ const persona = require('../persona');
 const features = require('../infra/features');
 const { matchMaster, isVerifiedOwner } = require('../core/master');
 const links = require('../adapters/links');
-const websearch = require('../adapters/websearch');
-const searchRouter = require('../adapters/searchRouter');
+const searchService = require('../services/search');
 const { LlmError } = require('../llm/client');
 const { describeError } = require('../infra/errors');
 const { saveSettings } = require('../infra/config');
 const personaStore = require('../persona/store');
 const { sanitizeForModel, nameMatches, clampInt } = require('../core/text');
+const { sendDenial } = require('../core/wechatSendPolicy');
 const trigger = require('../core/trigger');
 const { INSULT_RE, INSULT_LOOSE_RE, namedHerIn } = require('../core/trigger');
 const context = require('../core/context');
@@ -43,6 +43,7 @@ const envInfo = require('../services/envInfo');
 const { LIMITS } = require('../memory/constants');
 const tokenCalibration = require('../memory/calibration');
 const budgetPricing = require('../services/budget');
+const SEPARATE_REPLY_RE = /(?:^|[，。！？\s])(?:请|麻烦|能不能|可以|记得)?\s*你?\s*(?:要|给我)?\s*(?:分[条段开](?:来)?(?:发(?:送)?|回(?:复)?|说)|(?:一条一条|一句一句)地?[发回]|每(?:条|句|段)(?:话)?单独[发回]|分(?:成)?[两二三四五六七八九十\d]+[条段](?:气泡|发|回)?)(?:一下)?(?=$|[\s，。！？?!吧嘛哦啊,])/;
 
 /**
  * 把正文里的 [[sticker:分类]] 标记抠干净，返回 { text, category }。
@@ -139,6 +140,7 @@ class Bot {
     this.startedAt = Date.now();
     // handle() 的按会话串行队列：key → 上一条的收尾 promise（M21）
     this._handleChains = new Map();
+    this._adminSpellGrants = new WeakMap();
     // 全局回复时间戳（跨会话共用），只留在内存里：重启后重新数
     this.globalReplyTimes = [];
     this.lastBudget = null;
@@ -396,14 +398,17 @@ class Bot {
     // "Note: xxx" 也被截断，残缺文本进了提示词/搜索/记忆。wxid 前缀后面本来就有换行/空格，
     // 改成 \s+ 就够了（H8）。
     const rawText = String(msg.text || '').replace(/^[A-Za-z0-9_\-]{4,}:\s+/, '');
-    const clean = persona.cleanIncomingForPersona(rawText, this.config);
-    msg.cleanText = clean.text;
+    const spell = String(this.config.admin?.spell || '').trim();
+    const isAdminSpell = Boolean(spell && rawText.trim() === spell);
+    if (isAdminSpell) msg.text = '（已隐藏：管理员魔咒）';
+    const clean = persona.cleanIncomingForPersona(isAdminSpell ? msg.text : rawText, this.config);
+    msg.cleanText = isAdminSpell ? msg.text : clean.text;
     let atMe = msg.atMe || clean.atMe;
     const isGroup = msg.chatType === 'group';
     // 群里：@ 名单 + 文本里出现的别名；私聊：只认桥接明确给的提及名单（不做别名猜测）。
     // 关系块两种会话都用同一套逻辑（当前说话人 → 提到的第三人）。
     const mentionedNames = isGroup
-      ? [...new Set([...(msg.mentionedNames || []), ...extractMentionNames(rawText, persona.aliasList(this.config))])].slice(0, 4)
+      ? [...new Set([...(msg.mentionedNames || []), ...extractMentionNames(isAdminSpell ? msg.text : rawText, persona.aliasList(this.config))])].slice(0, 4)
       : [...new Set(msg.mentionedNames || [])].slice(0, 4);
     msg.mentionedNames = mentionedNames;
     const voiceRequested = msg.platform === 'wechat' && voiceReply.enabled(this.config, isGroup) && voiceReply.requested(clean.text);
@@ -435,6 +440,12 @@ class Bot {
       return { action: 'ignore', reason: 'duplicate', key, msg };
     }
     if (msg.msgId) this.store.markSeen(key, msg.msgId);
+    // 魔咒优先于普通聊天与固定话术，避免口令被当成消息落库或送模型。
+    const denial = sendDenial(this.config, { id: msg.chatId, names: [msg.chatTitle || session.title], isGroup, platform: msg.platform });
+    if (isAdminSpell) {
+      if (denial) return { action: 'ignore', reason: denial, key, msg };
+      return this.unlockAdminSpell(msg, key, session.state, spell, nowMs);
+    }
 
     // 每个说话人分别跟踪最近的显式 @ 对象；只作为短时路由提示，不当作确定事实。
     if (isGroup) {
@@ -499,6 +510,8 @@ class Bot {
         if (this.logger) this.logger.error('写入用户消息失败（继续回复）：' + describeError(err));
       }
     }
+    // 保留原有旁听记录，但在提醒、命令和固定回复之前拦住会话。
+    if (denial) return { action: 'ignore', reason: denial, key, msg };
     // 人物卡也是记忆：读不出来就用空卡顶上（昵称退回微信昵称），别让整条消息陪葬。
     // 以前这里没兜底，记忆目录一坏（文件损坏 / 权限 / 迁移中）就直接抛到 _handleOnce。
     let profile = null;
@@ -579,15 +592,6 @@ class Bot {
     // 魔咒 / 管理员权限（只有主人能用）
     const adminReply = this.handleAdmin({ msg, clean, key, state, isMaster, nowMs });
     if (adminReply) return adminReply;
-
-    // 主人在微信里禁言过这个群 → 一句话都不说
-    const mutedGroups = (this.config.group && Array.isArray(this.config.group.mutedGroups)) ? this.config.group.mutedGroups : [];
-    if (isGroup && mutedGroups.length) {
-      const groupName = msg.chatTitle || session.title || '';
-      if (mutedGroups.some((g) => g === '*' || nameMatches(groupName, g))) {
-        return { action: 'ignore', reason: 'muted_group', key, msg };
-      }
-    }
 
     // 3) 命令（群里说「安静」这类自然语言命令，要先叫到鲸鲸才算；主人说话直接算）
     // 回填的旧问题（recycled）不再重复执行命令，那句话只用来组装回复（M27）
@@ -738,157 +742,31 @@ class Bot {
       }
     }
 
-    // 需要最新信息时联网搜一下
-    let webText = '';
-    const webCfg = this.config.websearch || {};
-    const webOn = webCfg.enabled !== false;
-    // 路由、定位、天气/热榜及补搜共享预算，不能每一步重新等一个完整超时。
-    const webDeadline = Date.now() + Math.max(1, Number(webCfg.timeoutMs) || 8000);
-    const webRemaining = () => Math.max(0, webDeadline - Date.now());
-    // 触发判定通过之后才读链接：群里没叫她的消息不白抓一遍；读链接与联网搜索并行，
-    // 组提示词前一起 await，总耗时取两者较大的（共用 webDeadline）。
+    // 群聊触发判定后再并行获取链接和搜索资料，避免无关消息消耗网络预算。
     const linkUrls = (this.config.links && this.config.links.enabled === false)
       ? [] : links.extractUrls(clean.text || '');
     const linkTask = linkUrls.length ? this.readLink(linkUrls[0], key) : Promise.resolve('');
-    // 注意：以前只认「查一下/最新/多少钱」这类词。用户问「苹果出到几了」「现在几代」这种
-    // 口语问题时匹配不上，她就拿训练数据里的旧型号回答（实测把 iPhone 18 说成 16）。
-    const searchPattern = new RegExp(
-      [
-        '(查一下|查查|搜一下|搜搜|帮我查|帮我看看|最新|热搜|新闻|发生了什么|怎么回事|多少钱|什么价格|几块钱)',
-        '(什么时候|是谁|谁是|行情|报价|天气|下雨|下雪|气温|多少度|冷不冷|热不热|台风|雾霾|空气质量)',
-        '(出到|出到哪|第几代|几代|什么型号|哪个型号|哪个版本|什么版本|现在还|现在最新|今年|去年)',
-        '(苹果|iphone|ipad|华为|小米|三星|索尼|任天堂|switch|ps5|显卡|rtx|骁龙|麒麟|芯片|发布会)',
-      ].join('|'),
-      'i'
-    );
-    // 只按关键词触发，词库里没有的说法就永远不联网（「B站的热搜是什么」命中「热搜」，
-    // 但取的是头条榜，答非所问）。补一条「问句形态」兜底：在问事实、不是闲聊、不是问观点。
-    const ASK_FACT_RE = /(是什么|是谁|多少|几号|几点|怎么样|怎么|为什么|哪一?[个些张条]|哪个|有没有|是不是|能不能|会不会|可不可以|排行|排名|热搜|热榜|热门|最新|出到|第几)/;
-    const CHITCHAT_RE = /^(在吗|在不在|你好|嗨|hi|哈喽|早安|晚安|睡了|吃饭了吗|吃了吗|你在干嘛|在干啥|干啥呢|干嘛呢)/i;
-    const OPINION_RE = /(你觉得|你认为|你看|你怎么看|该不该|要不要|喜不喜欢|喜欢吗|讨厌|爱我吗|想我了吗)/;
-    const looksLikeFactQuestion = ASK_FACT_RE.test(clean.text || '')
-      && !CHITCHAT_RE.test(String(clean.text || '').trim())
-      && !OPINION_RE.test(clean.text || '');
-    // 主判断交给模型（语义），关键词只在模型不可用时兜底：
-    // 「小蓝鲸是什么梗」这种词库里没有的说法也会查，「你觉得呢」「在吗」不会被误触发。
-    //
-    // 但语义路由本身也是一次模型调用（上限 2 秒），实测每一句都要等它 —— 包括
-    // 「hello」「我要去上课了」这种明显不用查的闲聊。所以先用本地判据挡一道。
-    const kwHit = searchPattern.test(clean.text || '');
-    const askShape = /[?？]|吗|呢|什么|怎么|多少|几[个号点]|谁|哪|为什么|如何|查|搜|最新|今天|现在|价格|天气/
-      .test(clean.text || '');
-    // semanticRoute=true  → 每句都问模型（旧行为，最准，每句多 ~2 秒）
-    // semanticRoute=false → 完全不问，只按关键词
-    // 不配（默认）        → 只有「像问句/命中事实词」才问模型
-    const routeMode = webCfg.semanticRoute;
-    const wantRoute = routeMode === true
-      || (routeMode !== false && (kwHit || looksLikeFactQuestion || askShape));
-    let route = { need: false, query: '', site: '', city: '', fresh: 'normal', failed: true };
-    if (webOn && clean.text && wantRoute) {
+    const searchResult = await searchService.search({
+      text: clean.text,
+      history: () => this.recentHeard({ msg, key }).filter(line => line !== clean.text),
+      llm: this.llm, config: this.config.websearch || {}, now: this.now(),
+      trace: (stage, data) => this.logger?.info('[search] stage=' + stage + ' ' + JSON.stringify(data)),
+    });
+    if (searchResult.status !== 'skipped') {
       try {
-        route = await searchRouter.route(this.llm, clean.text, {
-          history: this.recentHeard({ msg, key }).filter((line) => line !== clean.text),
-          timeoutMs: Math.min(2000, Math.max(1, webRemaining())),
-          now: this.now(),
-        });
-      } catch { route = { need: false, query: '', site: '', failed: true }; }
-    }
-    const keywordFallback = route.failed && (searchPattern.test(clean.text || '') || looksLikeFactQuestion);
-    const shouldSearch = webOn && Boolean(clean.text) && (route.need || keywordFallback);
-    if (shouldSearch) {
-      try {
-        const isWeather = /(天气|下雨|下雪|气温|多少度|冷不冷|热不热|台风|雾霾|空气)/.test(clean.text);
-        // 模型给出的检索式已清洗；别再全局删除「吗/呢」等字符，可能属于专名。
-        let q = String(route.need && route.query ? route.query : clean.text).trim().slice(0, 100);
-        const site = /(b站|哔哩哔哩|bilibili)/i.test(clean.text) ? 'bilibili'
-          : /(微博|weibo)/i.test(clean.text) ? 'weibo'
-            : /(今日头条|头条)/.test(clean.text) ? 'toutiao' : route.site;
-        const siteDomain = { bilibili: 'bilibili.com', weibo: 'weibo.com', toutiao: 'toutiao.com' }[site];
-        if (isWeather) {
-          // 天气走专门的接口（open-meteo）：Bing 摘要常常只有「多云」没温度，还爱串城市。
-          // 城市来源顺序：模型从这句话里抄的地名 → 配置 websearch.city → 去掉天气词后的原句
-          // 交给 geocodeCity 解析 → 最后才按本机公网 IP 猜。不再用正则穷举城市。
-          let weatherCity = String(route.city || '').trim();
-          if (!weatherCity) weatherCity = String(webCfg.city || '').trim();
-          if (!weatherCity && webRemaining() > 0) {
-            const place = String(clean.text || '')
-              .replace(/(今天|明天|后天|大后天|现在|这几天|周末|早上|上午|中午|下午|晚上|夜里)/g, ' ')
-              .replace(/(天气|气温|温度|怎么样|如何|多少度|冷不冷|热不热|下雨|下雪|台风|雾霾|空气质量|要不要带伞|带伞)/g, ' ')
-              .replace(/[?？!！。，,、\s]+/g, ' ')
-              .trim();
-            if (place && place.length <= 40) {
-              try {
-                const placeHit = await websearch.geocodeCity(place, webRemaining());
-                if (placeHit && placeHit.name) weatherCity = placeHit.name;
-              } catch { /* 解析不出来就继续往下走 */ }
-            }
-          }
-          if (!weatherCity && webRemaining() > 0) {
-            try { weatherCity = await websearch.ipCity(webRemaining()); } catch { /* 忽略 */ }
-          }
-          if (weatherCity && webRemaining() > 0) {
-            try {
-              webText = await websearch.weatherText(weatherCity, { timeoutMs: webRemaining() });
-              if (webText && this.logger) this.logger.info('天气查询：' + weatherCity);
-            } catch { /* 落到搜索引擎 */ }
-          }
-          if (!webText) {
-            if (weatherCity) q = weatherCity + ' 天气';
-            else if (!/天气/.test(q)) q = q + ' 天气';
-          }
-        }
-        // 只有在问榜单/泛新闻时才取热榜；指定平台不等于要求该平台热搜。
-        // 实测：「苹果现在出到几了」加 2026 后，新文章反而被官方首页挤掉，时效性交给 dropStaleResults。
-        const wantsHotList = /(热搜|热榜|热点榜|排行榜|热门榜)/.test(clean.text)
-          || /(今天|今日|现在|刚刚|最新|最近|这两天)[^。！？!?\n]{0,8}(新闻|热点|大事|头条|发生了什么)/.test(clean.text)
-          || /^(?:今天|今日|现在|最新)?(?:有)?(?:什么)?(?:新闻|热点|大事件|头条)(?:是什么|有哪些|发生了什么|[?？])?$/.test(clean.text)
-          || /^(?:今天|今日|最近)?发生了什么[?？]?$/.test(clean.text);
-        if (!webText && wantsHotList && webRemaining() > 0) {
-          try {
-            if (site === 'bilibili') {
-              webText = await websearch.bilibiliHotText(10, webRemaining());
-            } else if (site === 'weibo') {
-              webText = await websearch.weiboHotText(10, webRemaining());
-            } else {
-              webText = await websearch.hotNewsText(8, webRemaining());
-            }
-          } catch { /* 同平台搜索兜底，不拿头条榜冒充 B站/微博榜 */ }
-        }
-        if (!webText && webRemaining() > 0) {
-          if (siteDomain) q = q + ' site:' + siteDomain;
-          // 时效由模型判（strict/normal/any），再按用户原话里的「今天/这周」收紧：
-          // 问今天的新闻时 90 天太松，会把四天前的稿子当今天的。
-          const freshAge = websearch.effectiveMaxAgeDays(
-            `${clean.text || ''} ${q}`,
-            route.failed ? undefined : route.fresh
-          );
-          webText = await websearch.searchText(q || String(clean.text).slice(0, 100), {
-            limit: 4,
-            timeoutMs: webRemaining(),
-            maxAgeDays: freshAge,
-          });
-        }
-        if (webText) this.logger && this.logger.info('联网搜索：' + String(clean.text).slice(0, 30));
-        // 联网结果只在这一轮的提示词里出现一次，下一轮就没了；
-        // 记一条账，她才能回答「你刚才查的什么」「查到了吗」。
         this.store.appendEvent(key, {
           type: 'web',
           detail: String(clean.text || '').slice(0, 60),
-          status: webText ? 'ok' : 'empty',
+          status: searchResult.status,
         });
-      } catch { /* ignore */ }
+      } catch (err) { this.logger?.warn('[search] stage=record_failed ' + describeError(err)); }
     }
     const linkText = await linkTask;
     msg.linkText = linkText;
-    // 搜到的东西必须真的送进提示词。以前只赋给局部变量、写了个日志就完事，
-    // msg 上从没挂过 webText，于是 persona 里那段「【刚联网搜到的资料】」永远是空——
-    // 表现就是「问她天气她不知道」，明明日志里已经搜到了。
-    msg.webText = webText;
-    // 空结果也要传递真实状态；不能让模型把「尝试过」说成「已查到」。
-    msg.webSearchStatus = shouldSearch ? (webText ? 'ok' : 'empty') : '';
-    // 现场问题：日志有「联网搜索」，回复却说「我记的是旧的」——光看日志分不清
-    // 资料到底有没有进提示词。这里把注入长度也记下来，一眼能对上。
-    if (webText && this.logger) this.logger.info('联网资料已注入提示词：' + String(webText).length + ' 字');
+    msg.webText = searchResult.text;
+    msg.webSearchStatus = searchResult.status === 'skipped' ? '' : searchResult.status;
+    msg.webSearchReason = searchResult.reason;
+    if (msg.webText) this.logger?.info('联网资料已注入提示词：' + msg.webText.length + ' 字');
 
     // 认真讨论（不是随口闲聊）→ 允许说长一点、有观点
     const discussPattern = /(讨论|探讨|你觉得|你怎么看|你认为|为什么|该不该|要不要|是不是应该|如何选择|怎么选|怎么看|有道理吗|值得吗|价值观|人生|意义|观点|看法|利弊|优缺点)/;
@@ -1038,7 +916,7 @@ class Bot {
     // features.staticSystem=false 时完全回到旧行为：所有内容都在 system，tail 为空串。
     const promptParts = persona.buildPromptParts({
       config: this.config,
-      msg: { ...msg, senderName: displayName, chatTitle: msg.chatTitle || session.title, isMaster, atMe, addressedToBot: Boolean(atMe || msg.replyToBot), mentionedNames, groupParticipants, linkText, discussion, groupStyleText, webText, fight, fightDirty, fightOnMaster, voiceRequested, replyToName: msg.replyToName, ts: nowMs },
+      msg: { ...msg, senderName: displayName, chatTitle: msg.chatTitle || session.title, isMaster, atMe, addressedToBot: Boolean(atMe || msg.replyToBot), mentionedNames, groupParticipants, linkText, discussion, groupStyleText, fight, fightDirty, fightOnMaster, voiceRequested, replyToName: msg.replyToName, ts: nowMs },
       profile,
       // 记忆不再进 system：人物卡/事件/摘要统一放最后一条 user 消息（mem.block）
       notes: [],
@@ -1052,7 +930,10 @@ class Bot {
     });
     const system = promptParts.system;
     // 桥接状态接在本轮状态最后一行；旧行为路径（tail 为空）也照样带上
-    const tail = [promptParts.tail, turnState.bridgeLine].filter(Boolean).join('\n');
+    const maxBubbles = Number(this.config.chat.maxBubbles) || 2;
+    msg.separateRequested = maxBubbles > 1 && SEPARATE_REPLY_RE.test(clean.text || '');
+    const separateHint = msg.separateRequested ? '本轮对方要求分开发送。把不同要点各写一行，最多 ' + maxBubbles + ' 行。' : '';
+    const tail = [promptParts.tail, turnState.bridgeLine, separateHint].filter(Boolean).join('\n');
     // 记忆块 = 人物卡/事件/摘要 + 关系卡（关系卡是 main 新加的，两段都挂最后一条 user 消息）
     const memoryBlock = [mem.block, mem.relationsBlock].filter(Boolean).join('\n\n');
     const turns = this.buildTurns({ ...msg, ts: nowMs }, historyForTurns, memoryBlock, tail);
@@ -1150,38 +1031,33 @@ class Bot {
     return trigger.computeTrigger(this, args);
   }
 
-  /** 魔咒 + 管理员命令。返回 decision，或 null 表示继续走普通聊天流程 */
+  unlockAdminSpell(msg, key, state, spell, nowMs) {
+    if (msg.platform !== 'wechat' || msg.chatType !== 'private' || !isVerifiedOwner(this.config, msg)) {
+      return { action: 'ignore', reason: 'not_owner', key, msg };
+    }
+    const minutes = Math.max(1, Math.min(1440, Number(this.config.admin?.minutes) || 30));
+    state.adminUntil = nowMs + minutes * 60000;
+    state.adminUser = msg.senderId;
+    // 只认本次运行中真正验证过的口令，旧存档里的计时器不能恢复权限。
+    this._adminSpellGrants.set(state, spell);
+    this.store.markDirty();
+    return {
+      action: 'command', commandType: 'admin_spell', key, msg, atMe: true, reason: 'admin',
+      text: `管理员魔咒已生效，${minutes} 分钟内可在本私聊发送「禁言 群名」「解除禁言 群名」或「禁言列表」。发送「退出管理」可提前结束。`,
+    };
+  }
+
+  /** 管理员命令。返回 decision，或 null 表示继续走普通聊天流程。 */
   handleAdmin({ msg, clean, key, state, isMaster, nowMs }) {
     // 不接受昵称兜底或上游传来的 isMaster 标记作为管理凭据。
     isMaster = isVerifiedOwner(this.config, msg);
     const adminCfg = this.config.admin || {};
     const spell = String(adminCfg.spell || '').trim();
-    const minutes = Math.max(1, Math.min(1440, Number(adminCfg.minutes) || 30));
     const allowAll = adminCfg.allowAll === true;
     const text = String((clean && clean.text) || '').trim();
     const say = (msgText, commandType = 'admin') => ({
       action: 'command', commandType, key, msg, atMe: true, reason: 'admin', text: msgText,
     });
-
-    // 1) 输入魔咒
-    if (spell && text === spell) {
-      if (!isMaster && !allowAll) {
-        this.store.redactLastMessage(key, '（已隐藏：有人试图使用魔咒）');
-        this.logger && this.logger.warn(`[admin] 非主人「${msg.senderName}」尝试使用魔咒，已忽略`);
-        return { action: 'ignore', reason: 'not_owner', key, msg, atMe: Boolean(msg && msg.atMe) };
-      }
-      state.adminUntil = nowMs + minutes * 60000;
-      // 时限权限认人不认会话：记下是谁拿到的，别的群友/聊友不能借光（见下面 2) 的门）
-      state.adminUser = String(msg.senderId || '');
-      this.store.redactLastMessage(key, '（已隐藏：管理员验证）');
-      this.store.markDirty();
-      this.logger && this.logger.info(`[admin] 主人 ${msg.senderName} 获得管理员权限 ${minutes} 分钟（会话 ${key}）`);
-      const warn = msg.chatType === 'group' ? '（群里别人也能看到魔咒，下次建议私聊发）' : '';
-      return say(
-        `（魔咒生效）管理员权限 ${minutes} 分钟。可以发：状态 / 改模型 deepseek-v4-pro / 演示模式 开|关 / 群聊主动接话 开|关 / 重置记忆 / 清空所有记忆 / 退出管理${warn}`,
-        'admin_spell'
-      );
-    }
 
     // 管理权限每次按当前配置复核；旧会话中的魔咒时限不是独立凭据。
     // 移除主人 ID 或关闭 allowAll 后应立即撤销旧权限，避免历史冒名授权继续生效。
@@ -1192,17 +1068,26 @@ class Bot {
         /^(?:别|不要|停止)(?:再)?(?:在)?\s*.+?群/.test(text) ||
         /^让\s*.+?群\s*(?:闭嘴|安静)/.test(text);
       if (looksControl) {
-        return say('这个得先开管理员权限才能改：先发魔咒，再说「解除禁言 群名」。', 'admin_hint');
+        return say('群禁言只能由已绑定微信 ID 的主人操作。', 'admin_hint');
       }
       return null;
     }
     const remainingText = '不限时';
 
     // —— 群禁言（让某个群安静） ——
+    const groupDenial = () => {
+      if (!isMaster) return say('群禁言只能由已绑定微信 ID 的主人操作。', 'admin_hint');
+      if (!spell) return null;
+      if (msg.platform === 'wechat' && msg.chatType === 'private' && state.adminUser === msg.senderId &&
+          state.adminUntil > nowMs && this._adminSpellGrants.get(state) === spell) return null;
+      return say('请主人先在微信私聊发送管理员魔咒，再在同一私聊发送禁言或解禁命令。', 'admin_hint');
+    };
     let mg;
     // 允许「你/请/帮我」开头，允许「暂时/先」前缀
     const mt = String(text).replace(/^(?:你|请|麻烦|帮我|能不能|可不可以|可以|先|暂时)+/, '').trim();
     if (/^(?:禁言列表|群聊禁言|禁言名单|黑名单)$/.test(text)) {
+      const denied = groupDenial();
+      if (denied) return denied;
       const list = (this.config.group && this.config.group.mutedGroups) || [];
       return say(list.length ? '当前禁言：' + list.map((x) => (x === '*' ? '所有群' : x)).join('、') : '现在没有禁言的群。');
     }
@@ -1210,8 +1095,10 @@ class Bot {
         || (mg = mt.match(/^(?:禁言|屏蔽)\s*(.+?)$/))
         || (mg = mt.match(/^把\s*(.+?)\s*(?:群)?\s*禁言$/))
         || (mg = mt.match(/^让\s*(.+?)\s*(?:群)?\s*闭嘴$/))) {
-      const g = String(mg[1]).replace(/[「」"'“”]/g, '').replace(/(那个|这个)?群$/, '').trim();
+      const g = String(mg[1]).replace(/[「」"'“”]/g, '').trim();
       if (g) {
+        const denied = groupDenial();
+        if (denied) return denied;
         const list = Array.isArray(this.config.group.mutedGroups) ? this.config.group.mutedGroups.slice() : [];
         if (!list.some((x) => nameMatches(x, g))) list.push(g);
         personaStore.save(this.config, { mutedGroups: list });
@@ -1220,6 +1107,8 @@ class Bot {
       }
     }
     if (/^(?:所有群禁言|全部群禁言|只在私聊说话)$/.test(text)) {
+      const denied = groupDenial();
+      if (denied) return denied;
       personaStore.save(this.config, { mutedGroups: ['*'] });
       return say('好，所有群都不说话了，只陪你私聊。');
     }
@@ -1227,6 +1116,8 @@ class Bot {
     // 会被下面单群那条 `(.+?)` 先吞掉（「所有群」被当成群名），全解分支永远走不到。
     if (/^(?:解除所有群禁言|解除所有禁言|取消所有禁言|全部恢复|允许所有群)$/.test(mt)
         || /^(?:解除禁言|取消禁言|解开禁言|解禁)[\s]*(?:(?:所有|全部)(?:个)?(?:群|群聊)?)?[。.!！~～]*$/.test(mt)) {
+      const denied = groupDenial();
+      if (denied) return denied;
       personaStore.save(this.config, { mutedGroups: [] });
       return say('所有群的禁言都解开了。');
     }
@@ -1236,6 +1127,8 @@ class Bot {
         || (mg = mt.match(/^解除对\s*(.+?)\s*的?禁言$/))
         || (mg = mt.match(/^让\s*(.+?)\s*(?:群)?\s*(?:可以|能)\s*说话$/))
         || (mg = mt.match(/^(?:恢复|放开)\s*(?!默认|语态|人设)(.+?)\s*(?:群)?\s*(?:说话)?$/))) {
+      const denied = groupDenial();
+      if (denied) return denied;
       const g = String(mg[1]).replace(/[「」"'“”]/g, '').trim();
       // '*'（所有群禁言）不归单群解禁管：放行一个群不能顺手把全禁言清掉
       const list = (Array.isArray(this.config.group.mutedGroups) ? this.config.group.mutedGroups : [])
@@ -1436,6 +1329,7 @@ class Bot {
       return say('这句我没听明白。改成「禁言 鼠标」或者「别在鼠标群说话」试试。');
     }
     if (/^(退出管理|结束管理|关闭管理|收起魔咒)$/.test(text)) {
+      this._adminSpellGrants.delete(state);
       state.adminUntil = 0;
       state.adminUser = '';
       this.store.markDirty();
@@ -1618,7 +1512,10 @@ class Bot {
    */
   stickerFor(decision, text) {
     if (!stickers.isOn(this.config) || !this.stickerService) return null;
-    if (decision && decision.error) return null;
+    if (decision && decision.error) {
+      this.logger?.info('[sticker] stage=decision result=skip reason=reply_error');
+      return null;
+    }
     const msg = (decision && decision.msg) || {};
     if (msg.platform !== 'wechat' || !msg.chatId) return null;
     let category = decision && decision.stickerCategory;
@@ -1644,12 +1541,15 @@ class Bot {
           || stickers.defaultCategory(this.config);
       }
     }
-    if (!category) return null;
+    if (!category) {
+      this.logger?.info('[sticker] stage=decision result=skip reason=no_category_or_demand');
+      return null;
+    }
     if (decision) decision.stickerCategory = category;
     try {
       return this.stickerService.plan(msg, category);
     } catch (err) {
-      if (this.logger) this.logger.warn('挑表情包失败：' + (err && err.message ? err.message : err));
+      if (this.logger) this.logger.warn('[sticker] stage=plan result=failed ' + describeError(err));
       return null;
     }
   }
@@ -1855,8 +1755,9 @@ class Bot {
     const maxChars = msg.discussion
       ? Math.min(Number(this.config.chat.discussionMaxChars) || LIMITS.maxOutputDiscussion, LIMITS.maxOutputDiscussion)
       : Math.min(Number(isGroup ? this.config.chat.groupMaxChars : this.config.chat.privateMaxChars) || LIMITS.maxOutputNormal, LIMITS.maxOutputNormal);
+    const preferSeparate = Boolean(msg.separateRequested);
     let bubbles;
-    if (decision.action === 'reply') {
+    if (decision.action === 'reply' && !preferSeparate && !text.includes('\n')) {
       // 按逗号/句号拆成几条短消息，每条不带标点
       const clauses = (text.match(/[^，。！？!?；;\n]+/g) || [])
         .map((s) => s.trim().replace(/^[，。！？!?；;]+|[，。！？!?；;~～…]+$/g, ''))
@@ -1869,8 +1770,13 @@ class Bot {
           .filter(Boolean);
       }
     } else {
-      bubbles = persona.splitBubbles(text, { maxChars, maxBubbles }).map((b) => String(b || '').trim()).filter(Boolean);
+      bubbles = persona.splitBubbles(text, { maxChars, maxBubbles, preferSeparate });
+      if (decision.action === 'reply') {
+        bubbles = bubbles.map((b) => b.replace(/[~～]+$/g, '').replace(/[。！!…]+$/g, '')).filter(Boolean);
+      }
     }
+    // 仅当本轮确实拆出了多段文字时，保留用户要求的文字发送方式。
+    decision.separateText = preferSeparate && bubbles.length > 1;
     // emoji / 颜文字单独一条发，不粘在句末。
     // 以前回加和「颜文字用量」概率绑在一起（M28）：chance=0（关/吵架模式）时模型自带的
     // emoji 被剥掉就再也回不来。现在解耦：模型自带的 emoji 无论概率多少都按原设计
@@ -1943,6 +1849,7 @@ class Bot {
       return { action: 'ignore', reason: 'error' };
     }
     if (decision.action === 'ignore') {
+      this.logger?.info('[pipeline] result=skip reason=' + String(decision.reason || 'unspecified') + ' search=not_reached delivery=not_reached');
       try { this.store.checkpoint(decision.key); } catch { /* 忽略的消息也要留断点 */ }
       return { action: 'ignore', reason: decision.reason };
     }
@@ -2066,6 +1973,7 @@ class Bot {
       mention: decision.msg && decision.msg.chatType === 'group' ? mention : '',
       reason: decision.reason,
       mock: decision.mock,
+      ...(decision.separateText ? { separateText: true } : {}),
       // 表情包分类由模型写在正文里的标记决定，这里带出去给网关排队
       ...(decision.stickerCategory ? { stickerCategory: decision.stickerCategory } : {}),
       // 这一轮是否命中“提醒带一张”；网关用它决定 ensureSend 要不要补图
@@ -2208,4 +2116,3 @@ class Bot {
 }
 
 module.exports = { Bot, extractCommand, COMMAND_HELP, isContextLengthError };
-

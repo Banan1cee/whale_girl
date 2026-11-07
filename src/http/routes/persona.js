@@ -3,7 +3,7 @@
 const personaStore = require('../../persona/store');
 const presets = require('../../persona/presets');
 const { applyPersonaPatch } = require('../../services/persona');
-const { checkPersonaTokens, PERSONA_MAX_TOKENS } = require('../../persona/tokenCheck');
+const { checkPersonaTokens } = require('../../persona/tokenCheck');
 const { json, readBody } = require('../util');
 
 module.exports = function register(router) {
@@ -64,7 +64,7 @@ module.exports = function register(router) {
       runtime.logger.warn(`人设预设 ${preset.id} 太长，拒绝导入：${tokenCheck.tokens} token`);
       return json(res, 400, {
         ok: false,
-        error: `这个人设预设太长：约 ${tokenCheck.tokens} token，超过上限 ${PERSONA_MAX_TOKENS}。`,
+        error: `这个人设预设太长：${tokenCheck.exact ? '' : '约 '}${tokenCheck.tokens} token，超过当前上限 ${tokenCheck.limit}。`,
         tokenCheck,
       });
     }

@@ -36,6 +36,7 @@ function run(root, action, key) {
     return { ...category, items, count: items.length };
   });
   return { ok: true, dir, emotions, enabled: stickers.isOn(config),
+    collectReceived: config.sticker?.collectReceived === true,
     configuredDir: config.sticker?.dir || '', testChat: config.sticker?.testChat || '文件传输助手',
     demandChance: Number.isFinite(Number(config.sticker?.demandChance))
       ? Math.min(1, Math.max(0, Number(config.sticker.demandChance))) : 0.7,

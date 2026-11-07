@@ -17,12 +17,15 @@ function sanitizeForModel(text) {
   return s;
 }
 
-/** 群名匹配：忽略大小写/空格，允许「鼠标」匹配「鼠标那个群」这种写法 */
+/** 兼容群名末尾的「群」称呼，避免子串把相似名称的其他群一并禁言。 */
 function nameMatches(a, b) {
   const x = String(a || '').replace(/\s+/g, '').toLowerCase();
   const y = String(b || '').replace(/\s+/g, '').toLowerCase();
   if (!x || !y) return false;
-  return x === y || x.includes(y) || y.includes(x);
+  if (x === y) return true;
+  const trimGroup = (name) => name.replace(/(?:那个|这个)?群$/, '');
+  const target = trimGroup(x);
+  return Boolean(target && target === trimGroup(y));
 }
 
 /**

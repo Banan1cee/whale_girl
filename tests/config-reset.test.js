@@ -14,7 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { loadConfig, DEFAULT_CONFIG } = require('../src/infra/config');
-const { resetConfig, defaultOf } = require('../src/infra/configPatch');
+const { applyConfigPatch, publicConfig, resetConfig, defaultOf } = require('../src/infra/configPatch');
 
 function fixture(t, patch = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-reset-'));
@@ -66,6 +66,18 @@ test('恢复默认：密钥字段一律跳过，别把人家的 Key 清了', (t)
   assert.deepEqual(out.unknown, ['deepseek.apiKey']);
   assert.deepEqual(out.changed, ['deepseek.temperature']);
   assert.equal(read().deepseek.apiKey, 'sk-keep-me');
+});
+
+test('管理员魔咒可以保存和清除，设置接口只返回是否已配置', (t) => {
+  const { runtime, read } = fixture(t);
+  applyConfigPatch(runtime, { 'admin.spell': 'test-only-spell' });
+  assert.equal(read().admin.spell, 'test-only-spell');
+  const saved = publicConfig(runtime.config);
+  assert.equal(saved.config.admin.spell, '');
+  assert.equal(saved.secrets['admin.spell'], true);
+  applyConfigPatch(runtime, { 'admin.spell': '' });
+  assert.equal(read().admin.spell, '');
+  assert.equal(publicConfig(runtime.config).secrets['admin.spell'], false);
 });
 
 test('恢复默认：paths 空或不是数组直接 400', (t) => {

@@ -69,6 +69,7 @@ namespace WhaleLauncher.Views
         public BridgePage(RuntimeSupervisor sup)
         {
             InitializeComponent();
+            SmoothScroll.Attach(Console);
             _sup = sup;
             Console.ItemsSource = _view;
 
@@ -93,6 +94,11 @@ namespace WhaleLauncher.Views
                 await LoadConfigAsync();
                 await RefreshAsync();
             };
+        }
+
+        private void OnChatPolicy(object sender, RoutedEventArgs e)
+        {
+            new ChatPolicyWindow(_sup) { Owner = Window.GetWindow(this) }.ShowDialog();
         }
 
         private static ConsoleRow Wrap(LogLine l) => new ConsoleRow
@@ -167,7 +173,7 @@ namespace WhaleLauncher.Views
         private void ScrollToEnd()
         {
             if (_view.Count == 0) return;
-            try { Console.ScrollIntoView(_view[_view.Count - 1]); } catch { }
+            SmoothScroll.End(Console);
         }
 
         private void UpdateStat()

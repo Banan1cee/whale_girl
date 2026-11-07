@@ -147,6 +147,8 @@ test('演示台词：命中意图、不会为空、群聊更短', () => {
 });
 
 test('splitBubbles：短句一条，长句按句号拆，数量受限', () => {
+  assert.deepEqual(persona.splitBubbles('第一条\r\n第二条'), ['第一条', '第二条']);
+  assert.deepEqual(persona.splitBubbles('第一条\r\n第二条', { maxBubbles: 1 }), ['第一条\n第二条']);
   assert.deepEqual(persona.splitBubbles('咕噜~', { maxChars: 50, maxBubbles: 2 }), ['咕噜~']);
   const long = '第一句话。第二句话！第三句话？第四句话。第五句话。';
   const bubbles = persona.splitBubbles(long, { maxChars: 12, maxBubbles: 2 });

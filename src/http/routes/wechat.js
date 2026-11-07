@@ -6,9 +6,26 @@ const {
   matchAccountDir,
 } = require('../../services/wechat');
 const { applyConfigPatch } = require('../../infra/configPatch');
+const { sendDenial } = require('../../core/wechatSendPolicy');
+const { isLoopbackRequest } = require('../security');
 const { json, readBody } = require('../util');
 
 module.exports = function register(router) {
+  router.post('/api/wechat/send-permission', async (runtime, req, res) => {
+    const gw = runtime.gateways?.get('wechat');
+    if (!isLoopbackRequest(req) || !gw?.verifyToken(req, null)) {
+      return json(res, 403, { ok: false, error: '仅允许本机微信桥接核对发言范围' });
+    }
+    const body = await readBody(req);
+    const id = typeof body?.chatId === 'string' ? body.chatId.trim() : '';
+    const name = typeof body?.name === 'string' ? body.name.trim() : '';
+    const contact = id && runtime.contacts?.get(id);
+    const reason = sendDenial(runtime.config, {
+      id, names: [name, contact?.name, contact?.remark], isGroup: /@chatroom$/i.test(id) || contact?.isGroup === true,
+    });
+    return json(res, 200, { ok: true, allowed: !reason, reason });
+  });
+
   // ---- 微信多账号：列账号 / 刷新昵称 / 选账号 ----
   // 启动器「微信桥接」页的账号卡用这三条。选账号 = 把
   // config.json 的 wechat.account 改成目标账号目录；桥接发现这个值变了会自己 exit 7，启动器看到后重新拉起。

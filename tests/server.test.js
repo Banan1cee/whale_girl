@@ -467,6 +467,49 @@ test('本地桥接请求不会被误报「回复只打印在控制台」', async
     await app.close();
   }
 });
+test('微信本地桥接：短回复换行和明确分条请求都返回多气泡，日志数量与回包一致', async () => {
+  const app = await boot({ chat: { maxBubbles: 2 }, persona: { emojiLevel: '关' } });
+  const log = [];
+  app.runtime.gateways.get('wechat').logger = { info: (line) => log.push(line), warn() {} };
+  app.runtime.bot.config.persona.emojiLevel = '关';
+  const { llm } = app.runtime.bot;
+  Object.defineProperty(llm, 'isMock', { value: false });
+  let modelReply;
+  let prompt;
+  llm.complete = async ({ turns }) => {
+    prompt = turns.at(-1).content;
+    return modelReply;
+  };
+  try {
+    const send = async (id, text, reply) => {
+      modelReply = reply;
+      const res = await fetch(app.url + '/webhook/wechat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-bot-token': TOKEN, 'x-whale-bridge': '1' },
+        body: JSON.stringify({ chat_id: id, chat_type: 'private', sender_id: id, text, msg_id: id }),
+      });
+      return res.json();
+    };
+    const byLine = await send('p1', '带些什么出门', '带伞\n\n带水\n记得带钥匙');
+    assert.deepEqual(byLine.bubbles, ['带伞', '带水\n记得带钥匙']);
+    assert.equal(byLine.separateText, undefined);
+    const byRequest = await send('p2', '请分条发', '先保存。再退出。最后重启。');
+    assert.deepEqual(byRequest.bubbles, ['先保存', '再退出。最后重启']);
+    assert.equal(byRequest.separateText, true);
+    assert.match(prompt, /各写一行，最多 2 行/);
+    const question = await send('p3', '说话分段什么意思？', '就是把几句话拆开');
+    assert.deepEqual(question.bubbles, ['就是把几句话拆开']);
+    assert.doesNotMatch(prompt, /各写一行/);
+    assert.deepEqual(log.filter((line) => line.includes('回复已交给本地桥接')), [
+      '[wechat] 回复已交给本地桥接发送（2 条）',
+      '[wechat] 回复已交给本地桥接发送（2 条）',
+      '[wechat] 回复已交给本地桥接发送（1 条）',
+    ]);
+  } finally {
+    await app.close();
+  }
+});
+
 test('桥接心跳：网页能看出桥接在不在、UIA 通不通', async () => {
   const app = await boot({
     gateway: {

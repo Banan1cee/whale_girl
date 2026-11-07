@@ -1,5 +1,7 @@
 'use strict';
 
+const { sendDenial } = require('../core/wechatSendPolicy');
+
 /**
  * 通用 HTTP 网关适配器：把微信/抖音中转服务发来的 JSON 变成统一消息，
  * 再把鲸鲸的回复 POST 回中转服务。
@@ -188,13 +190,15 @@ class Gateway {
     if (msg.noReply) return { ok: true, skipped: 'no_reply_flag' };
     this.logger &&
       this.logger.info(
-        `[${this.platform}] 收到 ${msg.chatType === 'group' ? '群' : '私聊'}消息 ${msg.senderName}：${String(msg.text).slice(0, 40)}`
+        `[${this.platform}] 收到 ${msg.chatType === 'group' ? '群' : '私聊'}消息 ${msg.senderName}（${String(msg.text).length} 字）`
       );
     const localWechat = local && this.platform === 'wechat';
     const result = await this.bot.handle(msg, { localWechat });
     if (result.action !== 'reply' || !result.reply) {
       return { ok: true, action: 'ignore', reason: result.reason || 'ignored' };
     }
+    const reason = sendDenial(this.bot.config, { id: msg.chatId, names: [msg.chatTitle], isGroup: msg.chatType === 'group', platform: this.platform });
+    if (reason) return { ok: true, action: 'ignore', reason };
     if (localWechat && result.reason === 'sticker_request' && result.sticker) {
       return { ok: true, action: 'reply', reply: result.reply, stickerOnly: true, sticker: result.sticker };
     }
@@ -243,8 +247,10 @@ class Gateway {
       reply: result.reply,
       bubbles: result.bubbles || [result.reply],
       ...(sticker ? { sticker } : {}),
+      ...(localWechat && result.separateText ? { separateText: true } : {}),
       // 群里要真的 @ 某人时，桥接据此调 at_member
       mention: result.mention || '',
+      ...(result.commandType ? { commandType: result.commandType } : {}),
       // 演示模式（没配 Key，说的是内置台词）：桥接据此在日志里提醒一次，
       // 不然用户会以为「没填 Key 居然也能真聊」。
       mock: Boolean(this.bot && this.bot.llm && this.bot.llm.isMock),
@@ -270,7 +276,7 @@ class Gateway {
       // 由桥接用 UIA 发出去的 —— 没配 outboundUrl 属于正常。以前这里一律打 WARN「只打印在控制台」，
       // 害得用户以为没发出去（实际发了，或者根本没开桥接）。
       if (local) {
-        this.logger && this.logger.info(`[${this.platform}] 回复已交给本地桥接发送（${lines.length} 条）`);
+        this.logger && this.logger.info(`[${this.platform}] 回复已交给本地桥接发送（${bubbles.length} 条）`);
       } else {
         this.logger &&
           this.logger.warn(

@@ -40,11 +40,12 @@ const CONFIG_PATHS = {
   freeChat: 'group.freeChat',
   historyTurns: 'chat.historyTurns',
   groupHistoryTurns: 'chat.groupHistoryTurns',
+  mutedGroups: 'group.mutedGroups',
 };
 
 function normalized(key, value) {
   if (key === 'links' || key === 'freeChat') return Boolean(value);
-  if (key === 'mutedGroups') return value;
+  if (key === 'mutedGroups') return Array.isArray(value) ? value.slice() : undefined;
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
 }
@@ -99,7 +100,6 @@ function save(config, patch) {
     preset: config.persona && config.persona.stylePreset,
     text: config.persona && config.persona.styleText,
     emoji: config.persona && config.persona.emojiLevel,
-    mutedGroups: config.group && Array.isArray(config.group.mutedGroups) ? config.group.mutedGroups : undefined,
     emotions: config.persona ? config.persona.emotions !== false : undefined,
     proactive: config.persona ? config.persona.proactive !== false : undefined,
     opinions: config.persona ? config.persona.opinions !== false : undefined,
@@ -187,6 +187,7 @@ function clear(config) {
   // 实际长度/上下文还停在用户改过的值（以前这些都在 persona.json 里才会被一起清掉）。
   const back = {};
   for (const [key, dotted] of Object.entries(CONFIG_PATHS)) {
+    if (key === 'mutedGroups') continue; // 发言范围属于微信设置，重置人设不能解除静音
     const value = normalized(key, DEFAULTS[key]);
     if (value !== undefined) back[dotted] = value;
   }
@@ -217,7 +218,6 @@ function apply(config, data) {
   config.persona.emojiLevel = data.emoji || '';
 
   if (!config.group) config.group = {};
-  config.group.mutedGroups = Array.isArray(data.mutedGroups) ? data.mutedGroups.slice() : [];
   // 归属 config.json 的键：老版本存过就搬一次（只搬 config.json 里没写过的），
   // 之后就只认 config.json，绝不再用它盖掉用户在设置页选的值。
   const legacy = {};
