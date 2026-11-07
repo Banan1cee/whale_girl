@@ -56,30 +56,20 @@ def settings(root):
     except (OSError, ValueError):
         return {}
 
-def choose(config, incoming, is_group, rng, log=None):
-    def decision(value, reason):
-        if log:
-            try:
-                log('[voice] stage=decision result=%s reason=%s' % ('selected' if value else 'skip', reason))
-            except Exception:
-                pass
-        return value
+def choose(config, incoming, is_group, rng):
     if config.get("Enabled") is not True:
-        return decision(False, 'disabled')
+        return False
     if config.get("Groups" if is_group else "Private", True) is not True:
-        return decision(False, 'chat_type_disabled')
+        return False
     if re.search(r"(?:不要|别|不用|不想|取消|关闭).{0,12}语音|语音.{0,8}(?:不要|取消|关闭)|(?:用|只要|只用).{0,3}(?:文字|文本)|(?:文字|文本)回复", str(incoming or "")):
-        return decision(False, 'user_requested_text')
+        return False
     if requested(incoming):
-        return decision(True, 'explicit_voice_request')
+        return True
     try:
         chance = float(config.get("Probability", 0))
     except (TypeError, ValueError):
-        return decision(False, 'invalid_probability')
-    if not math.isfinite(chance) or not 0 < chance <= 100:
-        return decision(False, 'probability_disabled_or_invalid')
-    selected = rng() < chance / 100
-    return decision(selected, 'probability_hit' if selected else 'probability_miss')
+        return False
+    return math.isfinite(chance) and 0 < chance <= 100 and rng() < chance / 100
 
 def deliver(root, text, hwnd, prepare, log, allow_foreground=None, cancelled=None, outcome=None, send_lock=None):
     """Synthesize first; only touch WeChat once the worker reports ready.

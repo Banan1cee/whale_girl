@@ -39,7 +39,6 @@ namespace WhaleLauncher.Views
         public DiagPage(RuntimeSupervisor sup)
         {
             InitializeComponent();
-            SmoothScroll.Attach(Logs);
             _sup = sup;
             CmbTail.SelectedIndex = 0;
 
@@ -321,10 +320,9 @@ namespace WhaleLauncher.Views
             if (sig == _lastLogSig && Logs.ItemsSource != null) return;
             _lastLogSig = sig;
 
-            var follow = SmoothScroll.AtEnd(Logs);
             Logs.ItemsSource = filtered;
-            if (filtered.Count > 0 && follow)
-                SmoothScroll.End(Logs);
+            if (filtered.Count > 0 && filtered.Count != _lastCount)
+                Logs.ScrollIntoView(filtered[filtered.Count - 1]);
             _lastCount = filtered.Count;
         }
 
@@ -592,6 +590,19 @@ namespace WhaleLauncher.Views
         private static string[] SafeFiles(string dir)
         {
             try { return Directory.GetFiles(dir); } catch { return Array.Empty<string>(); }
+        }
+
+        private string LatestRunDir()
+        {
+            try
+            {
+                var root = Path.Combine(_sup.DataDir, "logs");
+                if (!Directory.Exists(root)) return null;
+                return Directory.GetDirectories(root, "run-*")
+                    .OrderByDescending(d => Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)
+                    .FirstOrDefault();
+            }
+            catch { return null; }
         }
 
         private IEnumerable<string> RunDirs()

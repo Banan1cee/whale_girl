@@ -69,7 +69,6 @@ namespace WhaleLauncher.Views
         public BridgePage(RuntimeSupervisor sup)
         {
             InitializeComponent();
-            SmoothScroll.Attach(Console);
             _sup = sup;
             Console.ItemsSource = _view;
 
@@ -168,7 +167,7 @@ namespace WhaleLauncher.Views
         private void ScrollToEnd()
         {
             if (_view.Count == 0) return;
-            SmoothScroll.End(Console);
+            try { Console.ScrollIntoView(_view[_view.Count - 1]); } catch { }
         }
 
         private void UpdateStat()
