@@ -49,6 +49,7 @@ namespace WhaleLauncher.Views
         private readonly Dictionary<string, Action<JsonElement>> _loaders = new Dictionary<string, Action<JsonElement>>();
         private Action<JsonElement, Dictionary<string, JsonElement>> _loadModel;
         private Action<JsonElement> _loadVision;
+        private TextBlock _adminSpellStatus;
         private Dictionary<string, JsonElement> _providers;
         private bool _loading;
         private bool _configLoaded;      // 已经成功全量回填过一次（M30：周期刷新据此判断要不要补）
@@ -99,7 +100,7 @@ namespace WhaleLauncher.Views
                 new FieldSpec { Path = "links.timeoutMs", Label = "链接超时(毫秒)", Kind = "num", Min = 1000, Max = 30000 },
                 new FieldSpec { Path = "links.cacheMinutes", Label = "链接缓存(分钟)", Kind = "num", Min = 0, Max = 1440 },
             }},
-            new SectionSpec { Title = "高级", Note = "改完要重启的项都在这里（对话预算例外，改完立刻生效）；管理员口令也归这一组，平时不用碰。", Fields =
+            new SectionSpec { Title = "高级", Note = "改完要重启的项都在这里（对话预算例外，改完立刻生效）。", Fields =
             {
                 new FieldSpec { Path = "memory.dialogueBudget", Label = "对话预算(token)", Kind = "sliderInput", Min = 2000, Max = 20000, InputMin = 1000, Hint = "每轮带多少对话内容（不含人设）：默认 5,500。记忆和原文按比例分，预算越大带得越多；滑块 2,000–20,000，下面四个胶囊是一键跳档，右边输入框可以填到 1,000 以上。" },
                 new FieldSpec { Path = "server.host", Label = "监听地址", Kind = "text", Hint = "只建议 127.0.0.1；同 WiFi 访问只对桥接和接口有效，没有网页界面（改完重启）" },
@@ -107,9 +108,7 @@ namespace WhaleLauncher.Views
                 new FieldSpec { Path = "log.level", Label = "日志级别", Kind = "select", Options = new[] { "debug", "info", "error" }, Hint = "界面 / 控制台用哪一档；日志文件始终记 debug 全量（data/whale.log、data/wechat-bridge-4x.log），改完重启生效" },
                 new FieldSpec { Path = "storage.mediaKeepDays", Label = "媒体缓存保留几天", Kind = "num", Min = 0, Max = 90 },
                 new FieldSpec { Path = "storage.mediaMaxMB", Label = "媒体缓存上限(MB)", Kind = "num", Min = 0, Max = 10000 },
-                new FieldSpec { Path = "admin.spell", Label = "管理员口令", Kind = "text", Hint = "在微信里发这句获得权限；留空 = 关闭" },
-                new FieldSpec { Path = "admin.minutes", Label = "权限有效期(分钟)", Kind = "num", Min = 1, Max = 1440 },
-                new FieldSpec { Path = "admin.allowAll", Label = "谁发都给权限", Kind = "bool", Hint = "关掉 = 只有主人发才给" },
+                new FieldSpec { Path = "admin.allowAll", Label = "开放其他管理命令", Kind = "bool", Hint = "魔咒、群禁言和清空记忆仍限已绑定微信 ID 的主人" },
             }},
         };
 
@@ -118,6 +117,7 @@ namespace WhaleLauncher.Views
             SectionsHost.Children.Clear();
 
             AddSection(BuildModelSection());
+            AddSection(BuildAdminSpellSection());
             AddSection(BuildAdvancedSection());
             AddSection(BuildAppearanceSection());
         }
@@ -127,6 +127,41 @@ namespace WhaleLauncher.Views
         {
             card.Margin = new Thickness(0, 0, 0, 14);
             SectionsHost.Children.Add(card);
+        }
+
+        private Border BuildAdminSpellSection()
+        {
+            var card = Card("管理员魔咒", "主人在微信私聊发魔咒后，可在同一私聊发送「禁言 群名」或「解除禁言 群名」。默认有效 30 分钟。", out var body);
+            _adminSpellStatus = new TextBlock { Style = (Style)FindResource("Small") };
+            body.Children.Add(_adminSpellStatus);
+            var password = new PasswordBox();
+            body.Children.Add(Row("管理员口令", password, "设置后只显示是否已设置。", false, 150));
+            body.Children.Add(BuildField(new FieldSpec { Path = "admin.minutes", Label = "有效期（分钟）", Kind = "num", Min = 1, Max = 1440 }));
+            var actions = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+            var save = new Button { Content = "保存魔咒", Style = (Style)FindResource("Ghost") };
+            var clear = new Button { Content = "清除魔咒", Style = (Style)FindResource("Ghost") };
+            save.Click += async (_, __) =>
+            {
+                var spell = password.Password.Trim();
+                if (spell.Length == 0) return;
+                if (await PatchAsync("admin.spell", "\"" + Api.Esc(spell) + "\""))
+                {
+                    password.Clear();
+                    _adminSpellStatus.Text = "已设置";
+                }
+            };
+            clear.Click += async (_, __) =>
+            {
+                if (await PatchAsync("admin.spell", "\"\""))
+                {
+                    password.Clear();
+                    _adminSpellStatus.Text = "未设置";
+                }
+            };
+            actions.Children.Add(save);
+            actions.Children.Add(clear);
+            body.Children.Add(actions);
+            return card;
         }
 
         /// <summary>
@@ -476,13 +511,6 @@ namespace WhaleLauncher.Views
             if (el.ValueKind == JsonValueKind.Object && el.TryGetProperty(name, out var v)
                 && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n)) return n;
             return 0;
-        }
-
-        private Border BuildSection(SectionSpec spec)
-        {
-            var card = Card(spec.Title, spec.Note, out var body);
-            foreach (var f in spec.Fields) body.Children.Add(BuildField(f));
-            return card;
         }
 
         // ── 单个字段 ────────────────────────────────────────────
@@ -1682,6 +1710,10 @@ namespace WhaleLauncher.Views
                 if (!cfg.Ok) { KernelHint.Text = cfg.Error; return; }
                 var settings = await _sup.ReadConfigurationAsync("/api/settings");
                 var config = cfg.Prop("config");
+                var secrets = cfg.Prop("secrets");
+                _adminSpellStatus.Text = secrets.ValueKind == JsonValueKind.Object &&
+                    secrets.TryGetProperty("admin.spell", out var spell) && spell.ValueKind == JsonValueKind.True
+                    ? "已设置" : "未设置";
                 _loading = true;
                 try
                 {
@@ -1702,7 +1734,7 @@ namespace WhaleLauncher.Views
                 _configLoaded = true;
                 _loadedOnline = _sup.NodeRunning;
                 // 外观是本地设置，内核停止时仍然可以编辑。
-                for (var i = 0; i < Math.Min(2, SectionsHost.Children.Count); i++)
+                for (var i = 0; i < SectionsHost.Children.Count - 1; i++)
                     ConfigurationControls.SetReadOnly(SectionsHost.Children[i], !_loadedOnline);
             }
             finally

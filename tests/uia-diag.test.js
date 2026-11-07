@@ -11,7 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-const bridge = fs.readFileSync(path.join(root, 'bridge', 'engine.py'), 'utf8');
+const bridge = require('./helpers/bridge-source');
 const diagPath = path.join(root, 'scripts', 'tools', 'uia-diag.py');
 
 test('桥接预热失败时会解释属于哪一类原因', () => {
@@ -29,6 +29,7 @@ test('诊断工具存在，且能只读地报告版本/候选 RVA', () => {
   assert.match(tool, /--probe/, '要支持真的热激活一次');
   assert.match(tool, /非 ASCII/, '要能提示中文路径这个坑');
   assert.match(tool, /ffmpeg/, '顺手报一下 ffmpeg（看图要用）');
+  assert.match(tool, /is_wechat_main_title\(win32gui\.GetWindowText\(h\)\)/, '自检复用桥接的中英文主窗标题规则');
 });
 
 test('文档里写了「热激活 UIA 失败」的三类原因', () => {

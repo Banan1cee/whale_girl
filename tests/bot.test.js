@@ -293,10 +293,10 @@ test('魔咒：主人输入才生效，其他人输入无效', async () => {
   assert.equal(denied.action, 'ignore');
   assert.equal(denied.reason, 'not_owner');
 
-  const ok = await bot.decide(privateMsg('test-spell', { senderName: 'Master', senderId: 'wxid_test_master' }));
+  const ok = await bot.decide(privateMsg('test-spell', { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' }));
   assert.equal(ok.action, 'command');
   assert.equal(ok.commandType, 'admin_spell');
-  assert.match(ok.text, /管理员权限/);
+  assert.match(ok.text, /30 分钟.*禁言 群名/);
   assert.ok(bot.store.getState(ok.key).adminUntil > Date.now());
   const texts = bot.store.messages(ok.key, 20).map((m) => m.text).join('|');
   assert.doesNotMatch(texts, /test-spell/, '魔咒不应留在记忆里');
@@ -305,7 +305,7 @@ test('魔咒：主人输入才生效，其他人输入无效', async () => {
 
 test('管理员命令：状态 / 演示模式 / 主动接话 / 退出管理', async () => {
   const { bot, config, cleanup } = makeBot();
-  const master = (text) => privateMsg(text, { senderName: 'Master', senderId: 'wxid_test_master' });
+  const master = (text) => privateMsg(text, { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' });
   await bot.decide(master('test-spell'));
 
   const st1 = await bot.decide(master('状态'));
@@ -335,7 +335,7 @@ test('管理员命令：状态 / 演示模式 / 主动接话 / 退出管理', as
 
 test('管理员权限过期会失效，非主人不能用管理命令', async () => {
   const { bot, cleanup } = makeBot();
-  const master = (text) => privateMsg(text, { senderName: 'Master', senderId: 'wxid_test_master' });
+  const master = (text) => privateMsg(text, { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' });
   const ok = await bot.decide(master('test-spell'));
 
   // 同一个聊天里，别人发「状态」不会拿到管理员回复
@@ -403,7 +403,7 @@ test('主人的语态命令直接生效（不用先开魔咒）', async () => {
 
 test('管理员可以按群名禁言，禁言后那个群完全不说话', async () => {
   const { bot, config, cleanup } = makeBot();
-  const master = (text) => privateMsg(text, { senderName: 'Master', senderId: 'wxid_test_master' });
+  const master = (text) => privateMsg(text, { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' });
   await bot.decide(master('test-spell'));
 
   const r = await bot.decide(master('别在鼠标群说话'));
@@ -422,8 +422,9 @@ test('管理员可以按群名禁言，禁言后那个群完全不说话', async
   cleanup();
 });
 
-test('主人说禁言直接生效，不用先开魔咒', async () => {
+test('未配置魔咒时，主人可直接禁言', async () => {
   const { bot, config, cleanup } = makeBot();
+  config.admin.spell = '';
   const r = await bot.decide(privateMsg('别在鼠标群说话', { senderName: 'Master', senderId: 'wxid_test_master' }));
   assert.equal(r.action, 'command');
   assert.deepEqual(config.group.mutedGroups, ['鼠标']);
@@ -433,6 +434,39 @@ test('主人说禁言直接生效，不用先开魔咒', async () => {
   assert.notEqual(other.commandType, 'admin');
   assert.deepEqual(config.group.mutedGroups, ['鼠标']);
   cleanup();
+});
+
+test('群禁言魔咒只给同一个微信私聊里的主人，并在 30 分钟后失效', async t => {
+  const { bot, config, cleanup } = makeBot();
+  t.after(cleanup);
+  config.admin.allowAll = true;
+  let now = Date.now();
+  bot.now = () => new Date(now);
+  const owner = (text, extra = {}) => privateMsg(text, {
+    platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master', ...extra,
+  });
+  assert.equal((await bot.decide(owner('禁言 测试群'))).commandType, 'admin_hint');
+  assert.equal((await bot.decide(owner('test-spell', { chatType: 'group' }))).action, 'ignore');
+  assert.equal((await bot.decide(owner('test-spell', { platform: 'web' }))).action, 'ignore');
+  assert.equal((await bot.decide(owner('test-spell', { senderId: 'guest' }))).action, 'ignore');
+  assert.equal((await bot.decide(owner('test-spell'))).commandType, 'admin_spell');
+  assert.equal((await bot.decide(owner('禁言 测试群', { chatId: 'another-chat' }))).commandType, 'admin_hint');
+  assert.equal((await bot.decide(owner('禁言 测试群', { senderId: 'guest' }))).commandType, 'admin_hint');
+  assert.equal((await bot.decide(owner('禁言 测试群'))).commandType, 'admin');
+  assert.deepEqual(config.group.mutedGroups, ['测试群']);
+  const otherGroup = await bot.decide(groupMsg('@鲸鲸 在吗', { chatTitle: '测试讨论群', atMe: true }));
+  assert.notEqual(otherGroup.reason, 'muted_group');
+  now += 30 * 60_000;
+  assert.equal((await bot.decide(owner('解除禁言 测试群'))).commandType, 'admin_hint');
+  assert.deepEqual(config.group.mutedGroups, ['测试群']);
+  await bot.decide(owner('test-spell'));
+  assert.equal((await bot.decide(owner('解除禁言 测试群'))).commandType, 'admin');
+  assert.deepEqual(config.group.mutedGroups, []);
+  config.admin.spell = 'test-spell-updated';
+  assert.equal((await bot.decide(owner('禁言 测试群'))).commandType, 'admin_hint');
+  await bot.decide(owner('test-spell-updated'));
+  await bot.decide(owner('退出管理'));
+  assert.equal((await bot.decide(owner('禁言 测试群'))).commandType, 'admin_hint');
 });
 
 test('讨论类问题会标记为 discussion，普通闲聊不会', async () => {

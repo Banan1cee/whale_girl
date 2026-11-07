@@ -81,7 +81,7 @@ function toPatch(preset) {
   if (preset.appearance) patch.appearance = str(preset.appearance, 400);
   if (preset.personality) patch.personality = str(preset.personality, 500);
   if (preset.background) patch.background = str(preset.background, 500);
-  if (preset.customPrompt) patch.customPrompt = str(preset.customPrompt, 6000);
+  if (preset.customPrompt) patch.customPrompt = String(preset.customPrompt).trim();
   if (preset.preset) patch.preset = str(preset.preset, 20);
   if (preset.text) patch.text = str(preset.text, 300);
   if (preset.age) patch.age = Math.max(1, Math.min(120, Number(preset.age) || 23));

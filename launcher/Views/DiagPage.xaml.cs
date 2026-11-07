@@ -39,6 +39,7 @@ namespace WhaleLauncher.Views
         public DiagPage(RuntimeSupervisor sup)
         {
             InitializeComponent();
+            SmoothScroll.Attach(Logs);
             _sup = sup;
             CmbTail.SelectedIndex = 0;
 
@@ -320,9 +321,10 @@ namespace WhaleLauncher.Views
             if (sig == _lastLogSig && Logs.ItemsSource != null) return;
             _lastLogSig = sig;
 
+            var follow = SmoothScroll.AtEnd(Logs);
             Logs.ItemsSource = filtered;
-            if (filtered.Count > 0 && filtered.Count != _lastCount)
-                Logs.ScrollIntoView(filtered[filtered.Count - 1]);
+            if (filtered.Count > 0 && follow)
+                SmoothScroll.End(Logs);
             _lastCount = filtered.Count;
         }
 
@@ -388,12 +390,12 @@ namespace WhaleLauncher.Views
 
         // 脱敏用：键名命中这些词的，值一律换成 "***"（结构保留）
         private static readonly Regex SecretKey =
-            new Regex("apiKey|apikey|key|token|secret|password|cookie|session", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            new Regex("apiKey|apikey|key|token|secret|password|cookie|session|^spell$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         // 这些不是「密钥」，但一样是隐私：主人的名字、她认的别名、忽略名单、
         // 主动搭话白名单、测试用的会话名。排查 bug 用不到这些字面值，但用户很在意。
         private static readonly Regex PrivacyKey =
-            new Regex("^(ownerName|aliases|names|wxids|ignoreSenders|whitelist|testChat|chatTitle)$",
+            new Regex("^(ownerName|aliases|names|wxids|ignoreSenders|whitelist|mutedGroups|testChat|chatTitle)$",
                 RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         // 日志正文兜底：日志里没有做结构化脱敏（正文本来就可能带 Key 片段/微信号/手机号）
@@ -590,19 +592,6 @@ namespace WhaleLauncher.Views
         private static string[] SafeFiles(string dir)
         {
             try { return Directory.GetFiles(dir); } catch { return Array.Empty<string>(); }
-        }
-
-        private string LatestRunDir()
-        {
-            try
-            {
-                var root = Path.Combine(_sup.DataDir, "logs");
-                if (!Directory.Exists(root)) return null;
-                return Directory.GetDirectories(root, "run-*")
-                    .OrderByDescending(d => Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)
-                    .FirstOrDefault();
-            }
-            catch { return null; }
         }
 
         private IEnumerable<string> RunDirs()
@@ -866,7 +855,10 @@ namespace WhaleLauncher.Views
             {
                 var bundled = Path.Combine(_sup.BaseDir, "runtime", "ffmpeg", "bin", "ffmpeg.exe");
                 if (File.Exists(bundled)) return "包里自带（runtime\\ffmpeg\\bin\\ffmpeg.exe）";
-                return "包里没有（微信 4.x 的 HEVC 图片转 jpg 要用它）";
+                var wheel = Path.Combine(_sup.BaseDir, "runtime", "python", "Lib", "site-packages", "imageio_ffmpeg", "binaries");
+                if (Directory.Exists(wheel) && Directory.EnumerateFiles(wheel, "ffmpeg-win-x86_64-*.exe").Any())
+                    return "包里自带（Python 图像依赖）";
+                return "未发现随包文件（外部 FFmpeg 请看桥接状态）";
             }
             catch { return "未知"; }
         }

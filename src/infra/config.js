@@ -65,6 +65,16 @@ const PROVIDERS = {
     // 百炼「视觉理解」列表里 qwen3.8-max / qwen3.7-plus 都在；qwen3.8-flash 只在文本生成里
     visionModels: ['qwen3.8-max', 'qwen3.7-plus'],
   },
+  doubao: {
+    label: '豆包 Doubao（火山方舟）',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    model: 'doubao-seed-1-8-251228',
+    needsKey: true,
+    hint: 'console.volcengine.com/ark 创建 API Key；模型需先在「开通管理」开通。默认 doubao-seed-1-8-251228，也支持 doubao-seed-1-6-vision-250815 等视觉模型；模型名可填预置模型 ID 或 ep-xxxxx 接入点',
+    models: ['doubao-seed-1-8-251228', 'doubao-seed-1-6-vision-250815', 'doubao-seed-1-6-flash-250828'],
+    // 豆包 Seed 1.8 / 1.6 系列都能直接收图片，选它们当聊天模型时看图会自动跟随。
+    visionModels: ['doubao-seed-1-8-251228', 'doubao-seed-1-6-vision-250815', 'doubao-seed-1-6-flash-250828'],
+  },
   tju: {
     label: '天津大学 智能体广场（仅校内网）',
     baseUrl: 'https://ai.tju.edu.cn/api/v3',
@@ -74,11 +84,11 @@ const PROVIDERS = {
     models: ['tju-llm'],
   },
   ollama: {
-    label: '本地 Ollama（完全免费、可离线）',
+    label: 'Ollama / 自建 OpenAI 兼容接口（地址、模型可改）',
     baseUrl: 'http://127.0.0.1:11434/v1',
     model: 'qwen3:8b',
     needsKey: false,
-    hint: '装 Ollama 后跑 ollama pull qwen3:8b；数据不出本机，不用 Key',
+    hint: '接口地址和模型名都能自己填：本机默认 http://127.0.0.1:11434/v1，远程 Ollama、局域网或反向代理填对应地址即可。模型只是建议列表（qwen3:8b / llama3.1:8b），不是限制；有鉴权时也可以填 Key',
     models: ['qwen3:8b', 'llama3.1:8b'],
   },
   custom: {
@@ -180,11 +190,12 @@ const DEFAULT_CONFIG = {
   reminder: { enabled: true, maxPerDay: 0, quietAfterMinutes: 0 },
   // 别人发链接时，读一下标题/摘要/文章正文（视频只读得到文案）
   links: { enabled: true, timeoutMs: 6000, cacheMinutes: 60 },
-  // 魔咒：主人私聊/群里输入这段数字后，获得一段时间的「管理员权限」
+  // 魔咒：主人在微信私聊输入口令后，临时解锁当前会话的群禁言命令。
   admin: { spell: '', minutes: 30, allowAll: false },
   // 表情包（实验性）：总闸在 features.stickers，这里只管「怎么挑、发多勤」。
   // 关闭时整个功能不生效：不挑图、不回包带字段、桥接不轮询、测试接口 404。
   sticker: {
+    collectReceived: false,
     dir: 'data/stickers',
     // 三类内置 + 自定义分类：发哪一类仍由模型在回复里用 [[sticker:分类]] 决定，
     // 程序不猜情绪、不按概率配图。demandChance 只决定“这一轮要不要在尾部提醒她带一张”，
@@ -243,6 +254,7 @@ const DEFAULT_CONFIG = {
     quietAfterMinutes: 20,
   },
   group: {
+    mutedGroups: [],
     requireAt: true,
     freeChat: false,
     freeChatChance: 0.06,
@@ -285,6 +297,7 @@ const DEFAULT_CONFIG = {
     // 这些会话永不回复（微信团队、订阅号…）。必须是数组：保存时按数组原样写回，
     // 缺省会退化成字符串，界面上再读就成了一整行。
     ignoreSenders: [],
+    whitelistOnly: false,
   },
   gateway: {
     // 默认开：本地桥接就是走这个 webhook，关掉等于微信收发全停。
@@ -395,7 +408,27 @@ function migrateSampling(cfg, log) {
 function loadConfig({ root = projectRoot(), env = process.env, readOnly = false } = {}) {
   const configPath = path.join(root, 'config.json');
   const configExists = fs.existsSync(configPath);
-  const fromFile = configExists ? readJson(configPath, {}) : {};
+  // 解析失败不能悄悄当成「空配置」：那会让所有默认值顶上来，用户看到的是
+  // 「配置全没了」，日志里却一个字都没有（真实事故：手填路径写了单反斜杠，
+  // config.json 被判非法后一路静默走默认值）。这里退回默认值继续跑 —— 服务
+  // 还得起来 —— 但把错误带出去，交给启动日志和自检大声报出来。
+  let fromFile = {};
+  let configError = '';
+  if (configExists) {
+    try {
+      // 去 BOM：按码点判断，免得源码里埋一个看不见的 U+FEFF
+      const raw = fs.readFileSync(configPath, 'utf8');
+      const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+      const parsed = text.trim() ? JSON.parse(text) : {};
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('顶层不是 JSON 对象');
+      }
+      fromFile = parsed;
+    } catch (err) {
+      configError = String((err && err.message) || err);
+      fromFile = {};
+    }
+  }
   const cfg = deepMerge(DEFAULT_CONFIG, fromFile);
   // 表情包不再按概率发送（分类由模型标记决定），旧的 chances / genericChance
   // 即使还留在 config.json 里也不参与运行，这里不再做任何兼容搬移。
@@ -443,6 +476,7 @@ function loadConfig({ root = projectRoot(), env = process.env, readOnly = false 
     },
     env: mergedEnv,
     configExists,
+    configError,
   };
 }
 

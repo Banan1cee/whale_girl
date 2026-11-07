@@ -55,8 +55,8 @@ namespace WhaleLauncher.Views
 
             HeaderText.Text = allowAllMute ? "选择要静音的群 / 人" : "选择白名单联系人";
             SubText.Text = allowAllMute
-                ? "勾选后这些群或人的消息不会触发她。勾「全部静音（*）」= 屏蔽所有会话。"
-                : "白名单用于「主动搭话」：留空 = 只有主人和文件传输助手。";
+                ? "勾选要静音的私聊或群。选「全部静音」后暂停向所有会话发言。"
+                : "勾选允许发言的私聊或群。关闭「仅允许白名单会话发言」时，这份名单只用于主动搭话。";
 
             if (known != null)
                 foreach (var kv in known) _known[kv.Key] = kv.Value;
@@ -98,7 +98,7 @@ namespace WhaleLauncher.Views
             var all = AllMuted;
             List.IsEnabled = !all;
             AllMuteHint.Text = all
-                ? "已选全部静音：列表里的勾选会被忽略，确定后 group.mutedGroups = [\"*\"]。"
+                ? "全部静音期间暂停向所有会话发言，取消后恢复按名单静音。"
                 : "";
             UpdateFooter();
         }
@@ -142,7 +142,7 @@ namespace WhaleLauncher.Views
 
             if (!res.Ok)
             {
-                ShowState("联系人接口还没就绪（GET /api/wechat/contacts 失败）。" + Detail(res), true);
+                ShowState("联系人接口还没就绪（GET /api/wechat/contacts 失败）。" + Api.Detail(res), true);
                 UpdateFooter();
                 return;
             }
@@ -222,7 +222,8 @@ namespace WhaleLauncher.Views
 
         private void OnOk(object sender, RoutedEventArgs e)
         {
-            SelectedIds = AllMuted ? new List<string> { "*" } : new List<string>(_chosen);
+            SelectedIds = new List<string>(_chosen);
+            if (AllMuted) SelectedIds.Insert(0, "*");
             DialogResult = true;
         }
 
@@ -232,14 +233,6 @@ namespace WhaleLauncher.Views
             StateText.Text = text ?? "";
             StateText.Foreground = error ? (Brush)FindResource("Bad") : (Brush)FindResource("Dim");
             StateText.Visibility = Visibility.Visible;
-        }
-
-        private static string Detail(ApiResult res)
-        {
-            var raw = (res?.Raw ?? "").Trim();
-            if (raw.Length == 0) return res?.Error ?? "";
-            raw = raw.Replace("\r", " ").Replace("\n", " ");
-            return raw.Length > 120 ? raw.Substring(0, 120) + "…" : raw;
         }
 
         private static string GetStr(JsonElement e, string name)

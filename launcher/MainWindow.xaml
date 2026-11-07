@@ -148,9 +148,12 @@
                     <TextBlock x:Name="UpdateToastText" Text="已检测到新版本" FontSize="13" FontWeight="SemiBold"
                                VerticalAlignment="Center" Foreground="{DynamicResource Accent}" />
                 </DockPanel>
-                <Expander Header="更新内容与修复" IsExpanded="True" Margin="0,6,0,0" Foreground="{DynamicResource Text}">
-                    <ScrollViewer MaxHeight="130" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <TextBlock x:Name="UpdateToastNotes" FontSize="12.5" Foreground="{DynamicResource Text2}"
+                <TextBlock x:Name="UpdateToastNotes" FontSize="12.5" Foreground="{DynamicResource Text2}"
+                           LineHeight="20" TextWrapping="Wrap" Margin="4,6,4,2" />
+                <Expander x:Name="UpdateToastDetailsExpander" Header="详细更新" IsExpanded="False"
+                          Margin="0,6,0,0" Foreground="{DynamicResource Text}">
+                    <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <TextBlock x:Name="UpdateToastDetails" FontSize="12.5" Foreground="{DynamicResource Text2}"
                                    LineHeight="20" TextWrapping="Wrap" Margin="4,6,4,2" />
                     </ScrollViewer>
                 </Expander>

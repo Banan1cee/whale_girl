@@ -468,7 +468,7 @@ function webSearchContext(msg, now) {
       '程序确实能联网查资料，但本次只有以上资料；不要否认联网能力，也不要声称已经读过未抓取的正文或完成了未发生的核实。',
     ].join('\n');
   }
-  if (msg.webSearchStatus === 'empty') {
+  if (msg.webSearchStatus === 'empty' || msg.webSearchStatus === 'failed') {
     return '【本次联网状态】已尝试查询，但本次查询失败或无有效资料。没有可引用的检索结果；不要声称“已查到/刚核实”，不要编造当前型号、价格或热点。说明本次具体未能确认的事实即可，不要否认所有联网能力，也不要照抄固定推脱台词。';
   }
   return '';
@@ -1371,11 +1371,23 @@ function cleanIncomingForPersona(text, config) {
  * 把一段回复切成最多 maxBubbles 条消息（群聊里更自然）。
  * @returns {string[]}
  */
-function splitBubbles(text, { maxChars = 120, maxBubbles = 2 } = {}) {
+function splitBubbles(text, { maxChars = 120, maxBubbles = 2, preferSeparate = false } = {}) {
   const raw = String(text || '').replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').trim();
   if (!raw) return [];
   const limit = Math.max(8, Number(maxChars) || 120);
-  const maxN = Math.max(1, Number(maxBubbles) || 1);
+  const maxN = Math.max(1, Math.floor(Number(maxBubbles) || 1));
+  // 模型另起一行时，字数少也要尽量保留气泡边界。
+  let separate = raw.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  let separator = '\n';
+  if (separate.length === 1 && preferSeparate) {
+    separate = raw.split(/(?<=[。！？!?；;])(?=\s*[^。！？!?；;\s])/);
+    if (separate.length === 1) separate = raw.split(/(?<=，)(?=\s*\S)/);
+    separator = '';
+  }
+  if (maxN > 1 && separate.length > 1) {
+    const out = separate.slice(0, maxN - 1).concat(separate.slice(maxN - 1).join(separator)).map((line) => line.trim());
+    if (out.every((line) => line.length <= limit)) return out;
+  }
   // 按内容长度决定真的拆几条：短回复别硬拆，长回复也别碎成一句一条。
   const bubbles = Math.max(1, Math.min(maxN, Math.ceil(raw.length / Math.max(24, limit * 0.9))));
   if (raw.length <= limit) return [raw];
@@ -1482,6 +1494,7 @@ module.exports = {
   cleanIncomingForPersona,
   splitBubbles,
   aliasList,
+  slangTerms,
   emojiChanceFor,
   kaomojiPick,
   KAOMOJI,

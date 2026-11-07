@@ -111,6 +111,16 @@ test('发版步骤会写 latest / released_at / manifest_version', () => {
   assert.ok(block.includes('$manifest.manifest_version = [int]$manifest.manifest_version + 1'), 'manifest_version 没有递增');
 });
 
+test('更新浮层先显示摘要，展开才显示另存的详细说明', () => {
+  const xaml = read('launcher/MainWindow.xaml');
+  assert.match(xaml, /x:Name="UpdateToast" Grid.Row="1"[^>]*Panel.ZIndex="9"/s);
+  assert.match(xaml, /x:Name="UpdateToastNotes"[\s\S]*?<Expander x:Name="UpdateToastDetailsExpander" Header="详细更新" IsExpanded="False"/);
+  assert.match(wf, /release_notes -NotePropertyValue \$popupSummary/);
+  assert.match(wf, /release_details -NotePropertyValue \$releaseDetails/);
+  assert.match(manifestCode, /m\.ReleaseDetails = Str\(r, "release_details"\)/);
+  assert.match(manifestCode, /release_details = m\.ReleaseDetails/);
+});
+
 test('release-manifest.json 的字段与 UpdateManifest.Parse 一一对应', () => {
   const fields = ['latest', 'released_at', 'force_after_hours', 'force', 'kill_below', 'message', 'manifest_version'];
   for (const f of fields) {

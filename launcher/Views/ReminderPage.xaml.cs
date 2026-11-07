@@ -27,8 +27,6 @@ namespace WhaleLauncher.Views
     public partial class ReminderPage : UserControl, IRefreshable
     {
         private readonly RuntimeSupervisor _sup;
-        private readonly ContactListEditor _whitelistEditor;
-        private readonly ContactListEditor _mutedEditor;
         private DateTime _lastLoad = DateTime.MinValue;
         private bool _busy;
         private bool _formsLoaded;   // 表单（提醒规则 / 主动搭话）载入过没有（M30）
@@ -37,18 +35,6 @@ namespace WhaleLauncher.Views
         {
             InitializeComponent();
             _sup = sup;
-
-            // 白名单 / 黑名单用带联系人选择弹窗的编辑器，别再让人手抄 wxid。
-            // 这两个编辑器选完立即写回 config，和下面「保存主动搭话」按钮互不干扰。
-            _whitelistEditor = new ContactListEditor(_sup, "care.whitelist",
-                "留空 = 只有主人和文件传输助手", "选择联系人…", false);
-            _whitelistEditor.Status += ShowEditorStatus;
-            WhitelistHost.Content = _whitelistEditor;
-
-            _mutedEditor = new ContactListEditor(_sup, "group.mutedGroups",
-                "留空 = 不静音任何会话；勾「全部静音」= 所有会话都不接", "选择要静音的群 / 人…", true);
-            _mutedEditor.Status += ShowEditorStatus;
-            MutedHost.Content = _mutedEditor;
 
             // 所有输入都自动保存：输入框失焦、勾选框点一下就写回；手点「保存」按钮仍然可用。
             TxtMaxPerDay.LostFocus += async (_, __) => await SaveRulesAsync();
@@ -60,11 +46,6 @@ namespace WhaleLauncher.Views
                 chk.Click += async (_, __) => await SaveCareAsync();
 
             Loaded += async (_, __) => await RefreshAsync(true);   // 页面载入才全量回填（M30）
-        }
-
-        private void ShowEditorStatus(string msg)
-        {
-            if (!string.IsNullOrEmpty(msg)) CareStatus.Text = msg;
         }
 
         /// <summary>周期刷新（MainWindow 2 秒定时器驱动）：只刷提醒列表和状态行，不动表单（M30）。</summary>
@@ -190,9 +171,6 @@ namespace WhaleLauncher.Views
             if (!TxtCareMax.IsKeyboardFocusWithin) TxtCareMax.Text = Num(care, "maxPerDay", 0);
             if (!TxtCareQuiet.IsKeyboardFocusWithin) TxtCareQuiet.Text = Num(care, "quietAfterMinutes", 0);
             if (!TxtCareWindows.IsKeyboardFocusWithin) TxtCareWindows.Text = JoinLines(care, "windows");
-            _whitelistEditor.SetValue(care.TryGetProperty("whitelist", out var wl) ? wl : default);
-            if (cfg.Prop("config").TryGetProperty("group", out var g) && g.ValueKind == JsonValueKind.Object)
-                _mutedEditor.SetValue(g.TryGetProperty("mutedGroups", out var mg) ? mg : default);
             CareStatus.Text = "";
         }
 

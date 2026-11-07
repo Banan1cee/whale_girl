@@ -8,7 +8,7 @@ import tempfile
 import types
 import unittest
 import uuid
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 try:
     from PIL import Image
@@ -22,16 +22,17 @@ except ImportError:
     HAS_CRYPTO = False
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'tests'))
 sys.path.insert(0, str(ROOT / 'bridge'))
 import emoji_vision
 from image_cache import bind_target_probe, V2_MAGIC
 
 
+from bridge_ast import load_function  # noqa: E402
+
+
 def nested(name, env):
-    tree = ast.parse((ROOT / 'bridge/engine.py').read_text(encoding='utf-8-sig'))
-    node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
-    exec(compile(ast.Module(body=[node], type_ignores=[]), '<bridge-test>', 'exec'), env)
-    return env[name]
+    return load_function(name, env)
 
 
 class ReceivedMediaTests(unittest.TestCase):
@@ -115,6 +116,69 @@ class ReceivedMediaTests(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertEqual(Image.open(io.BytesIO(preview)).size, (40, 30))
 
+    def test_collection_keeps_original_gif_animation_and_deduplicates(self):
+        frames = [Image.new('RGB', (12, 10), color) for color in ('red', 'green', 'blue')]
+        buf = io.BytesIO()
+        frames[0].save(buf, format='GIF', save_all=True, append_images=frames[1:], duration=[100, 200, 300], loop=0)
+        raw = buf.getvalue()
+        digest = hashlib.md5(raw).hexdigest()
+        content = '<emoji md5="' + digest + '" cdnurl="https://wxapp.tc.qq.com/a"/>'
+        directory = self.root / '收集的表情包'
+        callback = lambda data, fmt: emoji_vision.save_original(directory, data, fmt)
+        for _ in range(2):
+            preview, _ = emoji_vision.load_preview(self.root, content, True, lambda _: raw, callback)
+        files = list(directory.iterdir())
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0].suffix, '.gif')
+        self.assertEqual(files[0].read_bytes(), raw)
+        with Image.open(files[0]) as image:
+            self.assertEqual(image.n_frames, 3)
+            self.assertEqual(image.info['loop'], 0)
+            image.seek(1)
+            self.assertEqual(image.info['duration'], 200)
+        self.assertNotEqual(preview, raw)
+
+    def test_collection_is_independent_of_vision_success_and_send_switch(self):
+        raw = self.image.read_bytes()
+        digest = hashlib.md5(raw).hexdigest()
+        cache = self.root / 'cache/month/Emoticon' / digest[:2] / digest
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(raw)
+        env, post, _ = self.env(None)
+        env.update(ROOT=str(self.root), STICKER_COLLECT=True, STICKER_TEST_ON=False,
+                   db=types.SimpleNamespace(account_dir=str(self.root)))
+        post.return_value.json = lambda: {'ok': False, 'error': '识别不可用'}
+        describe = nested('describe_emoji', env)
+        self.assertEqual(describe({'content': '<emoji md5="' + digest + '"/>'}), '')
+        files = list((self.root / 'data/收集的表情包').iterdir())
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0].read_bytes(), raw)
+        files[0].unlink()
+        env['STICKER_COLLECT'] = False
+        describe({'content': '<emoji md5="' + digest + '"/>'})
+        self.assertEqual(list((self.root / 'data/收集的表情包').iterdir()), [])
+
+    def test_collection_write_failure_does_not_break_vision(self):
+        raw = self.image.read_bytes()
+        digest = hashlib.md5(raw).hexdigest()
+        cache = self.root / 'cache/month/Emoticon' / digest[:2] / digest
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(raw)
+        (self.root / 'data').write_text('阻止创建目录')
+        env, _, _ = self.env(None)
+        env.update(ROOT=str(self.root), STICKER_COLLECT=True, db=types.SimpleNamespace(account_dir=str(self.root)))
+        self.assertEqual(nested('describe_emoji', env)({'content': '<emoji md5="' + digest + '"/>'}), '蓝色图片')
+        self.assertTrue(any('表情包收集失败 type=' in str(call) for call in env['log'].call_args_list))
+
+    def test_collection_rejects_wrong_local_hash(self):
+        digest = 'a' * 32
+        cache = self.root / 'cache/month/Emoticon' / digest[:2] / digest
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(self.image.read_bytes())
+        callback = Mock()
+        self.assertIsNone(emoji_vision.load_preview(self.root, '<emoji md5="' + digest + '"/>', on_original=callback))
+        callback.assert_not_called()
+
     @unittest.skipUnless(HAS_CRYPTO, '需要 cryptography 才能校验 AES 回源解密')
     def test_encrypted_cdn_sticker_is_verified_after_decryption(self):
         raw = self.image.read_bytes()
@@ -123,7 +187,11 @@ class ReceivedMediaTests(unittest.TestCase):
         cipher = Cipher(algorithms.AES(key), modes.CBC(bytes(16))).encryptor()
         encrypted = cipher.update(raw + bytes([padding]) * padding) + cipher.finalize()
         content = '<emoji md5="' + hashlib.md5(raw).hexdigest() + '" aeskey="' + key.hex() + '" encrypturl="https://wxapp.tc.qq.com/a"/>'
-        self.assertIsNotNone(emoji_vision.load_preview(self.root, content, allow_network=True, fetch=lambda u: encrypted))
+        saved = []
+        self.assertIsNotNone(emoji_vision.load_preview(self.root, content, allow_network=True,
+                                                     fetch=lambda u: encrypted,
+                                                     on_original=lambda data, fmt: saved.append(data)))
+        self.assertEqual(saved, [raw])
 
 
 class MediaFailureLogTests(unittest.TestCase):
@@ -164,14 +232,36 @@ class MediaFailureLogTests(unittest.TestCase):
         return env['log_error'].call_args.args[0]
 
     def test_image_failure_logs_error_and_sends_nothing(self):
-        env = self.env({'describe_image': Mock(return_value='')})
+        env = self.env({'describe_image': Mock(return_value=''),
+                        'describe_emoji': Mock(), 'STICKER_COLLECT': True})
         msg = self.message('图片')
         env['on_message_inner'](msg, None)
         env['describe_image'].assert_called_once_with(msg)
+        env['describe_emoji'].assert_not_called()
         line = self.error_line(env)
         for piece in ('会话=好友', '发送者=张三', '类型=图片', '消息id=peer:shard1:7', '空描述'):
             self.assertIn(piece, line)
         env['LOCAL_HTTP'].post.assert_not_called()
+
+    def test_separate_text_reply_sends_two_messages_even_with_auto_voice(self):
+        data = {'ok': True, 'action': 'reply', 'reply': '先保存。再重启。',
+                'bubbles': ['先保存', '再重启'], 'separateText': True}
+        env = self.env({
+            'ONLY_CHATS': [], 'is_system_notice': lambda *_: False, 'duplicate_guard': lambda *_: False,
+            'aliases': [], 'token': '', 'bot_url': 'http://localhost/webhook/wechat',
+            'CONN_STATE': {'ok': True}, 'rate_guard': lambda *_: True,
+            'STICKER_TEST_ON': False, 'QUOTE_REPLY': False,
+            'voice_reply': types.SimpleNamespace(settings=Mock(), choose=Mock(return_value=True)),
+            'send_text': Mock(return_value=True), 'send_voice_reply': Mock(return_value=True),
+        })
+        env['time'].sleep = Mock()
+        env['LOCAL_HTTP'].post.return_value = types.SimpleNamespace(status_code=200, json=lambda: data)
+        env['on_message_inner'](self.message('文本', content='请分条发'), None)
+        env['send_voice_reply'].assert_not_called()
+        self.assertEqual(env['send_text'].call_args_list, [
+            call('先保存', '好友', 'peer', quote_text=None),
+            call('再重启', '好友', 'peer', quote_text=None),
+        ])
 
     def test_emoji_failure_logs_error_and_sends_nothing(self):
         env = self.env({'describe_emoji': Mock(return_value='')})

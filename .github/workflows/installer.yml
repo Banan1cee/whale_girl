@@ -693,9 +693,12 @@ jobs:
           $manifest.released_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
           $manifest.manifest_version = [int]$manifest.manifest_version + 1
           $manifest.message = "鲸鲸 $env:version 已发布：下载安装包覆盖安装即可，data 与 config.json 不受影响。"
-          $releaseNotes = (node scripts/release-notes.js $env:version) -join "`n"
-          if ($LASTEXITCODE -ne 0) { throw '没有找到本版本更新说明，停止发布' }
-          $manifest | Add-Member -NotePropertyName release_notes -NotePropertyValue $releaseNotes -Force
+          $popupSummary = (node scripts/release-notes.js $env:version --summary) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw '本版本的更新弹窗摘要缺失或格式错误，停止准备发布资产' }
+          $releaseDetails = (node scripts/release-notes.js $env:version) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw '本版本缺少详细更新说明，停止准备发布资产' }
+          $manifest | Add-Member -NotePropertyName release_notes -NotePropertyValue $popupSummary -Force
+          $manifest | Add-Member -NotePropertyName release_details -NotePropertyValue $releaseDetails -Force
           $manifest | ConvertTo-Json -Depth 4 | Set-Content -Path $manifestPath -Encoding utf8NoBOM
           Get-Content $manifestPath
 

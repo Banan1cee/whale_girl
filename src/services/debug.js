@@ -76,10 +76,7 @@ function debugState(runtime) {
     admin: {
       configured: Boolean(config.admin && config.admin.spell),
       minutes: (config.admin && config.admin.minutes) || 30,
-      spellMasked: (() => {
-        const s = String((config.admin && config.admin.spell) || '');
-        return s ? s.slice(0, 2) + '****' + s.slice(-2) : '';
-      })(),
+      spellMasked: config.admin?.spell ? '********' : '',
     },
     gateways: [...gateways.values()].map((g) => g.status()),
     memory: store.summary(),

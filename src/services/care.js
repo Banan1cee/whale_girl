@@ -1,5 +1,7 @@
 'use strict';
 
+const { configuredWhitelist, sendDenial } = require('../core/wechatSendPolicy');
+
 // 读布尔开关：兼容老配置里的字符串 "false"（Boolean("false") 会被当成开）
 const { toBool } = require('../infra/features');
 
@@ -256,11 +258,9 @@ function defaultWhitelist(config) {
  * 当前生效的白名单（wxid 列表）。
  * 没配就退回默认值（主人 + 文件传输助手），而不是空数组 —— 空数组会让这个功能静默失效。
  */
-function careWhitelist(config) {
-  const raw = config && config.care && config.care.whitelist;
-  const list = Array.isArray(raw) ? raw : (raw ? String(raw).split(/[\n,;，；\s]+/) : []);
-  const out = list.map((x) => String(x || '').trim()).filter(Boolean);
-  return out.length ? [...new Set(out)] : defaultWhitelist(config);
+function careWhitelist(config = {}) {
+  const list = configuredWhitelist(config);
+  return list.length || config.wechat?.whitelistOnly === true ? list : defaultWhitelist(config);
 }
 
 /** 是不是主人（wxid 命中，或 filehelper 视为主人自己的会话） */
@@ -282,9 +282,7 @@ function isMasterTarget(config, wxid, contacts = null) {
  * 默认值只带主人 wxid + filehelper；wxid 没填时靠这里再用昵称从联系人缓存里补。
  */
 function hasExplicitWhitelist(config) {
-  const raw = config && config.care && config.care.whitelist;
-  const list = Array.isArray(raw) ? raw : (raw ? String(raw).split(/[\n,;，；\s]+/) : []);
-  return list.map((x) => String(x || '').trim()).filter(Boolean).length > 0;
+  return configuredWhitelist(config).length > 0;
 }
 
 /** 昵称 → wxid（主人名单只填了昵称时的兜底） */
@@ -313,7 +311,7 @@ function careTargets(config, { contacts = null, onlyMaster, allowOthers, allowGr
   const groups = allowGroups === undefined ? cfg.allowGroups === true : Boolean(allowGroups);
   let whitelist = careWhitelist(config);
   // 主人只填了昵称、没填 wxid：从联系人缓存里把 wxid 补进默认白名单
-  if (!hasExplicitWhitelist(config) && contacts) {
+  if (!hasExplicitWhitelist(config) && config.wechat?.whitelistOnly !== true && contacts) {
     const names = ((config && config.persona && config.persona.master) || {}).names || [];
     const extra = resolveByName(contacts, names);
     if (extra.length) whitelist = [...new Set([...whitelist, ...extra])];
@@ -325,6 +323,7 @@ function careTargets(config, { contacts = null, onlyMaster, allowOthers, allowGr
     const isGroup = !isFile && /@chatroom$/i.test(wxid);
     const hit = contacts && typeof contacts.get === 'function' ? contacts.get(wxid) : null;
     const name = isFile ? '文件传输助手' : (hit ? hit.label || hit.name : wxid);
+    if (sendDenial(config, { id: wxid, names: [name, hit?.name, hit?.remark], isGroup })) continue;
     const masterHit = isFile || isMasterTarget(config, wxid, contacts);
     if (isGroup) {
       if (!groups) continue;

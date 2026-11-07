@@ -42,6 +42,7 @@ namespace WhaleLauncher.Views
         private readonly List<EmotionVm> _emotions = new();
         private string _current = "";
         private bool _loading;
+        private bool _savingCollect;
         private bool _loaded;
         private readonly SemaphoreSlim _refreshLock = new(1);
         private bool _refreshPending;          // 上一轮还没跑完时点的刷新，跑完补一次
@@ -108,6 +109,7 @@ namespace WhaleLauncher.Views
             var tLoad = Stopwatch.StartNew();
             var online = _sup.NodeRunning;
             ChkEnabled.IsEnabled = TxtDir.IsEnabled = online;
+            ChkCollect.IsEnabled = online && !_savingCollect;
 
             var view = new ViewData();
             var tFetch = Stopwatch.StartNew();
@@ -118,6 +120,7 @@ namespace WhaleLauncher.Views
             {
                 view.Online = true;
                 view.Enabled = status.Bool("enabled");
+                view.CollectReceived = status.Bool("collectReceived");
                 view.Dir = status.Str("dir");
                 view.ConfiguredDir = status.Str("configuredDir");
                 view.TestChat = status.Str("testChat");
@@ -146,6 +149,7 @@ namespace WhaleLauncher.Views
                 _inventory = res;
                 view.Online = false;
                 view.Enabled = res.Bool("enabled");
+                view.CollectReceived = res.Bool("collectReceived");
                 view.Dir = res.Str("dir");
                 view.ConfiguredDir = res.Str("configuredDir");
                 view.TestChat = res.Str("testChat");
@@ -156,6 +160,7 @@ namespace WhaleLauncher.Views
 
             _loading = true;
             ChkEnabled.IsChecked = view.Enabled;
+            if (!_savingCollect) ChkCollect.IsChecked = view.CollectReceived;
             _loading = false;
             if (!string.IsNullOrEmpty(view.Dir)) _libraryDir = view.Dir;
             // 频率 / 必发（main 上新增的 UI）：数据来自 status（内核在线）或库存脚本（离线）
@@ -204,6 +209,7 @@ namespace WhaleLauncher.Views
         {
             public bool Online;
             public bool Enabled;
+            public bool CollectReceived;
             public string Dir = "";
             public string ConfiguredDir = "";
             public string TestChat = "";
@@ -635,6 +641,42 @@ namespace WhaleLauncher.Views
         {
             // 右上角：整个表情包库根目录（data/stickers）
             await ShowStickerFolder("");
+        }
+
+        private async void OnToggleCollect(object sender, RoutedEventArgs e)
+        {
+            if (!_sup.NodeRunning || _savingCollect) return;
+            var enabled = ChkCollect.IsChecked == true;
+            _savingCollect = true;
+            ChkCollect.IsEnabled = false;
+            try
+            {
+                var body = $"{{\"patch\":{{\"sticker.collectReceived\":{(enabled ? "true" : "false")}}}}}";
+                var res = await Api.Post(_sup.Url, "/api/config", body);
+                if (!res.Ok) ChkCollect.IsChecked = !enabled;
+                CollectStatus.Text = res.Ok ? "已保存，桥接将在约 5 秒内应用" : "保存失败：" + res.Error;
+            }
+            catch (Exception ex)
+            {
+                ChkCollect.IsChecked = !enabled;
+                CollectStatus.Text = Api.FriendlyError(ex);
+            }
+            finally
+            {
+                _savingCollect = false;
+                ChkCollect.IsEnabled = _sup.NodeRunning;
+            }
+        }
+
+        private void OnOpenCollected(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var dir = Path.Combine(_sup.DataDir, "收集的表情包");
+                Directory.CreateDirectory(dir);
+                Process.Start(new ProcessStartInfo(dir) { UseShellExecute = true });
+            }
+            catch (Exception ex) { CollectStatus.Text = Api.FriendlyError(ex); }
         }
 
         private async void OnOpenCategoryFolder(object sender, RoutedEventArgs e)

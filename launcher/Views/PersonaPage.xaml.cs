@@ -431,7 +431,7 @@ namespace WhaleLauncher.Views
             }
             _loadedEmoji = emoji;
 
-            SaveState.Text = okText + " · " + DateTime.Now.ToString("HH:mm:ss");
+            SaveState.Text = okText + PersonaTokenLabel(res.Prop("tokenCheck")) + " · " + DateTime.Now.ToString("HH:mm:ss");
             PresetSaved.Text = "✔ 已保存";
             PresetSaved.Foreground = (Brush)FindResource("Text");
             }
@@ -451,8 +451,18 @@ namespace WhaleLauncher.Views
             }
             _loaded = false;
             await LoadAsync();                       // LoadAsync 会按新的 sourcePreset 选中下拉框
+            SaveState.Text = "人设预设已导入" + PersonaTokenLabel(res.Prop("tokenCheck"));
             PresetSaved.Text = "✔ 已保存";
             PresetSaved.Foreground = (Brush)FindResource("Text");
+        }
+
+        private static string PersonaTokenLabel(JsonElement check)
+        {
+            var tokens = L(check, "tokens");
+            if (tokens <= 0) return "";
+            var limit = L(check, "limit");
+            var estimate = B(check, "exact") ? "" : "约 ";
+            return $" · 人设 {estimate}{tokens:N0} token / 当前上限 {limit:N0}";
         }
 
         /// <summary>JSON 数组 → 一行一个（给多行输入框用）</summary>
