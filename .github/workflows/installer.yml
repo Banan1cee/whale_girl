@@ -25,6 +25,11 @@ on:
         description: '版本号（如 4.0.0；留空 = tag 去 v，否则读 package.json）'
         required: false
         default: ''
+      publish_release:
+        description: '仅维护者发版：把通过烟测的资产上传到已有草稿 Release'
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       # 测试分支：推送即构建，便于在没有 tag 的情况下验证流水线。
@@ -676,8 +681,8 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: 准备 GitHub Release 资产（tag 触发）
-        if: github.ref_type == 'tag'
+      - name: 准备 GitHub Release 资产（tag 或维护者手动发版）
+        if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
         shell: pwsh
         env:
           TAG: ${{ github.ref_name }}
@@ -708,8 +713,8 @@ jobs:
 
       # 不用 Actions 机器人创建公开 Release，避免与维护者的草稿重复。
       # 维护者下载该资产包、核对 CI 和 SHA256 后，以自己的 GitHub 账号发布。
-      - name: 上传 Release 资产包（tag 触发）
-        if: github.ref_type == 'tag'
+      - name: 上传 Release 资产包（tag 或维护者手动发版）
+        if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
         uses: actions/upload-artifact@v4
         with:
           name: whale-girl-release-${{ steps.ver.outputs.version }}
@@ -719,3 +724,14 @@ jobs:
             artifacts/setup/release-manifest.json
           if-no-files-found: error
           retention-days: 30
+
+      - name: 上传到维护者草稿 Release（手动发版）
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:version"
+          gh release view $tag --json isDraft --jq '.isDraft' | Select-String '^true$' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "只允许上传到已有草稿 Release：$tag" }
+          gh release upload $tag artifacts/setup/*.exe artifacts/setup/SHA256SUMS.txt artifacts/setup/release-manifest.json --clobber
