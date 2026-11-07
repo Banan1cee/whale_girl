@@ -43,6 +43,6 @@ test('bilibili 适配器已删除（活着的 B 站实现在 adapters/websearch.
 });
 
 test('bridge/engine.py 不再有 chat_latest_seq', () => {
-  const py = require('./helpers/bridge-source');
+  const py = fs.readFileSync(path.join(root, 'bridge', 'engine.py'), 'utf8');
   assert.doesNotMatch(py, /def chat_latest_seq\b/);
 });
