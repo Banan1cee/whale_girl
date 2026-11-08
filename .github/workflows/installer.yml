@@ -26,7 +26,7 @@ on:
         required: false
         default: ''
       release_run:
-        description: '将成功的 4.0.8.1 标签构建产物上传到现有草稿，填入 Actions run ID'
+        description: '将成功的 4.0.8.2 标签构建产物上传到现有草稿，填入 Actions run ID'
         required: false
         default: ''
   push:
@@ -735,8 +735,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       RUN_ID: ${{ inputs.release_run }}
-      TAG: v4.08.1
-      VERSION: 4.0.8.1
+      TAG: v4.0.8.2
+      VERSION: 4.0.8.2
     steps:
       - name: 核验 CI 来源与草稿
         shell: bash
@@ -754,6 +754,7 @@ jobs:
           gh run download "$RUN_ID" -n "whale-girl-release-$VERSION" -D release
           cd release
           tr -d '\r' < SHA256SUMS.txt | sha256sum -c -
-          jq -e --arg version "$VERSION" '.latest == $version and .manifest_version >= 8 and .force == false
-            and (.release_notes | contains("账号待确认"))' release-manifest.json
+          jq -e --arg version "$VERSION" '.latest == $version and .manifest_version >= 10 and .force == false
+            and .kill_below == null and .force_from == null
+            and (.release_notes | startswith("- 🔴 仅建议微信窗口或 UIA 无法识别的用户更新，正常使用可跳过。"))' release-manifest.json
           gh release upload "$TAG" "whale-girl-$VERSION-setup.exe" SHA256SUMS.txt release-manifest.json
