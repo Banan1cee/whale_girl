@@ -1453,7 +1453,7 @@ const EMOJI_LEVEL_CHANCE = { 关: 0, 少: 0.12, 正常: 0.3, 多: 0.65 };
  * 这条回复带颜文字/emoji 的概率。
  * - 「关」是硬关，压过 chat.emojiChance；
  * - 没在面板里调过概率（config.chat.emojiChance 为 0/未设）时，跟着「颜文字用量」走；
- * - 手动填了 >0 的概率就用它（方便高级用户在调试台微调）。
+ * - 手动填了 >0 的概率就用它（方便高级用户在启动器或 config.json 里微调）。
  */
 function emojiChanceFor(config) {
   const level = String((config && config.persona && config.persona.emojiLevel) || '正常').trim();

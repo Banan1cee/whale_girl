@@ -115,7 +115,7 @@ function costOf(price, inputTokens, cachedTokens, outputTokens) {
  * @param {object} config 运行时 config（用 config.memory.dialogueBudget / persona / chat / group）
  * @param {{outputTokens?:number, dialogueBudget?:number}} [opts]
  *   dialogueBudget 传了就用它（启动器滑块实时预览用，不必先保存）
- * @returns {object} 给启动器/调试台看的估算结果
+ * @returns {object} 给启动器状态面板看的估算结果
  */
 function estimate(config, { outputTokens = LIMITS.maxOutputNormal, dialogueBudget: override } = {}) {
   const overrideNum = Number(override);
@@ -128,7 +128,7 @@ function estimate(config, { outputTokens = LIMITS.maxOutputNormal, dialogueBudge
   const maxInputTokens = systemTokens + budget;
   const out = Math.max(0, Number(outputTokens) || 0);
   // 这个预算实际会被分成几块（recent / memory / summary / reserve / relations），
-  // 给启动器的说明区和调试台/status 用
+  // 给启动器的说明区和 /api/status 用
   const plan = planBudget(budget, { relations: false });
   // 启动器只显示三类，太细的拆分别放界面上
   const split = {

@@ -69,7 +69,7 @@ test('网页聊天入口已关闭：不带桥接 token 一律 404', async () => 
   await app.close();
 });
 
-test('网页私聊：SSE 流式返回完整回复', async () => {
+test('API 私聊：SSE 流式返回完整回复', async () => {
   const app = await boot();
   const events = await collectSse(app.url + '/api/chat', {
     text: '你好呀',
@@ -88,7 +88,7 @@ test('网页私聊：SSE 流式返回完整回复', async () => {
   await app.close();
 });
 
-test('网页群聊：没被 @ 返回 ignore，被 @ 才回复', async () => {
+test('API 群聊：没被 @ 返回 ignore，被 @ 才回复', async () => {
   const app = await boot();
   const res = await fetch(app.url + '/api/chat', {
     method: 'POST',
@@ -304,7 +304,7 @@ test('健康检查与 404', async () => {
   await app.close();
 });
 
-test('调试台：状态接口能看到主人和模型信息', async () => {
+test('诊断接口：状态接口能看到主人和模型信息', async () => {
   const app = await boot();
   try {
   const s = await (await fetch(app.url + '/api/debug/state')).json();
@@ -318,7 +318,7 @@ test('调试台：状态接口能看到主人和模型信息', async () => {
   } finally { await app.close(); }
 });
 
-test('调试台：提示词预览能区分主人 / 普通人 / 群聊', async () => {
+test('诊断接口：提示词预览能区分主人 / 普通人 / 群聊', async () => {
   const app = await boot();
   try {
   const post = (body) => fetch(app.url + '/api/debug/prompt', {
@@ -330,7 +330,7 @@ test('调试台：提示词预览能区分主人 / 普通人 / 群聊', async ()
   assert.match(master.system, /父母|养大/);
 
   // 只把昵称改成主人的名字、id 对不上：配了真 wxid 就不认（和微信里真正跑消息时一致），
-  // 以前调试台这里会显示「识别为主人」，害人以为改好了
+  // 以前这里会显示「识别为主人」，害人以为改好了
   const impostor = await (await post({ senderName: 'Master', senderId: 'wxid_fake', chatType: 'private', text: '在吗' })).json();
   assert.equal(impostor.isMaster, false);
   assert.equal(impostor.master.reason, 'name_blocked');
@@ -342,12 +342,12 @@ test('调试台：提示词预览能区分主人 / 普通人 / 群聊', async ()
 
   const byWxid = await (await post({ senderName: '随便改的昵称', senderId: 'wxid_test_master', chatType: 'group', chatTitle: '深海鱼塘', text: '在吗' })).json();
   assert.equal(byWxid.isMaster, true);
-  // 群名在尾部（每轮会变），调试台返回拼装后的 prompt
+  // 群名在尾部（每轮会变），诊断接口返回拼装后的 prompt
   assert.match(byWxid.prompt, /微信群「深海鱼塘」/);
   } finally { await app.close(); }
 });
 
-test('调试台：会话列表只给计数，不暴露记忆正文', async () => {
+test('诊断接口：会话列表只给计数，不暴露记忆正文', async () => {
   const app = await boot();
   try {
   await collectSse(app.url + '/api/chat', { text: '在吗', mode: 'private', sessionId: 'dbg', senderName: '小海' });
@@ -361,7 +361,7 @@ test('调试台：会话列表只给计数，不暴露记忆正文', async () =>
   } finally { await app.close(); }
 });
 
-test('调试台：网页同名昵称不能借魔咒取得管理员权限', async () => {
+test('诊断接口：未绑定 ID 的同名昵称不能借魔咒取得管理员权限', async () => {
   const app = await boot();
   try {
     const s = await (await fetch(app.url + '/api/debug/state')).json();
@@ -376,7 +376,7 @@ test('调试台：网页同名昵称不能借魔咒取得管理员权限', async
     const d = await (await fetch(app.url + '/api/debug/sessions')).json();
     const sess = d.sessions.find((x) => x.key.includes('adm'));
     assert.ok(sess, '应能找到这个会话');
-    assert.equal(Number(sess.adminUntil)||0, 0, '未绑定 ID 的网页同名用户不得激活管理员权限');
+    assert.equal(Number(sess.adminUntil)||0, 0, '未绑定 ID 的同名用户不得激活管理员权限');
   } finally {
     await app.close();
   }
@@ -510,7 +510,7 @@ test('微信本地桥接：短回复换行和明确分条请求都返回多气�
   }
 });
 
-test('桥接心跳：网页能看出桥接在不在、UIA 通不通', async () => {
+test('桥接心跳：启动器能看出桥接在不在、UIA 通不通', async () => {
   const app = await boot({
     gateway: {
       wechat: { enabled: true, inboundToken: 'secret-token', outboundUrl: '', outboundHeaders: {} },
@@ -546,7 +546,7 @@ test('桥接心跳：网页能看出桥接在不在、UIA 通不通', async () =
     info = st.gateways.find((x) => x.platform === 'wechat');
     assert.equal(info.bridge.online, true);
     assert.equal(info.bridge.uia, true);
-    assert.equal(info.bridge.ffmpeg, false, 'ffmpeg 状态要透传给网页');
+    assert.equal(info.bridge.ffmpeg, false, 'ffmpeg 状态要透传给启动器');
 
     // 超过 45 秒没心跳 → 又变离线
     g.bridge.lastSeen = Date.now() - 60 * 1000;

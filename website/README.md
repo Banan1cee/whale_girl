@@ -1,62 +1,53 @@
 # Whale Girl 主题官网
 
-独立静态宣传网站。直接打开 `website/index.html` 可预览布局，正式部署时从 GitHub Releases 生成版本区。
+独立静态宣传网站源码。无依赖、无构建，直接编辑 `website/` 下的文件即可。版本区由 GitHub Releases 生成，不手写版本号。
 
-## 本地预览
-
-在仓库根目录运行：
-
-```powershell
-python -m http.server 4173 --bind 127.0.0.1 --directory website
-```
-
-浏览器访问 http://127.0.0.1:4173 。
-
-## 发布
-
-页面资源使用相对路径，支持托管在子路径下。其它静态托管服务可将 GitHub 的 `releases/latest` 和 `releases` JSON 交给 `node scripts/render-website-releases.js latest.json recent.json <输出目录>`，然后上传该输出目录。
-
-### GitHub Pages
-
-GitHub Pages 的「Deploy from a branch」只能选仓库根目录或 `/docs`，不能直接选 `website/`；本项目用 `.github/workflows/pages.yml` 走官方 Actions 发布：
-
-1. 仓库 **Settings → Pages → Build and deployment → Source** 选 **GitHub Actions**。
-2. 更新网站源码并合入 `main` 会自动部署。发布或编辑 GitHub Release 也会触发 `main` 部署，另有每日补跑。可在 Actions 里手动运行 **pages** 立即同步。
-3. 站点地址为 `https://<用户名>.github.io/whale_girl/`；所有资源都走相对路径，不需要改 base path。
-4. 如果默认分支不叫 `main`，同步修改 `pages.yml` 里的 `branches`。
-
-工作流只发布由 `website/` 生成的静态产物，不需要 Jekyll 或 npm 依赖。版本号、标题、摘要、日期和发行链接来自公开 Release，草稿和预发布不进入列表。网页打开后直接显示生成好的版本区，无需访客访问 GitHub API。
-
-### 自定义域名 `bot.zyyc.cc`
-
-仓库已在 `website/CNAME` 中写入 `bot.zyyc.cc`。更改域名时需要同时更新 DNS 和 GitHub：
-
-1. **DNS**：在 `zyyc.cc` 区域为 `bot` 添加 CNAME，指向 `banan1cee.github.io`。
-2. **GitHub**：仓库 **Settings → Pages → Custom domain** 填 `bot.zyyc.cc`，保存并等 DNS 检查通过。
-3. DNS 生效后勾选 **Enforce HTTPS**；证书签发可能需要几分钟到几十分钟。
-
-`website/CNAME` 会随 Actions 产物一起发布；如果以后换域名，改这个文件并同步修改 GitHub Pages 的自定义域名设置。
-
-## 内容维护
+## 修改指南
 
 - `index.html`：宣传内容、更新报告弹窗、最近发行版本、作者寄语、下载链接与 SEO 描述。
 - `style.css`：响应式布局、明暗主题 token、动效；支持系统减少动态效果设置。
 - `theme.js`：首屏主题初始化；优先本地选择，否则跟随系统。
 - `app.js`：主题切换、移动导航、报告弹窗、进入视口动效。
+- `motion.js`：连续滚动叙事的进度计算与可逆过渡。
 - `whale.svg`：首页原创矢量鲸鱼视觉。
-- `images/launcher-icon.png`：与启动器 `launcher/Assets/app.png` 字节一致的品牌图标，同时用于页头、页脚和 favicon。图标原创角色作者为上善无形，本项目图标为二创作品；署名与使用边界见根目录 `NOTICE.md`。
-- `fonts/`：本地 Noto Sans SC（思源黑体体系）400 / 500 / 600 字重及 OFL 许可，统一中英文字形。字体按当前页面文案和 ASCII 字符子集化；新增中文文案时需重新生成子集，否则新增字会使用系统后备字体。字体来自 Google Fonts，总大小约 387 KiB，访客无需访问外部字体服务。
+- `images/`：网页用图片副本，原图保留在仓库原位置，不要反向覆盖原图。
+- `fonts/`：本地 Noto Sans SC（思源黑体体系）400 / 500 / 600 字重及 OFL 许可。字体按当前页面文案和 ASCII 字符子集化；新增中文文案时需重新生成子集，否则新增字会使用系统后备字体。
 
-发行列表自动显示最新正式版与最近两次其它正式发行。完整更新历史见仓库 `CHANGELOG.md` 与 Releases。下载按钮打开官方最新 Release，让用户选择实际存在的安装资产。作者寄语为明确标注的待确认草稿，正式上线前由作者确认或替换。
+- 版本区由 `scripts/render-website-releases.js` 从 GitHub Releases 生成，自动显示最新正式版与最近两次其它正式发行；不要手写版本号或造假数据。完整更新历史见仓库 `docs/CHANGELOG.md` 与 Releases。下载按钮打开官方最新 Release，让用户选择实际存在的安装资产。作者寄语为明确标注的待确认草稿，正式上线前由作者确认或替换。
 
-网站不收集访客数据；仅在浏览器 localStorage 保存主题偏好。所有对话展示均为示意文案。
+## 规范
 
-## 视觉与动效
+### 域名
+
+正式域名是 `bot.zyyc.cc`，不要使用 `www.` 前缀。换域名时以下三处必须同时改，缺一处就会出现 canonical 与实际访问地址不一致：
+
+1. `website/CNAME`：只写裸域名，例如 `bot.zyyc.cc`。
+2. `index.html` 的 `<link rel="canonical">`：与 CNAME 完全一致，保留结尾 `/`。
+3. GitHub 仓库 **Settings → Pages → Custom domain**：与 CNAME 完全一致。
+
+`website/CNAME` 会随 Actions 产物一起发布；DNS 与 Pages 自定义域名在仓库外配置，改域名时一并在对应平台更新。
+
+### 内容
+
+- 只写已确认的事实与已发行版本，不虚构功能、数据或用户评价。
+- 对话、角色场景均为示意文案，需明确标注。
+- 页面全部使用相对路径，保证托管在子路径下也能正常加载。
+- 维护 `index.html` 中的 SEO 描述、canonical 与下载链接，避免指向失效资产。
+
+### 资源与许可
+
+- `images/launcher-icon.png` 需与启动器 `launcher/Assets/app.png` 字节一致，同时用于页头、页脚和 favicon。图标原创角色作者为上善无形，本项目图标为二创作品；署名与使用边界见 `docs/NOTICE.md`。
+- 01 / 02 / 03 角色场景使用项目现有鲸鱼娘素材：`assets/stickers/开心/whale-02078503148a8b78.png`、`assets/stickers/傲娇/whale-05e27f4bea539577.png`、`assets/stickers/傲娇/whale-fc820657b91d8fa7.png`。在 `website/images/` 保存 WebP 网页副本（共约 197 KiB），原图未修改。
+- 不引入未授权字体、图片、视频或第三方脚本；新增外部素材需先确认许可证并补充署名。
+
+### 视觉与动效
 
 白底配色参考 [Colorhero 的 Warm Neutral Light](https://colorhero.io/blog/modern-ui-color-schemes-users-love) 和 [Recolor 的 Sea glass 系列](https://recolor.page/palettes/teals/)，按鲸鱼主题调整为：白色 `#FFFFFF`、墨青 `#183332`、深青按钮 `#175C56`、海盐表面 `#F3F7F6`，辅以浅绿 `#EEF5F1` 与暖白 `#F6F4EF`。网页文字与按钮对比需按实际 token 检查，参考网站的结论不代替本项目验证。
 
 首屏分层入场、鲸鱼浮游、流动光轨、卡片滚动入场和桌面指针倾斜使用 CSS 与原生 JS。首屏底部可暂停动画；系统开启减少动态效果时自动使用静态模式。手机使用单列内容与折叠菜单，桌面使用双列布局，指针动效仅启用于精细指针设备。
 
-连续滚动叙事参考 [Apple AirPods Pro 官网](https://www.apple.com/airpods-pro/) 和 [Awwwards 对 Apple 团队的设计访谈](https://www.awwwards.com/airpods-pro-wins-site-of-the-month-january.html)：使用驻留视觉、按滚动进度推进的三段故事、可逆过渡与共享背景来连接章节。`motion.js` 按位置求值，前后滚动都可重放；各章节也保留持续的微动效。短屏与横屏自动切回自然排版。未使用苹果图片、视频或源代码。
+连续滚动叙事参考 [Apple AirPods Pro 官网](https://www.apple.com/airpods-pro/) 和 [Awwwards 对 Apple 团队的设计访谈](https://www.awwwards.com/airpods-pro-wins-site-of-the-month-january.html)：使用驻留视觉、按滚动进度推进的三段故事、可逆过渡与共享背景来连接章节。`motion.js` 按位置求值，前后滚动都可重放；各章节也保留持续的微动效。短屏与横屏自动切回自然排版。未使用苹果图片、视频或源代码。角色表情、对话气泡、记忆节点按阶段切换；网络线条、光轨和微浮动保持持续运动。首页与角色段落共用 `.journey` 背景，`entrance` 进度控制前景交接。
 
-01 / 02 / 03 角色场景使用项目现有鲸鱼娘素材：`assets/stickers/开心/whale-02078503148a8b78.png`、`assets/stickers/傲娇/whale-05e27f4bea539577.png`、`assets/stickers/傲娇/whale-fc820657b91d8fa7.png`。在 `website/images/` 保存 WebP 网页副本（共约 197 KiB），原图未修改。角色表情、对话气泡、记忆节点按阶段切换；网络线条、光轨和微浮动保持持续运动。首页与角色段落共用 `.journey` 背景，`entrance` 进度控制前景交接。
+### 隐私
+
+网站不收集访客数据；仅在浏览器 localStorage 保存主题偏好。

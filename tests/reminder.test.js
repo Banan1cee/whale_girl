@@ -217,6 +217,22 @@ test('提醒规则：总开关关掉后，设不了；已有的到点也不发',
   assert.equal(svc.list().find((x) => x.text === '开会').status, 'expired');
 });
 
+test('日记通知：不受提醒开关/每日额度限制，也不出现在提醒列表', (t) => {
+  const { config } = fixture(t);
+  config.reminder = { ...config.reminder, enabled: false, maxPerDay: 1 };
+  const clock = { ms: NOW.getTime() };
+  const svc = serviceAt(config, clock);
+  const item = svc.enqueueNow({ wxid: 'wxid_master', name: '主人', text: '# 日记\n\n第一行\n第二行', kind: 'diary' });
+  assert.equal(item.kind, 'diary');
+  assert.equal(svc.list().length, 0, '不混进提醒列表');
+  const due = svc.due();
+  assert.equal(due.length, 1);
+  assert.match(due[0].text, /第二行/);
+  svc.ack(due[0].id, { ok: true });
+  assert.equal(svc.rules().sentToday, 0, '不占提醒额度');
+  assert.equal(svc.items.find((it) => it.id === item.id).text, '（日记已发送）');
+});
+
 test('提醒规则：刚聊过先跳过（默认 0 = 不跳过）', (t) => {
   const { config } = fixture(t);
   config.reminder = { ...config.reminder, quietAfterMinutes: 10 };

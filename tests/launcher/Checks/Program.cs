@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text.Json;
@@ -52,6 +53,15 @@ try {
  File.WriteAllText(Path.Combine(root,"bridge-test-count"),"0");File.WriteAllText(Path.Combine(root,"bridge-test-code"),"7");File.WriteAllText(Path.Combine(root,"bridge-test-always"),"1");
  sup.StartNode();Check(await sup.WaitForNodeAsync(),"连续故障场景内核就绪");sup.StartBridge();await Task.Delay(14000);
  Check(File.ReadAllText(Path.Combine(root,"bridge-test-count"))=="4" && !sup.BridgeRunning,"连续异常最多自动恢复三次，避免重启风暴");
+ // 启动器被强杀时窗口 Closed 不会执行，只能靠 Job 句柄关闭兜底。
+ using(var job = new ProcessJob())
+ using(var orphan = Process.Start(new ProcessStartInfo(Path.Combine(root,"runtime","node.exe"), "-e \"setInterval(()=>{},1000)\""){UseShellExecute=false,CreateNoWindow=true}))
+ {
+  Check(job.IsAvailable,"能创建带 KILL_ON_JOB_CLOSE 的进程 Job");
+  Check(job.Assign(orphan),"内核进程能加入启动器 Job");
+  job.Dispose();
+  Check(orphan.WaitForExit(5000),"Job 句柄关闭后内核进程被系统结束");
+ }
 } finally {
  var allowed=Path.GetFullPath(Path.Combine(workspace,".tools","temp"))+Path.DirectorySeparatorChar;
  if(!Path.GetFullPath(root).StartsWith(allowed,StringComparison.OrdinalIgnoreCase))throw new Exception("invalid cleanup target");

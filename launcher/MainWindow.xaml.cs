@@ -40,6 +40,7 @@ namespace WhaleLauncher
             new NavEntry { Key = "状态", Label = "状态", Icon = Geometry.Parse("M4 4h7v7H4z M13 4h7v4h-7z M13 10h7v10h-7z M4 13h7v7H4z") },
             new NavEntry { Key = "人设", Label = "人设", Icon = Geometry.Parse("M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7") },
             new NavEntry { Key = "表情包", Label = "表情包", Icon = Geometry.Parse("M4 4h16v16H4z M8.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z M20 16l-4.6-4.6L7 20") },
+            new NavEntry { Key = "朋友圈", Label = "朋友圈", Icon = Geometry.Parse("M4 8h3l2-3h6l2 3h3v12H4z M12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z") },
             new NavEntry { Key = "主动与提醒", Label = "主动与提醒", Icon = Geometry.Parse("M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8 M10.5 20a2 2 0 0 0 3 0") },
             new NavEntry { Key = "微信桥接", Label = "微信桥接", Icon = Geometry.Parse("M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-4-.9L3 21l1.9-3.5a8.4 8.4 0 1 1 16.1-6Z M8 10h8 M8 13h5") },
             new NavEntry { Key = "诊断", Label = "诊断", Icon = Geometry.Parse("M3 12h4l2-5 4 10 2-5h6") },
@@ -59,7 +60,7 @@ namespace WhaleLauncher
             VersionText.Text = ver.Length > 0 ? "v" + ver : "v?";
 
             foreach (var k in NavKeys) Nav.Items.Add(k);
-            Nav.Items.Insert(3, new NavEntry { Key = "语音发送", Label = "语音发送", Icon = Geometry.Parse("M9 3h6v12H9z M5 10v3a7 7 0 0 0 14 0v-3 M12 20v3 M8 23h8") });
+            Nav.Items.Insert(4, new NavEntry { Key = "语音发送", Label = "语音发送", Icon = Geometry.Parse("M9 3h6v12H9z M5 10v3a7 7 0 0 0 14 0v-3 M12 20v3 M8 23h8") });
             Nav.SelectedIndex = 0;
 
             _sup.Say("启动器就绪 · " + dir);
@@ -477,10 +478,44 @@ namespace WhaleLauncher
             if (BackdropImage != null)
             {
                 BackdropImage.Source = bmp;
+                BackdropImage.Stretch = Appearance.BackdropStretch;
+                BackdropImage.Opacity = Appearance.BackdropOpacity;
+                if (BackdropScale != null)
+                {
+                    // 只有「等比裁剪」需要放大一点藏住模糊软边；拉伸 / 完整显示要保留原图边界。
+                    var zoom = Appearance.BackdropFit == "fill" ? 1.06 : 1.0;
+                    BackdropScale.ScaleX = zoom;
+                    BackdropScale.ScaleY = zoom;
+                }
+                if (BackdropBlurEffect != null) BackdropBlurEffect.Radius = Appearance.BackdropBlur;
                 BackdropLayer.Visibility = bmp == null ? Visibility.Collapsed : Visibility.Visible;
             }
 
-            ApplyTitleBar();
+            ApplyTopBarDefaults();
+            if (_appliedTitleTheme != Appearance.Theme)
+            {
+                ApplyTitleBar();
+                _appliedTitleTheme = Appearance.Theme;
+            }
+        }
+
+        // 顶栏和系统标题栏只跟深浅主题走，拖滑块 / 改颜色时不用重复刷。
+        private static readonly string[] TopBarKeys =
+        {
+            "BgTop", "Line", "Text", "Text2", "Muted", "Dim", "Accent",
+            "ChipBg", "CardBorder", "Surface3", "Idle", "TopBtnHover",
+            "GhostBg", "GhostHover", "PrimaryBg", "PrimaryFg", "PrimaryHover",
+        };
+
+        private string _appliedTopBarTheme;
+        private string _appliedTitleTheme;
+
+        private void ApplyTopBarDefaults()
+        {
+            if (TopBar == null || _appliedTopBarTheme == Appearance.Theme) return;
+            foreach (var key in TopBarKeys)
+                TopBar.Resources[key] = new SolidColorBrush(Appearance.BaseColor(key));
+            _appliedTopBarTheme = Appearance.Theme;
         }
 
         private void OnAppearanceChanged() => ApplyAppearance();
@@ -523,6 +558,7 @@ namespace WhaleLauncher
             ChangeWindowMessageFilterEx(hwnd, 0x004A /* WM_COPYDATA */, MSGFLT_ALLOW, IntPtr.Zero);
 
             ApplyTitleBar();
+            _appliedTitleTheme = Appearance.Theme;
         }
 
         [DllImport("dwmapi.dll", PreserveSig = true)]
@@ -562,6 +598,7 @@ namespace WhaleLauncher
                 case "人设": return new PersonaPage(_sup);
                 case "表情包": return new StickerPage(_sup);
                 case "语音发送": return new VoiceSendPage(_sup);
+                case "朋友圈": return new MomentsPage(_sup);
                 case "主动与提醒": return new ReminderPage(_sup);
                 case "微信桥接": return new BridgePage(_sup);
                 case "诊断": return new DiagPage(_sup);

@@ -19,15 +19,19 @@
               ClipToBounds="True" IsHitTestVisible="False">
             <Image x:Name="BackdropImage" Stretch="UniformToFill"
                    RenderOptions.BitmapScalingMode="HighQuality">
+                <!-- 略微放大，避免高斯模糊在四周产生透明的软边 -->
+                <Image.RenderTransform>
+                    <ScaleTransform x:Name="BackdropScale" ScaleX="1.06" ScaleY="1.06" />
+                </Image.RenderTransform>
                 <Image.Effect>
-                    <BlurEffect Radius="26" KernelType="Gaussian" RenderingBias="Performance" />
+                    <BlurEffect x:Name="BackdropBlurEffect" Radius="24" KernelType="Gaussian" RenderingBias="Performance" />
                 </Image.Effect>
             </Image>
             <Border Background="{DynamicResource BackdropTint}" />
         </Grid>
 
-        <!-- 顶栏 -->
-        <Border Grid.Row="0" Background="{DynamicResource BgTop}"
+        <!-- 顶栏：配色固定，不跟随莫奈 / 自定义颜色 -->
+        <Border x:Name="TopBar" Grid.Row="0" Background="{DynamicResource BgTop}"
                 BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
             <DockPanel Margin="24,0" VerticalAlignment="Center" LastChildFill="False">
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">

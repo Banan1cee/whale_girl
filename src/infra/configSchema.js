@@ -6,7 +6,7 @@ const { getByPath } = require('./objpath');
  * 配置校验：一张纯数据的表 + 两个函数。
  *
  * 为什么需要它：`config.json` 现在是 20 多个顶层组的深合并，非法值会在各处
- * 被 `Number(x) || 默认` 静默吃掉 —— 用户在调试台把「历史轮数」填成 `abc`，
+ * 被 `Number(x) || 默认` 静默吃掉 —— 用户在启动器或 config.json 里把「历史轮数」填成 `abc`，
  * 界面上显示保存成功，实际还是旧值，只能靠猜。
  *
  * 这里只做三件事：
@@ -90,6 +90,13 @@ const FIELDS = {
   'env.autoDetect': { type: 'bool' },
   // ---- 提醒（规则字段和 care 对齐，配置独立）----
   'reminder.enabled': { type: 'bool' },
+  'diary.enabled': { type: 'bool' },
+  'diary.time': { type: 'string', maxLen: 5, pattern: /^([01]\d|2[0-3]):[0-5]\d$/ },
+  // ---- 朋友圈 ----
+  'moments.autoLike': { type: 'bool' },
+  'moments.autoLikeMaxPerDay': { type: 'int', min: 0, max: 20 },
+  'moments.autoReadEveryHours': { type: 'int', min: 0, max: 24 },
+  'diary.sendToOwner': { type: 'bool' },
   'reminder.maxPerDay': { type: 'int', min: 0, max: 200 },
   'reminder.quietAfterMinutes': { type: 'int', min: 0, max: 1440 },
 
@@ -179,6 +186,7 @@ function checkValue(value, spec) {
   }
   if (spec.type === 'string') {
     if (typeof value !== 'string') return `应该是字符串，实际是 ${JSON.stringify(value)}`;
+    if (spec.pattern && !spec.pattern.test(value)) return '请填写 24 小时制时间 HH:mm（如 23:00）';
     if (spec.maxLen && value.length > spec.maxLen) return `太长（最多 ${spec.maxLen} 个字符）`;
     return null;
   }

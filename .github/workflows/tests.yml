@@ -59,9 +59,24 @@ jobs:
         shell: pwsh
         run: |
           $ver = '1.7.12'
+          $url = "https://github.com/rhysd/actionlint/releases/download/v$ver/actionlint_${ver}_windows_amd64.zip"
           $zip = Join-Path $env:RUNNER_TEMP "actionlint-$ver.zip"
           $dir = Join-Path $env:RUNNER_TEMP "actionlint-$ver"
-          Invoke-WebRequest -Uri "https://github.com/rhysd/actionlint/releases/download/v$ver/actionlint_${ver}_windows_amd64.zip" -OutFile $zip
+          $downloaded = $false
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $zip -TimeoutSec 120
+              $downloaded = $true
+              break
+            } catch {
+              Write-Output "actionlint 下载失败（第 $attempt 次）：$($_.Exception.Message)"
+              if ($attempt -lt 4) { Start-Sleep -Seconds (5 * $attempt) }
+            }
+          }
+          if (-not $downloaded) {
+            Write-Output '::error title=actionlint::下载 actionlint 失败（已重试 4 次）'
+            exit 1
+          }
           Expand-Archive -Path $zip -DestinationPath $dir -Force
           # SignPath 那两步还在用 upload-artifact v3 时代的 archive 输入（v4 已经没有），
           # 签名路径当前没启用，先只忽略这一条；其它问题一律不许过。

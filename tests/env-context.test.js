@@ -358,7 +358,7 @@ test('bridgeLine：离线', () => {
   assert.doesNotMatch(line, /UIA|ffmpeg/);
 });
 
-test('bridgeLine：没有 bridgeStatus（网页通道 / 测试）返回空串', () => {
+test('bridgeLine：没有 bridgeStatus（非桥接通道 / 测试）返回空串', () => {
   assert.equal(envInfo.bridgeLine({}), '');
   assert.equal(envInfo.bridgeLine({ bridgeStatus: null }), '');
   assert.equal(envInfo.bridgeLine(undefined), '');

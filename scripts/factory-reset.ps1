@@ -6,7 +6,7 @@
   2. 把 data\ 和 config.json 备份到 backup\reset-时间戳\（万一还想找回 Key / 聊天记录）
   3. 删掉：data\（聊天记忆、API Key、人设调教、PAUSED、媒体缓存）、config.json（主人名单 / 令牌 / 各项设置）、
      wechatauto_db\、wechatauto_logs\、debug.log
-  4. 用 config.example.json 重建 config.json —— 跟刚解压时一模一样
+  4. 用 config\config.example.json 重建 config.json —— 跟刚解压时一模一样
   5. 重新启动服务（-NoStart 可跳过；桥接由启动器拉起）
 
 注意：这不是「重启」，是**真的清空**。API Key、主人名单、聊天记忆、人设都会没。
@@ -120,13 +120,13 @@ foreach ($pat in @('wechatauto_ocr_tmp.png', '*.tmp')) {
 # ---------- 4) 从示例配置重建 ----------
 Say ''
 Say '[4/5] 用出厂配置重建 config.json…' 'Cyan'
-$example = Join-Path $root 'config.example.json'
+$example = Join-Path $root 'config\config.example.json'
 $configPath = Join-Path $root 'config.json'
 if (Test-Path $example) {
   Copy-Item -LiteralPath $example -Destination $configPath -Force
-  Say '  · 已从 config.example.json 重建（主人名单为空、网关令牌为 change-me-*）' 'Green'
+  Say '  · 已从 config\config.example.json 重建（主人名单为空、网关令牌为 change-me-*）' 'Green'
 } else {
-  Say '  ! 找不到 config.example.json，config.json 会在下次启动时自动生成' 'Yellow'
+  Say '  ! 找不到 config\config.example.json，config.json 会在下次启动时自动生成' 'Yellow'
 }
 New-Item -ItemType Directory -Path (Join-Path $root 'data') -Force | Out-Null
 
@@ -150,8 +150,8 @@ if ($NoStart) {
 Say ''
 Say '  ============================================================' 'Green'
 Say '    已恢复出厂：和刚解压时一样' 'Green'
-Say '    · 需要重新填 API Key（网页右上角「设置」）' 'Gray'
-Say '    · 主人名单为空：去调试台 /debug 抄自己的 wxid 填回去' 'Gray'
+Say '    · 需要重新填 API Key（启动器「设置」）' 'Gray'
+Say '    · 主人名单为空：去启动器「诊断」查看自己的 wxid 后填回' 'Gray'
 Say '    · 旧数据在 backup\reset-… 里，需要可以捞' 'Gray'
 Say '  ============================================================' 'Green'
 Say ''

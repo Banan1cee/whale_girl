@@ -53,7 +53,7 @@
 
 本项目的完整隐私政策只有一份，位于仓库根目录：
 
-- [PRIVACY.md](../PRIVACY.md)
+- [PRIVACY.md](PRIVACY.md)
 
 这里不再重复政策正文，避免多处内容不一致。
 

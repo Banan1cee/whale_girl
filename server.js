@@ -23,6 +23,7 @@ const { debugState, debugSessions } = require('./src/services/debug');
 const { statusPayload, replyChannelLabel } = require('./src/services/status');
 const { applySettings } = require('./src/services/settings');
 const probe = require('./src/infra/probe');
+const { watchParentPipe } = require('./src/infra/parentGuard');
 
 // 探针：进程从 require 到现在的时间，用来算「启动到 listen」到底多久
 const probeBootAt = probe.now();
@@ -120,6 +121,8 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
   };
   server.on('close', () => {
     clearInterval(runtime.snapshotTimer);
+    runtime.moments?.stopAutoRead();
+    runtime.diary?.stop();
     runtime.stopConfigWatch?.();
     runtime.store.close();
   });
@@ -227,7 +230,10 @@ async function main() {
   printBanner(instance.runtime, instance.url);
   instance.runtime.logger.info(`服务已启动 ${instance.url}，模式=${instance.runtime.llm.isMock ? '演示' : '真实 API'}`);
 
+  let stopping = false;
   const shutdown = async () => {
+    if (stopping) return;
+    stopping = true;
     console.log('\n🌊 鲸鲸要潜回深海了…');
     await instance.close();
     process.exit(0);
@@ -236,9 +242,14 @@ async function main() {
   if (process.env.WHALE_CONTROL_STDIN === '1') {
     const readline = require('node:readline');
     const control = readline.createInterface({ input: process.stdin });
-    let stopping = false;
     control.on('line', (line) => {
-      if (line === 'shutdown' && !stopping) { stopping = true; void shutdown(); }
+      if (line === 'shutdown') void shutdown();
+    });
+    // 启动器被强杀时不会发 shutdown，只剩管道关闭。必须把它当成父进程已死，
+    // 否则内核会继续占着端口，下次启动就连接到这个孤儿实例。
+    watchParentPipe(process.stdin, () => {
+      console.log('\n启动器已退出，内核随之关闭。');
+      void shutdown();
     });
   }
   process.on('SIGINT', shutdown);

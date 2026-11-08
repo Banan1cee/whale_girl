@@ -83,11 +83,11 @@ test('出包脚本会跑测试与发布自检，并从 zip 里复核内容', () 
 
 test('维护文档与 bug 台账在', () => {
   assert.ok(fs.existsSync(path.join(root, 'docs', '维护手册.md')), '缺少 docs/维护手册.md');
-  assert.ok(fs.existsSync(path.join(root, 'BUGS.md')), '缺少 BUGS.md');
-  const bugs = fs.readFileSync(path.join(root, 'BUGS.md'), 'utf8');
+  assert.ok(fs.existsSync(path.join(root, 'docs', 'BUGS.md')), '缺少 docs/BUGS.md');
+  const bugs = fs.readFileSync(path.join(root, 'docs', 'BUGS.md'), 'utf8');
   assert.match(bugs, /回归测试/, '每个 bug 要有回归测试列');
 });
-test('桥接会定时发心跳，网页才看得到「桥接在线 / UIA 不可用」', () => {
+test('桥接会定时发心跳，启动器才看得到「桥接在线 / UIA 不可用」', () => {
   const bridge = require('./helpers/bridge-source');
   assert.match(bridge, /def bridge_heartbeat/);
   assert.match(bridge, /\/api\/bridge\/heartbeat/);
@@ -170,7 +170,7 @@ test('引用回复默认关闭（开着的话每条要多走一遍 UI，回复�
   assert.match(bridge, /QUOTE_REPLY = _as_bool\(_wechat\.get\(['"]quoteReply['"], False\), False\)/, '启动读配置时默认必须是 False');
   assert.match(bridge, /QUOTE_REPLY = _as_bool\(w\.get\(['"]quoteReply['"], False\), False\)/, '热重载时默认也必须是 False');
   assert.doesNotMatch(bridge, /get\(['"]quoteReply['"], True\)/, '不能有人再写回 True');
-  const example = JSON.parse(fs.readFileSync(path.join(root, 'config.example.json'), 'utf8').replace(/^\uFEFF/, ''));
+  const example = JSON.parse(fs.readFileSync(path.join(root, 'config', 'config.example.json'), 'utf8').replace(/^\uFEFF/, ''));
   assert.equal(example.wechat.quoteReply, false, 'config.example 里也应该是 false');
 });
 

@@ -130,6 +130,8 @@ class ReminderService {
     // 已发送 + 在途（sending/retrying）都占当日额度：
     // 只数 done 的话，桥接还没回执时连续领取能突破每日上限。
     const sentToday = this.items.filter((it) => {
+      // 日记发送是内核自己的存档通知，不占用户提醒的每日额度。
+      if (it.kind === 'diary') return false;
       if (it.status === 'done') return Number(it.finishedAt) >= dayStart;
       if (it.status === 'sending' || it.status === 'retrying') {
         const at = Number(it.claimedAt || it.dueAt || 0);
@@ -178,6 +180,42 @@ class ReminderService {
       attempts: 0,
       error: '',
       createdAt: Number(createdAt) || this.now(),
+      claimedAt: 0,
+      retryAt: 0,
+      finishedAt: 0,
+    };
+    const previous = JSON.parse(JSON.stringify(this.items));
+    this.items.push(item);
+    this.trim();
+    this.commit(previous);
+    return { ...item };
+  }
+
+  /**
+   * 立即加入主动发送队列（日记等内核自己产生的内容）。
+   * 不受提醒开关、每日次数、刚刚聊过限制；文本允许换行和较长正文。
+   */
+  enqueueNow({ wxid, name = '', chatType = 'private', text, kind = 'diary' } = {}) {
+    const chatId = clean(wxid, 120);
+    const what = String(text == null ? '' : text).replace(/\u0000/g, '').trim().slice(0, 20000);
+    if (!chatId) throw Object.assign(new Error('缺少会话'), { statusCode: 400 });
+    if (!what) throw Object.assign(new Error('没有要发送的内容'), { statusCode: 400 });
+    if (this.items.filter((it) => ACTIVE.has(it.status)).length >= MAX_TOTAL) {
+      throw Object.assign(new Error('发送队列太满了，请稍后再试'), { statusCode: 429 });
+    }
+    const item = {
+      id: crypto.randomUUID(),
+      wxid: chatId,
+      name: clean(name, 80) || chatId,
+      chatType: chatType === 'group' ? 'group' : 'private',
+      atName: '',
+      text: what,
+      dueAt: this.now(),
+      status: 'pending',
+      attempts: 0,
+      error: '',
+      kind: String(kind || 'diary').slice(0, 20),
+      createdAt: this.now(),
       claimedAt: 0,
       retryAt: 0,
       finishedAt: 0,
@@ -250,6 +288,12 @@ class ReminderService {
         expired += 1;
       }
     }
+    // 日记正文只保留在 data/diary/；提醒队列里结束的任务不再留全文。
+    for (const item of this.items) {
+      if (item.kind === 'diary' && !ACTIVE.has(item.status) && item.text !== '（日记已发送）') {
+        item.text = '（日记未发送）';
+      }
+    }
     if (JSON.stringify(previous) !== JSON.stringify(this.items)) this.commit(previous);
     return { expired };
   }
@@ -273,19 +317,21 @@ class ReminderService {
     const out = [];
     const previous = JSON.parse(JSON.stringify(this.items));
     // 已领取但尚未回执的任务也占用每日额度，防止多轮领取超限。
-    const reserved = this.items.filter(it => it.status === 'sending').length;
+    // 日记通知不走用户提醒额度，所以不计入 reserved。
+    const reserved = this.items.filter(it => it.status === 'sending' && it.kind !== 'diary').length;
     for (const item of this.items) {
       if (out.length >= limit) break;
       if (item.status !== 'pending' && item.status !== 'retrying') continue;
       if (Number(item.dueAt) > now) continue;
       if (item.status === 'retrying' && Number(item.retryAt) > now) continue;
-      if (!rules.enabled) {
+      const isDiary = item.kind === 'diary';
+      if (!isDiary && !rules.enabled) {
         item.status = 'expired';
         item.error = '提醒功能已关闭';
         item.finishedAt = now;
         continue;
       }
-      if (rules.quietAfterMinutes && this.lastActiveAt) {
+      if (!isDiary && rules.quietAfterMinutes && this.lastActiveAt) {
         let last = 0;
         try { last = Number(this.lastActiveAt(item.wxid)) || 0; } catch { last = 0; }
         if (last && now - last < rules.quietAfterMinutes * 60000) {
@@ -295,7 +341,7 @@ class ReminderService {
           continue;
         }
       }
-      if (rules.dailyCap && rules.sentToday + reserved + out.length >= rules.dailyCap) {
+      if (!isDiary && rules.dailyCap && rules.sentToday + reserved + out.length >= rules.dailyCap) {
         item.status = 'expired';
         item.error = `今天提醒次数已满（${rules.dailyCap} 次），不补发`;
         item.finishedAt = now;
@@ -342,6 +388,8 @@ class ReminderService {
       item.status = 'done';
       item.error = '';
       item.finishedAt = now;
+      // 日记正文已经落在 data/diary/，发送成功后不再在 reminders.json 里留一份全文。
+      if (item.kind === 'diary') item.text = '（日记已发送）';
     } else if (item.attempts < 2 && now <= Number(item.dueAt) + RETRY_DELAY_MS) {
       item.status = 'retrying';
       item.retryAt = now + RETRY_DELAY_MS;
@@ -369,14 +417,15 @@ class ReminderService {
 
   /** 给启动器看的列表（新的在前） */
   list({ limit = 100 } = {}) {
-    return this.items.slice(-limit).reverse().map(({ id, wxid, name, chatType, text, dueAt, status, attempts, error, createdAt, finishedAt }) => ({
+    // 日记通知是内核自己的存档发送，不混进「提醒」列表。
+    return this.items.filter((it) => it.kind !== 'diary').slice(-limit).reverse().map(({ id, wxid, name, chatType, text, dueAt, status, attempts, error, createdAt, finishedAt }) => ({
       id, wxid, name, chatType, text, dueAt, status, attempts, error, createdAt, finishedAt,
     }));
   }
 
   /** 某个会话自己的未发提醒（「我设过哪些提醒」用） */
   pendingFor(wxid) {
-    return this.items.filter((it) => it.wxid === String(wxid || '') && ACTIVE.has(it.status));
+    return this.items.filter((it) => it.kind !== 'diary' && it.wxid === String(wxid || '') && ACTIVE.has(it.status));
   }
 }
 

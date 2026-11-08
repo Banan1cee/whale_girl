@@ -66,10 +66,21 @@ class RecoveryTests(unittest.TestCase):
     def test_database_owner_is_pinned_without_waiting_for_uia(self):
         rebind = Mock()
         env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False}, log=Mock(),
-                   _probe_wechat_windows=lambda: (None, [], [(222, 333)]), rebind_uia=rebind)
+                   _probe_wechat_windows=lambda: (None, [], [(222, 333, 0, False)]), rebind_uia=rebind)
+        env['choose_main_window'] = load_function('choose_main_window', env)
         self.assertTrue(load_function('pick_account_window', env)())
         self.assertEqual(env['ACCOUNT']['pid'], 333)
         rebind.assert_called_once_with(222)
+
+    def test_multiple_windows_of_same_account_pick_foreground(self):
+        rebind = Mock()
+        env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False}, log=Mock(),
+                   _probe_wechat_windows=lambda: (None, [], [
+                       (222, 333, 800, False), (444, 555, 100, True)]), rebind_uia=rebind)
+        env['choose_main_window'] = load_function('choose_main_window', env)
+        self.assertTrue(load_function('pick_account_window', env)())
+        self.assertEqual(env['ACCOUNT']['hwnd'], 444)
+        rebind.assert_called_once_with(444)
 
     def test_account_probe_does_not_inspect_or_activate_other_windows_when_owner_is_known(self):
         windows = {
@@ -93,21 +104,23 @@ class RecoveryTests(unittest.TestCase):
                    _window_account_matches=owner, ensure_uia_ready=Mock())
         with patch.dict(sys.modules, {'win32gui': win32gui, 'win32process': win32process,
                                       'wechatauto.uia_driver': driver}):
-            self.assertEqual(load_function('_probe_wechat_windows', env)()[1:], ([], [(222, 223)]))
+            self.assertEqual(load_function('_probe_wechat_windows', env)()[1:], ([], [(222, 223, 0, False)]))
             self.assertEqual(load_function('wechat_main_window_count', env)(), 2)
         env['ensure_uia_ready'].assert_not_called()
         probe._hot_activate_accessibility.assert_not_called()
         probe._anchor.assert_not_called()
         self.assertEqual([c.args[0] for c in owner.call_args_list], [112, 223])
 
-    def test_two_real_windows_with_same_ownership_still_require_unique_binding(self):
+    def test_two_real_windows_with_same_ownership_pick_one(self):
         rebind = Mock()
         env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False}, log=Mock(),
-                   _probe_wechat_windows=lambda: (None, [], [(111, 333), (222, 333)]),
+                   _probe_wechat_windows=lambda: (None, [], [(111, 333, 0, False), (222, 333, 0, False)]),
                    rebind_uia=rebind)
-        self.assertFalse(load_function('pick_account_window', env)())
-        self.assertFalse(env['ACCOUNT']['verified'])
-        rebind.assert_not_called()
+        env['choose_main_window'] = load_function('choose_main_window', env)
+        self.assertTrue(load_function('pick_account_window', env)())
+        self.assertTrue(env['ACCOUNT']['verified'])
+        self.assertEqual(env['ACCOUNT']['hwnd'], 111)
+        rebind.assert_called_once_with(111)
 
     def test_wechat_title_has_priority_over_a_large_detached_chat(self):
         windows = [

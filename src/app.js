@@ -25,7 +25,9 @@ const { StickerService } = require('./services/stickerService');
 const stickersAdapter = require('./adapters/stickers');
 const probe = require('./infra/probe');
 const { ContactsCache } = require('./services/contacts');
+const { MomentsService } = require('./services/moments');
 const { ReminderService } = require('./services/reminderService');
+const { DiaryService } = require('./services/diary');
 const locationProbe = require('./services/location');
 
 const VERSION = require('../package.json').version;
@@ -52,7 +54,7 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   // 放到 listen 之后再开会永远看不到那 10 秒。默认关，WHALE_PROBE_LOOP=1 才启动。
   const loopProbe = probe.startEventLoopProbe(logger);
   // 配置体检：非法值以前会被各处的 `Number(x) || 默认` 静默吃掉，
-  // 用户在调试台填错了也看不出来。这里启动时报一次，不阻断运行。
+  // 用户在启动器或 config.json 里填错了也看不出来。这里启动时报一次，不阻断运行。
   try {
     const configErrors = configSchema.validate(config);
     if (configErrors.length) {
@@ -120,6 +122,15 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   } catch { /* 定时器起不来不影响主流程 */ }
 
   runtime.llm = new DeepSeekClient({ config, logger: child('llm') });
+  runtime.diary = new DiaryService(config, {
+    store,
+    llm: runtime.llm,
+    logger: child('diary'),
+    // 日记写完要发给主人时，借用提醒的主动发送队列；runtime.reminders 在下面才创建，
+    // 所以这里用闭包延迟取，真正发日记时它已经存在。
+    enqueue: (item) => runtime.reminders.enqueueNow(item),
+  });
+  runtime.diary.start();
   // 记忆层用同一个模型做 episode 摘要/抽取（后台跑，不在回复热路径）
   store.llm = runtime.llm;
   // 判定链：为什么回 / 为什么不回。默认只记原因和状态；正文在 data/trace/raw 里留 24 小时，
@@ -131,6 +142,8 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   });
   runtime.trace = trace;
   runtime.bot = new Bot({ config, store, llm: runtime.llm, logger: child('pipeline'), trace, version: VERSION });
+  // 主人问起日记时，聊天模型通过 [[diary:日期]] 标记读取；不给它直接塞全文。
+  runtime.bot.diary = runtime.diary;
   // 本机所在地：后台探一次（Windows 定位服务优先，挂 VPN 也准），之后定期刷新。
   // 只放在内存里，给 <env> 块用；关掉 features.envContext 或 env.autoDetect=false 就完全不动。
   try {
@@ -145,6 +158,14 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   runtime.bot.stickerService = runtime.stickerService;
   // 联系人缓存：桥接推上来的 wxid 清单，给启动器选择器和 care 白名单用
   runtime.contacts = new ContactsCache(config, { logger: child('contacts') });
+  runtime.moments = new MomentsService({
+    dir: path.join(config.paths.dataDir, 'moments'),
+    logger: child('moments'),
+    llm: runtime.llm,
+    config,
+  });
+  runtime.bot.moments = runtime.moments;
+  runtime.moments.startAutoRead();
   // 提醒：到点由桥接来取（/api/reminders/due），这里只管存和状态
   runtime.reminders = new ReminderService(config, {
     logger: child('reminder'),

@@ -5,7 +5,7 @@
  *
  * 用户反馈：「本地 api 有问题，接不进去」。
  * 复现路径：新装 → 设置里选「本地 Ollama」（或自定义 + 127.0.0.1）→ 保存 → 测试连接。
- * 因为新装的「演示模式」开关默认是勾着的，而网页每次保存都会把开关状态一起提交，
+ * 因为新装的「演示模式」开关默认是勾着的，而启动器每次保存都会把开关状态一起提交，
  * 服务端又用 body.mock 覆盖了「免 Key 服务自动关演示模式」的判断，结果：
  *   · settings.json 里 mock 一直是 true
  *   · llm.isMock 一直为真 → _open() 直接抛 nokey，一次请求都没发到本地服务
@@ -148,14 +148,14 @@ test('云端服务没 Key 时仍然是演示模式（别把兜底一起改掉）
   cleanup(root);
 });
 
-/* ---------------- 网页真的能保存并连上 ---------------- */
+/* ---------------- 启动器设置接口能保存并连上 ---------------- */
 
 test('设置接口：新装选本地 Ollama 保存后，演示模式自动关闭', async () => {
   const fake = await startFakeModel();
   const root = tempRoot({ config: { server: { port: 0, openBrowser: false } } });
   const app = await bootServer(root);
   try {
-    // 网页读到的初始状态：没 Key → 开关是勾着的
+    // 启动器读到的初始状态：没 Key → 开关是勾着的
     const before = await (await fetch(app.url + '/api/settings')).json();
     assert.equal(before.mock, true);
 
@@ -167,7 +167,7 @@ test('设置接口：新装选本地 Ollama 保存后，演示模式自动关闭
           provider: 'ollama',
           baseUrl: fake.url + '/v1',
           model: 'qwen2.5:7b',
-          mock: before.mock, // 网页原样把「勾着」提交上去
+          mock: before.mock, // 启动器原样把「勾着」提交上去
           temperature: 0.95,
           userName: '主人',
           group: { requireAt: true, freeChat: false, freeChatChance: 0.06 },

@@ -112,6 +112,12 @@ namespace WhaleLauncher.Views
             ChkEnabled.IsEnabled = TxtDir.IsEnabled = online;
             ChkCollect.IsEnabled = online && !_savingCollect;
             if (!online) BtnImportPresets.IsEnabled = false;
+            if (online && !ChkCollect.IsKeyboardFocusWithin)
+            {
+                var cfg = await Api.Get(_sup.Url, "/api/config");
+                if (cfg.Ok && cfg.Prop("config").TryGetProperty("sticker", out var sticker))
+                    ChkCollect.IsChecked = sticker.TryGetProperty("collectReceived", out var collect) && BoolProp(collect);
+            }
 
             var view = new ViewData();
             var tFetch = Stopwatch.StartNew();

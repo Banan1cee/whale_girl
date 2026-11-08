@@ -20,7 +20,7 @@ const DEAD_SECTIONS = ['share', 'digest'];
 const DEAD_WORDS = /主动分享|消息汇总/;
 
 test('出厂配置和存在的本机配置里不再有 share / digest 段', () => {
-  for (const name of ['config.json', 'config.example.json']) {
+  for (const name of ['config.json', 'config/config.example.json']) {
     // A clean checkout intentionally has no personal config.json.
     if (name === 'config.json' && !fs.existsSync(path.join(root, name))) continue;
     let raw;
@@ -35,7 +35,7 @@ test('出厂配置和存在的本机配置里不再有 share / digest 段', () =
   }
 });
 
-test('源码与调试台里不再提「主动分享 / 消息汇总」', () => {
+test('源码与启动器里不再提「主动分享 / 消息汇总」', () => {
   const files = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {

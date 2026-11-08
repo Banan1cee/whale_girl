@@ -141,7 +141,7 @@ test('C3：时效性问题不再机械加年份（实测加了反而更差）', 
 });
 
 test('C2：config.example 里能调媒体缓存策略', () => {
-  const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json'), 'utf8').replace(/^\uFEFF/, ''));
+  const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config', 'config.example.json'), 'utf8').replace(/^\uFEFF/, ''));
   assert.equal(cfg.storage.mediaKeepDays, 7);
   assert.equal(cfg.storage.mediaMaxMB, 500);
 });

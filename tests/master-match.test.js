@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 主人判定的唯一实现（src/master.js）：微信里认 wxid，网页/抖音没 id 才认昵称；
+ * 主人判定的唯一实现（src/core/master.js）：微信里认 wxid，抖音等没有稳定 id 的渠道才认昵称；
  * 配了真 wxid 时昵称冒充无效，但 wxid 栏里错填成微信号时要能提示、别把主人永远挡在外面。
  */
 const test = require('node:test');
@@ -44,13 +44,13 @@ test('没配主人时谁都不是主人，也不叫主人', () => {
   }
 });
 
-test('网页 / 抖音这类没有稳定 id 的渠道，按昵称认（忽略大小写）', () => {
+test('抖音等没有稳定 id 的渠道，按昵称认（忽略大小写）', () => {
   const r = matchMaster(cfg(['A-Jing'], ['wxid_master_test']), { platform: 'web', senderId: 'web-u-abc', senderName: 'a-jing' });
   assert.equal(r.isMaster, true);
   assert.equal(r.reason, 'nickname');
 });
 
-test('大小写和首尾空格都能容错（网页一行一个容易带空格）', () => {
+test('大小写和首尾空格都能容错（昵称列表容易带空格）', () => {
   const r = matchMaster(cfg(['  阿鲸 '], ['  WXID_MASTER_TEST  ']), wechat('wxid_master_test', '阿鲸'));
   assert.equal(r.isMaster, true);
   assert.equal(r.reason, 'wxid');

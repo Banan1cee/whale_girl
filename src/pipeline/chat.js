@@ -45,6 +45,13 @@ const tokenCalibration = require('../memory/calibration');
 const budgetPricing = require('../services/budget');
 const SEPARATE_REPLY_RE = /(?:^|[，。！？\s])(?:请|麻烦|能不能|可以|记得)?\s*你?\s*(?:要|给我)?\s*(?:分[条段开](?:来)?(?:发(?:送)?|回(?:复)?|说)|(?:一条一条|一句一句)地?[发回]|每(?:条|句|段)(?:话)?单独[发回]|分(?:成)?[两二三四五六七八九十\d]+[条段](?:气泡|发|回)?)(?:一下)?(?=$|[\s，。！？?!吧嘛哦啊,])/;
 
+// 主人私聊问起朋友圈时才注入快照；普通聊天和群聊都不带，避免第三方内容乱入。
+const MOMENTS_INTENT_RE = /朋友圈|动态|谁发了|发了(?:什么|啥)|最近发了|看看.*(?:朋友圈|动态)|点赞/;
+
+function momentsIntent(text) {
+  return MOMENTS_INTENT_RE.test(String(text == null ? '' : text));
+}
+
 /**
  * 把正文里的 [[sticker:分类]] 标记抠干净，返回 { text, category }。
  *
@@ -123,7 +130,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const VERSION = require('../../package.json').version;
 
 class Bot {
-  constructor({ config, store, llm, logger, trace = null, now = () => new Date(), rng = Math.random, mockChunkDelayMs = 12, linkReader = null, calibration = null, version = VERSION }) {
+  constructor({ config, store, llm, logger, trace = null, now = () => new Date(), rng = Math.random, mockChunkDelayMs = 12, linkReader = null, calibration = null, moments = null, version = VERSION }) {
     this.config = config;
     this.store = store;
     this.llm = llm;
@@ -137,6 +144,8 @@ class Bot {
     this.mockChunkDelayMs = mockChunkDelayMs;
     this.linkReader = linkReader || ((url) => links.describeLink(url, { timeoutMs: (config.links && config.links.timeoutMs) || 6000 }));
     this.calibration = calibration || null;
+    // 朋友圈快照：只在主人私聊问到朋友圈时读取，不参与普通记忆。
+    this.moments = moments || null;
     this.startedAt = Date.now();
     // handle() 的按会话串行队列：key → 上一条的收尾 promise（M21）
     this._handleChains = new Map();
@@ -532,8 +541,8 @@ class Bot {
     const muted = state.mutedUntil > nowMs;
 
     // 识别「唯一的主人」（配置里 master.names / master.wxids）
-    // 规则只写在 src/master.js，调试台预览提示词用的是同一个函数，不会出现
-    //「控制台说认了、微信里却当陌生人」这种两边打架的情况。
+    // 规则只写在 src/core/master.js，启动器的提示词预览用的是同一个函数，不会出现
+    //「预览说认了、微信里却当陌生人」这种两边打架的情况。
     const masterCfg = (this.config.persona && this.config.persona.master) || {};
     const masterHit = matchMaster(this.config, msg);
     const isMaster = masterHit.isMaster;
@@ -928,14 +937,34 @@ class Bot {
       now,
       envBlock,
     });
-    const system = promptParts.system;
+    let system = promptParts.system;
+    // 日记是「按需读取」的存档，不是每轮都塞全文。只给主人私聊这段工具说明，
+    // 模型据此知道可以输出 [[diary:日期]]，由 finalize 替换成文件内容。
+    if (this.diary && isMaster && !isGroup) {
+      system += '\n\n【日记工具】你有一份自己的日记存档，可以读取。' +
+        '主人问起日记、某天聊了什么、或让你回忆时，可以在回复最后单独写 [[diary:YYYY-MM-DD]] 或 [[diary:latest]]；' +
+        '系统会把标记替换成那天的日记原文。不要编造日记内容，也不要在普通聊天里主动提这个标记。';
+    }
     // 桥接状态接在本轮状态最后一行；旧行为路径（tail 为空）也照样带上
     const maxBubbles = Number(this.config.chat.maxBubbles) || 2;
     msg.separateRequested = maxBubbles > 1 && SEPARATE_REPLY_RE.test(clean.text || '');
     const separateHint = msg.separateRequested ? '本轮对方要求分开发送。把不同要点各写一行，最多 ' + maxBubbles + ' 行。' : '';
     const tail = [promptParts.tail, turnState.bridgeLine, separateHint].filter(Boolean).join('\n');
-    // 记忆块 = 人物卡/事件/摘要 + 关系卡（关系卡是 main 新加的，两段都挂最后一条 user 消息）
-    const memoryBlock = [mem.block, mem.relationsBlock].filter(Boolean).join('\n\n');
+    // 主人问起朋友圈时，先尝试补一次最新读取；读不到就用旧快照，并在上下文里说明。
+    if (this.moments && isMaster && !isGroup && momentsIntent(clean.text)
+        && typeof this.moments.ensureFresh === 'function') {
+      try {
+        const account = String((this.config.wechat && this.config.wechat.account) || '').trim();
+        await this.moments.ensureFresh({ account });
+      } catch { /* 读不到不影响正常回复 */ }
+    }
+    // 记忆块 = 人物卡/事件/摘要 + 关系卡 + 朋友圈快照。
+    // 朋友圈只在「主人私聊」且这轮确实问到朋友圈时加入，绝不下沉到群聊或普通聊天。
+    let momentsBlock = '';
+    if (this.moments && isMaster && !isGroup && momentsIntent(clean.text)) {
+      try { momentsBlock = this.moments.contextBlock(); } catch { momentsBlock = ''; }
+    }
+    const memoryBlock = [mem.block, mem.relationsBlock, momentsBlock].filter(Boolean).join('\n\n');
     const turns = this.buildTurns({ ...msg, ts: nowMs }, historyForTurns, memoryBlock, tail);
 
     // 预算：system 只测量，不裁剪；dialogueBudget 默认 5,500，给裁剪窗口用。
@@ -1610,6 +1639,23 @@ class Bot {
     return this.rng() < chance;
   }
 
+  /**
+   * 把模型写的 [[diary:日期]] 替换成日记原文。
+   * 只有主人私聊允许读取；其他会话只把标记删掉，避免把日记泄露到群里。
+   */
+  expandDiaryMark(decision, text) {
+    const msg = (decision && decision.msg) || {};
+    const allowed = Boolean(this.diary && msg.isMaster && msg.chatType === 'private');
+    return String(text == null ? '' : text).replace(/\[\[diary:([^\]]{1,32})\]\]/gi, (all, token) => {
+      if (!allowed) return '';
+      try {
+        return this.diary.readForChat(String(token || '').trim()) || '（没找到那天的日记）';
+      } catch {
+        return '（没找到那天的日记）';
+      }
+    }).trim();
+  }
+
   finalize(decision, text, { error = false } = {}) {
     text = String(text == null ? '' : text).trim();
     // 表情包标记 [[sticker:分类]]：发哪一类由模型决定。标记必须从正文里剥干净，
@@ -1730,12 +1776,17 @@ class Bot {
     // 记一笔全局回复时间（跨会话共用），_decide 的全局闸门读它
     this.globalReplyTimes.push(this.now().getTime());
     if (this.globalReplyTimes.length > 600) this.globalReplyTimes = this.globalReplyTimes.slice(-300);
-    // 写库失败照常返回 bubbles：话已经生成了，不能因为落库失败把回复丢了
+    // 写库失败照常返回 bubbles：话已经生成了，不能因为落库失败把回复丢了。
+    // 日记标记只存占位符，避免把整篇日记又写进聊天记忆。
+    const hasDiaryMark = /\[\[diary:[^\]]{1,32}\]\]/i.test(text);
+    const storeText = hasDiaryMark
+      ? text.replace(/\[\[diary:[^\]]{1,32}\]\]/gi, '（读取日记）')
+      : text;
     try {
       this.store.appendMessage(decision.key, {
         role: 'assistant',
         name: this.config.persona.name,
-        text,
+        text: storeText,
         ts: this.now().getTime(),
         error,
       });
@@ -1748,6 +1799,14 @@ class Bot {
     } catch (err) {
       this.logger && this.logger.error('写 checkpoint 失败（照常发送）：' + describeError(err));
     }
+    if (hasDiaryMark) {
+      const expanded = this.expandDiaryMark(decision, text);
+      if (expanded !== text) {
+        text = expanded;
+        decision.finalText = text;
+        decision.diaryExpanded = Boolean(msg.isMaster && msg.chatType === 'private');
+      }
+    }
     const isGroup = msg.chatType === 'group';
     // 命令路径以前在这里直接 return [text]，刚剥出来的 foundEmoji（🫧 这种）直接丢了（M28）
     if (decision.action === 'command') return foundEmoji ? [text, foundEmoji] : [text];
@@ -1757,7 +1816,10 @@ class Bot {
       : Math.min(Number(isGroup ? this.config.chat.groupMaxChars : this.config.chat.privateMaxChars) || LIMITS.maxOutputNormal, LIMITS.maxOutputNormal);
     const preferSeparate = Boolean(msg.separateRequested);
     let bubbles;
-    if (decision.action === 'reply' && !preferSeparate && !text.includes('\n')) {
+    if (decision.diaryExpanded) {
+      // 日记原文是存档内容，不按聊天短句切分/截断，原样发一条。
+      bubbles = text ? [text] : [];
+    } else if (decision.action === 'reply' && !preferSeparate && !text.includes('\n')) {
       // 按逗号/句号拆成几条短消息，每条不带标点
       const clauses = (text.match(/[^，。！？!?；;\n]+/g) || [])
         .map((s) => s.trim().replace(/^[，。！？!?；;]+|[，。！？!?；;~～…]+$/g, ''))
@@ -1782,8 +1844,8 @@ class Bot {
     // emoji 被剥掉就再也回不来。现在解耦：模型自带的 emoji 无论概率多少都按原设计
     // 回加成单独一条气泡，只有「随机补表情」才看概率。
     const chance = persona.emojiChanceFor(this.config);
-    let extra = foundEmoji || '';
-    if (!error && decision.action === 'reply' && !extra && chance > 0 && this.rng() <= chance) {
+    let extra = decision.diaryExpanded ? '' : (foundEmoji || '');
+    if (!decision.diaryExpanded && !error && decision.action === 'reply' && !extra && chance > 0 && this.rng() <= chance) {
       // 颜文字和 emoji 各一半，这样「颜文字用量」调高后真的能看到颜文字
       extra = this.rng() < 0.5
         ? persona.kaomojiPick(this.rng)
@@ -2115,4 +2177,4 @@ class Bot {
   }
 }
 
-module.exports = { Bot, extractCommand, COMMAND_HELP, isContextLengthError };
+module.exports = { Bot, extractCommand, COMMAND_HELP, isContextLengthError, momentsIntent };

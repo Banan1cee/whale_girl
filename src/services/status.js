@@ -38,7 +38,7 @@ function usageSnapshot(runtime) {
 }
 
 /**
- * 单轮预算（只给内部 status / 调试台计数；不接 UI、不提供预算接口）。
+ * 单轮预算（只给内部 status / 启动器计数；不接 UI、不提供预算接口）。
  * system 只测量，不参与裁剪。
  */
 function budgetSnapshot(runtime) {

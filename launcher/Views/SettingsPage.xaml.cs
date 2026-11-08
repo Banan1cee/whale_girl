@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using Microsoft.Win32;
 
 namespace WhaleLauncher.Views
@@ -235,7 +236,7 @@ namespace WhaleLauncher.Views
         // ── 外观：深浅色 + 背景图（只影响启动器）────────────────
         private Border BuildAppearanceSection()
         {
-            var card = Card("外观", "只影响启动器界面：深浅色和背景图。不会写进 config.json，也不影响她的人设和聊天。", out var body);
+            var card = Card("外观", "只影响启动器界面：深浅色、背景图和它的模糊 / 透明效果。文字直接浮在背景上，自带反色描边；卡片和面板的遮罩可以拉到 0。不会写进 config.json，也不影响她的人设和聊天。", out var body);
 
             var dark = new CheckBox
             {
@@ -299,16 +300,153 @@ namespace WhaleLauncher.Views
             panel.Children.Add(actions);
             panel.Children.Add(hint);
             body.Children.Add(Row("背景图片", panel,
-                "支持 JPG / PNG / BMP，会自动压一层主题蒙版并模糊。浅色模式建议配浅色图，深色模式建议配深色图，文字更清楚。", true));
+                "支持 JPG / PNG / BMP。有图时顶栏、导航和卡片都会透出背景；文字自带反色柔光，亮图暗图都能看清。", true));
+
+            var fit = new ComboBox { Width = 220, HorizontalAlignment = HorizontalAlignment.Left };
+            fit.Items.Add("等比裁剪（铺满）");
+            fit.Items.Add("拉伸铺满");
+            fit.Items.Add("等比完整（留边）");
+            fit.SelectedIndex = Appearance.BackdropFit switch { "stretch" => 1, "uniform" => 2, _ => 0 };
+            fit.SelectionChanged += (_, __) =>
+            {
+                if (fit.SelectedIndex < 0) return;
+                Appearance.SetBackdropFit(fit.SelectedIndex switch { 1 => "stretch", 2 => "uniform", _ => "fill" });
+            };
+            body.Children.Add(Row("背景填充", fit,
+                "等比裁剪会裁掉多余边缘；拉伸会让画面变形；等比完整会在空出来的地方露出主题底色。", true));
+
+            // 模糊 / 透明度滑块：值直接写进 launcher-ui.json，拖一下就能看到效果。
+            var blurValue = ValueLabel();
+            var blurSlider = new Slider
+            {
+                Style = (Style)FindResource("BudgetSlider"),
+                Minimum = 0,
+                Maximum = 60,
+                Width = 300,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            blurSlider.Value = Appearance.BackdropBlur;
+            blurValue.Text = Math.Round(Appearance.BackdropBlur) + " px";
+            blurSlider.ValueChanged += (_, e) =>
+            {
+                var v = Math.Round(e.NewValue);
+                blurValue.Text = v + " px";
+                Appearance.SetBackdropBlur(v);
+            };
+            body.Children.Add(Row("背景模糊", SliderWithValue(blurSlider, blurValue),
+                "0 = 清晰，60 = 最柔；只模糊背景图，文字和卡片保持锐利。", true));
+
+            var opacityValue = ValueLabel();
+            var opacitySlider = new Slider
+            {
+                Style = (Style)FindResource("BudgetSlider"),
+                Minimum = 0,
+                Maximum = 100,
+                Width = 300,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            opacitySlider.Value = Math.Round((1 - Appearance.BackdropOpacity) * 100);
+            opacityValue.Text = Math.Round(opacitySlider.Value) + "%";
+            opacitySlider.ValueChanged += (_, e) =>
+            {
+                var v = Math.Round(e.NewValue);
+                opacityValue.Text = v + "%";
+                Appearance.SetBackdropOpacity(1 - v / 100.0);
+            };
+            body.Children.Add(Row("背景透明度", SliderWithValue(opacitySlider, opacityValue),
+                "0% = 图片完全不透明，100% = 只看主题底色。图片越透明，底下的主题色越多。", true));
+
+            var surfaceValue = ValueLabel();
+            var surfaceSlider = new Slider
+            {
+                Style = (Style)FindResource("BudgetSlider"),
+                Minimum = 0,
+                Maximum = 100,
+                Width = 300,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            surfaceSlider.Value = Math.Round(Appearance.SurfaceOpacity * 100);
+            surfaceValue.Text = Math.Round(surfaceSlider.Value) + "%";
+            surfaceSlider.ValueChanged += (_, e) =>
+            {
+                var v = Math.Round(e.NewValue);
+                surfaceValue.Text = v + "%";
+                Appearance.SetSurfaceOpacity(v / 100.0);
+            };
+            body.Children.Add(Row("面板不透明度", SliderWithValue(surfaceSlider, surfaceValue),
+                "0% = 文字框完全透明，只留描边；100% = 更实的玻璃。文字自带描边，拉到 0 也能看清。", true));
+
+            // ── 配色：莫奈取色 + 手动覆盖（顶栏固定，不参与）──
+            var monetCheck = new CheckBox
+            {
+                Content = "从背景图自动取色（莫奈）",
+                IsChecked = Appearance.MonetEnabled,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            monetCheck.Click += (_, __) => Appearance.SetMonet(monetCheck.IsChecked == true);
+            var remonet = new Button { Content = "重新取色", Style = (Style)FindResource("Ghost"), Margin = new Thickness(10, 0, 0, 0) };
+            remonet.Click += (_, __) => Appearance.RefreshMonet();
+            var monetPanel = new WrapPanel();
+            monetPanel.Children.Add(monetCheck);
+            monetPanel.Children.Add(remonet);
+            body.Children.Add(Row("莫奈取色", monetPanel,
+                "从背景图挑主色生成主题色和低饱和遮罩色；下面手选的颜色优先。顶栏固定不参与。", true));
+
+            body.Children.Add(Row("主题色", BuildColorRow("accent", "主题色"),
+                "按钮、选中态和强调文字用的颜色。点「自动」就回到莫奈取色。", true));
+            body.Children.Add(Row("遮罩色", BuildColorRow("tint", "遮罩色"),
+                "压在背景图上的统一色调；觉得画面发灰时可以换一个颜色。", true));
+            body.Children.Add(Row("文字色", BuildColorRow("text", "文字色"),
+                "正文和说明文字的颜色；选完后注意和背景的明暗差。", true));
+
+            var haloCheck = new CheckBox
+            {
+                Content = "文字描边（觉得发光可以关掉）",
+                IsChecked = Appearance.TextHaloEnabled,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            haloCheck.Click += (_, __) => Appearance.SetTextHalo(haloCheck.IsChecked == true);
+            body.Children.Add(Row("文字描边", haloCheck,
+                "只在有背景图时生效；关掉后靠自定义文字色保证可读。", true));
+
+            var resetPalette = new Button { Content = "恢复自动配色", Style = (Style)FindResource("Ghost") };
+            resetPalette.Click += (_, __) => Appearance.ResetPalette();
+            body.Children.Add(Row("配色重置", resetPalette,
+                "主题色、遮罩色、文字色退回莫奈 / 主题默认，描边重新打开。", true));
 
             void Refresh()
             {
                 dark.IsChecked = Appearance.IsDark;
+                monetCheck.IsChecked = Appearance.MonetEnabled;
+                haloCheck.IsChecked = Appearance.TextHaloEnabled;
+                monetCheck.IsEnabled = Appearance.HasBackdrop;
+                remonet.IsEnabled = Appearance.HasBackdrop;
                 var bmp = Appearance.LoadBackdrop();
                 img.Source = bmp;
+                img.Opacity = Appearance.BackdropOpacity;
+                if (bmp == null)
+                {
+                    img.Effect = null;
+                }
+                else
+                {
+                    // 复用同一个 BlurEffect：拖滑块时 Changed 会高频触发，别每次 new。
+                    if (img.Effect is not BlurEffect blur)
+                    {
+                        blur = new BlurEffect { KernelType = KernelType.Gaussian, RenderingBias = RenderingBias.Performance };
+                        img.Effect = blur;
+                    }
+                    blur.Radius = Appearance.BackdropBlur * 0.35;
+                }
                 img.Visibility = bmp == null ? Visibility.Collapsed : Visibility.Visible;
                 empty.Visibility = bmp == null ? Visibility.Visible : Visibility.Collapsed;
                 clear.IsEnabled = !string.IsNullOrEmpty(Appearance.Backdrop);
+                blurSlider.IsEnabled = Appearance.HasBackdrop;
+                opacitySlider.IsEnabled = Appearance.HasBackdrop;
+                surfaceSlider.IsEnabled = Appearance.HasBackdrop;
                 pathText.Text = string.IsNullOrEmpty(Appearance.Backdrop)
                     ? "当前使用纯色背景。"
                     : "当前：" + Appearance.Backdrop;
@@ -366,6 +504,80 @@ namespace WhaleLauncher.Views
             stack.Children.Add(body);
             border.Child = stack;
             return border;
+        }
+
+        private TextBlock ValueLabel() => new TextBlock
+        {
+            Style = (Style)FindResource("Small"),
+            MinWidth = 58,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(12, 0, 0, 0),
+        };
+
+        /// <summary>色块 + 当前色值 + 调色 / 自动。点「自动」清掉手选色，回到莫奈或主题默认。</summary>
+        private FrameworkElement BuildColorRow(string kind, string label)
+        {
+            var swatch = new Border
+            {
+                Width = 38,
+                Height = 22,
+                CornerRadius = new CornerRadius(6),
+                BorderThickness = new Thickness(1),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            swatch.SetResourceReference(Border.BorderBrushProperty, "CardBorder");
+            var hex = new TextBlock
+            {
+                Style = (Style)FindResource("Small"),
+                VerticalAlignment = VerticalAlignment.Center,
+                MinWidth = 76,
+                Margin = new Thickness(8, 0, 0, 0),
+            };
+            var pick = new Button { Content = "调色…", Style = (Style)FindResource("Ghost"), Margin = new Thickness(10, 0, 0, 0) };
+            var auto = new Button { Content = "自动", Style = (Style)FindResource("Ghost"), Margin = new Thickness(8, 0, 0, 0) };
+
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+            row.Children.Add(swatch);
+            row.Children.Add(hex);
+            row.Children.Add(pick);
+            row.Children.Add(auto);
+
+            bool IsCustom() => kind switch
+            {
+                "accent" => Appearance.AccentOverride.Length > 0,
+                "tint" => Appearance.TintOverride.Length > 0,
+                _ => Appearance.TextOverride.Length > 0,
+            };
+
+            void RefreshSwatch()
+            {
+                var c = Appearance.EffectiveColor(kind);
+                swatch.Background = new SolidColorBrush(c);
+                hex.Text = Appearance.ToHex(c);
+                auto.IsEnabled = IsCustom();
+            }
+
+            pick.Click += (_, __) =>
+            {
+                var dlg = new ColorPickerWindow(label, Appearance.EffectiveColor(kind), (Style)FindResource("BudgetSlider"))
+                {
+                    Owner = Window.GetWindow(this),
+                };
+                if (dlg.ShowDialog() == true)
+                    Appearance.SetPaletteColor(kind, Appearance.ToHex(dlg.SelectedColor));
+            };
+            auto.Click += (_, __) => Appearance.ClearPaletteColor(kind);
+            Appearance.Changed += RefreshSwatch;
+            RefreshSwatch();
+            return row;
+        }
+
+        private static StackPanel SliderWithValue(Slider slider, TextBlock value)
+        {
+            var panel = new StackPanel { Orientation = Orientation.Horizontal };
+            panel.Children.Add(slider);
+            panel.Children.Add(value);
+            return panel;
         }
 
         private Grid Row(string label, FrameworkElement control, string hint, bool top = false, double labelWidth = 150)

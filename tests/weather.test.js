@@ -28,7 +28,7 @@ test('联网有开关，配置项齐全', () => {
   assert.equal(typeof ds.city, 'string', 'city 是字符串（留空也行）');
   assert.ok(Number(ds.timeoutMs) > 0, '要有超时');
   // 示例配置也要有，别让新用户漏掉
-  const ex = JSON.parse(fs.readFileSync(path.join(root, 'config.example.json'), 'utf8'));
+  const ex = JSON.parse(fs.readFileSync(path.join(root, 'config', 'config.example.json'), 'utf8'));
   assert.ok(ex.websearch, 'config.example.json 要有 websearch 段');
   assert.equal(typeof ex.websearch.city, 'string', '示例里要能看到 city 这一项');
 });

@@ -12,7 +12,7 @@ from bridge_ast import load_function
 class BridgeStartupReadyTests(unittest.TestCase):
     def test_bridge_token_default_matches_kernel_and_respects_explicit_values(self):
         token = load_function('wechat_token', {})
-        example = Path(__file__).resolve().parents[1] / 'config.example.json'
+        example = Path(__file__).resolve().parents[1] / 'config' / 'config.example.json'
         self.assertEqual(token({}), json.loads(example.read_text(encoding='utf-8-sig'))['gateway']['wechat']['inboundToken'])
         self.assertEqual(token({'gateway': {'wechat': {'inboundToken': 'custom'}}}), 'custom')
         self.assertEqual(token({'gateway': {'wechat': {'inboundToken': ''}}}), '')

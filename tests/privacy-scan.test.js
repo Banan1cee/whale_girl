@@ -60,6 +60,16 @@ test('群号 / 手机号 / 邮箱 / 密钥 / JWT 会命中，示例值不会', (
   assert.ok(rulesOf(scanText('token ' + jwt)).includes('JWT'));
 });
 
+test('作者公开的提交邮箱不算泄露，相似地址照样报', () => {
+  // 这两个地址写在 LICENSE / docs/NOTICE.md 里做署名，作者本人同意公开
+  assert.deepEqual(scanText('署名 ' + 'chrisgao0312' + '@' + 'qq.com'), []);
+  assert.deepEqual(scanText('署名 ' + '2117286908' + '@' + 'qq.com'), []);
+
+  // 白名单必须是精确地址：只差一位、同域名的仍要报，否则等于按域名放行
+  assert.ok(rulesOf(scanText('联系 ' + 'chrisgao0313' + '@' + 'qq.com')).includes('邮箱'));
+  assert.ok(rulesOf(scanText('联系 ' + '2117286909' + '@' + 'qq.com')).includes('邮箱'));
+});
+
 test('本机用户名路径会命中，别人的路径不会', () => {
   const user = process.env.USERNAME || 'nobody';
   assert.ok(rulesOf(scanText('C:\\Users\\' + user + '\\Documents\\x')).length > 0);

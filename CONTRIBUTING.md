@@ -10,7 +10,7 @@ node -v
 npm start            # 只启动内核 HTTP API（127.0.0.1:8787）；界面请用 WhaleLauncher.exe
 
 # 接微信才需要 Python 3.12
-python -m pip install -r requirements.txt
+python -m pip install -r bridge/requirements.txt
 # wechatauto 由仓库 vendor/wechatauto 提供，pip 不需要装它；源码直跑桥接时把 vendor 加进 PYTHONPATH
 ```
 
@@ -18,8 +18,8 @@ python -m pip install -r requirements.txt
 
 ## 二、改代码之前
 
-1. 先看 `BUGS.md`：每个 bug 的现象 / 根因 / 修复 / 回归测试都记在里面，别重复踩
-2. 看 `CHANGELOG.md`：确认你要改的东西没人正在做
+1. 先看 `docs/BUGS.md`：每个 bug 的现象 / 根因 / 修复 / 回归测试都记在里面，别重复踩
+2. 看 `docs/CHANGELOG.md`：确认你要改的东西没人正在做
 3. `npm test` 先跑一遍，确认基线是绿的（Node 全量 `tests/*.test.js` + Python `tests/test_*.py`，CI 实测）
 
 ## 三、提 PR 的步骤
@@ -64,8 +64,8 @@ git push origin fix/一句话说明
 - [ ] `npm test` 全绿（不许删别人的测试来让它变绿）
 - [ ] 提交信息按 `docs/协作规范.md` 的 新增 / 改进 / 修复 / 其他 四段写，每条改动归到正确的类
 - [ ] 新增/修改的行为有对应测试，且**修复前会失败、修复后通过**
-- [ ] 改到用户看得到的行为时，`CHANGELOG.md` 加一段（版本号我们合并时统一提）
-- [ ] 修的是 bug 就在 `BUGS.md` 加一行：现象 / 根因 / 修复 / 版本 / 回归测试
+- [ ] 改到用户看得到的行为时，`docs/CHANGELOG.md` 加一段（版本号我们合并时统一提）
+- [ ] 修的是 bug 就在 `docs/BUGS.md` 加一行：现象 / 根因 / 修复 / 版本 / 回归测试
 - [ ] 没有提交 `data/`、`config.json`、`wechatauto_db/`、日志、任何真实 Key 或 wxid
 - [ ] 中文注释清楚说明「为什么」，不是「做了什么」
 

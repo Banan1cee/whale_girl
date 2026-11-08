@@ -6,13 +6,28 @@
 
 - 项目名称：**鲸鲸 / Whale Girl**
 - 版权：Copyright (c) 2026 鲸鲸 / Whale Girl contributors
-- 原作者与指定署名方：**[@Banan1cee](https://github.com/Banan1cee)**
 - 项目地址：<https://github.com/Banan1cee/whale_girl>
 - 许可：**GNU Affero General Public License v3.0 only（AGPL-3.0-only，OSI 认可的开源许可证）**
 
-分享本项目或其修改版本时，请保留 `LICENSE`、本 `NOTICE.md` 和版权声明，并在 README、关于页、应用内致谢或其它合理位置注明：
+**共同作者（按首次贡献排序，共同持有本项目著作权）**：
 
-> 基于鲸鲸 / Whale Girl（作者 @Banan1cee，https://github.com/Banan1cee/whale_girl）修改
+| 署名方 | GitHub | 提交邮箱 | 说明 |
+| --- | --- | --- | --- |
+| 高晨阳 | [@Banan1cee](https://github.com/Banan1cee) | chrisgao0312@qq.com | 原作者，项目发起人与主要维护者 |
+| 周政 | [@xmuzhou](https://github.com/xmuzhou) | 2117286908@qq.com | 共同作者 |
+| Muzi0336 | [@Muzi0336](https://github.com/Muzi0336) | 265007223+Muzi0336@users.noreply.github.com | 共同作者 |
+
+以上为三位作者在 Git 提交中使用的邮箱，**作者本人同意公开**，可在这份署名清单中直接引用。
+除此之外的联系方式请走项目 Issues，不要从提交记录里翻别人的私人邮箱。
+
+> 署名以 Git 提交记录为准：`Banan1cee` 与「高晨阳」是同一个人；「周政」与 `zhengzhou` 是同一个人，
+> 其 GitHub 账号为 [@xmuzhou](https://github.com/xmuzhou)。
+> `dsh <dsh@local>` 是 AI 协作工具代提交的身份，**不是**著作权人，不在此列。
+> 注意 GitHub 上的 `@zhengzhou` 是同名的第三方账号，与本项目无关，请勿关联。
+
+分享本项目或其修改版本时，请保留 [LICENSE](../LICENSE)、本 `NOTICE.md` 和版权声明，并在 README、关于页、应用内致谢或其它合理位置注明：
+
+> 基于鲸鲸 / Whale Girl（作者 @Banan1cee、@xmuzhou、@Muzi0336，https://github.com/Banan1cee/whale_girl）修改
 
 同时请标明你做了哪些修改。AGPL-3.0 还要求：分发修改版、或让用户通过网络使用修改版时，必须提供完整对应的源代码。
 
@@ -45,7 +60,18 @@
 
 如果你再分发本项目，请同时保留上述第三方组件的许可证和版权声明。
 
-## 4. 商业使用
+## 4. 共同作者与许可一致性
+
+本项目由三位共同作者按 AGPL-3.0-only 对外发布，作如下内部约定（便于协作，不构成对第三方的额外限制）：
+
+- **贡献即以 AGPL-3.0-only 授权**：向本项目提交代码，视为同意该贡献以 AGPL-3.0-only 分发，无需另签 CLA。
+- **许可不得单方变更**：项目的对外许可证只有一份，即 `LICENSE`。任何作者都不得单方面把项目整体改为闭源或其他许可证；如需变更，须三位作者全部书面同意。
+- **商业授权需全体同意**：“商业使用”一节提到的闭源商业授权，须三位作者一致同意方可授予。
+- **作者身份以 Git 记录为准**：署名清单变更（新增或移除作者）同样需要三位作者同意，并同步更新 `LICENSE` 头部与本节。
+
+本节只约束项目内部的协作方式，不改变任何人对已发布版本依 AGPL-3.0 享有的权利。
+
+## 5. 商业使用
 
 AGPL-3.0 允许商业使用，不需要额外交费。但如果你分发修改版，或让用户通过网络使用修改版，必须按 AGPL-3.0 提供完整对应的源代码。
 

@@ -2,7 +2,7 @@
 
 /**
  * 微信多账号（双开）相关：
- *   - 网页「设置 → 微信账号」靠 /api/wechat/accounts 列出本机账号
+ *   - 启动器「设置 → 微信账号」靠 /api/wechat/accounts 列出本机账号
  *   - 选账号 = 把 config.json 的 wechat.account 改成目标账号目录
  *   - 桥接心跳要上报「现在用的是哪个号」
  *   - 桥接 / uia_compat 里必须有关键的「钉账号」代码（静态守住，别被后来的人改丢）
@@ -151,7 +151,7 @@ test('切号后桥接没重启成功时，发送闸要拦住（别从旧号发�
 
 test('桥接源码里必须留着「钉账号」的关键代码（别被后来的改动弄丢）', () => {
   const bridge = require('./helpers/bridge-source');
-  assert.match(bridge, /--list-accounts/, '要有给网页列账号的一次性模式');
+  assert.match(bridge, /--list-accounts/, '要有给启动器列账号的一次性模式');
   assert.match(bridge, /def resolve_account_dir/, '要能把目录名/wxid/昵称解析成账号目录');
   assert.match(bridge, /db\.account != acct/, '建库后要断言没被库偷偷换号');
   assert.match(bridge, /def ensure_account_window/, '发送前要确认窗口还活着');
@@ -166,4 +166,13 @@ test('桥接源码里必须留着「钉账号」的关键代码（别被后来�
   assert.match(compat, /def pinned_window/, '要能查当前钉住哪个窗口');
   assert.match(compat, /_pinned_hwnd/, '_find_main 要先认钉住的窗口');
   assert.match(compat, /def _session_rows_of/, '要能只读某个窗口的会话行（认账号用）');
+});
+
+test('同一账号多个微信主窗时选一个，不要卡在「暂未绑定」', () => {
+  const bridge = require('./helpers/bridge-source');
+  assert.match(bridge, /def choose_main_window/, '要有一个稳定的多窗口选择函数');
+  assert.doesNotMatch(bridge, /len\(matched\)\s*!=\s*1/, '多个同账号主窗不能直接放弃');
+  assert.doesNotMatch(bridge, /所选账号对应多个主窗口，暂未绑定/, '旧失败提示会把 UIA 永久卡在等待');
+  assert.match(bridge, /matched\.append\(\(h, _cpid, _area, _fg\)\)/, '候选窗口要带上面积和前台状态');
+  assert.match(bridge, /choose_main_window\(matched, pinned=int/, '优先沿用上次钉住的窗口');
 });

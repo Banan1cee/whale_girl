@@ -42,7 +42,7 @@ test('开关能被配置关掉，关了就走旧行为', () => {
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 6, retryDelay: 60 });
 });
 
-test('每个开关都有 label/desc，控制台才显示得出来', () => {
+test('每个开关都有 label/desc，启动器才显示得出来', () => {
   const { root, cfg } = boot();
   const list = features.list(cfg);
   assert.ok(list.length >= 5);

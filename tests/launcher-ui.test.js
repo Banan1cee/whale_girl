@@ -105,6 +105,36 @@ test('顶栏有太阳/月亮开关，背景图有独立图层和模糊', () => {
   assert.ok(main.includes('<BlurEffect'), '背景图应该做模糊，避免抢文字');
 });
 
+test('背景模糊与透明度可调，玻璃面板 + 自动蒙版保证文字可读', () => {
+  const main = readLauncher('MainWindow.xaml');
+  const code = readLauncher('MainWindow.xaml.cs');
+  const settings = readLauncher('Views/SettingsPage.xaml.cs');
+
+  assert.ok(main.includes('x:Name="BackdropBlurEffect"'), '背景模糊效果要能被代码调半径');
+  assert.ok(code.includes('BackdropImage.Opacity = Appearance.BackdropOpacity'), '背景图透明度要接到设置');
+  assert.ok(code.includes('BackdropBlurEffect.Radius = Appearance.BackdropBlur'), '背景模糊要接到设置');
+
+  for (const member of ['SetBackdropBlur', 'SetBackdropFit', 'SetBackdropOpacity', 'SetSurfaceOpacity', 'BuildPalettes', 'ApplyPalette', 'ApplyTextPalette', 'ResolveTint', 'ApplyTextHalo', 'ApplyGlassSurfaces', 'SetPaletteColor', 'ResetPalette']) {
+    assert.ok(appearance.includes(member), 'Appearance.cs 缺少 ' + member);
+  }
+  assert.match(appearance, /backdropBlur\s*=\s*BackdropBlur/, '模糊度要写进 launcher-ui.json');
+  assert.match(appearance, /backdropOpacity\s*=\s*BackdropOpacity/, '透明度要写进 launcher-ui.json');
+  assert.match(appearance, /surfaceOpacity\s*=\s*SurfaceOpacity/, '面板不透明度要写进 launcher-ui.json');
+  assert.match(appearance, /backdropFit\s*=\s*BackdropFit/, '背景填充要写进 launcher-ui.json');
+  assert.match(appearance, /accentColor\s*=\s*AccentOverride/, '主题色要写进 launcher-ui.json');
+  // 莫奈取色：从背景图统计色相，而不是写死颜色
+  assert.ok(appearance.includes('TryGetMonet') && appearance.includes('Hsv'), '缺少莫奈取色');
+  // 卡片从 0 调到上限：默认只留一层淡玻璃，不再盖住背景图
+  assert.match(appearance, /\("CardBg", 0\.00, 0\.86\)/, '卡片没有做成可调透明');
+  // 文字自带反色描边，面板拉到 0 也能读
+  assert.ok(appXaml.includes('x:Key="TextHalo"'), 'App.xaml 缺少文字描边资源');
+  assert.match(appXaml, /TargetType="TextBlock"[\s\S]*?Effect" Value="\{DynamicResource TextHalo\}"/, 'TextBlock 没挂描边');
+
+  assert.ok(settings.includes('背景模糊') && settings.includes('背景透明度'), '设置页缺少背景滑块');
+  assert.ok(settings.includes('面板不透明度'), '设置页缺少面板不透明度滑块');
+  assert.ok(settings.includes('SetBackdropBlur') && settings.includes('SetBackdropOpacity') && settings.includes('SetSurfaceOpacity'), '滑块没接到 Appearance');
+});
+
 test('人设页左侧身份/说话方式子导航已移除，分区直接铺满', () => {
   const xaml = readLauncher('Views/PersonaPage.xaml');
   const code = readLauncher('Views/PersonaPage.xaml.cs');
@@ -165,7 +195,7 @@ test('「深度思考」开关在模型卡的聊天页里，默认关，读写 s
   const chatPanel = code.slice(chatStart, voiceStart);
   assert.ok(chatPanel.includes('"深度思考"'), '聊天页缺少深度思考开关');
   assert.ok(chatPanel.includes('思考 token 计入输出预算'), '要说明变慢 / 变贵');
-  // 不能再挂 config 的 deepseek.thinking：它会被网页保存的 settings.thinking 盖掉
+  // 不能再挂 config 的 deepseek.thinking：它会被启动器保存的 settings.thinking 盖掉
   assert.ok(!code.includes('Path = "deepseek.thinking"'), '不要再用 config 的 deepseek.thinking');
   assert.ok(!code.includes('思考（打开后会减慢说话速度）'), '旧语音页开关要删掉');
   // 读写都走 data/settings.json：保存时带 thinking，加载时回填

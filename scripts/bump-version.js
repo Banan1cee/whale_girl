@@ -11,7 +11,7 @@
  *
  * 它会：
  *   1. package.json 版本 +1
- *   2. 在 CHANGELOG.md 最上面插一条对应版本（内容就是你给的说明）
+ *   2. 在 docs/CHANGELOG.md 最上面插一条对应版本（内容就是你给的说明）
  *   3. 打印新旧版本号
  *
  * 已经存在同名版本会直接报错退出，避免同一个版本号改两次。
@@ -35,7 +35,7 @@ if (!['patch', 'minor', 'major'].includes(level)) {
 }
 
 const pkgPath = path.join(root, 'package.json');
-const clPath = path.join(root, 'CHANGELOG.md');
+const clPath = path.join(root, 'docs', 'CHANGELOG.md');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 // 版本号允许两段（3.60）或三段（3.55.1）：两段式加补丁就补成三段，别凭空造怪号。
 const parts = String(pkg.version).split('.').map((n) => Number(n) || 0);

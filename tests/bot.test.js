@@ -545,3 +545,23 @@ test('同名群友单独 @ 时只恢复自己的上一条问题', async () => {
   assert.equal(recovered.msg.cleanText, '甲的问题是什么');
   cleanup();
 });
+
+test('主人私聊提示词带日记工具，标记会被替换成原文且不把全文写进记忆', async () => {
+  const { bot, store, cleanup } = makeBot();
+  bot.diary = {
+    readForChat: (token) => (token === 'latest' ? '【2026-11-06】\n今天和主人聊得很开心。' : null),
+  };
+  const decision = await bot.decide(privateMsg('在吗', { senderId: 'wxid_test_master', senderName: 'Master' }));
+  assert.equal(decision.action, 'reply');
+  assert.match(decision.system, /\[\[diary:/);
+
+  const bubbles = bot.finalize(decision, '给你看 [[diary:latest]]');
+  const sent = bubbles.join('\n');
+  assert.match(sent, /今天和主人聊得很开心/);
+  assert.doesNotMatch(sent, /\[\[diary:/);
+
+  const stored = store.messages(decision.key, 10).at(-1);
+  assert.match(stored.text, /（读取日记）/);
+  assert.doesNotMatch(stored.text, /今天和主人聊得很开心/);
+  cleanup();
+});

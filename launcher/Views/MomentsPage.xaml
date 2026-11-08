@@ -1,0 +1,143 @@
+<UserControl x:Class="WhaleLauncher.Views.MomentsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="Transparent">
+    <!-- 和其它设置页一样：整页一个滚动条，窗口变小时内容不被裁掉 -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                  FocusVisualStyle="{x:Null}">
+        <Grid Margin="28,24,32,20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+        <!-- 页头与其它页面保持一致：H1 在左，说明在右 -->
+        <DockPanel Grid.Row="0" LastChildFill="False">
+            <TextBlock DockPanel.Dock="Left" Text="朋友圈" Style="{StaticResource H1}" VerticalAlignment="Center" />
+            <TextBlock DockPanel.Dock="Right" Text="本地缓存 · 手动互动" Style="{StaticResource Small}"
+                       VerticalAlignment="Center" />
+        </DockPanel>
+
+        <TextBlock Grid.Row="1" Style="{StaticResource Small}" Margin="0,8,0,14" TextWrapping="Wrap"
+                   Text="读取使用当前桥接账号的本地缓存，未浏览过的动态可能不在缓存里；互动会短暂操作微信窗口，执行后请在微信中确认。" />
+
+        <!-- 上半：左侧读取，右侧互动；和表情包/提醒页一样用两张卡片分栏 -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="18,16" Margin="0,0,6,0">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="读取本地缓存" Style="{StaticResource H2}" />
+                            <TextBlock Text="不打开微信界面，也不下载媒体" Style="{StaticResource Small}" Margin="0,3,0,0" />
+                        </StackPanel>
+                        <CheckBox x:Name="ChkOwn" Grid.Column="1" Content="只看自己"
+                                  VerticalAlignment="Center" Margin="12,0,0,0" />
+                    </Grid>
+
+                    <TextBlock Text="正文关键词（可留空）" Style="{StaticResource Label}" Margin="0,16,0,6" />
+                    <TextBox x:Name="TxtKeyword" Height="34" VerticalContentAlignment="Center"
+                             ToolTip="留空读取最近动态；填写后只显示正文包含该关键词的动态" />
+
+                    <TextBlock Text="发布者内部 ID（可留空，不是昵称）" Style="{StaticResource Label}" Margin="0,12,0,6" />
+                    <TextBox x:Name="TxtUsername" Height="34" VerticalContentAlignment="Center"
+                             ToolTip="只筛选指定 wxid 的动态，不是昵称" />
+
+                    <Button x:Name="BtnRead" Content="读取最近 20 条" Style="{StaticResource Primary}"
+                            HorizontalAlignment="Left" Margin="0,16,0,0" />
+                    <TextBlock Text="本页不保存历史，离开页面即清空输入；读取结果会留一份最近快照给主人问答。"
+                               Style="{StaticResource Small}" Margin="0,10,0,0" TextWrapping="Wrap" />
+
+                    <Border Height="1" Background="{DynamicResource Line}" Margin="0,14,0,12" />
+                    <CheckBox x:Name="ChkAutoLike" Content="自动点赞（模型判断）"
+                              VerticalAlignment="Center" Click="OnAutoLikeChanged"
+                              ToolTip="只对积极、非求助/丧事、正文足够长的动态判断；每天有次数上限，执行后不重试" />
+                    <TextBlock Text="模型只决定点不点；广告、求助、讣告、负面情绪和纯图片动态会跳过。"
+                               Style="{StaticResource Small}" Margin="0,4,0,0" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <TextBlock Text="自动读取" Style="{StaticResource Small}" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CmbAutoRead" Width="132" Height="28" FontSize="12"
+                                  Margin="8,0,0,0" SelectionChanged="OnAutoReadChanged">
+                            <ComboBoxItem Content="关闭" Tag="0" />
+                            <ComboBoxItem Content="每 4 小时" Tag="4" />
+                            <ComboBoxItem Content="每 6 小时" Tag="6" />
+                            <ComboBoxItem Content="每 12 小时" Tag="12" />
+                        </ComboBox>
+                    </StackPanel>
+                    <TextBlock x:Name="AutoStatus" Style="{StaticResource Small}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Column="1" Style="{StaticResource Card}" Padding="18,16" Margin="6,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="手动互动" Style="{StaticResource H2}" />
+                    <TextBlock Text="用左侧的正文关键词定位目标；执行后不会自动重试"
+                               Style="{StaticResource Small}" Margin="0,3,0,0" />
+
+                    <Grid Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="发布者准确昵称" Style="{StaticResource Label}" Margin="0,0,0,6" />
+                            <TextBox x:Name="TxtPublisher" Height="34" VerticalContentAlignment="Center" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="动作" Style="{StaticResource Label}" Margin="0,0,0,6" />
+                            <ComboBox x:Name="ActionBox" Height="34" FontSize="12" VerticalContentAlignment="Center" />
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="评论内容 / 发布文案草稿" Style="{StaticResource Label}" Margin="0,12,0,6" />
+                    <TextBox x:Name="TxtComment" Height="34" VerticalContentAlignment="Center" />
+
+                    <TextBlock Text="被回复者昵称（仅回复评论）" Style="{StaticResource Label}" Margin="0,12,0,6" />
+                    <TextBox x:Name="TxtReplyTo" Height="34" VerticalContentAlignment="Center" />
+
+                    <WrapPanel Margin="0,16,0,0">
+                        <Button x:Name="BtnInteract" Content="执行所选互动" Style="{StaticResource Ghost}" />
+                        <Button x:Name="BtnDraft" Content="复制文案" Style="{StaticResource Ghost}" Margin="8,0,0,0"
+                                ToolTip="只把评论/文案复制到剪贴板，到微信朋友圈里手动发表" />
+                    </WrapPanel>
+                    <TextBlock Text="互动只代表界面操作已执行，未核验微信服务器结果；显示“未确认”时不要重复操作。"
+                               Style="{StaticResource Small}" Margin="0,10,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- 下半：读取结果 -->
+        <Border Grid.Row="3" Style="{StaticResource Card}" Margin="0,12,0,0" Height="280">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <DockPanel Grid.Row="0" Margin="16,12,16,0" LastChildFill="False">
+                    <TextBlock DockPanel.Dock="Left" Text="读取结果" Style="{StaticResource Label}" VerticalAlignment="Center" />
+                </DockPanel>
+                <TextBlock x:Name="StatusText" Grid.Row="1" Text="尚未读取。" Style="{StaticResource Small}"
+                           Margin="16,4,16,6" TextWrapping="Wrap" />
+
+                <TextBox x:Name="TxtOutput" Grid.Row="2" Margin="16,0,16,14" IsReadOnly="True"
+                         TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
+                         Background="Transparent" BorderThickness="0" Padding="0"
+                         Foreground="{DynamicResource Text2}" FontSize="12.5" FocusVisualStyle="{x:Null}" />
+            </Grid>
+        </Border>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

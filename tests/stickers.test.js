@@ -43,7 +43,7 @@ test('表情包：默认关（总闸），关着时一片空白', () => {
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 80 });
 });
 
-test('表情包：开关在调试台登记表最前面，并标着 experimental', () => {
+test('表情包：开关在设置登记表最前面，并标着 experimental', () => {
   assert.equal(features.REGISTRY[0].key, 'stickers', '实验性总闸要排在最上面');
   assert.equal(features.REGISTRY[0].experimental, true);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-s-'));

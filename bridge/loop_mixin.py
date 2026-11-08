@@ -279,7 +279,7 @@ class LoopMixin:
         """每 20 秒告诉服务端「桥接还活着、UIA/ffmpeg 状态如何」。
 
         没有心跳时，服务端只知道「它收到了消息」，不知道回复到底有没有能力发出去；
-        网页上也就没法提示「桥接离线」或「UIA 不可用」。
+        启动器上也就没法提示「桥接离线」或「UIA 不可用」。
         """
         base = self.bot_url.rsplit('/webhook', 1)[0]
         misses = 0
@@ -347,9 +347,9 @@ class LoopMixin:
             G.time.sleep(20)
 
     def config_watch(self):
-        """盯 config.json 的修改时间：调试台一保存就热更新，不用重启桥接。
+        """盯 config.json 的修改时间：启动器一保存就热更新，不用重启桥接。
 
-        以前这些开关只在启动时读一次，用户在 /debug 里关掉「主动搭话」、
+        以前这些开关只在启动时读一次，用户在启动器里关掉「主动搭话」、
         改「忽略名单」、「群聊开关」都没反应，只能重启桥接 —— 也就是
         「调了没用，还是默认」。
         """
@@ -368,14 +368,14 @@ class LoopMixin:
                 G.log('桥接连接设置变了，重新连接微信与内核…')
                 G.os._exit(7)
             if G.reload_config():
-                G.log('配置已热更新（调试台改完即时生效，不用重启桥接）')
+                G.log('配置已热更新（启动器改完即时生效，不用重启桥接）')
 
     def contacts_sync_once(self):
         """把「联系人 + 群」清单推给服务端一次（H1 接线；后台线程跑完即退）。
 
         bridge/contacts_sync.py 只负责从 DB 整理数据；推送（POST
         /api/wechat/contacts/sync）在这里做。失败只记日志：清单丢一轮只影响
-        网页选择器的候选，绝不影响收发消息。
+        启动器选择器的候选，绝不影响收发消息。
         """
         try:
             try:

@@ -94,6 +94,9 @@ namespace WhaleLauncher
         private static readonly TimeSpan BridgeRestartWindow = TimeSpan.FromMinutes(10);
         private Process _node;
         private Process _bridge;
+        // 启动器无论怎么退出都要带走内核和桥接：正常关窗靠 StopAll，进程被强杀
+        // 只能靠 Job 句柄关闭时由系统结束整棵进程树。
+        private readonly ProcessJob _job = new ProcessJob();
         private readonly HttpClient _http = new HttpClient(new HttpClientHandler { UseProxy = false })
         {
             Timeout = TimeSpan.FromSeconds(2)
@@ -111,6 +114,8 @@ namespace WhaleLauncher
             LogPath = Path.Combine(DataDir, "launcher.log");
             foreach (var k in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy" })
                 try { Environment.SetEnvironmentVariable(k, null); } catch { }
+            if (!_job.IsAvailable)
+                SayWarn("无法创建进程 Job：启动器被强杀时可能残留内核进程");
         }
 
         /// <summary>
@@ -380,7 +385,10 @@ namespace WhaleLauncher
                 psi.Environment["PYTHONIOENCODING"] = "utf-8";
                 psi.Environment["PYTHONUNBUFFERED"] = "1";
                 psi.Environment["PYTHONUTF8"] = "1";
-                if (src == "K") psi.Environment["WHALE_CONTROL_STDIN"] = "1";
+                // 内核/桥接都通过 stdin 管道感知启动器是否还活着：父进程崩溃或被
+                // 强杀时管道只会关闭，它们读到 EOF 就自行退出，不留孤儿进程。
+                psi.Environment["WHALE_CONTROL_STDIN"] = "1";
+                psi.Environment["WHALE_PARENT_PID"] = Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
                 var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 // 进程崩掉时，真正的死因往往只在最后几行 stderr 里（Python traceback /
@@ -412,6 +420,8 @@ namespace WhaleLauncher
                     if (src == "B") _ = RecoverBridgeAsync(p, _restartGeneration);
                 };
                 p.Start();
+                if (!_job.Assign(p))
+                    SayWarn($"{what}未能加入启动器 Job，启动器被强杀时可能残留");
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
                 Say($"已启动{what}（pid={p.Id}）");
@@ -631,6 +641,9 @@ namespace WhaleLauncher
         {
             _disposed = true;
             StopAll();
+            // 兜底：StopAll 失败、或还有 StopAll 不知道的子进程（node 再拉起的
+            // 子进程），都随 Job 关闭一起结束。
+            _job.Dispose();
             _http.Dispose();
         }
     }

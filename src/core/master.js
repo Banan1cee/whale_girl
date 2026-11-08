@@ -3,9 +3,9 @@
 /**
  * 主人身份认证 —— 全项目只在这里判断「这条消息是不是主人发的」。
  *
- * 为什么要单独一个文件：以前 bot.js（真正跑消息的地方）和 server.js（调试台预览提示词）
- * 各写了一套规则，两边不一致 —— 调试台显示「识别为主人」，微信里却当陌生人，
- * 于是在控制台怎么改都像没生效。现在两边都调 matchMaster()。
+ * 为什么要单独一个文件：以前消息处理和提示词预览各写了一套规则，两边不一致 ——
+ * 预览显示「识别为主人」，微信里却当陌生人，于是在面板里怎么改都像没生效。
+ * 现在两边都调 matchMaster()。
  *
  * 判定顺序：
  *   1. senderId 等于 master.wxids 里的某一项 → 是主人（微信内部 id，改不了昵称也冒充不了）
@@ -64,7 +64,7 @@ function matchMaster(config, msg = {}) {
   return { isMaster, reason, names, wxids, hardIds, nameHit, nameFallback, senderId, senderName, platform };
 }
 
-/** 配置明显有问题时返回人话提示（调试台和日志用，不影响判定） */
+/** 配置明显有问题时返回人话提示（启动器和日志用，不影响判定） */
 function masterWarnings(config) {
   const { names, wxids } = masterLists(config);
   const out = [];
