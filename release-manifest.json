@@ -3,6 +3,7 @@
   "released_at": "2026-11-08T13:11:53Z",
   "force_after_hours": 12,
   "force": false,
+  "force_from": null,
   "kill_below": null,
   "message": "鲸鲸 4.0.8.2 已发布：下载安装包覆盖安装即可，data 与 config.json 不受影响。",
   "manifest_version": 10,
