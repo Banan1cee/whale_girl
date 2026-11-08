@@ -21,7 +21,12 @@ sys.path.insert(0, os.path.join(ROOT, 'bridge'))
 
 # account_mixin 顶部是 `import engine as G`；engine 会拉起整条运行时（requests / win32），
 # 单元测试只需要 G.os / G.json / G.ROOT，所以先塞一个最小替身。
-if 'engine' not in sys.modules:
+#
+# 用完必须把 sys.modules['engine'] 还原：unittest discover 是同一个进程跑完所有
+# test_*.py，替身留在全局会污染后面的 bridge_ast（它 import engine 拿真实模块，
+# 拿到替身就会报 `module 'engine' has no attribute ...`）。
+_prev_engine = sys.modules.get('engine')
+if _prev_engine is None:
     _stub = types.ModuleType('engine')
     _stub.os = os
     _stub.json = json
@@ -29,6 +34,11 @@ if 'engine' not in sys.modules:
     sys.modules['engine'] = _stub
 
 import account_mixin  # noqa: E402
+
+if _prev_engine is None:
+    sys.modules.pop('engine', None)
+else:
+    sys.modules['engine'] = _prev_engine
 
 
 class _FakeDB:
