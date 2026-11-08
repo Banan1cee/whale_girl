@@ -4,7 +4,6 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -39,10 +38,7 @@ namespace WhaleLauncher.Views
     public partial class BridgePage : UserControl, IRefreshable
     {
         private readonly RuntimeSupervisor _sup;
-        private readonly HttpClient _http = new HttpClient(new HttpClientHandler { UseProxy = false })
-        {
-            Timeout = TimeSpan.FromSeconds(4)
-        };
+        private readonly ConfigSaver _saver;
 
         private const int ViewCap = 3000;
         // 后台通道打字的编码（写进 config.json 的 wechat.bgSend.charMode）。
@@ -71,6 +67,7 @@ namespace WhaleLauncher.Views
             InitializeComponent();
             SmoothScroll.Attach(Console);
             _sup = sup;
+            _saver = new ConfigSaver(sup);
             Console.ItemsSource = _view;
 
             var hist = _sup.History(ViewCap);
@@ -286,18 +283,18 @@ namespace WhaleLauncher.Views
             var wanted = "";
             try
             {
-                var json = await _http.GetStringAsync(_sup.Url + "/api/wechat/accounts");
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-                wanted = Str(root, "wanted");
+                var res = await Api.Get(_sup.Url, "/api/wechat/accounts");
+                if (!res.Ok) return;
+                var root = res.Root;
+                wanted = JsonRead.Str(root, "wanted");
                 if (root.TryGetProperty("accounts", out var arr) && arr.ValueKind == JsonValueKind.Array)
                 {
                     foreach (var a in arr.EnumerateArray())
                     {
-                        var account = Str(a, "account");
+                        var account = JsonRead.Str(a, "account");
                         if (string.IsNullOrEmpty(account)) continue;
-                        var nick = Str(a, "nick");
-                        var active = a.TryGetProperty("active", out var ac) && ac.ValueKind == JsonValueKind.True;
+                        var nick = JsonRead.Str(a, "nick");
+                        var active = JsonRead.Bool(a, "active");
                         var name = string.IsNullOrEmpty(nick) ? account : nick;
                         cards.Add(new AccountCard
                         {
@@ -365,12 +362,10 @@ namespace WhaleLauncher.Views
         {
             try
             {
-                var body = new StringContent("{\"account\":\"" + Api.Esc(account) + "\"}", Encoding.UTF8, "application/json");
-                var res = await _http.PostAsync(_sup.Url + "/api/wechat/account", body);
-                var text = await res.Content.ReadAsStringAsync();
-                if (!res.IsSuccessStatusCode)
+                var res = await Api.PostJson(_sup.Url, "/api/wechat/account", new { account });
+                if (!res.Ok)
                 {
-                    SwitchHint.Text = "切账号失败：" + ApiText(text);
+                    SwitchHint.Text = "切账号失败：" + Api.Message(res);
                     return;
                 }
                 TxtAccount.Text = account;
@@ -392,21 +387,6 @@ namespace WhaleLauncher.Views
             }
         }
 
-        /// <summary>后端报错是 {"error":"..."}，取出来给人看；不是 JSON 就原样给。</summary>
-        private static string ApiText(string raw)
-        {
-            try
-            {
-                using var doc = JsonDocument.Parse(raw);
-                if (doc.RootElement.ValueKind == JsonValueKind.Object
-                    && doc.RootElement.TryGetProperty("error", out var er)
-                    && er.ValueKind == JsonValueKind.String)
-                    return er.GetString() ?? raw;
-            }
-            catch { }
-            return string.IsNullOrWhiteSpace(raw) ? "内核没响应" : raw;
-        }
-
         private void OnRefreshAccounts(object sender, RoutedEventArgs e)
         {
             _lastAccounts = DateTime.MinValue;
@@ -424,21 +404,14 @@ namespace WhaleLauncher.Views
             _sup.Say("刷新微信账号列表（开库读昵称，最多 30 秒）…");
             try
             {
-                // 用独立的 HttpClient：页面这个 4 秒超时，扫描要十几秒
-                using var scan = new HttpClient(new HttpClientHandler { UseProxy = false })
-                {
-                    Timeout = TimeSpan.FromSeconds(45)
-                };
-                using var res = await scan.PostAsync(
-                    _sup.Url + "/api/wechat/accounts/refresh",
-                    new StringContent("{}", Encoding.UTF8, "application/json"));
-                var body = await res.Content.ReadAsStringAsync();
-                if (!body.Contains("\"refreshed\":true"))
-                    _sup.Say("扫描账号没成功：" + body);
+                // 扫描要开库读昵称，最多等 45 秒；Api 按请求传超时，不用为它另建 HttpClient。
+                var res = await Api.Post(_sup.Url, "/api/wechat/accounts/refresh", "{}", 45);
+                if (!res.Ok || !res.Bool("refreshed"))
+                    _sup.Say("扫描账号没成功：" + Api.Message(res));
             }
             catch (Exception ex)
             {
-                _sup.Say("扫描账号失败：" + ex.Message);
+                _sup.Say("扫描账号失败：" + Api.FriendlyError(ex));
             }
             finally
             {
@@ -462,24 +435,24 @@ namespace WhaleLauncher.Views
                 if (!cfg.TryGetProperty("wechat", out var wx) || wx.ValueKind != JsonValueKind.Object) return;
 
                 _loading = true;
-                ChkGuard.IsChecked = Bool(wx, "accountGuard");
-                ChkQuote.IsChecked = Bool(wx, "quoteReply");
+                ChkGuard.IsChecked = JsonRead.Bool(wx, "accountGuard");
+                ChkQuote.IsChecked = JsonRead.Bool(wx, "quoteReply");
 
                 var enabled = true;
                 var fallback = true;
                 var charMode = "auto";
                 var charGap = 40;
-                TxtAccount.Text = Str(wx, "account");
+                TxtAccount.Text = JsonRead.Str(wx, "account");
                 if (wx.TryGetProperty("bgSend", out var bg) && bg.ValueKind == JsonValueKind.Object)
                 {
-                    enabled = Bool(bg, "enabled");
-                    fallback = Bool(bg, "fallbackToForeground");
-                    charMode = Str(bg, "charMode");
+                    enabled = JsonRead.Bool(bg, "enabled");
+                    fallback = JsonRead.Bool(bg, "fallbackToForeground");
+                    charMode = JsonRead.Str(bg, "charMode");
                     if (charMode.Length == 0) charMode = "auto";
-                    charGap = Int(bg, "charGapMs", 40);
-                    ChkUnhide.IsChecked = Bool(bg, "unhideWindow");
-                    ChkVerify.IsChecked = Bool(bg, "verify");
-                    ChkStrip.IsChecked = Bool(bg, "stripUnencodable");
+                    charGap = JsonRead.Int(bg, "charGapMs", 40);
+                    ChkUnhide.IsChecked = JsonRead.Bool(bg, "unhideWindow");
+                    ChkVerify.IsChecked = JsonRead.Bool(bg, "verify");
+                    ChkStrip.IsChecked = JsonRead.Bool(bg, "stripUnencodable");
                 }
                 if (!TxtCharGap.IsKeyboardFocusWithin) TxtCharGap.Text = charGap.ToString();
                 CmbCharMode.Items.Clear();
@@ -500,50 +473,53 @@ namespace WhaleLauncher.Views
             }
         }
 
-        private static bool Bool(JsonElement e, string name)
-            => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
-
-        private static string Str(JsonElement e, string name)
-            => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? (v.GetString() ?? "") : "";
-
-        private static int Int(JsonElement e, string name, int fallback)
-            => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? n : fallback;
-
-        private async Task PatchAsync(string json)
+        private async Task PatchAsync(IDictionary<string, object> patch)
         {
-            try
-            {
-                var body = new StringContent("{\"patch\":" + json + "}", Encoding.UTF8, "application/json");
-                var res = await _http.PostAsync(_sup.Url + "/api/config", body);
-                var text = await res.Content.ReadAsStringAsync();
-                SwitchHint.Text = res.IsSuccessStatusCode ? "已保存，桥接会在几秒内用上新配置。" : "保存失败：" + text;
-            }
-            catch (Exception ex)
-            {
-                SwitchHint.Text = "保存失败：" + ex.Message;
-            }
+            var res = await _saver.SaveAsync(() => patch);
+            SwitchHint.Text = res.Ok
+                ? "已保存，桥接会在几秒内用上新配置。"
+                : "保存失败：" + Api.Message(res);
         }
 
         private async void OnToggleGuard(object sender, RoutedEventArgs e)
         {
             if (_loading) return;
-            await PatchAsync("{\"wechat\":{\"accountGuard\":" + (ChkGuard.IsChecked == true ? "true" : "false") + "}}");
+            await PatchAsync(new Dictionary<string, object>
+            {
+                ["wechat"] = new Dictionary<string, object>
+                {
+                    ["accountGuard"] = ChkGuard.IsChecked == true
+                }
+            });
         }
 
         private async void OnToggleQuote(object sender, RoutedEventArgs e)
         {
             if (_loading) return;
-            await PatchAsync("{\"wechat\":{\"quoteReply\":" + (ChkQuote.IsChecked == true ? "true" : "false") + "}}");
+            await PatchAsync(new Dictionary<string, object>
+            {
+                ["wechat"] = new Dictionary<string, object>
+                {
+                    ["quoteReply"] = ChkQuote.IsChecked == true
+                }
+            });
         }
 
         private async void OnSendModeChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_loading || CmbSend.SelectedIndex < 0) return;
             var idx = CmbSend.SelectedIndex;
-            var enabled = idx != 1;
-            var fallback = idx == 0;
-            await PatchAsync("{\"wechat\":{\"bgSend\":{\"enabled\":" + (enabled ? "true" : "false") +
-                             ",\"fallbackToForeground\":" + (fallback ? "true" : "false") + "}}}");
+            await PatchAsync(new Dictionary<string, object>
+            {
+                ["wechat"] = new Dictionary<string, object>
+                {
+                    ["bgSend"] = new Dictionary<string, object>
+                    {
+                        ["enabled"] = idx != 1,
+                        ["fallbackToForeground"] = idx == 0
+                    }
+                }
+            });
         }
 
         // ── 账号与发送（原「设置 → 微信 · 账号与发送」，归位到本页）────
@@ -561,24 +537,42 @@ namespace WhaleLauncher.Views
 
         private async Task SaveSendSettingsAsync()
         {
-            var gap = 40;
-            if (int.TryParse((TxtCharGap.Text ?? "").Trim(), out var g)) gap = Math.Clamp(g, 20, 80);
-            else if ((TxtCharGap.Text ?? "").Trim().Length > 0) TxtCharGap.Text = gap.ToString();
+            if (!TxtCharGap.TryRead(out var gap))
+            {
+                SwitchHint.Text = TxtCharGap.ErrorText;
+                return;
+            }
 
             var mode = CharModeValues[Math.Max(0, Math.Min(CmbCharMode.SelectedIndex, CharModeValues.Length - 1))];
-            await PatchAsync("{\"wechat\":{"
-                + "\"account\":\"" + Api.Esc(TxtAccount.Text.Trim()) + "\","
-                + "\"bgSend\":{\"charMode\":\"" + Api.Esc(mode) + "\",\"charGapMs\":" + gap + "}}}");
+            await PatchAsync(new Dictionary<string, object>
+            {
+                ["wechat"] = new Dictionary<string, object>
+                {
+                    ["account"] = TxtAccount.Text.Trim(),
+                    ["bgSend"] = new Dictionary<string, object>
+                    {
+                        ["charMode"] = mode,
+                        ["charGapMs"] = gap
+                    }
+                }
+            });
         }
 
         private async void OnSaveSendOpt(object sender, RoutedEventArgs e)
         {
             if (_loading) return;
-            await PatchAsync("{\"wechat\":{\"bgSend\":{"
-                + "\"unhideWindow\":" + (ChkUnhide.IsChecked == true ? "true" : "false") + ","
-                + "\"verify\":" + (ChkVerify.IsChecked == true ? "true" : "false") + ","
-                + "\"stripUnencodable\":" + (ChkStrip.IsChecked == true ? "true" : "false")
-                + "}}}");
+            await PatchAsync(new Dictionary<string, object>
+            {
+                ["wechat"] = new Dictionary<string, object>
+                {
+                    ["bgSend"] = new Dictionary<string, object>
+                    {
+                        ["unhideWindow"] = ChkUnhide.IsChecked == true,
+                        ["verify"] = ChkVerify.IsChecked == true,
+                        ["stripUnencodable"] = ChkStrip.IsChecked == true
+                    }
+                }
+            });
         }
     }
 }

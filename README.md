@@ -90,7 +90,6 @@ The full field list is in [`docs/设置说明.md`](docs/设置说明.md). Owner 
 | --- | --- |
 | [`docs/设置说明.md`](docs/设置说明.md) | All configuration fields and admin commands |
 | [`docs/接入微信.md`](docs/接入微信.md) | WeChat bridge, UIA elevation, multi-account notes |
-| [`docs/接入抖音.md`](docs/接入抖音.md) | Douyin gateway setup |
 | [`docs/日记功能.md`](docs/日记功能.md) | Diary behavior and troubleshooting |
 | [`docs/朋友圈实现.md`](docs/朋友圈实现.md) | Moments cache, reading, and manual interaction |
 | [`docs/搜索模块.md`](docs/搜索模块.md) | Search sources and relevance rules |

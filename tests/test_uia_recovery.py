@@ -74,13 +74,24 @@ class RecoveryTests(unittest.TestCase):
 
     def test_multiple_windows_of_same_account_pick_foreground(self):
         rebind = Mock()
+        resolve = Mock(return_value=((444, 555), []))
         env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False}, log=Mock(),
                    _probe_wechat_windows=lambda: (None, [], [
-                       (222, 333, 800, False), (444, 555, 100, True)]), rebind_uia=rebind)
+                       (222, 333, 800, False), (444, 555, 100, True)]), rebind_uia=rebind,
+                   uia_boot=SimpleNamespace(resolve_account_windows=resolve))
         env['choose_main_window'] = load_function('choose_main_window', env)
         self.assertTrue(load_function('pick_account_window', env)())
         self.assertEqual(env['ACCOUNT']['hwnd'], 444)
         rebind.assert_called_once_with(444)
+
+    def test_unresolved_cross_process_windows_fail_closed(self):
+        resolve = Mock(return_value=(None, []))
+        env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False}, log=Mock(),
+                   _probe_wechat_windows=lambda: (None, [], [(111, 333, 10, False), (222, 444, 20, False)]),
+                   uia_boot=SimpleNamespace(resolve_account_windows=resolve), rebind_uia=Mock())
+        env['choose_main_window'] = load_function('choose_main_window', env)
+        self.assertFalse(load_function('pick_account_window', env)())
+        self.assertFalse(env['ACCOUNT']['verified'])
 
     def test_account_probe_does_not_inspect_or_activate_other_windows_when_owner_is_known(self):
         windows = {
@@ -113,14 +124,58 @@ class RecoveryTests(unittest.TestCase):
 
     def test_two_real_windows_with_same_ownership_pick_one(self):
         rebind = Mock()
+        resolve = Mock(return_value=(None, []))
         env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False}, log=Mock(),
                    _probe_wechat_windows=lambda: (None, [], [(111, 333, 0, False), (222, 333, 0, False)]),
-                   rebind_uia=rebind)
+                   uia_boot=SimpleNamespace(resolve_account_windows=resolve), rebind_uia=rebind)
         env['choose_main_window'] = load_function('choose_main_window', env)
         self.assertTrue(load_function('pick_account_window', env)())
         self.assertTrue(env['ACCOUNT']['verified'])
         self.assertEqual(env['ACCOUNT']['hwnd'], 111)
         rebind.assert_called_once_with(111)
+
+    def test_account_tree_needs_session_controls_on_the_exact_hwnd(self):
+        root = SimpleNamespace(NativeWindowHandle=222, ClassName='Qt51514QWindowIcon', GetChildren=Mock())
+        child = SimpleNamespace(ClassName='mmui::XTableView', GetChildren=lambda: [])
+        root.GetChildren.return_value = [child]
+        auto = SimpleNamespace(ControlFromHandle=lambda _h: root)
+        with patch.dict(sys.modules, {'uiautomation': auto}), patch.object(boot, '_ensure_com', return_value=True):
+            self.assertEqual(boot.tree_state(222), 'ok')
+            self.assertEqual(boot.tree_state(222, account_window=True), 'shell')
+            child.ClassName = 'mmui::ChatSessionList'
+            self.assertEqual(boot.tree_state(222, account_window=True), 'ok')
+            self.assertEqual(boot.tree_state(111, account_window=True), 'unreachable')
+            root.ClassName = 'mmui::LoginWindow'
+            self.assertEqual(boot.tree_state(222, account_window=True), 'login')
+
+    def test_equal_size_windows_use_chat_evidence_and_fail_closed_when_tied(self):
+        windows = [(111, 333), (222, 333)]
+        gui = SimpleNamespace(IsIconic=lambda _h: False, IsWindowVisible=lambda _h: True,
+                              GetClassName=lambda _h: 'Qt51514QWindowIcon',
+                              GetWindowRect=lambda _h: (0, 0, 900, 531), GetAncestor=lambda h, _kind: h)
+        process = SimpleNamespace(GetWindowThreadProcessId=lambda _h: (1, 333))
+        with patch.dict(sys.modules, {'win32gui': gui, 'win32process': process}), \
+                patch.object(boot, 'tree_state', side_effect=['shell', 'ok', 'ok', 'ok']) as read:
+            picked, evidence = boot.resolve_account_windows(windows)
+            self.assertEqual(picked, (222, 333))
+            self.assertEqual([row['size'] for row in evidence], [(900, 531)] * 2)
+            self.assertIsNone(boot.resolve_account_windows(windows)[0])
+        self.assertTrue(all(call.kwargs['account_window'] for call in read.call_args_list))
+
+    def test_unique_native_main_can_warm_up_with_hidden_qt_helper(self):
+        windows = [(111, 333), (222, 333)]
+        gui = SimpleNamespace(IsIconic=lambda _h: False, IsWindowVisible=lambda h: h == 222,
+                              GetClassName=lambda h: 'mmui::MainWindow' if h == 222 else 'Qt51514QWindowIcon',
+                              GetWindowRect=lambda _h: (0, 0, 900, 531), GetAncestor=lambda h, _kind: h)
+        process = SimpleNamespace(GetWindowThreadProcessId=lambda _h: (1, 333))
+        with patch.dict(sys.modules, {'win32gui': gui, 'win32process': process}), \
+                patch.object(boot, 'tree_state', return_value='shell'):
+            self.assertEqual(boot.resolve_account_windows(windows)[0], (222, 333))
+            gui.IsWindowVisible = lambda _h: True
+            self.assertIsNone(boot.resolve_account_windows(windows)[0])
+            gui.IsWindowVisible = lambda h: h == 222
+            process.GetWindowThreadProcessId = lambda h: (1, 444 if h == 111 else 333)
+            self.assertIsNone(boot.resolve_account_windows(windows)[0])
 
     def test_wechat_title_has_priority_over_a_large_detached_chat(self):
         windows = [

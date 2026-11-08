@@ -33,6 +33,7 @@ TREE_MARKERS = (
     "mmui::XTableView",
     "mmui::ChatSessionCell",
 )
+SESSION_MARKERS = ("mmui::ChatSessionList", "mmui::ChatSessionCell")
 
 # 已知「扫描扫不出来、但实测可用」的兜底 RVA。键是 Weixin.dll 的版本目录名。
 # 4.2.0.9 目前靠库缓存的 verified 值（0xB4F7C08）工作；表里留空是为了不写死，
@@ -199,10 +200,10 @@ def _ensure_com() -> bool:
     return True
 
 # ── 判据 ───────────────────────────────────────────────────────────
-def tree_state(hwnd: int, timeout: float = 1.0, max_nodes: int = 1200) -> str:
+def tree_state(hwnd: int, timeout: float = 1.0, max_nodes: int = 1200, *, account_window=False) -> str:
     """看控件树到底物化了没有：'ok' / 'shell' / 'unreachable'。
 
-    'shell' = 只有 Qt 空壳（根窗口类名是 mmui:: 但里面没有会话列表）。
+    账号择窗只接受指定句柄自己的会话列表，通用表格不能证明这是聊天主窗。
     """
     try:
         import uiautomation as auto
@@ -210,7 +211,7 @@ def tree_state(hwnd: int, timeout: float = 1.0, max_nodes: int = 1200) -> str:
         return "unreachable"
     if not _ensure_com():
         return "unreachable"
-    deadline = time.time() + max(0.2, timeout)
+    deadline = time.monotonic() + max(0.2, timeout)
     while True:
         try:
             root = auto.ControlFromHandle(hwnd)
@@ -218,9 +219,20 @@ def tree_state(hwnd: int, timeout: float = 1.0, max_nodes: int = 1200) -> str:
             root = None
         if root is not None:
             break
-        if time.time() >= deadline:
+        if time.monotonic() >= deadline:
             return "unreachable"
         time.sleep(0.15)
+
+    markers = TREE_MARKERS
+    if account_window:
+        try:
+            if int(root.NativeWindowHandle or 0) != hwnd:
+                return "unreachable"
+            if (root.ClassName or "").casefold().endswith("loginwindow"):
+                return "login"
+        except Exception:
+            return "unreachable"
+        markers = SESSION_MARKERS
 
     seen = 0
     stack = [(root, 0)]
@@ -230,17 +242,77 @@ def tree_state(hwnd: int, timeout: float = 1.0, max_nodes: int = 1200) -> str:
             kids = node.GetChildren()
         except Exception:
             kids = []
+        if account_window:
+            kids = kids[:max_nodes - seen]
         seen += len(kids)
         for k in kids:
+            if account_window and time.monotonic() >= deadline:
+                return "unreachable"
             try:
                 cn = getattr(k, "ClassName", "") or ""
             except Exception:
                 cn = ""
-            if any(cn == m for m in TREE_MARKERS):
+            if cn in markers:
                 return "ok"
             if depth < 12:
                 stack.append((k, depth + 1))
     return "shell"
+
+
+def resolve_account_windows(candidates):
+    """进程已确认归属后，用窗口级证据区分主窗与辅助窗。"""
+    if len(candidates) > 6:
+        return None, [{"count": len(candidates), "tree": "too_many"}]
+    import win32gui
+    import win32process
+
+    evidence = []
+    for hwnd, pid in candidates:
+        row = {"hwnd": hwnd, "pid": pid, "tree": "unreachable"}
+        evidence.append(row)
+        try:
+            if win32process.GetWindowThreadProcessId(hwnd)[1] != pid:
+                row["tree"] = "changed"
+                continue
+            minimized = bool(win32gui.IsIconic(hwnd))
+            rect = win32gui.GetWindowPlacement(hwnd)[4] if minimized else win32gui.GetWindowRect(hwnd)
+            row.update(cls=win32gui.GetClassName(hwnd), visible=bool(win32gui.IsWindowVisible(hwnd)),
+                       minimized=minimized, size=(rect[2] - rect[0], rect[3] - rect[1]))
+        except Exception:
+            continue
+        try:
+            row["root_owner"] = win32gui.GetAncestor(hwnd, 3)  # GA_ROOTOWNER
+        except Exception:
+            pass
+        row["tree"] = tree_state(hwnd, timeout=0.5, max_nodes=500, account_window=True)
+        try:
+            if win32process.GetWindowThreadProcessId(hwnd)[1] != pid:
+                row["tree"] = "changed"
+        except Exception:
+            row["tree"] = "changed"
+
+    chat = [row for row in evidence if row["tree"] == "ok"]
+    if chat:
+        return ((chat[0]["hwnd"], chat[0]["pid"]) if len(chat) == 1 else None), evidence
+
+    # UIA 尚未预热时，要求唯一的原生主窗；隐藏的通用 Qt 句柄不能独立作为证据。
+    native = [row for row in evidence if (row.get("cls") or "").casefold() == "mmui::mainwindow"
+              and row["tree"] not in ("login", "changed")]
+    if len(native) == 1:
+        main = native[0]
+        if main.get("root_owner") == main["hwnd"] and (main.get("visible") or main.get("minimized")):
+            for other in evidence:
+                if other is main or other["tree"] == "login":
+                    continue
+                if other["tree"] == "changed" or other["pid"] != main["pid"]:
+                    break
+                if other.get("root_owner") == main["hwnd"]:
+                    continue
+                if other.get("visible") is not False or other.get("minimized") is not False:
+                    break
+            else:
+                return (main["hwnd"], main["pid"]), evidence
+    return None, evidence
 
 
 

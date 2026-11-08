@@ -3,10 +3,10 @@
 /**
  * 更新链路契约测试。
  *
- * 起因：安装版点更新永远报「没找到 scripts\update.ps1」——
- *   · 安装包的 [Files] 不带 scripts\，装完目录里根本没有那个脚本；
- *   · 就算带上也没用：脚本只认 Release 里的 zip 资产，而 CI 从 4.0.1 起只传 setup.exe；
- *   · 另外 Release 里没有 release-manifest.json，客户端只能靠 raw 分支兜底。
+ * 更新只由启动器的「检查更新」下载官方安装包：
+ *   · 安装包资产来自 Release 的 whale-girl-*-setup.exe 和 SHA256SUMS.txt；
+ *   · 不再保留源码版 update.ps1 分支；
+ *   · Release 里没有 release-manifest.json，客户端靠 raw 分支兜底。
  *
  * 这里只读文件、不联网：更新落地方式或资产名一改错，测试直接红。
  */
@@ -25,13 +25,10 @@ const iss = read('installer/whale.iss');
 const wf = read('.github/workflows/installer.yml');
 const manifest = JSON.parse(read('release-manifest.json'));
 
-test('UpdateService：有脚本才走脚本，没有就下载安装包（不是硬依赖）', () => {
-  assert.match(service, /if\s*\(File\.Exists\(script\)\)/, 'ApplyAsync 没有先判断 scripts\\update.ps1 是否存在');
-  assert.match(service, /SetupAsync\(/, '没有安装包覆盖安装这条新路');
-  assert.ok(!service.includes('没找到 scripts'), '安装版还会直接报「没找到 scripts\\update.ps1」');
-  // 源码版的路必须留着：不恢复 zip 分发，也不删 update.ps1
-  assert.match(service, /ApplyByScriptAsync\(/, '源码版的 update.ps1 分支被删了');
-  assert.ok(fs.existsSync(path.join(root, 'scripts/update.ps1')), 'scripts/update.ps1 被删了（源码版还要用）');
+test('UpdateService：更新只下载安装包，不再依赖源码版脚本', () => {
+  assert.match(service, /return await SetupAsync\(baseDir, latest, progress\)/, 'ApplyAsync 没有走安装包覆盖安装');
+  assert.doesNotMatch(service, /ApplyByScriptAsync|update\.ps1/, 'UpdateService 还在保留源码版脚本分支');
+  assert.equal(fs.existsSync(path.join(root, 'scripts/update.ps1')), false, 'scripts/update.ps1 应该已经删除');
 });
 
 test('UpdateService：从 releases/latest/download 取安装包和校验清单', () => {
@@ -49,11 +46,12 @@ test('UpdateService：静默安装参数是 /SILENT，带 /CLOSEAPPLICATIONS', (
   assert.ok(service.includes('/NORESTART'), '没有 /NORESTART，静默安装可能直接重启电脑');
 });
 
-test('UpdateService：装完自己退出并重启，不跟安装器抢 exe', () => {
+test('UpdateService：装完自己退出，不跟安装器抢 exe', () => {
   assert.ok(service.includes('UseShellExecute = true'), 'apply.ps1 没有独立进程启动，启动器一退就断了');
-  assert.ok(service.includes('ApplyOutcome'), '没有把「已交给安装器」回传给 MainWindow');
+  assert.ok(service.includes('ApplyOutcome'), '没有把更新结果回传给 MainWindow');
   const main = read('launcher/MainWindow.xaml.cs');
-  assert.ok(main.includes('HandedToInstaller'), 'MainWindow 没处理「已交给安装器」，会自己再拉起旧 exe');
+  assert.ok(!main.includes('RestartSelf'), '源码版重启逻辑应该已经删除');
+  assert.ok(!main.includes('update.ps1'), 'MainWindow 还留着源码版脚本分支');
   assert.ok(main.includes('Application.Current.Shutdown()'), '装完后没有退出，exe 换不掉');
 });
 
@@ -145,7 +143,7 @@ test('UpdateService：资产（安装包 / 校验清单）有镜像回退，直�
   const block = service.slice(start, service.indexOf('};', start));
 
   for (const host of ['gh-proxy.com', 'ghfast.top', 'ghproxy.net']) {
-    assert.ok(block.includes(host), `资产源里缺镜像 ${host}（与 scripts/update.ps1 用过的三家保持一致）`);
+    assert.ok(block.includes(host), `资产源里缺镜像 ${host}（与更新服务用的三家保持一致）`);
   }
   assert.ok(block.includes('https://github.com/'), '资产源里没有 GitHub 直连');
   assert.ok(
@@ -160,9 +158,10 @@ test('UpdateService：校验清单多源并行，哈希对不上就中止而不�
   assert.match(service, /hash\.Length == 64/, '没有校验哈希格式，镜像的错误页会被当成哈希');
 });
 
-test('UpdateService：安装包 4 段并发，服务端不支持 Range 就退回单连接', () => {
+test('UpdateService：安装包最多 32 段并发，服务端不支持 Range 就退回单连接', () => {
   assert.ok(service.includes('RangeHeaderValue'), '没有用 Range 分段下载');
-  assert.match(service, /SegmentCount = 4/, '分段数不是 4');
+  assert.match(service, /SegmentCount = 32/, '最大分段数不是 32');
+  assert.match(service, /SegmentChunkBytes = 2L \* 1024 \* 1024/, '没有按 2MB 一段自适应切分');
   assert.match(service, /HttpStatusCode\.PartialContent/, '没有检查 206（Range 是否真的被支持）');
   assert.match(service, /ProbeLengthAsync/, '没有先探总长度就直接分段');
   assert.match(

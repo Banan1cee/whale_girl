@@ -43,16 +43,20 @@ async function collectSse(url, payload) {
   return events;
 }
 
-test('状态接口：默认是演示模式，两个网关都在', async () => {
+test('状态接口：默认是演示模式，只保留微信网关', async () => {
   const app = await boot();
-  const res = await fetch(app.url + '/api/status');
-  const data = await res.json();
-  assert.equal(data.ok, true);
-  assert.equal(data.mock, true);
-  assert.equal(data.name, '鲸鲸');
-  assert.ok(Array.isArray(data.gateways) && data.gateways.length === 2);
-  assert.ok(data.webhookPaths.includes('/webhook/wechat'));
-  await app.close();
+  try {
+    const res = await fetch(app.url + '/api/status');
+    const data = await res.json();
+    assert.equal(data.ok, true);
+    assert.equal(data.mock, true);
+    assert.equal(data.name, '鲸鲸');
+    assert.ok(Array.isArray(data.gateways) && data.gateways.length === 1);
+    assert.equal(data.gateways[0].platform, 'wechat');
+    assert.ok(data.webhookPaths.includes('/webhook/wechat'));
+  } finally {
+    await app.close();
+  }
 });
 
 test('网页聊天入口已关闭：不带桥接 token 一律 404', async () => {
@@ -141,7 +145,6 @@ test('微信网关：token 校验 + 收到消息 + 回复发回中转服务', as
   const app = await boot({
     gateway: {
       wechat: { enabled: true, inboundToken: 'secret-token', outboundUrl: sinkUrl, outboundHeaders: {} },
-      douyin: { enabled: false, inboundToken: 'dy-token', outboundUrl: '', outboundHeaders: {} },
     },
   });
 
@@ -191,29 +194,21 @@ test('微信网关：token 校验 + 收到消息 + 回复发回中转服务', as
   await new Promise((r) => sink.close(r));
 });
 
-test('抖音网关：token 可以用 query 传，群消息按群聊规则处理', async () => {
-  const app = await boot({
-    gateway: {
-      wechat: { enabled: false, inboundToken: 'w', outboundUrl: '', outboundHeaders: {} },
-      douyin: { enabled: true, inboundToken: 'dy-token', outboundUrl: '', outboundHeaders: {} },
-    },
-  });
+test('已下线的抖音网关不再暴露 webhook：返回 404', async () => {
+  const app = await boot();
   const res = await fetch(app.url + '/webhook/douyin?token=dy-token', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ room_id: 'live_1', chat_type: 'group', nickname: '小丑鱼', content: '鲸娘你在吗', msg_id: 'd1' }),
   });
-  const data = await res.json();
-  assert.equal(data.ok, true);
-  assert.equal(data.action, 'reply');
+  assert.equal(res.status, 404);
   await app.close();
 });
 
-test('回调地址校验：GET 带 challenge 原样返回（抖音/微信都有这种校验）', async () => {
+test('回调地址校验：GET 带 challenge 原样返回', async () => {
   const app = await boot({
     gateway: {
       wechat: { enabled: true, inboundToken: 'sec', outboundUrl: '', outboundHeaders: {} },
-      douyin: { enabled: false, inboundToken: 'd', outboundUrl: '', outboundHeaders: {} },
     },
   });
   const res = await fetch(app.url + '/webhook/wechat?token=sec&challenge=12345');
@@ -439,7 +434,6 @@ test('本地桥接请求不会被误报「回复只打印在控制台」', async
   const app = await boot({
     gateway: {
       wechat: { enabled: true, inboundToken: 'secret-token', outboundUrl: '', outboundHeaders: {} },
-      douyin: { enabled: false, inboundToken: 'dy-token', outboundUrl: '', outboundHeaders: {} },
     },
   });
   try {
@@ -514,7 +508,6 @@ test('桥接心跳：启动器能看出桥接在不在、UIA 通不通', async (
   const app = await boot({
     gateway: {
       wechat: { enabled: true, inboundToken: 'secret-token', outboundUrl: '', outboundHeaders: {} },
-      douyin: { enabled: false, inboundToken: 'dy-token', outboundUrl: '', outboundHeaders: {} },
     },
   });
   try {
@@ -562,7 +555,6 @@ test('演示模式下 webhook 响应带 mock:true，桥接才能提醒用户', a
   const app = await boot({
     gateway: {
       wechat: { enabled: true, inboundToken: 'secret-token', outboundUrl: '', outboundHeaders: {} },
-      douyin: { enabled: false, inboundToken: 'dy-token', outboundUrl: '', outboundHeaders: {} },
     },
   });
   try {

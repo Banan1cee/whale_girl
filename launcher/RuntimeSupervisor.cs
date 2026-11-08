@@ -75,6 +75,9 @@ namespace WhaleLauncher
     {
         public string BaseDir { get; }
         private LocalConfiguration _localConfiguration;
+        private ContactDirectory _contacts;
+        /// <summary>联系人缓存 / 搜索的统一入口，各页面共用，避免重复请求和搜索规则漂移。</summary>
+        public ContactDirectory Contacts => _contacts ??= new ContactDirectory(this);
         public Task<ApiResult> ReadConfigurationAsync(string path)
             => NodeRunning ? Api.Get(Url, path) : (_localConfiguration ??= new LocalConfiguration(BaseDir)).ReadAsync(path);
         public string DataDir { get; }

@@ -203,7 +203,7 @@ namespace WhaleLauncher
 
         /// <summary>
         /// 拿清单结果决定界面形态。这里只做「提示 / 强制 / 禁止启动」的判定，
-        /// 不下载；真下载交给 UpdateService（安装版下安装包，源码版跑 update.ps1）。
+        /// 不下载；真下载交给 UpdateService 下载官方安装包。
         /// </summary>
         private async Task SilentUpdateCheckAsync()
         {
@@ -300,25 +300,20 @@ namespace WhaleLauncher
         }
 
         /// <summary>
-        /// 真正下载并换版：源码版跑 update.ps1（备份 / 覆盖 / 失败回滚），安装版下载官方安装包、
-        /// 校验 SHA256 后静默覆盖安装。askFirst=false 用于强制态：不再问「现在更新吗」。
+        /// 真正下载并换版：下载官方安装包、校验 SHA256 后静默覆盖安装。
+        /// askFirst=false 用于强制态：不再问「现在更新吗」。
         /// </summary>
         private async Task RunUpdateAsync(ManifestCheck chk, bool askFirst)
         {
             if (_updating || chk == null || chk.Manifest == null) return;
             var latest = chk.Manifest.Latest;
-            // 有脚本 = 源码版 / 老 zip 装法；安装版包里没有 scripts\，走安装包
-            var byScript = File.Exists(Path.Combine(_sup.BaseDir, "scripts", "update.ps1"));
 
             if (askFirst)
             {
-                var how = byScript
-                    ? "更新会先备份，再覆盖代码；data\\ 和 config.json 不会被改动。\n"
-                    : "更新会下载官方安装包，校验 SHA256 后覆盖安装；data\\ 和 config.json 不会被改动。\n";
                 var answer = MessageBox.Show(
                     "发现新版本 v" + latest + "（当前 v" + chk.Current + "）。\n\n"
                     + (chk.Manifest.Message.Length > 0 ? chk.Manifest.Message + "\n\n" : "")
-                    + how
+                    + "更新会下载官方安装包，校验 SHA256 后覆盖安装；data\\ 和 config.json 不会被改动。\n"
                     + "更新期间启动器会退出，结束后自动重新打开。\n\n现在更新吗？",
                     "检查更新", MessageBoxButton.YesNo, MessageBoxImage.Question);
                 if (answer != MessageBoxResult.Yes) return;
@@ -350,34 +345,12 @@ namespace WhaleLauncher
                     return;
                 }
 
-                // 安装版：apply.ps1 已经接手——等本进程退出后装包，装完自己拉起新版。
-                // 这里不能再 RestartSelf，否则会跟安装器抢同一个 exe。
-                if (outcome.HandedToInstaller)
-                {
-                    StatusLine.Text = "正在安装 v" + latest + "，启动器会退出并在安装完成后自动重新打开…";
-                    await Task.Delay(800);
-                    Application.Current.Shutdown();
-                    return;
-                }
-
-                // 源码版：跑着的还是旧镜像，旧 exe 也只有等本进程退出才删得掉。
-                StatusLine.Text = "已更新到 v" + latest + "，正在重启…";
+                // apply.ps1 已经接手——等本进程退出后装包，装完自己拉起新版。
+                // 这里不能再重启自己，否则会跟安装器抢同一个 exe。
+                StatusLine.Text = "正在安装 v" + latest + "，启动器会退出并在安装完成后自动重新打开…";
                 await Task.Delay(800);
-
-                // 脚本收尾时会自己把启动器拉起来（带 --replace 本进程 PID）：
-                // 它已经在了就只关自己；没在（老脚本）才自己起一个。
-                if (AnotherInstanceRunning())
-                {
-                    Application.Current.Shutdown();
-                }
-                else if (!RestartSelf(out var restartErr))
-                {
-                    HideUpdateProgress();
-                    StatusLine.Text = "已更新到 v" + latest + "，请手动重新打开";
-                    MessageBox.Show(
-                        "更新完成，但自动重启失败：" + restartErr + "\n\n请手动关掉再打开启动器（新版要重启才生效）。",
-                        "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
+                Application.Current.Shutdown();
+                return;
             }
             finally
             {
@@ -411,18 +384,6 @@ namespace WhaleLauncher
             UpdatePct.Visibility = Visibility.Collapsed;
         }
 
-        /// <summary>是不是已经有新实例被脚本拉起来了（含自己）。</summary>
-        private static bool AnotherInstanceRunning()
-        {
-            try
-            {
-                var name = Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "");
-                if (string.IsNullOrEmpty(name)) return false;
-                return Process.GetProcessesByName(name).Length > 1;
-            }
-            catch { return false; }
-        }
-
         /// <summary>更新中关窗口：说清楚关掉也不会中断，让用户自己决定。</summary>
         private void OnClosingDuringUpdate(object sender, System.ComponentModel.CancelEventArgs e)
         {
@@ -432,36 +393,6 @@ namespace WhaleLauncher
                 "关掉窗口不会中断更新：下载和安装会在后台继续，装完会自动把启动器重新打开。\n\n现在关吗？",
                 "更新进行中", MessageBoxButton.YesNo, MessageBoxImage.Warning);
             if (ans != MessageBoxResult.Yes) e.Cancel = true;
-        }
-
-        /// <summary>
-        /// 重启自己：起一个新实例（带 --replace 本进程 PID），然后关掉本进程。
-        /// 返回 false 表示起不来，调用方负责提示。
-        /// </summary>
-        private bool RestartSelf(out string error)
-        {
-            error = "";
-            try
-            {
-                // 不写死文件名：更新可能刚把 exe 换掉（甚至以后会改名），
-                // ProcessPath 永远是"我是从哪个路径启动的"，正好就是要重启的那个。
-                var exe = Environment.ProcessPath;
-                if (string.IsNullOrEmpty(exe)) exe = Path.Combine(AppContext.BaseDirectory, "WhaleLauncher.exe");
-                Process.Start(new ProcessStartInfo(exe)
-                {
-                    UseShellExecute = true,
-                    WorkingDirectory = AppContext.BaseDirectory,
-                    // 让新进程等本进程退出再抢单实例锁，否则会弹「已经在运行」
-                    Arguments = "--replace " + Environment.ProcessId,
-                });
-            }
-            catch (Exception ex)
-            {
-                error = ex.Message;
-                return false;
-            }
-            Application.Current.Shutdown();
-            return true;
         }
 
         // ── 外观：主题 / 背景图 / 标题栏 ────────────────────────

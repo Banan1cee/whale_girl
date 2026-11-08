@@ -254,7 +254,7 @@ class LiveEncodingTests(unittest.TestCase):
 class DirtyDraftPipelineTests(unittest.TestCase):
     def test_bridge_does_not_fall_back_or_disable_chat_after_dirty_draft(self):
         # 只提取发送闭包，避开 main 的真实微信连接；执行的仍是实际桥接代码。
-        from bridge_ast import init, load_function
+        from bridge_ast import init, load_chat_name_helpers, load_function
         for reason in ('input_dirty', 'residue_left', 'input_not_empty', 'content_mismatch'):
             with self.subTest(reason=reason):
                 draft_error = type('DraftDirtyError', (RuntimeError,), {})
@@ -271,6 +271,7 @@ class DirtyDraftPipelineTests(unittest.TestCase):
                 module = SimpleNamespace(configure=Mock(), send=Mock(return_value=(False, reason)))
                 with patch.dict(sys.modules, {'bg_sender': module}):
                     init(env)
+                    load_chat_name_helpers(env)
                     load_function('bg_send', env)
                     load_function('send_text', env)
                     self.assertFalse(env['send_text']('测试正文', '测试群'))

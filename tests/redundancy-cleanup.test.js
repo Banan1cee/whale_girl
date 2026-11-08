@@ -127,8 +127,8 @@ test('启动器只去掉无引用成员，联系人错误摘要复用公共方�
   assert.doesNotMatch(source('launcher/Views/DiagPage.xaml.cs'), /\bLatestRunDir\(/);
   assert.doesNotMatch(source('launcher/Views/SettingsPage.xaml.cs'), /\bBuildSection\(/);
   assert.match(source('launcher/Api.cs'), /public static string Detail\(ApiResult res\)/);
-  for (const rel of ['launcher/Views/ContactListEditor.cs', 'launcher/Views/ContactPicker.xaml.cs']) {
-    assert.match(source(rel), /Api\.Detail\(res\)/);
+  for (const rel of ['launcher/Views/ContactCheckList.xaml.cs']) {
+    assert.match(source(rel), /Api\.Message\(res\)/);
     assert.doesNotMatch(source(rel), /private static string Detail\(/);
   }
 });

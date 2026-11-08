@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace WhaleLauncher
@@ -38,10 +41,25 @@ namespace WhaleLauncher
 
     public static class Api
     {
+        // 超时统一由每次请求的 CancellationToken 控制：账号扫描要 45 秒，状态轮询只要 3 秒，
+        // HttpClient.Timeout 只能设一个值，放这里会逼着页面各建一套客户端。
         private static readonly HttpClient Http = new HttpClient(new HttpClientHandler { UseProxy = false })
         {
-            Timeout = TimeSpan.FromSeconds(10)
+            Timeout = Timeout.InfiniteTimeSpan
         };
+
+        private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
+        {
+            // 中文按原文发送，日志和抓包时不用先脑内解码 \uXXXX；服务端两种都认。
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
+
+        private static async Task<ApiResult> SendAsync(Func<CancellationToken, Task<HttpResponseMessage>> send, int timeoutSeconds)
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds <= 0 ? 10 : timeoutSeconds));
+            using var response = await send(cts.Token);
+            return await Wrap(response);
+        }
 
         private static async Task<ApiResult> Wrap(HttpResponseMessage res)
         {
@@ -77,12 +95,11 @@ namespace WhaleLauncher
             return outRes;
         }
 
-        public static async Task<ApiResult> Get(string baseUrl, string path)
-    {
+        public static async Task<ApiResult> Get(string baseUrl, string path, int timeoutSeconds = 10)
+        {
             try
             {
-                using var response = await Http.GetAsync(baseUrl + path);
-                return await Wrap(response);
+                return await SendAsync(ct => Http.GetAsync(baseUrl + path, ct), timeoutSeconds);
             }
             catch (Exception ex)
             {
@@ -90,19 +107,26 @@ namespace WhaleLauncher
             }
         }
 
-        public static async Task<ApiResult> Post(string baseUrl, string path, string json)
+        public static async Task<ApiResult> Post(string baseUrl, string path, string json, int timeoutSeconds = 10)
         {
             try
             {
                 using var body = new StringContent(json, Encoding.UTF8, "application/json");
-                using var response = await Http.PostAsync(baseUrl + path, body);
-                return await Wrap(response);
+                return await SendAsync(ct => Http.PostAsync(baseUrl + path, body, ct), timeoutSeconds);
             }
             catch (Exception ex)
             {
                 return new ApiResult { Ok = false, Error = FriendlyError(ex) };
             }
         }
+
+        /// <summary>对象直接序列化，别再手拼 JSON；字符串转义、数字格式、嵌套层级都由序列化器负责。</summary>
+        public static Task<ApiResult> PostJson(string baseUrl, string path, object body, int timeoutSeconds = 10)
+            => Post(baseUrl, path, JsonSerializer.Serialize(body, JsonOptions), timeoutSeconds);
+
+        /// <summary>写配置：patch 里的键可以是点号路径（如 care.everyMinutes），也可以是嵌套对象。</summary>
+        public static Task<ApiResult> PatchConfig(string baseUrl, IDictionary<string, object> patch, int timeoutSeconds = 10)
+            => PostJson(baseUrl, "/api/config", new Dictionary<string, object> { ["patch"] = patch }, timeoutSeconds);
 
         /// <summary>
         /// 把 .NET 的原始异常翻成人话。以前内核没起来时，界面直接显示
@@ -128,7 +152,8 @@ namespace WhaleLauncher
                 || text.Contains("No connection could be made", StringComparison.OrdinalIgnoreCase))
                 return "内核没在运行（连接被拒绝）。先点顶栏「启动」，或者直接在分类文件夹里拖图片。";
             if (text.Contains("timed out", StringComparison.OrdinalIgnoreCase) || text.Contains("超时")
-                || text.Contains("TaskCanceledException", StringComparison.OrdinalIgnoreCase))
+                || text.Contains("TaskCanceledException", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("The operation was canceled", StringComparison.OrdinalIgnoreCase))
                 return "内核没响应（可能正在整理图库），等几秒再试；别重复上传。";
             return text;
         }
@@ -141,10 +166,19 @@ namespace WhaleLauncher
             return raw.Length > 120 ? raw.Substring(0, 120) + "…" : raw;
         }
 
+        /// <summary>给用户看的失败原因：优先后端返回的 error，没有再退回原始响应摘要。</summary>
+        public static string Message(ApiResult res)
+        {
+            if (res == null) return "";
+            if (!string.IsNullOrWhiteSpace(res.Error)) return res.Error.Trim();
+            var detail = Detail(res);
+            return string.IsNullOrWhiteSpace(detail) ? "内核没有返回原因" : detail;
+        }
+
         public static string Esc(string s)
         {
             if (s == null) return "";
-            var json = JsonSerializer.Serialize(s);
+            var json = JsonSerializer.Serialize(s, JsonOptions);
             return json.Substring(1, json.Length - 2);
         }
     }

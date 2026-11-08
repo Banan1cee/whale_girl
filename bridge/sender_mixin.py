@@ -372,6 +372,18 @@ class SenderMixin:
             self.dead_chats.add(chat_username)
             G.log('群里已经没有我了（被移出？），以后跳过：', chat_display_name)
             return False
+        if chat_username and self.is_self_chat(chat_username):
+            # 微信里没有「和自己聊天」，只能发文件传输助手；否则会拿 wxid 去搜会话。
+            chat_username, chat_display_name = 'filehelper', '文件传输助手'
+        # 所有发送入口统一把「内部 id 当会话名」挡在这里。以前只有 care 会传 wxid，
+        # 现在不管调用方是谁，都先换成昵称/备注；换不出来就放弃，别让 open_chat 空转。
+        resolved = self.ui_chat_name(chat_username, chat_display_name)
+        if not resolved:
+            G.log_throttled('send-no-name-' + str(chat_username or chat_display_name)[:18],
+                            '发送跳过：%s 只拿到了内部 id，微信会话列表和搜索框都不认，先给 TA 加个备注再试' % str(chat_username or chat_display_name)[:18],
+                            ttl=600)
+            return False
+        chat_display_name = resolved
         if not self.account_send_allowed('发送'):
             return False
         with self.send_lock, G._SendStateScope(len(text)):
@@ -510,6 +522,10 @@ class SenderMixin:
     def send_at(self, member, text, chat_display_name, chat_username=''):
         """在群里真 @ 某个成员（UI 选人），失败返回 False 让调用方退回普通发送。"""
         if not member or not text:
+            return False
+        # 和 send_text 同一道闸：群名/成员名可能是 wxid，@ 的时候同样搜不到。
+        chat_display_name = self.ui_chat_name(chat_username, chat_display_name)
+        if not chat_display_name:
             return False
         if chat_username and (chat_username in self.dead_chats or not self.group_is_alive(chat_username)):
             return False

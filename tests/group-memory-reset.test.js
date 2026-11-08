@@ -102,11 +102,11 @@ test('所有对话列表包含群聊、私聊及其他渠道；可单独清空�
   seed(store, target, '保留群聊');
   const removed = seed(store, privateKey, '待清空私聊', 'private');
   seed(store, 'wechat:u:test_other_user', '保留私聊', 'private');
-  store.ensureSession('douyin:u:test_person', { platform: 'douyin', chatType: 'private', title: '其他渠道' });
+  store.ensureSession('web:u:test_person', { platform: 'web', chatType: 'private', title: '其他渠道' });
   const listing = await (await fetch(app.url + '/api/memory/chats')).json();
   assert.equal(listing.chats.length, 4);
   assert.ok(listing.chats.some((c) => c.key === privateKey && c.chatType === 'private'));
-  assert.ok(listing.chats.some((c) => c.platform === 'douyin'));
+  assert.ok(listing.chats.some((c) => c.platform === 'web'));
   assert.ok(!JSON.stringify(listing).includes('我喜欢喝茶'));
   const resetChat = (body) => fetch(app.url + '/api/memory/chats/reset', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),

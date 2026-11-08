@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 主人判定的唯一实现（src/core/master.js）：微信里认 wxid，抖音等没有稳定 id 的渠道才认昵称；
+ * 主人判定的唯一实现（src/core/master.js）：微信里认 wxid，网页等没有稳定 id 的渠道才认昵称；
  * 配了真 wxid 时昵称冒充无效，但 wxid 栏里错填成微信号时要能提示、别把主人永远挡在外面。
  */
 const test = require('node:test');
@@ -44,7 +44,7 @@ test('没配主人时谁都不是主人，也不叫主人', () => {
   }
 });
 
-test('抖音等没有稳定 id 的渠道，按昵称认（忽略大小写）', () => {
+test('没有稳定 id 的渠道（网页）按昵称认（忽略大小写）', () => {
   const r = matchMaster(cfg(['A-Jing'], ['wxid_master_test']), { platform: 'web', senderId: 'web-u-abc', senderName: 'a-jing' });
   assert.equal(r.isMaster, true);
   assert.equal(r.reason, 'nickname');
@@ -62,6 +62,15 @@ test('wxids 里填微信号会给出人话告警', () => {
   assert.match(warn[0], /不是 wxid/);
 });
 
+test('主人 wxid 填成机器人自己的账号时给出提示', () => {
+  const warn = masterWarnings({
+    persona: { master: { names: [], wxids: ['wxid_master_test_c248'] } },
+    wechat: { account: 'wxid_master_test_c248' },
+  });
+  assert.equal(warn.length, 1);
+  assert.match(warn[0], /机器人当前登录的账号/);
+});
+
 test('只填昵称时提醒可能被冒充', () => {
   const warn = masterWarnings(cfg(['阿鲸'], []));
   assert.equal(warn.length, 1);
@@ -74,8 +83,16 @@ test('没配主人时提醒未设置', () => {
   assert.match(warn[0], /还没设置主人/);
 });
 
-test('配对了就没有告警', () => {
+test('选择式配置的名字和 wxid 成对时没有告警', () => {
   assert.deepEqual(masterWarnings(cfg(['阿鲸'], ['wxid_master_test'])), []);
+});
+
+test('主人 wxid 填成账号目录名（多 4 位哈希）也认', () => {
+  // 启动器账号列表显示的就是 wxid_xxx_c248，用户复制进去很常见；
+  // 消息里的 senderId 却是真 wxid_xxx，不归一化就永远「非主人」。
+  const r = matchMaster(cfg([], ['wxid_master_test_c248']), wechat('wxid_master_test', '阿鲸'));
+  assert.equal(r.isMaster, true);
+  assert.equal(r.reason, 'wxid');
 });
 
 test('looksLikeWxid 认得清 wxid 和微信号', () => {

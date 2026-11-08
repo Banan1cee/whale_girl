@@ -272,13 +272,13 @@ namespace WhaleLauncher.Views
         private async void OnSaveStickerSettings(object sender, RoutedEventArgs e)
         {
             if (_loading || !_sup.NodeRunning || TxtDir.Text.Trim() == _inventory.Str("configuredDir")) return;
-            var body = "{\"patch\":{"
-                + "\"sticker.dir\":\"" + Api.Esc(TxtDir.Text.Trim()) + "\""
-                + "}}";
-            var res = await Api.Post(_sup.Url, "/api/config", body);
+            var res = await Api.PatchConfig(_sup.Url, new Dictionary<string, object>
+            {
+                ["sticker.dir"] = TxtDir.Text.Trim()
+            });
             StatusText.Text = res.Ok
                 ? "表情包设置已保存 · " + DateTime.Now.ToString("HH:mm:ss")
-                : "保存失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                : "保存失败：" + Api.Message(res);
         }
 
         /* ── 页签 ──────────────────────────────────────────────── */
@@ -297,14 +297,14 @@ namespace WhaleLauncher.Views
             if (_loading || !_sup.NodeRunning) return;
             var chance = Math.Round(Math.Clamp(SldDemand.Value / 100.0, 0, 1), 2);
             var ensure = ChkEnsure.IsChecked == true;
-            var body = "{\"patch\":{"
-                + "\"sticker.demandChance\":" + chance.ToString("0.##", CultureInfo.InvariantCulture)
-                + ",\"sticker.ensureSend\":" + (ensure ? "true" : "false")
-                + "}}";
-            var res = await Api.Post(_sup.Url, "/api/config", body);
+            var res = await Api.PatchConfig(_sup.Url, new Dictionary<string, object>
+            {
+                ["sticker.demandChance"] = chance,
+                ["sticker.ensureSend"] = ensure
+            });
             StatusText.Text = res.Ok
                 ? $"表情包频率已保存：{Math.Round(chance * 100)}%" + (ensure ? "，必发已开" : "") + " · " + DateTime.Now.ToString("HH:mm:ss")
-                : "保存失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                : "保存失败：" + Api.Message(res);
             if (res.Ok) await LoadAsync();
         }
 
@@ -509,9 +509,8 @@ namespace WhaleLauncher.Views
                 var n = (string)((Button)s).Tag;
                 var confirm = MessageBox.Show($"删掉这张？\n\n{n}", "表情包", MessageBoxButton.OKCancel, MessageBoxImage.Question);
                 if (confirm != MessageBoxResult.OK) return;
-                var r = await Api.Post(_sup.Url, "/api/stickers/delete",
-                    $"{{\"emotion\":\"{Api.Esc(_current)}\",\"name\":\"{Api.Esc(n)}\"}}");
-                StatusText.Text = r.Ok ? "已删除 " + n : "删除失败：" + (r.Error.Length > 0 ? r.Error : r.Raw);
+                var r = await Api.PostJson(_sup.Url, "/api/stickers/delete", new { emotion = _current, name = n });
+                StatusText.Text = r.Ok ? "已删除 " + n : "删除失败：" + Api.Message(r);
                 if (r.Ok)
                 {
                     _renderedSignature = "";   // 强制下次重建
@@ -581,9 +580,8 @@ namespace WhaleLauncher.Views
                 StatusText.Text = "先写一个分类名，比如「猫猫」。文件夹会用同一个名字建出来。";
                 return;
             }
-            var res = await Api.Post(_sup.Url, "/api/stickers/category",
-                "{\"action\":\"add\",\"label\":\"" + Api.Esc(label) + "\"}");
-            StatusText.Text = res.Ok ? "已新增分类：" + label : "新增失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+            var res = await Api.PostJson(_sup.Url, "/api/stickers/category", new { action = "add", label });
+            StatusText.Text = res.Ok ? "已新增分类：" + label : "新增失败：" + Api.Message(res);
             if (res.Ok)
             {
                 TxtNewCat.Text = "";
@@ -602,9 +600,8 @@ namespace WhaleLauncher.Views
                 "从列表里移除分类「" + label + "」？\n\n文件夹和里面的图片都会保留，随时可以再加回来。",
                 "表情包分类", MessageBoxButton.OKCancel, MessageBoxImage.Question);
             if (confirm != MessageBoxResult.OK) return;
-            var res = await Api.Post(_sup.Url, "/api/stickers/category",
-                "{\"action\":\"remove\",\"label\":\"" + Api.Esc(label) + "\"}");
-            StatusText.Text = res.Ok ? "已移除分类：" + label : "移除失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+            var res = await Api.PostJson(_sup.Url, "/api/stickers/category", new { action = "remove", label });
+            StatusText.Text = res.Ok ? "已移除分类：" + label : "移除失败：" + Api.Message(res);
             if (res.Ok)
             {
                 _current = "";
@@ -619,8 +616,8 @@ namespace WhaleLauncher.Views
         {
             if (_loading || !_sup.NodeRunning) return;
             var on = ChkEnabled.IsChecked == true;
-            var res = await Api.Post(_sup.Url, "/api/features", $"{{\"key\":\"stickers\",\"value\":{(on ? "true" : "false")}}}");
-            StatusText.Text = res.Ok ? $"表情包已{(on ? "开启" : "关闭")}" : "保存失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+            var res = await Api.PostJson(_sup.Url, "/api/features", new { key = "stickers", value = on });
+            StatusText.Text = res.Ok ? $"表情包已{(on ? "开启" : "关闭")}" : "保存失败：" + Api.Message(res);
             _loaded = false;
             _nextRefresh = DateTime.MinValue;
             await LoadAsync();
@@ -637,14 +634,14 @@ namespace WhaleLauncher.Views
         {
             if (string.IsNullOrEmpty(_current) || !CanManageOnline()) return;
             var chat = (TxtTestChat.Text ?? "").Trim();
-            var body = "{\"emotion\":\"" + Api.Esc(_current) + "\""
-                + (chat.Length > 0 ? ",\"chat\":\"" + Api.Esc(chat) + "\"" : "") + "}";
-            var res = await Api.Post(_sup.Url, "/api/stickers/test", body);
+            var body = new Dictionary<string, object> { ["emotion"] = _current };
+            if (chat.Length > 0) body["chat"] = chat;
+            var res = await Api.PostJson(_sup.Url, "/api/stickers/test", body);
             QueueInfo.Text = res.Ok ? "已排队 1 张" : "排队失败";
             StatusText.Text = res.Ok
                 ? "已排队，接收会话：" + (chat.Length > 0 ? chat : "（配置里的默认会话）")
                   + "。桥接会核验目标，必要时短暂切换微信；以任务结果为准。"
-                : "排队失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                : "排队失败：" + Api.Message(res);
         }
 
         private async void OnOpenFolder(object sender, RoutedEventArgs e)
@@ -661,10 +658,12 @@ namespace WhaleLauncher.Views
             ChkCollect.IsEnabled = false;
             try
             {
-                var body = $"{{\"patch\":{{\"sticker.collectReceived\":{(enabled ? "true" : "false")}}}}}";
-                var res = await Api.Post(_sup.Url, "/api/config", body);
+                var res = await Api.PatchConfig(_sup.Url, new Dictionary<string, object>
+                {
+                    ["sticker.collectReceived"] = enabled
+                });
                 if (!res.Ok) ChkCollect.IsChecked = !enabled;
-                CollectStatus.Text = res.Ok ? "已保存，桥接将在约 5 秒内应用" : "保存失败：" + res.Error;
+                CollectStatus.Text = res.Ok ? "已保存，桥接将在约 5 秒内应用" : "保存失败：" + Api.Message(res);
             }
             catch (Exception ex)
             {
@@ -771,7 +770,7 @@ namespace WhaleLauncher.Views
                 StatusText.Text = res.Ok
                     ? $"已上传 {uploaded} 张到「{_emotions.FirstOrDefault((x) => x.Key == _current)?.Label}」。"
                       + (skipped > 0 ? $"另有 {skipped} 张超过 4MB，已跳过。" : "")
-                    : "上传失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                    : "上传失败：" + Api.Message(res);
                 if (res.Ok)
                 {
                     _renderedSignature = "";
@@ -794,11 +793,10 @@ namespace WhaleLauncher.Views
             // 原因：内核经常跟着启动器一起提权，从提权进程里 spawn explorer.exe 在 Windows 上
             // 会“进程起来了但窗口不出现”（用户看到的就是「说已打开但其实没开」）。
             // 这里改用 ShellExecute（UseShellExecute=true），交给已经在跑的 explorer 处理。
-            var body = "{\"emotion\":\"" + Api.Esc(emotion ?? "") + "\""
-                + (string.IsNullOrEmpty(name) ? "" : ",\"name\":\"" + Api.Esc(name) + "\"")
-                + ",\"open\":false}";
+            var folderBody = new Dictionary<string, object> { ["emotion"] = emotion ?? "", ["open"] = false };
+            if (!string.IsNullOrEmpty(name)) folderBody["name"] = name;
             var res = _sup.NodeRunning
-                ? await Api.Post(_sup.Url, "/api/stickers/open-folder", body)
+                ? await Api.PostJson(_sup.Url, "/api/stickers/open-folder", folderBody)
                 : new ApiResult { Ok = false, Error = "内核未运行" };
 
             string target = res.Ok ? res.Str("dir") : LocalPath(emotion, name);

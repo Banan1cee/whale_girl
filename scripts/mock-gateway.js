@@ -2,12 +2,11 @@
 'use strict';
 
 /**
- * 模拟微信 / 抖音的网关，往本机的鲸鲸发消息，验证接入链路是否通。
- * 不需要真的微信/抖音账号，专门用来联调。
+ * 模拟微信的网关，往本机的鲸鲸发消息，验证接入链路是否通。
+ * 不需要真的微信账号，专门用来联调。
  *
  * 用法：
  *   node scripts/mock-gateway.js                                   # 模拟微信群里被 @
- *   node scripts/mock-gateway.js --platform=douyin                 # 模拟抖音群消息
  *   node scripts/mock-gateway.js --text="鲸鲸在吗" --user=海胆酱     # 自定义内容
  *   node scripts/mock-gateway.js --demo                            # 连发几条，看群聊规则
  *   node scripts/mock-gateway.js --private                         # 私聊消息
@@ -120,7 +119,7 @@ async function main() {
         if (b) console.log(`   💬 鲸鲸：${b}`);
       }
       if (data.outbound && data.outbound.dryRun) {
-        console.log('   （没配 outboundUrl，所以回复只在你这边显示，不会真的发回微信/抖音）');
+        console.log('   （没配 outboundUrl，所以回复只在你这边显示，不会真的发回微信）');
       }
       return data;
     } catch (err) {

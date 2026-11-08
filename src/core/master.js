@@ -9,12 +9,14 @@
  *
  * 判定顺序：
  *   1. senderId 等于 master.wxids 里的某一项 → 是主人（微信内部 id，改不了昵称也冒充不了）
- *   2. 微信以外的渠道（抖音等）没有稳定 id，昵称对上就算
+ *   2. 非微信渠道（网页等）没有稳定 id，昵称对上就算
  *   3. 微信里只有当 master.wxids 里没有任何「像 wxid 的值」时，才退回用昵称认
  *      —— 微信里谁都能改昵称，配了真 wxid 还认昵称就等于给所有人开后门
  */
 
 const WXID_RE = /^wxid_[A-Za-z0-9_-]+$/;
+// 账号目录名比真 wxid 多 4 位哈希（wxid_xxx_c248），配置里两种写法都可能出现。
+const ACCOUNT_HASH_RE = /_[0-9a-f]{4}$/i;
 
 function asList(value) {
   return (Array.isArray(value) ? value : [])
@@ -33,6 +35,23 @@ function looksLikeWxid(value) {
   return WXID_RE.test(String(value == null ? '' : value).trim());
 }
 
+/** 去掉账号目录名末尾的 4 位哈希，得到真 wxid */
+function stripAccountHash(value) {
+  return String(value == null ? '' : value).trim().replace(ACCOUNT_HASH_RE, '');
+}
+
+/**
+ * 两个 id 是不是同一个人。
+ * 启动器的账号列表显示的是目录名 `wxid_xxx_c248`，用户复制到主人 wxid 里也常常带哈希；
+ * 消息里的 senderId 却是真 wxid `wxid_xxx`。以前按字符串全等比较，
+ * 填了目录名就等于「不是主人」，日志里会反复出现「→ 非主人」。
+ */
+function sameWxid(a, b) {
+  const x = stripAccountHash(a).toLowerCase();
+  const y = stripAccountHash(b).toLowerCase();
+  return Boolean(x) && x === y;
+}
+
 /**
  * 判断这条消息的发送者是不是主人。
  * @param {object} config 运行时配置
@@ -49,10 +68,10 @@ function matchMaster(config, msg = {}) {
   const senderName = String((msg && msg.senderName) || '').trim();
   const platform = String((msg && msg.platform) || '').trim().toLowerCase();
 
-  const idHit = Boolean(senderId) && wxids.some((w) => w.toLowerCase() === senderId.toLowerCase());
+  const idHit = Boolean(senderId) && wxids.some((w) => sameWxid(w, senderId));
   const nameHit = Boolean(senderName) && names.some((n) => n.toLowerCase() === senderName.toLowerCase());
   const hardIds = wxids.filter(looksLikeWxid);
-  // 微信里只信 senderId；抖音这类渠道没有稳定 id，才允许昵称兜底
+  // 微信里只信 senderId；网页这类渠道没有稳定 id，才允许昵称兜底
   const nameFallback = platform !== 'wechat' || hardIds.length === 0;
   const isMaster = idHit || (nameFallback && nameHit);
 
@@ -82,6 +101,15 @@ function masterWarnings(config) {
   if (!wxids.length && names.length) {
     out.push('现在只靠昵称认主人：微信里谁都能改成同名，建议在 master.wxids 里补一个真正的 wxid');
   }
+  // 账号列表显示的是目录名，复制到主人 wxid 里很容易复制成机器人自己。
+  // 那样既认不出主人，主动搭话也没法「发给自己」（微信没有这个会话）。
+  const accountId = stripAccountHash(config && config.wechat && config.wechat.account);
+  if (accountId && wxids.some((w) => sameWxid(w, accountId))) {
+    out.push(
+      'master.wxids 里填的是机器人当前登录的账号（' + accountId + '），不是你自己；' +
+      '微信里没法给自己发消息，主动搭话会改发文件传输助手。请换成你自己的 wxid'
+    );
+  }
   return out;
 }
 
@@ -91,4 +119,7 @@ function isVerifiedOwner(config, msg) {
   return hit.reason === 'wxid' && hit.senderId !== 'unknown';
 }
 
-module.exports = { matchMaster, masterWarnings, masterLists, looksLikeWxid, isVerifiedOwner };
+module.exports = {
+  matchMaster, masterWarnings, masterLists, looksLikeWxid, isVerifiedOwner,
+  sameWxid, stripAccountHash,
+};

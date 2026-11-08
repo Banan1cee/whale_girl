@@ -150,12 +150,6 @@
       "inboundToken": "change-me-wechat",
       "outboundUrl": "",
       "outboundHeaders": {}
-    },
-    "douyin": {
-      "enabled": false,
-      "inboundToken": "change-me-douyin",
-      "outboundUrl": "",
-      "outboundHeaders": {}
     }
   },
   "websearch": {

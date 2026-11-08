@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Windows;
 
@@ -7,15 +8,16 @@ namespace WhaleLauncher.Views
     public partial class ChatPolicyWindow : Window
     {
         private readonly RuntimeSupervisor _sup;
-        private readonly ContactListEditor _muted;
-        private readonly ContactListEditor _whitelist;
+        private readonly ContactCheckList _muted;
+        private readonly ContactCheckList _whitelist;
 
         public ChatPolicyWindow(RuntimeSupervisor sup)
         {
             InitializeComponent();
             _sup = sup;
-            _muted = new ContactListEditor(sup, "group.mutedGroups", "没有设置黑名单", "编辑黑名单…", true);
-            _whitelist = new ContactListEditor(sup, "care.whitelist", "没有选择白名单会话", "编辑白名单…", false);
+            // 名单直接铺在窗口里：搜索 + 勾选 + 立即保存，不再开二级选择弹窗。
+            _muted = new ContactCheckList(sup, "group.mutedGroups", true);
+            _whitelist = new ContactCheckList(sup, "care.whitelist", false);
             MutedHost.Content = _muted;
             WhitelistHost.Content = _whitelist;
             _muted.Status += SetStatus;
@@ -24,13 +26,15 @@ namespace WhaleLauncher.Views
             {
                 SetEditable(false);
                 var res = await _sup.ReadConfigurationAsync("/api/config");
-                if (!res.Ok) { SetStatus("读取发言范围失败：" + Api.Detail(res)); return; }
+                if (!res.Ok) { SetStatus("读取发言范围失败：" + Api.Message(res)); return; }
                 var config = res.Prop("config");
                 _muted.SetValue(Property(Property(config, "group"), "mutedGroups"));
                 _whitelist.SetValue(Property(Property(config, "care"), "whitelist"));
                 WhitelistOnly.IsChecked = Property(Property(config, "wechat"), "whitelistOnly").ValueKind == JsonValueKind.True;
                 SetEditable(_sup.NodeRunning);
                 if (!_sup.NodeRunning) SetStatus("启动内核后可以编辑名单。");
+                await _muted.ReloadAsync();
+                await _whitelist.ReloadAsync();
             };
         }
 
@@ -40,10 +44,12 @@ namespace WhaleLauncher.Views
             SetEditable(false);
             try
             {
-                var res = await Api.Post(_sup.Url, "/api/config", "{\"patch\":{\"wechat.whitelistOnly\":"
-                    + (enabled ? "true" : "false") + "}}");
+                var res = await Api.PatchConfig(_sup.Url, new Dictionary<string, object>
+                {
+                    ["wechat.whitelistOnly"] = enabled
+                });
                 if (!res.Ok) WhitelistOnly.IsChecked = !enabled;
-                SetStatus(res.Ok ? "已保存并生效" : "保存失败：" + Api.Detail(res));
+                SetStatus(res.Ok ? "已保存并生效" : "保存失败：" + Api.Message(res));
             }
             finally { SetEditable(_sup.NodeRunning); }
         }

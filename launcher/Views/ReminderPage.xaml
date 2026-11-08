@@ -1,6 +1,7 @@
 <UserControl x:Class="WhaleLauncher.Views.ReminderPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:WhaleLauncher"
              Background="Transparent">
     <Grid Margin="28,24,32,20">
         <Grid.RowDefinitions>
@@ -141,11 +142,13 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Margin="0,0,10,0">
                                 <TextBlock Text="每天最多提醒几次（0 = 不限）" Style="{StaticResource Small}" Margin="0,0,0,4" />
-                                <TextBox x:Name="TxtMaxPerDay" Width="120" HorizontalAlignment="Left" />
+                                <ui:NumberField x:Name="TxtMaxPerDay" Width="120" HorizontalAlignment="Left"
+                                                Minimum="0" Maximum="200" Fallback="0" Label="每天最多提醒几次" />
                             </StackPanel>
                             <StackPanel Grid.Column="1">
                                 <TextBlock Text="刚聊过先跳过（分钟，0 = 不跳过）" Style="{StaticResource Small}" Margin="0,0,0,4" />
-                                <TextBox x:Name="TxtQuiet" Width="120" HorizontalAlignment="Left" />
+                                <ui:NumberField x:Name="TxtQuiet" Width="120" HorizontalAlignment="Left"
+                                                Minimum="0" Maximum="1440" Fallback="0" Label="刚聊过先跳过" />
                             </StackPanel>
                         </Grid>
 
@@ -170,19 +173,23 @@
                         <WrapPanel>
                             <StackPanel Margin="0,0,18,0">
                                 <TextBlock Text="平均间隔（分钟）" Style="{StaticResource Small}" Margin="0,0,0,4" />
-                                <TextBox x:Name="TxtCareEvery" Width="96" HorizontalAlignment="Left" />
+                                <ui:NumberField x:Name="TxtCareEvery" Width="96" HorizontalAlignment="Left"
+                                                Minimum="5" Maximum="1440" Fallback="90" Label="平均间隔" />
                             </StackPanel>
                             <StackPanel Margin="0,0,18,0">
                                 <TextBlock Text="间隔浮动（分钟）" Style="{StaticResource Small}" Margin="0,0,0,4" />
-                                <TextBox x:Name="TxtCareJitter" Width="96" HorizontalAlignment="Left" />
+                                <ui:NumberField x:Name="TxtCareJitter" Width="96" HorizontalAlignment="Left"
+                                                Minimum="0" Maximum="180" Fallback="25" Label="间隔浮动" />
                             </StackPanel>
                             <StackPanel Margin="0,0,18,0">
                                 <TextBlock Text="每天最多几次（0 = 不限）" Style="{StaticResource Small}" Margin="0,0,0,4" />
-                                <TextBox x:Name="TxtCareMax" Width="96" HorizontalAlignment="Left" />
+                                <ui:NumberField x:Name="TxtCareMax" Width="96" HorizontalAlignment="Left"
+                                                Minimum="0" Maximum="50" Fallback="0" Label="每天最多几次" />
                             </StackPanel>
                             <StackPanel>
                                 <TextBlock Text="刚聊过先跳过（分钟）" Style="{StaticResource Small}" Margin="0,0,0,4" />
-                                <TextBox x:Name="TxtCareQuiet" Width="96" HorizontalAlignment="Left" />
+                                <ui:NumberField x:Name="TxtCareQuiet" Width="96" HorizontalAlignment="Left"
+                                                Minimum="0" Maximum="240" Fallback="0" Label="刚聊过先跳过" />
                             </StackPanel>
                         </WrapPanel>
 

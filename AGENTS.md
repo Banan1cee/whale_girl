@@ -77,7 +77,7 @@ Copy-Item launcher/publish/WhaleLauncher.exe .\WhaleLauncher.exe -Force
 根目录只放 GitHub 识别的文件、项目元数据和 EXE：
 
 - 必须保留：`README.md`、`LICENSE`、`CONTRIBUTING.md`、`.gitignore`、`.gitattributes`、`.github/`、`WhaleLauncher.exe`。
-- 兼容性例外，不要移动：`AGENTS.md`（agent 规则入口）、`package.json`（Node/npm 与启动器读版本）、`server.js`（老版 `update.ps1` 靠它识别安装目录）、`release-manifest.json`（已发布启动器固定从根目录拉更新清单）。
+- 兼容性例外，不要移动：`AGENTS.md`（agent 规则入口）、`package.json`（Node/npm 与启动器读版本）、`server.js`（内核入口，老快捷方式也靠它识别安装目录）、`release-manifest.json`（已发布启动器固定从根目录拉更新清单）。
 - 其余文档放 `docs/`（`CHANGELOG.md`、`BUGS.md`、`NOTICE.md`、`PRIVACY.md`、`README.zh-CN.md`），配置模板放 `config/config.example.json`，Python 依赖放 `bridge/requirements.txt`。
 - 新增文件先想清楚归属目录，不要再往根目录丢新的 `.md` / `.json` / `.txt` / `.js`。
 

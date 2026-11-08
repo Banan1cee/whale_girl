@@ -13,7 +13,7 @@ test('会话刷新独立于探测和主动状态请求，页面卸载停止且�
   assert.match(src, /if \(_recentBusy \|\| !IsLoaded\) return/);
   assert.match(src, /finally \{ _recentBusy = false; \}/);
   assert.doesNotMatch(src, /TotalSeconds >= 5/);
-  assert.match(src, /json == _recentJson/);
+  assert.match(src, /res\.Raw == _recentJson/);
   const catchBody = src.slice(src.indexOf('// /api/recent'));
   assert.doesNotMatch(catchBody, /Recent.ItemsSource = null/);
 });

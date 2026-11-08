@@ -28,6 +28,13 @@ namespace WhaleLauncher.Views
         private readonly SemaphoreSlim _saveGate = new SemaphoreSlim(1, 1);
         private string _loadedEmoji = "正常";   // 上次载入的颜文字档位，用来判断用户有没有改过
 
+        // 主人名单复用 ContactInfo：名字和 wxid 本来就是联系人的两个字段，
+        // 再立一个 MasterEntry 只会多一套同样的模型。
+        private readonly List<ContactInfo> _masterEntries = new List<ContactInfo>();
+        private DispatcherTimer _masterSearchTimer;
+        private int _masterSearchSeq;
+        private bool _masterRendering;
+
         /// <summary>
         /// 这些开关在各自专页已经有入口（微信桥接 / 主动与提醒 / 表情包），
         /// 人设页不再重复列一份，避免同一个键两处可改、改完另一处不刷新。
@@ -50,6 +57,13 @@ namespace WhaleLauncher.Views
             {
                 _saveTimer.Stop();
                 await SaveAllAsync("已保存");
+            };
+
+            _masterSearchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(320) };
+            _masterSearchTimer.Tick += async (_, __) =>
+            {
+                _masterSearchTimer.Stop();
+                await SearchMasterAsync(TxtMasterSearch.Text.Trim());
             };
 
             Loaded += async (_, __) => await RefreshAsync();
@@ -108,12 +122,16 @@ namespace WhaleLauncher.Views
                 if (cfg.Ok && cfg.Prop("config").ValueKind == JsonValueKind.Object &&
                     cfg.Prop("config").TryGetProperty("persona", out var pcfg) && pcfg.ValueKind == JsonValueKind.Object)
                 {
-                    TxtAliases.Text = JoinLines(pcfg, "aliases");
+                    TxtAliases.Text = JsonRead.Lines(pcfg, "aliases");
                     ChkRoast.IsChecked = B(pcfg, "masterRoast");
                     if (pcfg.TryGetProperty("master", out var m) && m.ValueKind == JsonValueKind.Object)
                     {
-                        TxtMasterNames.Text = JoinLines(m, "names");
-                        TxtMasterWxids.Text = JoinLines(m, "wxids");
+                        LoadMasterEntries(m);
+                    }
+                    else
+                    {
+                        _masterEntries.Clear();
+                        RenderMasterChips();
                     }
                 }
 
@@ -150,7 +168,7 @@ namespace WhaleLauncher.Views
             var res = await Api.Get(_sup.Url, "/api/memory/chats");
             if (!res.Ok)
             {
-                MemoryHint.Text = "读取对话失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                MemoryHint.Text = "读取对话失败：" + Api.Message(res);
                 return;
             }
             var groups = new List<MemoryChatItem>();
@@ -191,11 +209,10 @@ namespace WhaleLauncher.Views
             CmbMemoryChat.IsEnabled = false;
             try
             {
-                var res = await Api.Post(_sup.Url, "/api/memory/chats/reset",
-                    JsonSerializer.Serialize(new { key = group.Key, confirm = true }));
+                var res = await Api.PostJson(_sup.Url, "/api/memory/chats/reset", new { key = group.Key, confirm = true });
                 if (!res.Ok)
                 {
-                    MemoryHint.Text = "清空失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                    MemoryHint.Text = "清空失败：" + Api.Message(res);
                     return;
                 }
                 await LoadMemoryChatsAsync();
@@ -290,9 +307,214 @@ namespace WhaleLauncher.Views
             if (_loading) return;
             if (!(sender is CheckBox chk) || chk.Tag is not string key) return;
             var value = chk.IsChecked == true;
-            var res = await Api.Post(_sup.Url, "/api/features",
-                $"{{\"key\":\"{Api.Esc(key)}\",\"value\":{(value ? "true" : "false")}}}");
-            SaveState.Text = res.Ok ? $"开关 {key} → {(value ? "开" : "关")}" : "开关保存失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+            var res = await Api.PostJson(_sup.Url, "/api/features", new { key, value });
+            SaveState.Text = res.Ok ? $"开关 {key} → {(value ? "开" : "关")}" : "开关保存失败：" + Api.Message(res);
+        }
+
+        // ── 主人名单：搜索选择，一次填好名字和 wxid ──────────────
+        //
+        // 以前是两个多行文本框，名字和 wxid 各填一份，很容易填成「A 的名字 + B 的 wxid」。
+        // 微信只按 wxid 认主人，这种错配不会报错，却会让 B 拿到主人权限。
+        // 现在统一从联系人里搜、选中，名字和 wxid 一起带出来，不再给手填错配的机会。
+        private void LoadMasterEntries(JsonElement master)
+        {
+            var names = JsonRead.Strings(master, "names");
+            var wxids = JsonRead.Strings(master, "wxids");
+            _masterEntries.Clear();
+            // 旧配置按行号配对：保存时也是这个顺序，所以来回切换不会把已有值弄丢。
+            var count = Math.Max(names.Count, wxids.Count);
+            for (var i = 0; i < count; i++)
+            {
+                _masterEntries.Add(new ContactInfo
+                {
+                    Name = i < names.Count ? names[i] : "",
+                    Wxid = i < wxids.Count ? wxids[i] : "",
+                });
+            }
+            RenderMasterChips();
+        }
+
+        private void RenderMasterChips()
+        {
+            MasterChips.Children.Clear();
+            foreach (var entry in _masterEntries.ToList())
+            {
+                var label = string.IsNullOrWhiteSpace(entry.Name) ? entry.Wxid : entry.Name;
+                if (!string.IsNullOrWhiteSpace(entry.Name) && !string.IsNullOrWhiteSpace(entry.Wxid)
+                    && !string.Equals(entry.Name, entry.Wxid, StringComparison.Ordinal))
+                    label = entry.Name + " · " + entry.Wxid;
+
+                var row = new StackPanel { Orientation = Orientation.Horizontal };
+                row.Children.Add(new TextBlock
+                {
+                    Text = label,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Foreground = (Brush)FindResource("Text"),
+                });
+                var remove = new Button
+                {
+                    Content = "×",
+                    Margin = new Thickness(6, 0, 0, 0),
+                    Padding = new Thickness(4, 0, 4, 0),
+                    Style = (Style)FindResource("Ghost"),
+                    Tag = entry,
+                    ToolTip = "移除这个主人",
+                };
+                remove.Click += OnRemoveMaster;
+                row.Children.Add(remove);
+
+                MasterChips.Children.Add(new Border
+                {
+                    Background = (Brush)FindResource("Surface3"),
+                    CornerRadius = new CornerRadius(12),
+                    Padding = new Thickness(10, 3, 5, 3),
+                    Margin = new Thickness(0, 0, 6, 6),
+                    Child = row,
+                });
+            }
+
+            var incomplete = _masterEntries.Any((e) =>
+                string.IsNullOrWhiteSpace(e.Name) || string.IsNullOrWhiteSpace(e.Wxid));
+            MasterWarn.Text = incomplete
+                ? "有主人只填了昵称或只填了 wxid。微信只按 wxid 认主人，请重新搜索选择一次，避免名字和 id 不是同一个人。"
+                : "";
+            MasterWarn.Visibility = incomplete ? Visibility.Visible : Visibility.Collapsed;
+            MasterHint.Text = _sup.NodeRunning
+                ? "搜索名字或 wxid，选中后自动填好昵称和 wxid。"
+                : "启动内核后可以搜索联系人；当前显示的是已保存的配置。";
+        }
+
+        private async void OnMasterSearchChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_loading || _masterRendering) return;
+            _masterSearchTimer.Stop();
+            var q = TxtMasterSearch.Text.Trim();
+            if (q.Length == 0)
+            {
+                _masterSearchSeq++;
+                MasterSuggest.ItemsSource = null;
+                MasterSuggest.Visibility = Visibility.Collapsed;
+                RenderMasterChips();
+                return;
+            }
+            _masterSearchTimer.Start();
+        }
+
+        private async Task SearchMasterAsync(string q)
+        {
+            var seq = ++_masterSearchSeq;
+            if (!_sup.NodeRunning)
+            {
+                MasterSuggest.ItemsSource = null;
+                MasterSuggest.Visibility = Visibility.Collapsed;
+                MasterHint.Text = "启动内核后才能搜索联系人。";
+                return;
+            }
+
+            var snap = await _sup.Contacts.LoadAsync();
+            if (seq != _masterSearchSeq) return;
+
+            if (!snap.Ok && snap.Items.Count == 0)
+            {
+                MasterSuggest.ItemsSource = null;
+                MasterSuggest.Visibility = Visibility.Collapsed;
+                MasterHint.Text = "联系人接口还没就绪（GET /api/wechat/contacts 失败）。" + snap.Error;
+                return;
+            }
+
+            var items = new List<ContactItem>();
+            foreach (var info in snap.Items)
+            {
+                if (info.IsGroup) continue;
+                if (_masterEntries.Any((m) => m.Wxid == info.Wxid)) continue;
+                if (!ContactDirectory.Matches(info, q)) continue;
+                items.Add(new ContactItem
+                {
+                    Wxid = info.Wxid,
+                    Name = info.Name,
+                    Remark = info.Remark,
+                    IsGroup = false
+                });
+            }
+
+            _masterRendering = true;
+            try
+            {
+                MasterSuggest.ItemsSource = items;
+                MasterSuggest.Visibility = items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
+            finally { _masterRendering = false; }
+
+            MasterHint.Text = items.Count > 0
+                ? "点一个结果加为主人。"
+                : "没有匹配「" + q + "」的联系人；换个名字或直接搜 wxid。";
+        }
+
+        private void OnMasterSuggestionPicked(object sender, SelectionChangedEventArgs e)
+        {
+            if (_masterRendering || _loading) return;
+            if (!(MasterSuggest.SelectedItem is ContactItem item)) return;
+
+            var display = string.IsNullOrWhiteSpace(item.Display) ? item.Wxid : item.Display;
+            var sameId = _masterEntries.FirstOrDefault((m) => m.Wxid == item.Wxid);
+            if (sameId != null)
+            {
+                if (string.IsNullOrWhiteSpace(sameId.Name)) sameId.Name = display;
+            }
+            else
+            {
+                // 旧配置里只有昵称、没有 wxid 的那一条，选中同名联系人时直接补上 id，
+                // 而不是再加一条重复的主人。
+                var nameOnly = _masterEntries.FirstOrDefault((m) =>
+                    string.IsNullOrWhiteSpace(m.Wxid)
+                    && string.Equals(m.Name, display, StringComparison.OrdinalIgnoreCase));
+                if (nameOnly != null) nameOnly.Wxid = item.Wxid;
+                else
+                    _masterEntries.Add(new ContactInfo
+                    {
+                        Name = string.Equals(display, item.Wxid, StringComparison.Ordinal) ? "" : display,
+                        Wxid = item.Wxid,
+                    });
+            }
+
+            _masterRendering = true;
+            try
+            {
+                MasterSuggest.SelectedItem = null;
+                MasterSuggest.ItemsSource = null;
+                MasterSuggest.Visibility = Visibility.Collapsed;
+                TxtMasterSearch.Text = "";
+            }
+            finally { _masterRendering = false; }
+
+            RenderMasterChips();
+            ScheduleSave();
+        }
+
+        private void OnRemoveMaster(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is Button b) || !(b.Tag is ContactInfo entry)) return;
+            _masterEntries.Remove(entry);
+            RenderMasterChips();
+            ScheduleSave();
+        }
+
+        private void ScheduleSave()
+        {
+            if (_loading) return;
+            _saveTimer.Stop();
+            _saveTimer.Start();
+        }
+
+        private List<string> MasterList(Func<ContactInfo, string> pick)
+        {
+            var list = new List<string>();
+            foreach (var entry in _masterEntries)
+            {
+                var value = (pick(entry) ?? "").Trim();
+                if (value.Length > 0) list.Add(value);
+            }
+            return list;
         }
 
         // ── 保存 ────────────────────────────────────────────────
@@ -300,23 +522,18 @@ namespace WhaleLauncher.Views
         {
             if (_loading) return;
             UpdateHints();
-            _saveTimer.Stop();
-            _saveTimer.Start();
+            ScheduleSave();
         }
 
         private void OnToggleField(object sender, RoutedEventArgs e)
         {
-            if (_loading) return;
-            _saveTimer.Stop();
-            _saveTimer.Start();
+            ScheduleSave();
         }
 
         private void OnEmojiChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             UpdateEmojiHint();
-            if (_loading) return;
-            _saveTimer.Stop();
-            _saveTimer.Start();
+            ScheduleSave();
         }
 
         private void UpdateEmojiHint()
@@ -367,12 +584,12 @@ namespace WhaleLauncher.Views
             {
             if (_loading || !_sup.NodeRunning) return;
 
-            int age = int.TryParse(TxtAge.Text.Trim(), out var a) ? Math.Clamp(a, 1, 120) : 23;
-            int priv = int.TryParse(TxtPrivate.Text.Trim(), out var pv) ? Math.Clamp(pv, 40, 800) : 140;
-            int grp = int.TryParse(TxtGroup.Text.Trim(), out var gv) ? Math.Clamp(gv, 20, 300) : 70;
-            int turns = int.TryParse(TxtTurns.Text.Trim(), out var tv) ? Math.Clamp(tv, 4, 400) : 200;
-            int gturns = int.TryParse(TxtGroupTurns.Text.Trim(), out var gtv) ? Math.Clamp(gtv, 2, 300) : 150;
-            int bubbles = int.TryParse(TxtBubbles.Text.Trim(), out var bv) ? Math.Clamp(bv, 1, 8) : 2;
+            if (!TxtAge.TryRead(out var age)) { SaveState.Text = TxtAge.ErrorText; return; }
+            if (!TxtPrivate.TryRead(out var priv)) { SaveState.Text = TxtPrivate.ErrorText; return; }
+            if (!TxtGroup.TryRead(out var grp)) { SaveState.Text = TxtGroup.ErrorText; return; }
+            if (!TxtTurns.TryRead(out var turns)) { SaveState.Text = TxtTurns.ErrorText; return; }
+            if (!TxtGroupTurns.TryRead(out var gturns)) { SaveState.Text = TxtGroupTurns.ErrorText; return; }
+            if (!TxtBubbles.TryRead(out var bubbles)) { SaveState.Text = TxtBubbles.ErrorText; return; }
 
             var pct = Math.Clamp((int)Math.Round(SldEmoji.Value), 0, 100);
             // 0% 用档位「关」做硬关；>0 时把档位恢复成可用值，真正生效的是下面的精确概率
@@ -381,52 +598,51 @@ namespace WhaleLauncher.Views
                 : (string.Equals(_loadedEmoji, "关", StringComparison.Ordinal) ? "正常" : _loadedEmoji);
             var emojiChance = pct / 100.0;
 
-            var json = "{" +
-                $"\"name\":\"{Api.Esc(TxtName.Text.Trim())}\"," +
-                $"\"age\":{age}," +
-                $"\"job\":\"{Api.Esc(TxtJob.Text.Trim())}\"," +
-                $"\"appearance\":\"{Api.Esc(TxtLook.Text.Trim())}\"," +
-                $"\"personality\":\"{Api.Esc(TxtPerson.Text.Trim())}\"," +
-                $"\"background\":\"{Api.Esc(TxtBack.Text.Trim())}\"," +
-                $"\"customPrompt\":\"{Api.Esc(TxtPrompt.Text.Trim())}\"," +
-                $"\"privateMaxChars\":{priv}," +
-                $"\"groupMaxChars\":{grp}," +
-                $"\"maxBubbles\":{bubbles}," +
-                $"\"historyTurns\":{turns}," +
-                $"\"groupHistoryTurns\":{gturns}," +
-                $"\"emoji\":\"{Api.Esc(emoji)}\"," +
-                $"\"emotions\":{(ChkEmotions.IsChecked == true ? "true" : "false")}," +
-                $"\"proactive\":{(ChkProactive.IsChecked == true ? "true" : "false")}," +
-                $"\"opinions\":{(ChkOpinions.IsChecked == true ? "true" : "false")}," +
-                $"\"links\":{(ChkLinks.IsChecked == true ? "true" : "false")}" +
-                "}";
-
-            var res = await Api.Post(_sup.Url, "/api/persona", json);
+            var res = await Api.PostJson(_sup.Url, "/api/persona", new
+            {
+                name = TxtName.Text.Trim(),
+                age,
+                job = TxtJob.Text.Trim(),
+                appearance = TxtLook.Text.Trim(),
+                personality = TxtPerson.Text.Trim(),
+                background = TxtBack.Text.Trim(),
+                customPrompt = TxtPrompt.Text.Trim(),
+                privateMaxChars = priv,
+                groupMaxChars = grp,
+                maxBubbles = bubbles,
+                historyTurns = turns,
+                groupHistoryTurns = gturns,
+                emoji,
+                emotions = ChkEmotions.IsChecked == true,
+                proactive = ChkProactive.IsChecked == true,
+                opinions = ChkOpinions.IsChecked == true,
+                links = ChkLinks.IsChecked == true
+            });
             if (!res.Ok)
             {
-                SaveState.Text = "保存失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                SaveState.Text = "保存失败：" + Api.Message(res);
                 return;
             }
 
             // 称呼（persona 接口不收，走 settings）；群聊规则统一在「设置 → 群聊」，这里不再写 config
             var owner = TxtOwner.Text.Trim();
-            var ownerResult = await Api.Post(_sup.Url, "/api/settings", $"{{\"userName\":\"{Api.Esc(owner)}\"}}");
+            var ownerResult = await Api.PostJson(_sup.Url, "/api/settings", new { userName = owner });
             if (!ownerResult.Ok)
             {
-                SaveState.Text = "人设已保存，但称呼保存失败：" + ownerResult.Error;
+                SaveState.Text = "人设已保存，但称呼保存失败：" + Api.Message(ownerResult);
                 return;
             }
-            var patch = "{\"patch\":{" +
-                "\"persona.masterRoast\":" + (ChkRoast.IsChecked == true ? "true" : "false") + "," +
-                "\"persona.aliases\":" + Lines(TxtAliases) + "," +
-                "\"persona.master.names\":" + Lines(TxtMasterNames) + "," +
-                "\"persona.master.wxids\":" + Lines(TxtMasterWxids) + "," +
-                "\"chat.emojiChance\":" + emojiChance.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) +
-                "}}";
-            var configResult = await Api.Post(_sup.Url, "/api/config", patch);
+            var configResult = await Api.PatchConfig(_sup.Url, new Dictionary<string, object>
+            {
+                ["persona.masterRoast"] = ChkRoast.IsChecked == true,
+                ["persona.aliases"] = LineList(TxtAliases),
+                ["persona.master.names"] = MasterList(e => e.Name),
+                ["persona.master.wxids"] = MasterList(e => e.Wxid),
+                ["chat.emojiChance"] = emojiChance
+            });
             if (!configResult.Ok)
             {
-                SaveState.Text = "人设与称呼已保存，但其他设置保存失败：" + configResult.Error;
+                SaveState.Text = "人设与称呼已保存，但其他设置保存失败：" + Api.Message(configResult);
                 return;
             }
             _loadedEmoji = emoji;
@@ -442,10 +658,10 @@ namespace WhaleLauncher.Views
         {
             if (!_sup.NodeRunning) { SaveState.Text = "请先启动内核，再导入预设。"; return; }
             if (!(CmbPreset.SelectedItem is PresetItem p)) return;
-            var res = await Api.Post(_sup.Url, "/api/persona/preset", $"{{\"id\":\"{Api.Esc(p.Id)}\"}}");
+            var res = await Api.PostJson(_sup.Url, "/api/persona/preset", new { id = p.Id });
             if (!res.Ok)
             {
-                PresetSaved.Text = "导入失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                PresetSaved.Text = "导入失败：" + Api.Message(res);
                 PresetSaved.Foreground = (Brush)FindResource("Bad");
                 return;
             }
@@ -465,38 +681,16 @@ namespace WhaleLauncher.Views
             return $" · 人设 {estimate}{tokens:N0} token / 当前上限 {limit:N0}";
         }
 
-        /// <summary>JSON 数组 → 一行一个（给多行输入框用）</summary>
-        private static string JoinLines(JsonElement parent, string name)
-        {
-            if (parent.ValueKind != JsonValueKind.Object || !parent.TryGetProperty(name, out var v)
-                || v.ValueKind != JsonValueKind.Array) return "";
-            return string.Join("\n", v.EnumerateArray()
-                .Where(x => x.ValueKind == JsonValueKind.String)
-                .Select(x => x.GetString() ?? "")
-                .Where(x => x.Length > 0));
-        }
-
-        /// <summary>多行输入框 → JSON 数组字面量</summary>
-        private static string Lines(System.Windows.Controls.TextBox box)
-        {
-            var items = (box.Text ?? "").Split('\n')
+        /// <summary>多行输入框 → 字符串列表</summary>
+        private static List<string> LineList(System.Windows.Controls.TextBox box)
+            => (box.Text ?? "").Split('\n')
                 .Select(x => x.Trim()).Where(x => x.Length > 0)
-                .Select(x => "\"" + Api.Esc(x) + "\"");
-            return "[" + string.Join(",", items) + "]";
-        }
+                .ToList();
 
-        private static string S(JsonElement e, string n)
-            => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? (v.GetString() ?? "") : "";
+        private static string S(JsonElement e, string n) => JsonRead.Str(e, n);
 
-        private static bool B(JsonElement e, string n)
-            => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.True;
+        private static bool B(JsonElement e, string n) => JsonRead.Bool(e, n);
 
-        private static long L(JsonElement e, string n)
-        {
-            if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty(n, out var v)) return 0;
-            if (v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var x)) return x;
-            if (v.ValueKind == JsonValueKind.String && long.TryParse(v.GetString(), out var y)) return y;
-            return 0;
-        }
+        private static long L(JsonElement e, string n) => JsonRead.Long(e, n);
     }
 }

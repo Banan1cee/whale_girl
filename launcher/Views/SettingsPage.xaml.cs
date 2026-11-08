@@ -47,6 +47,7 @@ namespace WhaleLauncher.Views
     public partial class SettingsPage : UserControl, IRefreshable
     {
         private readonly RuntimeSupervisor _sup;
+        private readonly ConfigSaver _saver;
         private readonly Dictionary<string, Action<JsonElement>> _loaders = new Dictionary<string, Action<JsonElement>>();
         private Action<JsonElement, Dictionary<string, JsonElement>> _loadModel;
         private Action<JsonElement> _loadVision;
@@ -61,6 +62,7 @@ namespace WhaleLauncher.Views
         {
             InitializeComponent();
             _sup = sup;
+            _saver = new ConfigSaver(sup);
             BuildOnce();
             Loaded += async (_, __) =>
             {
@@ -145,7 +147,7 @@ namespace WhaleLauncher.Views
             {
                 var spell = password.Password.Trim();
                 if (spell.Length == 0) return;
-                if (await PatchAsync("admin.spell", "\"" + Api.Esc(spell) + "\""))
+                if (await PatchAsync("admin.spell", spell))
                 {
                     password.Clear();
                     _adminSpellStatus.Text = "已设置";
@@ -153,7 +155,7 @@ namespace WhaleLauncher.Views
             };
             clear.Click += async (_, __) =>
             {
-                if (await PatchAsync("admin.spell", "\"\""))
+                if (await PatchAsync("admin.spell", ""))
                 {
                     password.Clear();
                     _adminSpellStatus.Text = "未设置";
@@ -654,7 +656,7 @@ namespace WhaleLauncher.Views
                     var status = await Api.Get(_sup.Url, "/api/memory/import/status");
                     if (!status.Ok)
                     {
-                        result.Text = "检查失败：" + (string.IsNullOrEmpty(status.Error) ? status.Raw : status.Error);
+                        result.Text = "检查失败：" + Api.Message(status);
                         return;
                     }
                     if (!status.Bool("pending"))
@@ -687,7 +689,7 @@ namespace WhaleLauncher.Views
                     var res = await Api.Post(_sup.Url, "/api/memory/import", "{}");
                     if (!res.Ok)
                     {
-                        result.Text = "转换失败：" + (string.IsNullOrEmpty(res.Error) ? res.Raw : res.Error);
+                        result.Text = "转换失败：" + Api.Message(res);
                         return;
                     }
                     if (res.Bool("idle"))
@@ -740,7 +742,7 @@ namespace WhaleLauncher.Views
                     chk.Click += async (s, e) =>
                     {
                         if (_loading) return;
-                        await PatchAsync(f.Path, ((CheckBox)s).IsChecked == true ? "true" : "false");
+                        await PatchAsync(f.Path, ((CheckBox)s).IsChecked == true);
                     };
                     _loaders[f.Path] = v => { if (chk.IsKeyboardFocusWithin) return; _loading = true; chk.IsChecked = v.ValueKind == JsonValueKind.True; _loading = false; };
                     return Row(f.Label, chk, f.Hint, false, labelWidth);
@@ -751,7 +753,7 @@ namespace WhaleLauncher.Views
                     cmb.SelectionChanged += async (s, e) =>
                     {
                         if (_loading || cmb.SelectedItem == null) return;
-                        await PatchAsync(f.Path, "\"" + Api.Esc((string)cmb.SelectedItem) + "\"");
+                        await PatchAsync(f.Path, (string)cmb.SelectedItem);
                     };
                     _loaders[f.Path] = v =>
                     {
@@ -769,7 +771,8 @@ namespace WhaleLauncher.Views
                     cmb.SelectionChanged += async (s, e) =>
                     {
                         if (_loading || cmb.SelectedItem == null) return;
-                        await PatchAsync(f.Path, (string)cmb.SelectedItem);
+                        if (int.TryParse((string)cmb.SelectedItem, out var port))
+                            await PatchAsync(f.Path, port);
                     };
                     _loaders[f.Path] = v =>
                     {
@@ -788,7 +791,7 @@ namespace WhaleLauncher.Views
                     pwd.LostFocus += async (s, e) =>
                     {
                         if (_loading || pwd.Password.Length == 0) return;
-                        if (await PatchAsync(f.Path, "\"" + Api.Esc(pwd.Password.Trim()) + "\"")) pwd.Password = "";
+                        if (await PatchAsync(f.Path, pwd.Password.Trim())) pwd.Password = "";
                     };
                     return Row(f.Label, pwd, f.Hint, false, labelWidth);
                 }
@@ -799,7 +802,7 @@ namespace WhaleLauncher.Views
                     {
                         if (_loading) return;
                         var lines = (box.Text ?? "").Split('\n').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
-                        await PatchAsync(f.Path, "[" + string.Join(",", lines.Select(p => "\"" + Api.Esc(p) + "\"")) + "]");
+                        await PatchAsync(f.Path, lines);
                     };
                     _loaders[f.Path] = v =>
                     {
@@ -814,19 +817,49 @@ namespace WhaleLauncher.Views
                 }
                 case "num":
                 {
-                    var box = new TextBox { Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
+                    TextBox box;
+                    if (f.IsInt)
+                    {
+                        var min = double.IsNaN(f.Min) ? int.MinValue : (int)Math.Ceiling(f.Min);
+                        var max = double.IsNaN(f.Max) ? int.MaxValue : (int)Math.Floor(f.Max);
+                        box = new NumberField
+                        {
+                            Width = 120,
+                            HorizontalAlignment = HorizontalAlignment.Left,
+                            Minimum = min,
+                            Maximum = max,
+                            EmptyUsesFallback = false,
+                            Label = f.Label
+                        };
+                    }
+                    else
+                    {
+                        box = new TextBox { Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
+                    }
                     box.LostFocus += async (s, e) =>
                     {
                         if (_loading) return;
-                        if (!double.TryParse((box.Text ?? "").Trim(), out var n))
+                        if (box is NumberField number)
+                        {
+                            if (!number.TryRead(out var n))
+                            {
+                                StatusText.Text = number.ErrorText;
+                                return;
+                            }
+                            number.Text = n.ToString();
+                            await PatchAsync(f.Path, n);
+                            return;
+                        }
+                        var text = (box.Text ?? "").Trim();
+                        if (!double.TryParse(text, out var v) || !double.IsFinite(v))
                         {
                             StatusText.Text = f.Label + "：要填数字";
                             return;
                         }
-                        if (!double.IsNaN(f.Min)) n = Math.Max(f.Min, n);
-                        if (!double.IsNaN(f.Max)) n = Math.Min(f.Max, n);
-                        if (f.IsInt) { n = Math.Round(n); box.Text = n.ToString(); }
-                        await PatchAsync(f.Path, f.IsInt ? n.ToString() : n.ToString("0.###"));
+                        // 以前越界会静默改成边界值，用户以为自己的输入生效了；现在直接说清楚。
+                        if (!double.IsNaN(f.Min) && v < f.Min) { StatusText.Text = f.Label + " 不能小于 " + f.Min; return; }
+                        if (!double.IsNaN(f.Max) && v > f.Max) { StatusText.Text = f.Label + " 不能大于 " + f.Max; return; }
+                        await PatchAsync(f.Path, v);
                     };
                     _loaders[f.Path] = v =>
                     {
@@ -862,7 +895,7 @@ namespace WhaleLauncher.Views
                     {
                         debounce.Stop();
                         if (_loading) return;
-                        await PatchAsync(f.Path, Math.Round(slider.Value).ToString());
+                        await PatchAsync(f.Path, Math.Round(slider.Value));
                     };
                     void ShowValue() => readout.Text = Math.Round(slider.Value) + (f.Unit ?? "");
                     slider.ValueChanged += (s, e) =>
@@ -1105,7 +1138,7 @@ namespace WhaleLauncher.Views
                         var v = Current();
                         if (v.Equals(saved)) return;
                         saved = v;
-                        await PatchAsync(f.Path, v.ToString("0"));
+                        await PatchAsync(f.Path, v);
                     };
 
                     hintTimer.Tick += (s, e) =>
@@ -1137,7 +1170,7 @@ namespace WhaleLauncher.Views
                     box.LostFocus += async (s, e) =>
                     {
                         if (_loading) return;
-                        await PatchAsync(f.Path, "\"" + Api.Esc((box.Text ?? "").Trim()) + "\"");
+                        await PatchAsync(f.Path, (box.Text ?? "").Trim());
                     };
                     _loaders[f.Path] = v =>
                     {
@@ -1164,13 +1197,12 @@ namespace WhaleLauncher.Views
             return cur.ValueKind == JsonValueKind.Number ? cur.GetDouble() : 0;
         }
 
-        private async Task<bool> PatchAsync(string path, string jsonLiteral)
+        private async Task<bool> PatchAsync(string path, object value)
         {
-            var body = "{\"patch\":{\"" + Api.Esc(path) + "\":" + jsonLiteral + "}}";
-            var res = await Api.Post(_sup.Url, "/api/config", body);
+            var res = await _saver.SaveAsync(() => new Dictionary<string, object> { [path] = value });
             StatusText.Text = res.Ok
                 ? path + " 已保存 " + DateTime.Now.ToString("HH:mm:ss")
-                : path + " 保存失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                : path + " 保存失败：" + Api.Message(res);
             return res.Ok;
         }
 
@@ -1192,11 +1224,10 @@ namespace WhaleLauncher.Views
                 "恢复默认", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (answer != MessageBoxResult.Yes) return;
 
-            var body = "{\"paths\":[" + string.Join(",", list.Select(p => "\"" + Api.Esc(p) + "\"")) + "]}";
-            var res = await Api.Post(_sup.Url, "/api/config/reset", body);
+            var res = await Api.PostJson(_sup.Url, "/api/config/reset", new { paths = list });
             if (!res.Ok)
             {
-                StatusText.Text = "恢复默认失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                StatusText.Text = "恢复默认失败：" + Api.Message(res);
                 return;
             }
 
@@ -1465,7 +1496,7 @@ namespace WhaleLauncher.Views
                 if (_providers != null)
                     foreach (var kv in _providers)
                         if (ProviderHasVision(kv.Key))
-                            list.Add(new ProviderItem { Key = kv.Key, Label = GetStr(kv.Value, "label") + "（" + kv.Key + "）" });
+                            list.Add(new ProviderItem { Key = kv.Key, Label = JsonRead.Str(kv.Value, "label") + "（" + kv.Key + "）" });
                 // 自定义永远在最后：不依赖任何预设，地址和模型都由用户填
                 list.Add(new ProviderItem { Key = "custom", Label = "自定义（自己填接口地址和模型）" });
                 visionProviders = list;
@@ -1496,9 +1527,9 @@ namespace WhaleLauncher.Views
                     suppressAuto = true;
                     try
                     {
-                        baseUrl.Text = GetStr(pv, "baseUrl");
+                        baseUrl.Text = JsonRead.Str(pv, "baseUrl");
                         FillChatOptions(pv);
-                        model.Text = GetStr(pv, "model");
+                        model.Text = JsonRead.Str(pv, "model");
                         RebuildVisionProviders();   // 新服务商的聊天模型能不能识图，决定「自动跟随」还在不在
                         if (!wasAuto || !VisionIsAuto()) EnsureVisionSelection();
                         ApplyVisionMode();
@@ -1628,20 +1659,22 @@ namespace WhaleLauncher.Views
                 return string.IsNullOrWhiteSpace(picked) ? (visionModel.Text ?? "").Trim() : picked;
             }
 
-            string ModelRequest()
+            object ModelRequest()
             {
                 var prov = (cmb.SelectedItem as ProviderItem)?.Key ?? "";
-                return "{"
-                    + "\"provider\":\"" + Api.Esc(prov) + "\","
-                    + "\"baseUrl\":\"" + Api.Esc(baseUrl.Text.Trim()) + "\","
-                    + "\"model\":\"" + Api.Esc(model.Text.Trim()) + "\","
-                    + "\"visionProvider\":\"" + Api.Esc(VisionProviderValue()) + "\","
-                    + "\"visionModel\":\"" + Api.Esc(VisionValue()) + "\","
-                    + (VisionIsCustom() ? "\"visionBaseUrl\":\"" + Api.Esc(visionUrl.Text.Trim()) + "\"," : "")
-                    + "\"mock\":false"
-                    + ",\"thinking\":" + (thinking.IsChecked == true ? "true" : "false")
-                    + (key.Password.Length > 0 ? ",\"apiKey\":\"" + Api.Esc(key.Password.Trim()) + "\"" : "")
-                    + "}";
+                var req = new Dictionary<string, object>
+                {
+                    ["provider"] = prov,
+                    ["baseUrl"] = baseUrl.Text.Trim(),
+                    ["model"] = model.Text.Trim(),
+                    ["visionProvider"] = VisionProviderValue(),
+                    ["visionModel"] = VisionValue(),
+                    ["mock"] = false,
+                    ["thinking"] = thinking.IsChecked == true
+                };
+                if (VisionIsCustom()) req["visionBaseUrl"] = visionUrl.Text.Trim();
+                if (key.Password.Length > 0) req["apiKey"] = key.Password.Trim();
+                return req;
             }
 
             // 自动保存：聊天/看图这些输入改完（失焦、换了选项、勾了开关）立刻写回，
@@ -1652,10 +1685,10 @@ namespace WhaleLauncher.Views
                 autoSaving = true;
                 try
                 {
-                    var res = await Api.Post(_sup.Url, "/api/settings", ModelRequest());
+                    var res = await Api.PostJson(_sup.Url, "/api/settings", ModelRequest());
                     if (!res.Ok)
                     {
-                        chatResult.Text = "自动保存失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                        chatResult.Text = "自动保存失败：" + Api.Message(res);
                         return;
                     }
                     key.Password = "";
@@ -1672,8 +1705,8 @@ namespace WhaleLauncher.Views
 
             save.Click += async (s, e) =>
             {
-                var res = await Api.Post(_sup.Url, "/api/settings", ModelRequest());
-                if (!res.Ok) { chatResult.Text = "保存失败：" + (res.Error.Length > 0 ? res.Error : res.Raw); return; }
+                var res = await Api.PostJson(_sup.Url, "/api/settings", ModelRequest());
+                if (!res.Ok) { chatResult.Text = "保存失败：" + Api.Message(res); return; }
                 key.Password = "";
                 chatResult.Text = "已保存。";
                 // 服务端可能顺手改了看图模型（跟随/解除跟随），必须重新拉一次，
@@ -1684,8 +1717,8 @@ namespace WhaleLauncher.Views
             test.Click += async (s, e) =>
             {
                 chatResult.Text = "正在测…";
-                var res = await Api.Post(_sup.Url, "/api/settings/test", ModelRequest());
-                chatResult.Text = res.Ok ? "连通正常。" : "测试没通过：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                    var res = await Api.PostJson(_sup.Url, "/api/settings/test", ModelRequest());
+                chatResult.Text = res.Ok ? "连通正常。" : "测试没通过：" + Api.Message(res);
             };
 
             // ── 看图面板 ────────────────────────────────────────
@@ -1744,7 +1777,7 @@ namespace WhaleLauncher.Views
                 var res = await Api.Post(_sup.Url, "/api/settings", payload);
                 if (!res.Ok)
                 {
-                    visionResult.Text = "保存失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                    visionResult.Text = "保存失败：" + Api.Message(res);
                     return false;
                 }
                 if (visionKey.Password.Length > 0) visionKey.Password = "";
@@ -1760,10 +1793,10 @@ namespace WhaleLauncher.Views
             vcopy.Click += async (s, e) =>
             {
                 visionResult.Text = "正在从聊天复制…";
-                var res = await Api.Post(_sup.Url, "/api/settings", "{\"visionCopyFromChat\":true}");
+                var res = await Api.PostJson(_sup.Url, "/api/settings", new { visionCopyFromChat = true });
                 if (!res.Ok)
                 {
-                    visionResult.Text = "复制失败：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                    visionResult.Text = "复制失败：" + Api.Message(res);
                     return;
                 }
                 _lastLoad = DateTime.MinValue;
@@ -1776,7 +1809,7 @@ namespace WhaleLauncher.Views
                 visionResult.Text = "正在测…";
                 if (!await SaveVisionAsync("")) return;      // 先落盘，测的就是刚才填的模型/Key
                 var res = await Api.Post(_sup.Url, "/api/vision/test", "{}");
-                visionResult.Text = res.Ok ? "看图通了，它说：" + res.Str("sample") : "没通：" + (res.Error.Length > 0 ? res.Error : res.Raw);
+                visionResult.Text = res.Ok ? "看图通了，它说：" + res.Str("sample") : "没通：" + Api.Message(res);
             };
 
             // ── 语音面板（原来单独一页，并到模型卡里）──────────
@@ -1805,10 +1838,10 @@ namespace WhaleLauncher.Views
                 // SelectedItem 指向新对象就匹配不上 → 显示成空白（换模型服务后就这样）。
                 var list = new List<ProviderItem>();
                 foreach (var kv in provs)
-                    list.Add(new ProviderItem { Key = kv.Key, Label = GetStr(kv.Value, "label") + "（" + kv.Key + "）" });
+                    list.Add(new ProviderItem { Key = kv.Key, Label = JsonRead.Str(kv.Value, "label") + "（" + kv.Key + "）" });
                 var keepKey = (cmb.SelectedItem as ProviderItem)?.Key;
                 cmb.ItemsSource = list;
-                var cur = GetStr(set, "provider");
+                var cur = JsonRead.Str(set, "provider");
                 // 以服务端值为准；万一认不出（服务刚重启、列表还没刷新）就退回上一次选中的，
                 // 再不行取第一项。以前焦点在下拉里时干脆不恢复，列表一重建就空白。
                 var picked = list.FirstOrDefault(x => x.Key == cur)
@@ -1816,13 +1849,13 @@ namespace WhaleLauncher.Views
                     ?? list.FirstOrDefault();
                 cmb.SelectedItem = picked;
                 FillChatOptions(picked != null && provs.TryGetValue(picked.Key, out var pv) ? pv : default);
-                if (!baseUrl.IsKeyboardFocusWithin) baseUrl.Text = GetStr(set, "baseUrl");
-                if (!model.IsKeyboardFocusWithin) model.Text = GetStr(set, "model");
+                if (!baseUrl.IsKeyboardFocusWithin) baseUrl.Text = JsonRead.Str(set, "baseUrl");
+                if (!model.IsKeyboardFocusWithin) model.Text = JsonRead.Str(set, "model");
                 RebuildVisionProviders();   // 自动项是否出现取决于聊天模型能不能识图
                 var vis = set.ValueKind == JsonValueKind.Object && set.TryGetProperty("vision", out var vv) ? vv : default;
-                var vmodel = GetStr(vis, "model");
+                var vmodel = JsonRead.Str(vis, "model");
                 var manual = vis.ValueKind == JsonValueKind.Object && vis.TryGetProperty("manual", out var mf) && mf.ValueKind == JsonValueKind.True;
-                var vprov = GetStr(vis, "provider");
+                var vprov = JsonRead.Str(vis, "provider");
                 if (!visionProvider.IsKeyboardFocusWithin && !visionModel.IsKeyboardFocusWithin)
                 {
                     if (manual && vmodel.Length > 0)
@@ -1834,7 +1867,7 @@ namespace WhaleLauncher.Views
                         var hit = visionProviders.FirstOrDefault(x => x.Key == vprov);
                         if (hit == null) hit = visionProviders.FirstOrDefault(x => x.Key == cur);   // 认不出就用聊天服务商，别把手动模型弄丢
                         visionProvider.SelectedItem = hit ?? visionProviders.FirstOrDefault();
-                        if (!visionUrl.IsKeyboardFocusWithin) visionUrl.Text = GetStr(vis, "baseUrl");
+                        if (!visionUrl.IsKeyboardFocusWithin) visionUrl.Text = JsonRead.Str(vis, "baseUrl");
                         if (hit != null && hit.Key == "custom")
                         {
                             // 自定义：模型名可能不在任何预设里，直接放进可编辑下拉的文本框
@@ -1870,7 +1903,7 @@ namespace WhaleLauncher.Views
             _loadVision = (set) =>
             {
                 var v = set.ValueKind == JsonValueKind.Object && set.TryGetProperty("vision", out var vv) ? vv : default;
-                var curModel = GetStr(v, "model");
+                var curModel = JsonRead.Str(v, "model");
                 var manual = v.ValueKind == JsonValueKind.Object && v.TryGetProperty("manual", out var mf) && mf.ValueKind == JsonValueKind.True;
                 if (v.ValueKind == JsonValueKind.Object)
                 {
@@ -1879,7 +1912,7 @@ namespace WhaleLauncher.Views
                     var follow = manual ? "" : "（自动）";
                     visionHint.Text = (configured ? "已配置：" + masked : "没配置。选「自动跟随」就用聊天那把 Key；本机/内网看图服务可以留空。")
                         + (curModel.Length > 0 ? " 当前看图模型：" + curModel + follow : "");
-                    var ep = GetStr(v, "baseUrl");
+                    var ep = JsonRead.Str(v, "baseUrl");
                     var custom = v.ValueKind == JsonValueKind.Object && v.TryGetProperty("custom", out var cst) && cst.ValueKind == JsonValueKind.True;
                     visionEndpoint.Text = ep.Length > 0
                         ? "接口地址：" + ep + (custom ? "（自定义）" : manual ? "（手动指定）" : "（自动跟随聊天模型）")
@@ -1965,10 +1998,6 @@ namespace WhaleLauncher.Views
             }
             return cur;
         }
-
-        private static string GetStr(JsonElement e, string name)
-            => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
-                ? (v.GetString() ?? "") : "";
     }
 }
 

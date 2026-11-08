@@ -3,7 +3,7 @@
 const { sendDenial } = require('../core/wechatSendPolicy');
 
 /**
- * 通用 HTTP 网关适配器：把微信/抖音中转服务发来的 JSON 变成统一消息，
+ * 通用 HTTP 网关适配器：把微信中转服务发来的 JSON 变成统一消息，
  * 再把鲸鲸的回复 POST 回中转服务。
  *
  * 收消息：POST /webhook/{platform}  （协议见 docs/GATEWAY.md）
@@ -14,7 +14,8 @@ const http = require('node:http');
 const https = require('node:https');
 const { URL } = require('node:url');
 
-const PLATFORMS = ['wechat', 'douyin'];
+// 只保留微信：抖音桥接早已不适配，代码删掉后不再留一个永远连不上的平台名。
+const PLATFORMS = ['wechat'];
 
 function firstDefined(obj, keys) {
   for (const k of keys) {
@@ -164,7 +165,7 @@ class Gateway {
   verifyToken(req, body) {
     const expected = String(this.options.inboundToken || '');
     if (!expected.trim()) return false; // 空凭据不能变成免鉴权入口。
-    if (/^change-me-(wechat|douyin)$/.test(expected)) {
+    if (/^change-me-wechat$/.test(expected)) {
       const ip = String(req.socket && req.socket.remoteAddress || '');
       if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ip)) return false;
     }

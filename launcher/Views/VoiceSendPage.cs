@@ -17,8 +17,9 @@ public sealed class VoiceSendPage : UserControl
 {
     readonly CheckBox experimental=new(){Content="启用语音发送（实验性）",IsChecked=false};
     readonly StackPanel panel=new(){Visibility=Visibility.Collapsed};
-    readonly TextBox probability=new(){Text="25"},model=new(),voice=new(),instructions=new(),search=new();
-    readonly TextBox synthTimeout=new(){Text="20",Width=140,HorizontalAlignment=HorizontalAlignment.Left};
+    readonly NumberField probability=new(){Text="25",Minimum=0,Maximum=100,Fallback=25,Label="概率"};
+    readonly TextBox model=new(),voice=new(),instructions=new(),search=new();
+    readonly NumberField synthTimeout=new(){Text="20",Width=140,HorizontalAlignment=HorizontalAlignment.Left,Minimum=5,Maximum=90,Fallback=20,Label="语音合成最长等待"};
     readonly ComboBox shortcut=new(){IsEditable=true,Text="Ctrl+Alt"},devices=new(),models=new(),voices=new();
     readonly PasswordBox key=new();
     readonly ComboBox provider=new();
@@ -373,8 +374,8 @@ public sealed class VoiceSendPage : UserControl
     void Save()
     {
         if(experimental.IsChecked!=true)throw new Exception("请先打开实验开关");
-        if(!double.TryParse(probability.Text,NumberStyles.Float,CultureInfo.InvariantCulture,out var chance)||!double.IsFinite(chance)||chance<0||chance>100)throw new Exception("概率须为 0～100");
-        if(!double.TryParse(synthTimeout.Text,NumberStyles.Float,CultureInfo.InvariantCulture,out var seconds)||!double.IsFinite(seconds)||seconds<5||seconds>90)throw new Exception("语音合成最长等待须为 5～90 秒");
+        if(!probability.TryRead(out var chance))throw new Exception(probability.ErrorText);
+        if(!synthTimeout.TryRead(out var seconds))throw new Exception(synthTimeout.ErrorText);
         var hotkey=RecordingShortcut.Parse(shortcut.Text);
         if(devices.SelectedItem is not Device d||string.IsNullOrWhiteSpace(voice.Text))throw new Exception("请选择虚拟声卡和音色");
         BreezeSpeech.SaveKey(keyFile,key.Password);if(string.IsNullOrWhiteSpace(BreezeSpeech.LoadKey(keyFile)))throw new Exception("请配置 "+SpeechProviders.Get(providerId).Name+" Key");
