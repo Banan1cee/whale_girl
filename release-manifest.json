@@ -1,13 +1,13 @@
 {
-  "latest": "4.0.8.1",
-  "released_at": "2026-11-08T07:23:16Z",
+  "latest": "4.0.8.2",
+  "released_at": "2026-11-08T13:11:53Z",
   "force_after_hours": 12,
-  "force": true,
-  "force_from": "4.0.8",
+  "force": false,
+  "force_from": null,
   "kill_below": null,
-  "message": "鲸鲸 4.0.8.1 已发布：下载安装包覆盖安装即可，data 与 config.json 不受影响。",
-  "manifest_version": 9,
+  "message": "鲸鲸 4.0.8.2 已发布：下载安装包覆盖安装即可，data 与 config.json 不受影响。",
+  "manifest_version": 10,
   "channel": "stable",
-  "release_notes": "- 修复微信已打开却一直显示「账号待确认」，导致鲸鲸收得到却回不了的问题。\n- 所选账号没登录时，微信桥接会提示该登录哪个号。",
-  "release_details": "### 修复 · 微信账号窗口确认\n\n- 排除标题与主窗口相同的小型辅助窗口，避免一个微信账号被识别成多个主窗口。\n- 微信、WeChat 和 Weixin 主窗仍可识别。最小化时按还原尺寸判断，真正的多个候选窗口仍须通过账号归属校验。\n- 排除停在登录页的窗口。所选账号没登录时，微信桥接会提示该登录哪个号，或可改用当前已登录的账号。"
+  "release_notes": "- 🔴 窗口/UIA异常才建议更新\n- 正常使用可跳过",
+  "release_details": "### 修复 · 微信账号窗口确认\n\n- 同账号有多个候选窗口时，核对指定窗口的会话列表和原生窗口关系，避免单开时被隐藏或附属窗口卡住。\n- 候选窗口仍无法区分时暂停发送，并记录句柄、进程、尺寸和控件树状态，方便继续定位。"
 }
