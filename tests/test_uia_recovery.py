@@ -115,22 +115,28 @@ class RecoveryTests(unittest.TestCase):
         rebind = Mock()
         resolve = Mock(return_value=((222, 333), []))
         owner = Mock(return_value=True)
+        warn = Mock()
         matched = [(111, 333), (222, 333)]
         env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False}, log=Mock(),
                    _probe_wechat_windows=lambda: (None, [], matched),
-                   _window_account_matches=owner, log_throttled=Mock(),
+                   _window_account_matches=owner, log_throttled=Mock(), log_warn=warn,
                    uia_boot=SimpleNamespace(resolve_account_windows=resolve), rebind_uia=rebind)
         pick = load_function('pick_account_window', env)
         self.assertTrue(pick())
         resolve.assert_called_once_with(matched)
         self.assertEqual(env['ACCOUNT']['hwnd'], 222)
         rebind.assert_called_once_with(222)
+        self.assertIn('type=window_binding code=main_window_verified status=confirmed detail=',
+                      env['log_throttled'].call_args.args[1])
 
         owner.return_value = False
         rebind.reset_mock()
         self.assertFalse(pick(force=True))
         self.assertFalse(env['ACCOUNT']['verified'])
         rebind.assert_not_called()
+        self.assertIn('type=window_binding code=ownership_changed status=blocked detail=',
+                      env['log_throttled'].call_args.args[1])
+        self.assertIs(env['log_throttled'].call_args.kwargs['emit'], warn)
 
     def test_account_tree_needs_session_controls_on_the_exact_hwnd(self):
         root = SimpleNamespace(NativeWindowHandle=222, ClassName='Qt51514QWindowIcon', GetChildren=Mock())
