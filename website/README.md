@@ -1,6 +1,6 @@
 # Whale Girl 主题官网
 
-独立静态宣传网站。无需安装依赖或构建，可直接打开 `website/index.html`。
+独立静态宣传网站。直接打开 `website/index.html` 可预览布局，正式部署时从 GitHub Releases 生成版本区。
 
 ## 本地预览
 
@@ -14,27 +14,25 @@ python -m http.server 4173 --bind 127.0.0.1 --directory website
 
 ## 发布
 
-将 `website/` 中的文件部署到任何静态托管服务的站点根目录（例如 GitHub Pages、Cloudflare Pages 或 Nginx）。无构建命令，输出目录为 `website`。页面全部使用相对路径，支持托管在子路径下。
+页面资源使用相对路径，支持托管在子路径下。其它静态托管服务可将 GitHub 的 `releases/latest` 和 `releases` JSON 交给 `node scripts/render-website-releases.js latest.json recent.json <输出目录>`，然后上传该输出目录。
 
 ### GitHub Pages
 
 GitHub Pages 的「Deploy from a branch」只能选仓库根目录或 `/docs`，不能直接选 `website/`；本项目用 `.github/workflows/pages.yml` 走官方 Actions 发布：
 
 1. 仓库 **Settings → Pages → Build and deployment → Source** 选 **GitHub Actions**。
-2. 推送到 `main`（只改 `website/**` 或 `pages.yml` 时自动触发），或在 Actions 里手动运行 **pages**。
+2. 更新网站源码并合入 `main` 会自动部署。发布或编辑 GitHub Release 也会触发 `main` 部署，另有每日补跑。可在 Actions 里手动运行 **pages** 立即同步。
 3. 站点地址为 `https://<用户名>.github.io/whale_girl/`；所有资源都走相对路径，不需要改 base path。
 4. 如果默认分支不叫 `main`，同步修改 `pages.yml` 里的 `branches`。
 
-工作流只发布 `website/`，不会把仓库里的源码、`docs/` 或其它文件带到站点上。使用 Actions 发布时不需要 Jekyll，也不需要额外构建步骤。
+工作流只发布由 `website/` 生成的静态产物，不需要 Jekyll 或 npm 依赖。版本号、标题、摘要、日期和发行链接来自公开 Release，草稿和预发布不进入列表。网页打开后直接显示生成好的版本区，无需访客访问 GitHub API。
 
-### 自定义域名 `www.bot.zyyc.cc`
+### 自定义域名 `bot.zyyc.cc`
 
-仓库已经在 `website/CNAME` 里写入 `www.bot.zyyc.cc`。还需要在 GitHub 和 DNS 侧各做一步：
+仓库已在 `website/CNAME` 中写入 `bot.zyyc.cc`。更改域名时需要同时更新 DNS 和 GitHub：
 
-1. **DNS**：给 `www.bot.zyyc.cc` 添加 CNAME，指向 `banan1cee.github.io`。
-   - 如果 DNS 服务商管理的是 `zyyc.cc` 区域，记录名填 `www.bot`。
-   - 如果管理的是 `bot.zyyc.cc` 区域，记录名填 `www`。
-2. **GitHub**：仓库 **Settings → Pages → Custom domain** 填 `www.bot.zyyc.cc`，保存并等 DNS 检查通过。
+1. **DNS**：在 `zyyc.cc` 区域为 `bot` 添加 CNAME，指向 `banan1cee.github.io`。
+2. **GitHub**：仓库 **Settings → Pages → Custom domain** 填 `bot.zyyc.cc`，保存并等 DNS 检查通过。
 3. DNS 生效后勾选 **Enforce HTTPS**；证书签发可能需要几分钟到几十分钟。
 
 `website/CNAME` 会随 Actions 产物一起发布；如果以后换域名，改这个文件并同步修改 GitHub Pages 的自定义域名设置。
@@ -49,7 +47,7 @@ GitHub Pages 的「Deploy from a branch」只能选仓库根目录或 `/docs`，
 - `images/launcher-icon.png`：与启动器 `launcher/Assets/app.png` 字节一致的品牌图标，同时用于页头、页脚和 favicon。图标原创角色作者为上善无形，本项目图标为二创作品；署名与使用边界见根目录 `NOTICE.md`。
 - `fonts/`：本地 Noto Sans SC（思源黑体体系）400 / 500 / 600 字重及 OFL 许可，统一中英文字形。字体按当前页面文案和 ASCII 字符子集化；新增中文文案时需重新生成子集，否则新增字会使用系统后备字体。字体来自 Google Fonts，总大小约 387 KiB，访客无需访问外部字体服务。
 
-发版后根据真实 Releases 更新报告与版本列表，不要展示未单独发行的仓库中间版本。当前只列真实发行过的三个 4.x 版本：4.0.7、4.0.6、4.0.5；4.0.2–4.0.4 未单独发版，内容已并入 4.0.5，页面脚注也说明这一点，更早的 4.0.1 与 3.x 版本从 Releases 查看。站点不再提供独立更新日志栏目，完整历史仍以仓库 `CHANGELOG.md` 与 Releases 为准。下载按钮打开官方最新 Release，让用户选择实际存在的安装资产。作者寄语为明确标注的待确认草稿，正式上线前由作者确认或替换。
+发行列表自动显示最新正式版与最近两次其它正式发行。完整更新历史见仓库 `CHANGELOG.md` 与 Releases。下载按钮打开官方最新 Release，让用户选择实际存在的安装资产。作者寄语为明确标注的待确认草稿，正式上线前由作者确认或替换。
 
 网站不收集访客数据；仅在浏览器 localStorage 保存主题偏好。所有对话展示均为示意文案。
 
