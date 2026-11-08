@@ -25,6 +25,10 @@ on:
         description: '版本号（如 4.0.0；留空 = tag 去 v，否则读 package.json）'
         required: false
         default: ''
+      release_run:
+        description: '将成功的 4.0.8.1 标签构建产物上传到现有草稿，填入 Actions run ID'
+        required: false
+        default: ''
   push:
     branches:
       # 测试分支：推送即构建，便于在没有 tag 的情况下验证流水线。
@@ -69,6 +73,7 @@ env:
 
 jobs:
   installer:
+    if: github.event_name != 'workflow_dispatch' || inputs.release_run == ''
     name: 构建安装包
     runs-on: windows-latest
     timeout-minutes: 90
@@ -720,3 +725,35 @@ jobs:
             artifacts/setup/release-manifest.json
           if-no-files-found: error
           retention-days: 30
+
+  promote-hotfix:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_run != ''
+    name: 核验正式标签产物并上传到草稿
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ inputs.release_run }}
+      TAG: v4.0.8.1
+    steps:
+      - name: 核验 CI 来源与草稿
+        shell: bash
+        run: |
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          tag_object=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .object.sha)
+          tag_commit=$(gh api "repos/$GH_REPO/git/tags/$tag_object" --jq .object.sha)
+          gh api "repos/$GH_REPO/actions/runs/$RUN_ID" | jq -e --arg commit "$tag_commit" --arg tag "$TAG" '
+            .conclusion == "success" and .event == "push" and .path == ".github/workflows/installer.yml"
+            and .head_branch == $tag and .head_sha == $commit'
+          test "$(gh release view "$TAG" --json isDraft,author --jq '.isDraft and .author.login == "Banan1cee"')" = true
+      - name: 下载、验证并上传草稿资产
+        shell: bash
+        run: |
+          version=${TAG#v}
+          gh run download "$RUN_ID" -n "whale-girl-release-$version" -D release
+          cd release
+          tr -d '\r' < SHA256SUMS.txt | sha256sum -c -
+          jq -e --arg version "$version" '.latest == $version and .manifest_version >= 8 and .force == false
+            and (.release_notes | contains("账号待确认"))' release-manifest.json
+          gh release upload "$TAG" "whale-girl-$version-setup.exe" SHA256SUMS.txt release-manifest.json
