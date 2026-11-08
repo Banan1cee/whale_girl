@@ -178,18 +178,10 @@ class AccountMixin:
         unknown = []
         matched = []
         ownership = {}
-        for h in hwnds:
-            h = int(h)
-            try:
-                cls = win32gui.GetClassName(h) or ''
-                title = (win32gui.GetWindowText(h) or '').strip()
-                if pinned and h != pinned:
-                    continue
-            except Exception:
-                cls, title = ('', '')
-            if 'login' in cls.lower() or not ('QWindowIcon' in cls or 'mmui::' in cls):
+        for h in dict.fromkeys(map(int, hwnds)):
+            if pinned and h != pinned:
                 continue
-            if not G.uia_boot.is_wechat_main_title(title):
+            if not G.uia_boot.is_wechat_account_window(win32gui, h):
                 continue
             try:
                 _cpid = int(win32process.GetWindowThreadProcessId(h)[1] or 0)
@@ -494,17 +486,7 @@ class AccountMixin:
             hwnds = list(probe._wechat_hwnds() or ())
         except Exception:
             return None
-        count = 0
-        for h in hwnds:
-            try:
-                cls = win32gui.GetClassName(int(h)) or ''
-                title = (win32gui.GetWindowText(int(h)) or '').strip()
-            except Exception:
-                continue
-            if ('QWindowIcon' in cls or 'mmui::' in cls) and 'login' not in cls.lower() \
-                    and G.uia_boot.is_wechat_main_title(title):
-                count += 1
-        return count
+        return sum(G.uia_boot.is_wechat_account_window(win32gui, h) for h in set(map(int, hwnds)))
 
     def sticker_account_evidence_allowed(self):
         explicit_pin = bool(G.WINDOW_HWND and int(G.WINDOW_HWND) == int(self.ACCOUNT.get('hwnd') or 0))

@@ -115,7 +115,7 @@ jobs:
           $v = "$v".Trim()
           if ($v -match '^\d+\.\d+$') { $v = "$v.0" }
           if ($v -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
-            Write-Output "::error title=版本号不合法::解析出「$v」，要 x.y.z 形式"
+            Write-Output "::error title=版本号不合法::解析出「$v」，要 x.y.z 或 x.y.z.r 形式"
             exit 1
           }
           "version=$v" >> $env:GITHUB_ENV
@@ -208,13 +208,14 @@ jobs:
           # 版本号必须从这里注入：csproj 里的 4.0.2 只是本机默认值。
           # 不传的话 CI 出的 exe 文件属性会永远停在 csproj 那个值，
           # 和安装包 / release-manifest.json 对不上。
+          $fileVersion = if ($env:version.Split('.').Count -eq 3) { "$env:version.0" } else { $env:version }
           dotnet publish launcher/WhaleLauncher.csproj `
             -c Release `
             -r win-x64 `
             --self-contained false `
             -p:PublishSingleFile=true `
             -p:Version=$env:version `
-            -p:FileVersion=$env:version.0 `
+            -p:FileVersion=$fileVersion `
             -o launcher/publish `
             --nologo
           if ($LASTEXITCODE -ne 0) { Write-Output '::error title=启动器发布失败::dotnet publish 退出码非 0'; exit 1 }
