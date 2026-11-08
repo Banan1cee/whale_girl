@@ -310,7 +310,6 @@ const DEFAULT_CONFIG = {
     // 默认开：本地桥接就是走这个 webhook，关掉等于微信收发全停。
     // 启动器设置页已不再暴露这一组，改只能改 config.json。
     wechat: { enabled: true, inboundToken: 'change-me-wechat', outboundUrl: '', outboundHeaders: {} },
-    douyin: { enabled: false, inboundToken: 'change-me-douyin', outboundUrl: '', outboundHeaders: {} },
   },
   // 日志：level 管控制台，fileLevel 管文件（默认 debug 全量）。
   // trace 记「为什么回/为什么不回」的判定链（不含正文）；traceRaw 在本地留 24 小时的原文副本，

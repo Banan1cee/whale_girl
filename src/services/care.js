@@ -1,6 +1,7 @@
 'use strict';
 
 const { configuredWhitelist, sendDenial } = require('../core/wechatSendPolicy');
+const { sameWxid } = require('../core/master');
 
 // 读布尔开关：兼容老配置里的字符串 "false"（Boolean("false") 会被当成开）
 const { toBool } = require('../infra/features');
@@ -269,7 +270,8 @@ function isMasterTarget(config, wxid, contacts = null) {
   if (!id) return false;
   if (id === 'filehelper') return true;
   const masters = ((config && config.persona && config.persona.master) || {}).wxids || [];
-  if (masters.some((m) => String(m || '').trim() && String(m).trim() === id)) return true;
+  // 主人 wxid 可能填的是账号目录名（多 4 位哈希），按归一化后的 id 比。
+  if (masters.some((m) => String(m || '').trim() && sameWxid(m, id))) return true;
   // 没填 wxid 时按昵称兜底（以前 wxids 为空 → 一个目标都发不出去）
   const names = ((config && config.persona && config.persona.master) || {}).names || [];
   const hit = contacts && typeof contacts.get === 'function' ? contacts.get(id) : null;

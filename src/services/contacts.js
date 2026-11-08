@@ -96,7 +96,13 @@ class ContactsCache {
   get(wxid) {
     const id = clean(wxid, 120);
     if (!id || !id.length) return null;
-    return this.items.find((item) => item.wxid === id) || null;
+    const exact = this.items.find((item) => item.wxid === id);
+    if (exact) return exact;
+    // 启动器里看到的是账号目录名（wxid_xxx_c248），联系人缓存里存的是真 wxid（wxid_xxx）。
+    // 不归一化的话，白名单/主人里填目录名就永远查不到名字，日志只能显示一串 wxid。
+    const want = id.replace(/_[0-9a-f]{4}$/i, '');
+    if (want === id) return null;
+    return this.items.find((item) => item.wxid === want) || null;
   }
 
   /** 按 wxid / 名字 / 备注匹配（大小写不敏感）；空 q 返回全部 */

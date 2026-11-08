@@ -14,11 +14,8 @@ using System.Threading.Tasks;
 namespace WhaleLauncher
 {
     /// <summary>
-    /// 更新落地：两种装法走两条路。
-    ///
-    /// · 源码版 / 老 zip 装法：目录里有 scripts\update.ps1，仍交给它（备份、覆盖、回滚）。
-    /// · 安装版：包里没有 scripts\，改为下载官方安装包 → 校验 SHA256 → 静默覆盖安装。
-    ///   安装包资产名由 installer/whale.iss 的 OutputBaseFilename 决定，两处必须一致。
+    /// 更新落地：统一下载官方安装包 → 校验 SHA256 → 静默覆盖安装。
+    /// 安装包资产名由 installer/whale.iss 的 OutputBaseFilename 决定，两处必须一致。
     /// </summary>
     public static class UpdateService
     {
@@ -42,8 +39,7 @@ namespace WhaleLauncher
 
         /// <summary>
         /// 安装包和校验清单的候选源，顺序就是尝试顺序：GitHub 直连在前，镜像兜底。
-        /// 镜像写法照抄 UpdateManifest 那份（前缀 + 原始 GitHub 地址），
-        /// 三家与 scripts/update.ps1 历史上用过的一致。
+        /// 镜像写法照抄 UpdateManifest 那份（前缀 + 原始 GitHub 地址），三家镜像保持一致。
         ///
         /// 为什么下载也要镜像：清单有 4 个源（含两个镜像），所以「检查更新」总能拿到版本号；
         /// 但资产只有 GitHub 一条路，国内直连 github.com 经常 TLS 直接断，
@@ -70,34 +66,12 @@ namespace WhaleLauncher
             Timeout = TimeSpan.FromMinutes(15)
         };
 
-        // 脚本里的中文进度行 → 界面上一句话。按顺序匹配，命中第一个就用。
-        private static readonly string[][] Stages =
-        {
-            new[] { "正在查询 GitHub Release", "检查版本…" },
-            new[] { "先试差分", "下载差分补丁…" },
-            new[] { "下载中", "下载中…" },
-            new[] { "校验通过", "校验通过" },
-            new[] { "解压新版", "解压新版…" },
-            new[] { "已解压", "解压完成" },
-            new[] { "语法检查", "检查新版代码…" },
-            new[] { "停止正在运行的鲸鲸", "停止内核…" },
-            new[] { "备份 data", "备份数据…" },
-            new[] { "备份完成", "备份完成" },
-            new[] { "更新 runtime", "更新运行环境…" },
-            new[] { "覆盖代码", "覆盖代码…" },
-            new[] { "启动器已换成新版", "换启动器…" },
-            new[] { "更新完成", "收尾…" },
-        };
-
         /// <summary>
-        /// 更新入口：有 scripts\update.ps1 才走脚本，没有就走安装包覆盖安装。
+        /// 更新入口：统一下载官方安装包，校验 SHA256 后交给独立安装脚本。
         /// 返回空 Error 表示成功；HandedToInstaller=true 时调用方应立即退出。
         /// </summary>
         public static async Task<ApplyOutcome> ApplyAsync(string baseDir, string latest, IProgress<Progress> progress = null)
         {
-            var script = Path.Combine(baseDir, "scripts", "update.ps1");
-            if (File.Exists(script))
-                return new ApplyOutcome { Error = await ApplyByScriptAsync(baseDir, script, progress) };
             return await SetupAsync(baseDir, latest, progress);
         }
 
@@ -273,14 +247,16 @@ namespace WhaleLauncher
             return "";
         }
 
-        // ── 下载：单源内 4 段并发，失败退回单连接 ──────────────────────
+        // ── 下载：单源内最多 32 段并发，失败退回单连接 ─────────────────
 
-        /// <summary>小于这个体积不值得切段：4 段并发对几 MB 的文件只有反效果。</summary>
+        /// <summary>小于这个体积不值得切段：2MB 一段对几 MB 的文件只有反效果。</summary>
         private const long SegmentMinBytes = 8L * 1024 * 1024;
-        private const int SegmentCount = 4;
+        /// <summary>每段目标大小；大安装包会拉满 32 段，小文件自动少开。</summary>
+        private const long SegmentChunkBytes = 2L * 1024 * 1024;
+        private const int SegmentCount = 32;
 
         /// <summary>
-        /// 下载一个资产：先探服务端支不支持 Range，支持就 4 段并发拉，
+        /// 下载一个资产：先探服务端支不支持 Range，支持就按 2MB 一段并发拉（最多 32 段），
         /// 不支持或任何一段失败就退回单连接——宁可慢一点，不要卡在半截。
         /// 失败时删掉半截文件，别让下次误判「已下好」。
         /// </summary>
@@ -319,7 +295,8 @@ namespace WhaleLauncher
         private static async Task<bool> DownloadSegmentsAsync(string url, string path, long total,
             IProgress<Progress> progress, string label)
         {
-            var chunk = total / SegmentCount;
+            var segments = (int)Math.Min(SegmentCount, Math.Max(1, total / SegmentChunkBytes));
+            var chunk = (total + segments - 1) / segments;
             try
             {
                 TryDelete(path);
@@ -329,11 +306,11 @@ namespace WhaleLauncher
 
                 var done = new long[1];
                 var lastPct = new int[1] { -1 };
-                var tasks = new Task[SegmentCount];
-                for (var i = 0; i < SegmentCount; i++)
+                var tasks = new Task[segments];
+                for (var i = 0; i < segments; i++)
                 {
                     var start = i * chunk;
-                    var end = i == SegmentCount - 1 ? total - 1 : start + chunk - 1;
+                    var end = i == segments - 1 ? total - 1 : Math.Min(total - 1, start + chunk - 1);
                     tasks[i] = DownloadSegmentAsync(url, path, start, end, done, lastPct, total, progress, label);
                 }
                 await Task.WhenAll(tasks);
@@ -439,107 +416,6 @@ namespace WhaleLauncher
         private static void TryDelete(string path)
         {
             try { if (File.Exists(path)) File.Delete(path); } catch { }
-        }
-
-        /// <summary>
-        /// 源码版 / 老 zip 装法：跑 update.ps1 -Yes（脚本自己备份、覆盖、自检、失败回滚）。
-        /// 正在运行的 exe 不能写，脚本会跳过它、最后用「改名 → 落位」换掉，
-        /// 所以这里把当前 exe 文件名告诉脚本（名字不写死，以后改名也照跑）。
-        /// 输出是边跑边读的：脚本吐一行进度就回传一次，界面才有得显示。
-        /// 返回空串表示成功，否则是失败原因。
-        /// </summary>
-        private static async Task<string> ApplyByScriptAsync(string baseDir, string script, IProgress<Progress> progress)
-        {
-            try
-            {
-                var exeName = "";
-                try { exeName = Path.GetFileName(Environment.ProcessPath ?? ""); } catch { }
-                // -Force：清单已经判定「该升级」，别让脚本自己再判一次「已是最新」而空转
-                var args = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" -Yes -Force";
-                if (!string.IsNullOrWhiteSpace(exeName)) args += " -ExeName \"" + exeName + "\"";
-
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "powershell.exe",
-                    Arguments = args,
-                    WorkingDirectory = baseDir,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8,
-                };
-
-                var tail = new StringBuilder();
-                var gate = new object();
-                using var p = new Process { StartInfo = psi };
-                p.OutputDataReceived += (_, e) => OnLine(e.Data, tail, gate, progress);
-                p.ErrorDataReceived += (_, e) => OnLine(e.Data, tail, gate, progress);
-                p.Start();
-                p.BeginOutputReadLine();
-                p.BeginErrorReadLine();
-
-                // 覆盖可能要下载运行时，给足 10 分钟；等退出必须异步，别卡 UI 线程
-                var exit = await Task.Run(() => p.WaitForExit(10 * 60 * 1000));
-                if (exit) p.WaitForExit();   // 让异步输出把最后几行吐完
-                string text;
-                lock (gate) text = tail.ToString();
-                if (!exit) return "更新超时（10 分钟），可以再点一次「检查更新」重试";
-                if (p.ExitCode != 0)
-                {
-                    var last = "";
-                    foreach (var raw in text.Split('\n'))
-                        if (raw.Trim().Length > 0) last = raw.Trim();
-                    return "更新失败（退出码 " + p.ExitCode + "）" + (last.Length > 0 ? "：" + last : "");
-                }
-                return "";
-            }
-            catch (Exception ex)
-            {
-                return ex.Message;
-            }
-        }
-
-        private static void OnLine(string line, StringBuilder tail, object gate, IProgress<Progress> progress)
-        {
-            if (line == null) return;
-            lock (gate)
-            {
-                tail.AppendLine(line);
-                if (tail.Length > 40000) tail.Remove(0, tail.Length - 40000);   // 别无限涨
-            }
-            var step = ParseLine(line);
-            if (step != null) progress?.Report(step);
-        }
-
-        /// <summary>把脚本的一行输出翻成界面状态；认不出来的行返回 null（保持上一句）。</summary>
-        private static Progress ParseLine(string raw)
-        {
-            var line = (raw ?? "").Trim();
-            if (line.Length == 0) return null;
-
-            // 脚本吐的进度行：P 45 ghfast.top 52.1/116.6 MB
-            if (line.Length > 2 && line[0] == 'P' && line[1] == ' ')
-            {
-                var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length >= 2 && double.TryParse(parts[1], out var pct))
-                {
-                    var rest = parts.Length > 2 ? string.Join(" ", parts, 2, parts.Length - 2) : "";
-                    return new Progress
-                    {
-                        Percent = pct,
-                        Text = "下载中 " + (int)pct + "%" + (rest.Length > 0 ? " · " + rest : ""),
-                    };
-                }
-            }
-
-            foreach (var s in Stages)
-            {
-                if (line.IndexOf(s[0], StringComparison.OrdinalIgnoreCase) >= 0)
-                    return new Progress { Text = s[1], Percent = -1 };
-            }
-            return null;
         }
     }
 }

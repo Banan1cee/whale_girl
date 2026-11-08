@@ -176,3 +176,11 @@ test('同一账号多个微信主窗时选一个，不要卡在「暂未绑定�
   assert.match(bridge, /matched\.append\(\(h, _cpid, _area, _fg\)\)/, '候选窗口要带上面积和前台状态');
   assert.match(bridge, /choose_main_window\(matched, pinned=int/, '优先沿用上次钉住的窗口');
 });
+
+test('微信 4.2 用会话列表证据区分主窗和隐藏辅助窗', () => {
+  const bridge = require('./helpers/bridge-source');
+  assert.match(bridge, /SESSION_MARKERS = \("mmui::ChatSessionList", "mmui::ChatSessionCell"\)/, '缺少窗口级会话列表标记');
+  assert.match(bridge, /def resolve_account_windows/, '缺少多候选窗口的会话证据解析');
+  assert.match(bridge, /tree_state\(hwnd, timeout=0\.5, max_nodes=500, account_window=True\)/, '择窗时必须检查指定 hwnd 自己的会话列表');
+  assert.match(bridge, /所选账号有多个候选窗口，未能确认聊天主窗/, '跨进程分不清时应该继续等待，不能串号');
+});

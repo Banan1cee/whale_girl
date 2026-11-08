@@ -254,4 +254,9 @@ test('桥接里接了定时器，且判断交给服务端', () => {
   assert.match(py, /\/api\/care['"]/, '内容要问服务端生成');
   assert.match(py, /CARE_QUIET_MIN/, '要有「刚聊过就别打扰」的静默期');
   assert.match(py, /care-state\.json/, '要记上次发的时间');
+  // 2026-11-08 21:35 现场：白名单里是 wxid，桥接拿它去搜会话，搜一轮十几秒，
+  // 连试几轮就像卡死。现在名字必须先换成昵称/备注，换不出来就不发。
+  assert.match(py, /ui_chat_name\(/, '会话名要经 ui_chat_name 换成人能搜到的昵称');
+  assert.match(py, /is_self_chat\(/, '白名单填了自己要改发文件传输助手');
+  assert.match(py, /文件传输助手/, '自己的 wxid 落到文件传输助手');
 });

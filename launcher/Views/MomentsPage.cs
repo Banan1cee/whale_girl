@@ -55,11 +55,11 @@ public sealed partial class MomentsPage : UserControl
         {
             StatusText.Text = "等候桥接读取，请确保微信和桥接已启动…";
             var account = await AccountAsync();
-            var response = await Api.Post(sup.Url, "/api/moments/read", JsonSerializer.Serialize(new {
+            var response = await Api.PostJson(sup.Url, "/api/moments/read", new {
                 account, limit = 20, keyword = TxtKeyword.Text, username = TxtUsername.Text, own = ChkOwn.IsChecked == true
-            }));
+            });
             if (generation != viewGeneration) return;
-            if (!response.Ok) { StatusText.Text = response.Error; return; }
+            if (!response.Ok) { StatusText.Text = Api.Message(response); return; }
             var id = response.Str("id");
             for (var i = 0; i < 48; i++)
             {
@@ -94,10 +94,10 @@ public sealed partial class MomentsPage : UserControl
         try
         {
             var account = await AccountAsync();
-            var result = await Api.Post(sup.Url, "/api/moments/action", JsonSerializer.Serialize(new {
+            var result = await Api.PostJson(sup.Url, "/api/moments/action", new {
                 account, action = Actions[ActionBox.SelectedIndex].Value, publisher = TxtPublisher.Text,
                 keyword = TxtKeyword.Text, content = TxtComment.Text, replyTo = TxtReplyTo.Text
-            }));
+            });
             if (generation != viewGeneration) return;
             if (!result.Ok) { StatusText.Text = result.Error; return; }
             for (var i = 0; i < 48; i++)
@@ -170,12 +170,11 @@ public sealed partial class MomentsPage : UserControl
         if (loadingSettings) return;
         try
         {
-            var body = JsonSerializer.Serialize(new {
+            var res = await Api.PostJson(sup.Url, "/api/moments/settings", new {
                 autoLike = ChkAutoLike.IsChecked == true,
                 autoReadEveryHours = SelectedAutoReadHours(),
             });
-            var res = await Api.Post(sup.Url, "/api/moments/settings", body);
-            if (!res.Ok) { AutoStatus.Text = res.Error; return; }
+            if (!res.Ok) { AutoStatus.Text = Api.Message(res); return; }
             var max = res.Long("autoLikeMaxPerDay");
             AutoStatus.Text = res.Bool("autoLike")
                 ? $"自动策略已保存；每天最多 {max} 条。" : "自动策略已保存；自动点赞已关闭。";

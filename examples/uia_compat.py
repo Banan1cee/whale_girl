@@ -508,6 +508,15 @@ def apply(verbose: bool = True) -> bool:
     def _name_tokens(text):
         return [t.strip() for t in re.split(r"[、,，;；/]", text or "") if t.strip()]
 
+    # 微信只认昵称 / 备注 / 微信号，不认 wxid_xxx 和 xxx@chatroom。
+    # 拿内部 id 当关键词，一条要空搜十几秒（还要抢前台、连试两轮），
+    # 2026-11-08 21:35 的「桥接卡死」就是这里一直搜 wxid。
+    _RAW_CHAT_ID = re.compile(r"(?:^wxid_[A-Za-z0-9_-]+$|@chatroom$)", re.I)
+
+    def _searchable_name(text):
+        t = str(text or "").strip()
+        return bool(t) and not _RAW_CHAT_ID.search(t)
+
     def _row_score(nm, aliases):
         """这个列表行名和一串候选名有多像：0 最像，数字越大越勉强，None 不匹配。
 
@@ -541,8 +550,13 @@ def apply(verbose: bool = True) -> bool:
         else:
             aliases = [str(keyword or "").strip()]
         aliases = [a for a in aliases if a]
-        if not aliases:
+        searchable = [a for a in aliases if _searchable_name(a)]
+        if not searchable:
+            # 只剩内部 id：微信的会话列表和搜索框都搜不到，别再空转十几秒。
+            log.warning("uia_compat: 关键词只有内部 id（%r），微信搜不到，跳过打开会话",
+                        aliases[0] if aliases else "")
             return False
+        aliases = searchable
         target = aliases[0]
         try:
             if not self.back_to_chat_tab():

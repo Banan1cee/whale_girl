@@ -31,19 +31,17 @@ test('模型名下拉仍然是可编辑的（没有型号时可以手输）', ()
 
 test('检查更新不在 UI 线程同步等进程', () => {
   const code = read('UpdateService.cs');
-  // 检测那段（CheckAsync + 30 秒 CTS）已经整段删掉：版本判定在 UpdateManifestService 里走 HTTP，
-  // 这里只剩落地。脚本路径必须把等待丢进 Task.Run，安装包路径本身就是异步下载。
+  // 现在只剩安装包落地：下载、校验、启动安装器都是异步的。
   assert.doesNotMatch(code, /\.WaitForExit\(30000\)/, '同步 WaitForExit 会卡住 UI 线程');
-  assert.match(code, /Task\.Run\(\(\) => p\.WaitForExit\(/, '等子进程要放进 Task.Run，别卡 UI 线程');
+  assert.doesNotMatch(code, /WaitForExit\(10 \* 60/, '源码版脚本等待逻辑应该已经删除');
   assert.match(read('UpdateManifest.cs'), /public static async Task<ManifestCheck> FetchAsync/, '检测要异步，别在 UI 线程等网络');
 });
 
-test('更新过程有进度反馈：流式读输出 + 底栏进度条', () => {
+test('更新过程有进度反馈：下载进度 + 底栏进度条', () => {
   const svc = read('UpdateService.cs');
   assert.match(svc, /IProgress<Progress>/, 'ApplyAsync 要能把进度回传给界面');
-  assert.match(svc, /BeginOutputReadLine/, '要边跑边读输出，一次性读等于没有进度');
-  assert.match(svc, /Percent = pct/, '要认下载器的 "P 45 52.1/116.6" 进度行');
-  assert.match(svc, /Stages/, '要有中文阶段行 → 一句话的映射');
+  assert.match(svc, /Report\(progress, pct/, '下载过程要回传真实百分比');
+  assert.match(svc, /Percent = pct/, '进度对象要带 Percent');
 
   const xaml = read('MainWindow.xaml');
   assert.match(xaml, /x:Name="UpdateBar"/, '底栏缺进度条');
@@ -59,12 +57,12 @@ test('更新期间状态行不被两秒一次的刷新覆盖', () => {
   assert.match(code, /HideUpdateProgress/, '更新结束要收起进度条');
 });
 
-test('更新中关窗口不会烂尾：先确认，脚本再兜底拉起', () => {
+test('更新中关窗口不会烂尾：先确认，安装器接手后启动器退出', () => {
   const code = read('MainWindow.xaml.cs');
   assert.match(code, /Closing \+= OnClosingDuringUpdate/, '没挂 Closing 事件');
   assert.match(code, /OnClosingDuringUpdate/, '缺关闭确认');
-  assert.match(code, /AnotherInstanceRunning/, '更新完要看脚本是不是已经把新实例拉起来了');
-  assert.match(code, /Application\.Current\.Shutdown\(\)/, '已经有新实例时只关自己，别再起一个');
+  assert.doesNotMatch(code, /AnotherInstanceRunning|RestartSelf/, '源码版脚本重启逻辑应该已经删除');
+  assert.match(code, /Application\.Current\.Shutdown\(\)/, '安装器接手后启动器要退出，exe 才换得掉');
 });
 
 test('保存模型后重新拉设置，看图页不会停在旧模型', () => {
@@ -186,4 +184,53 @@ test('提醒页的输入也自动保存，手动按钮保留', () => {
   assert.match(code, /TxtCareEvery\.LostFocus|\{ TxtCareEvery, TxtCareJitter/, '主动搭话的输入要保存');
   assert.match(code, /async Task<bool> SaveCareAsync\(\)/, '主动搭话要抽出可复用的保存');
   assert.match(code, /async Task<bool> SaveRulesAsync\(\)/, '提醒规则要抽出可复用的保存');
+});
+
+test('黑白名单在发言范围窗口内直接搜索勾选，勾选即保存', () => {
+  const window = read('Views/ChatPolicyWindow.xaml.cs');
+  assert.match(window, /new ContactCheckList\(sup, "group\.mutedGroups", true\)/, '黑名单要内联到发言范围窗口');
+  assert.match(window, /new ContactCheckList\(sup, "care\.whitelist", false\)/, '白名单要内联到发言范围窗口');
+  assert.doesNotMatch(window, /ContactPicker|ShowDialog/, '不该再开二级选择弹窗');
+  assert.doesNotMatch(read('Views/ChatPolicyWindow.xaml'), /编辑黑名单/, '旧的「编辑黑名单…」入口应移除');
+
+  const control = read('Views/ContactCheckList.xaml.cs');
+  const controlXaml = read('Views/ContactCheckList.xaml');
+  assert.match(controlXaml, /x:Name="SearchBox"/, '名单控件缺搜索框');
+  assert.match(controlXaml, /x:Name="List"/, '名单控件缺勾选列表');
+  assert.match(control, /OnSearchChanged/, '搜索框要实时过滤');
+  assert.match(control, /ContactDirectory\.Matches\(x, q\)/, '搜索规则要复用统一的联系人匹配');
+  assert.match(control, /_saver\.SaveAsync\(BuildPatch\)/, '勾选后要立即写回 config');
+  assert.match(control, /new ConfigSaver\(sup\)/, '连续勾选要交给保存协调器串行处理');
+  assert.match(control, /Revert\(\)/, '保存失败要回滚到上次成功的名单');
+  assert.equal(fs.existsSync(path.join(root, 'launcher', 'Views', 'ContactPicker.xaml')), false, '旧的二级弹窗已删除');
+});
+
+test('配置写入、 HTTP、联系人和数字输入都走统一入口', () => {
+  const api = read('Api.cs');
+  assert.match(api, /public static Task<ApiResult> PatchConfig/, '配置写入要有结构化入口');
+  assert.match(api, /Timeout = Timeout\.InfiniteTimeSpan/, '超时要按请求传，页面不再各建 HttpClient');
+  assert.match(api, /public static string Message\(ApiResult res\)/, '错误文案要统一优先 error');
+
+  const bridge = read('Views/BridgePage.xaml.cs');
+  assert.doesNotMatch(bridge, /new HttpClient/, '桥接页不该再自己建 HttpClient');
+  assert.doesNotMatch(bridge, /Contains\("\\"refreshed\\":true"\)/, '账号扫描成功要解析 JSON，不要匹配字符串');
+  assert.match(bridge, /accounts\/refresh", "\{\}", 45\)/, '账号扫描要显式传 45 秒超时');
+
+  const status = read('Views/StatusPage.xaml.cs');
+  assert.doesNotMatch(status, /new HttpClient/, '状态页不该再自己建 HttpClient');
+
+  assert.match(read('ContactDirectory.cs'), /CacheSeconds/, '联系人要有一份共享缓存');
+  assert.match(read('RuntimeSupervisor.cs'), /public ContactDirectory Contacts/, '联系人目录要挂在 Supervisor 上共用');
+  assert.match(read('Views/PersonaPage.xaml.cs'), /_sup\.Contacts\.LoadAsync/, '主人搜索也要走同一份联系人目录');
+
+  assert.match(read('ConfigSaver.cs'), /SemaphoreSlim/, '保存协调器要串行化请求');
+  assert.match(read('Views/ReminderPage.xaml.cs'), /_saver\.SaveAsync/, '提醒页保存要复用协调器');
+  assert.match(read('Views/ReminderPage.xaml.cs'), /Api\.Message\(res\)/, '错误提示要复用公共方法');
+
+  assert.match(read('NumberField.cs'), /public bool TryRead\(out int value\)/, '数字输入要有统一校验');
+  assert.match(read('Views/SettingsPage.xaml.cs'), /new NumberField/, '设置页的整数项也要用统一数字控件');
+  for (const rel of ['Views/ReminderPage.xaml', 'Views/PersonaPage.xaml', 'Views/BridgePage.xaml']) {
+    assert.match(read(rel), /ui:NumberField/, rel + ' 的数字输入要换成统一控件');
+  }
+  assert.doesNotMatch(read('Views/PersonaPage.xaml.cs'), /int age = int\.TryParse/, '非法年龄不能再静默变成默认值');
 });

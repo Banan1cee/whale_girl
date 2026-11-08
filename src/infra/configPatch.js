@@ -28,7 +28,6 @@ const SECRET_PATHS = new Set([
   'vision.apiKey',
   'voice.apiKey',
   'gateway.wechat.inboundToken',
-  'gateway.douyin.inboundToken',
   'admin.spell',
 ]);
 

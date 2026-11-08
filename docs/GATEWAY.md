@@ -1,16 +1,16 @@
 # 网关协议（GATEWAY）
 
-鲸鲸只负责「怎么说话」，不负责「怎么连微信/抖音」。  
+鲸鲸只负责「怎么说话」，不负责「怎么连微信」。
 任何中转服务、开源框架、自写脚本，只要能按本文的格式收发 JSON，就能把她接进去。
 
 ```
-微信/抖音 ──> 你的中转服务 ──POST /webhook/{platform}──> 鲸鲸
-                                                        │
-微信/抖音 <── 你的中转服务 <──POST {outboundUrl}──────────┘
-                              （或者直接用 HTTP 响应里的 reply）
+微信 ──> 你的中转服务 ──POST /webhook/{platform}──> 鲸鲸
+                                                    │
+微信 <── 你的中转服务 <──POST {outboundUrl}──────────┘
+                          （或者直接用 HTTP 响应里的 reply）
 ```
 
-平台名支持：`wechat`、`douyin`。两个平台的协议完全一样。
+平台名目前只支持：`wechat`。
 
 ---
 
@@ -37,7 +37,7 @@ Token 不对返回 `403`。没配 token 时不校验（只建议本机调试这�
 | `text` | `content` `message` `msg` `body` | 消息文本（必填） |
 | `chat_id` | `chatId` `room_id` `conversation_id` `group_id` | 群 id 或用户 id，缺省用发送者 id |
 | `chat_type` | `chatType` `type` `is_group` `from_group` | `group` / `private`，有 `room_id` 时默认 group |
-| `user_id` | `sender_id` `from` `wxid` | 发送者 id（抖音 `open_id` 不直接支持，需先转换成本程序的 id） |
+| `user_id` | `sender_id` `from` `wxid` | 发送者 id |
 | `nickname` | `sender_name` `user_name` `name` | 发送者昵称（记忆里用这个） |
 | `at_me` | `atMe` `is_at` `mentioned` | 是否 @ 了她（也可以直接让文本里带「鲸鲸」） |
 | `reply_to_bot` | `quote_from_bot` | 是否回复了她的消息 |
@@ -133,11 +133,6 @@ Token 正确时原样返回 `12345`；`echostr` 参数同样支持。
       "outboundUrl": "https://your-bridge.example.com/api/send",
       "outboundHeaders": { "Authorization": "Bearer xxx" },
       "sendBubbles": false
-    },
-    "douyin": {
-      "enabled": true,
-      "inboundToken": "另一个随机字符串",
-      "outboundUrl": "https://your-bridge.example.com/douyin/send"
     }
   }
 }
@@ -192,7 +187,7 @@ curl -X POST "http://127.0.0.1:8787/webhook/wechat" \
 
 ## 六、部署建议
 
-- 公网部署：**先把 `server.allowRemote` 设成 `true`、把两个 `inboundToken` 改成随机串，再改 `server.host`**（顺序反了 `server.js` 会把 host 强制改回 `127.0.0.1` 并告警）；然后前面套 Nginx/Caddy 反向代理并上 HTTPS。
-- **一定要**给两个网关配不同的 `inboundToken`，并在中转服务侧校验。
+- 公网部署：**先把 `server.allowRemote` 设成 `true`、把 `gateway.wechat.inboundToken` 改成随机串，再改 `server.host`**（顺序反了 `server.js` 会把 host 强制改回 `127.0.0.1` 并告警）；然后前面套 Nginx/Caddy 反向代理并上 HTTPS。
+- **一定要**给网关配随机 `inboundToken`，并在中转服务侧校验。
 - 不要把 `/api/settings` 暴露到公网（里面能改 API Key）；本程序没有登录系统，建议只在内网/本机用。
-- 想扩展新平台（QQ、Discord…）：复制 `src/adapters/gateway.js` 里的模式，加一个平台名就行；`PLATFORMS` 数组里加一项。
+- 以后确实要接新平台：在 `src/adapters/gateway.js` 的 `PLATFORMS` 里加平台名，同时补默认配置、密钥白名单和测试，别只加一个字符串。

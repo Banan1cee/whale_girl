@@ -1,12 +1,12 @@
 <Window x:Class="WhaleLauncher.Views.ChatPolicyWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="微信发言范围" Width="580" Height="465" MinWidth="420" MinHeight="330"
+        Title="微信发言范围" Width="620" Height="700" MinWidth="460" MinHeight="520"
         Background="{DynamicResource Bg}" Foreground="{DynamicResource Text}"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False" FontFamily="Microsoft YaHei UI, Segoe UI">
     <DockPanel Margin="20,16">
         <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
-            <Button DockPanel.Dock="Right" Content="完成" Style="{StaticResource Ghost}" IsCancel="True" />
+            <Button DockPanel.Dock="Right" Content="关闭" Style="{StaticResource Ghost}" IsCancel="True" />
             <TextBlock x:Name="StatusText" Style="{StaticResource Small}" TextWrapping="Wrap"
                        Margin="0,0,12,0" VerticalAlignment="Center" />
         </DockPanel>
@@ -14,10 +14,14 @@
             <StackPanel Margin="0,0,10,0">
                 <TextBlock Text="发言范围" Style="{StaticResource H2}" />
                 <TextBlock Text="名单按微信会话生效，适用于回复、主动搭话和提醒。两份名单同时选中一个会话时，黑名单优先。"
-                           Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,14" />
+                           Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,4" />
+                <TextBlock Text="搜索后直接勾选，勾一下就会保存。"
+                           Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,0,0,12" />
+
                 <TextBlock Text="黑名单" Style="{StaticResource Label}" Margin="0,0,0,6" />
                 <ContentControl x:Name="MutedHost" />
-                <TextBlock Text="白名单" Style="{StaticResource Label}" Margin="0,16,0,6" />
+
+                <TextBlock Text="白名单" Style="{StaticResource Label}" Margin="0,18,0,6" />
                 <CheckBox x:Name="WhitelistOnly" Content="仅允许白名单会话发言" Margin="0,0,0,6" Click="OnWhitelistOnly" />
                 <TextBlock Text="打开后，空白名单会暂停所有会话的发言。关闭时，白名单仅筛选主动搭话对象。"
                            Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,0,0,8" />

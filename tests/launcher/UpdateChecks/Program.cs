@@ -16,8 +16,9 @@ Check(UpdateManifestService.ReleaseDetails(new UpdateManifest { Message = "旧�
 var current = (UpdateManifest)parse.Invoke(null, new object[] { "{\"latest\":\"4.0.8\",\"release_notes\":\"- 新增自带表情包。\\n- 微信回复更稳定。\",\"release_details\":\"### 详细说明\\n- 按账号数据库归属绑定窗口。\"}" });
 Check(UpdateManifestService.ReleaseSummary(current) == "• 新增自带表情包。\n• 微信回复更稳定。", "新清单直接使用白话摘要");
 Check(UpdateManifestService.ReleaseDetails(current) == "详细说明\n• 按账号数据库归属绑定窗口。", "新清单独立读取完整详细说明");
-var longNotes = new UpdateManifest { ReleaseNotes = "- 一\n- 二\n- 三\n- 四", ReleaseDetails = new string('详', 3000) };
-Check(!UpdateManifestService.ReleaseSummary(longNotes).Contains("四"), "摘要最多显示三条");
+var longNotes = new UpdateManifest { ReleaseNotes = "- 一\n- 二\n- 三\n- 四\n- 五\n- 六", ReleaseDetails = new string('详', 3000) };
+Check(!UpdateManifestService.ReleaseSummary(longNotes).Contains("六"), "摘要最多显示五条");
+Check(UpdateManifestService.ReleaseSummary(longNotes).Contains("五"), "第五行保留");
 Check(UpdateManifestService.ReleaseDetails(longNotes).Length == 3000, "展开后保留完整详情");
 var hotfix = (UpdateManifest)parse.Invoke(null, new object[] { "{\"latest\":\"4.0.8.1\",\"force\":true,\"force_from\":\"4.0.8\"}" });
 var now = DateTimeOffset.UtcNow;

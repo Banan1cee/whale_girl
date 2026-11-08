@@ -1,6 +1,7 @@
 <UserControl x:Class="WhaleLauncher.Views.BridgePage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="clr-namespace:WhaleLauncher"
              Background="Transparent">
     <UserControl.Resources>
         <!-- 账号卡：整张卡是按钮，点一下就把这个号钉给桥接 -->
@@ -120,7 +121,8 @@
                     <ComboBox x:Name="CmbCharMode" Width="196" FontSize="12" VerticalAlignment="Center"
                               SelectionChanged="OnCharModeChanged" />
                     <TextBlock Text="码元间隔" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="16,0,6,0" />
-                    <TextBox x:Name="TxtCharGap" Width="48" VerticalAlignment="Center" LostFocus="OnSaveSendSettings" />
+                    <ui:NumberField x:Name="TxtCharGap" Width="48" VerticalAlignment="Center" LostFocus="OnSaveSendSettings"
+                                    Minimum="20" Maximum="80" Fallback="40" Label="打字间隔" />
                     <TextBlock Text="ms" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="4,0,0,0" />
                 </WrapPanel>
                 <WrapPanel Margin="0,8,0,0">

@@ -199,7 +199,7 @@ test('「深度思考」开关在模型卡的聊天页里，默认关，读写 s
   assert.ok(!code.includes('Path = "deepseek.thinking"'), '不要再用 config 的 deepseek.thinking');
   assert.ok(!code.includes('思考（打开后会减慢说话速度）'), '旧语音页开关要删掉');
   // 读写都走 data/settings.json：保存时带 thinking，加载时回填
-  assert.ok(code.includes('\\"thinking\\":'), '保存请求要带 thinking');
+  assert.ok(code.includes('["thinking"]'), '保存请求要带 thinking');
   assert.ok(code.includes('TryGetProperty("thinking"'), '加载时要回填 thinking');
   // 默认必须是关：DEFAULT_CONFIG 里 thinking=false
   const config = read('src/infra/config.js');

@@ -2,11 +2,11 @@
 
 /**
  * 机器人核心：判断要不要接话 → 组装提示词 → 由 DeepSeek 生成 → 写入记忆。
- * 这里不关心消息从哪来（微信 / 抖音等），只处理统一后的消息对象。
+ * 这里不关心消息从哪来（网页 / 微信等），只处理统一后的消息对象。
  *
  * 统一消息对象：
  * {
- *   platform: 'web'|'wechat'|'douyin',
+ *   platform: 'web'|'wechat',
  *   chatId:   '123456',              // 群 id 或用户 id
  *   chatType: 'private'|'group',
  *   senderId: 'wxid_xxx',
@@ -1860,7 +1860,7 @@ class Bot {
   }
 
   /**
-   * 非流式的完整处理，给微信/抖音网关用。
+   * 非流式的完整处理，给微信网关用。
    * @returns {{action: string, reply?: string, bubbles?: string[], reason: string, commandType?: string}}
    */
   async handle(rawMsg, { signal, localWechat = false } = {}) {

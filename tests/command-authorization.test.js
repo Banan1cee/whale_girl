@@ -104,7 +104,7 @@ test('撤权测试：旧版留下的临时管理员记录不得延续越权',asy
  const model=f.config.deepseek.model;await f.bot.decide(f.msg('改模型 fake-model'));assert.equal(f.config.deepseek.model,model);
 });
 const {Gateway}=require('../src/adapters/gateway');
-for(const token of ['', ' ', 'change-me-wechat','change-me-douyin'])test(`网关攻击：空凭据或公开默认凭据不能远程伪造主人 (${JSON.stringify(token)})`,()=>{
+for(const token of ['', ' ', 'change-me-wechat'])test(`网关攻击：空凭据或公开默认凭据不能远程伪造主人 (${JSON.stringify(token)})`,()=>{
  const gw=new Gateway({platform:'wechat',options:{inboundToken:token}});
  for(const ip of ['192.168.1.8','8.8.8.8',''])for(const field of ['header','query','body']){
   const req={headers:{},socket:{remoteAddress:ip},url:'/webhook/wechat'};const body={};

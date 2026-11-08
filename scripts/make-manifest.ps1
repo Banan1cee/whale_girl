@@ -69,7 +69,12 @@ $policy.manifest_version = $oldVer + 1
 $oldLatestIsHotfix = $oldLatest -match '^\d+\.\d+\.\d+\.\d+$'
 if ($isHotfix) {
     $policy.force = $true
-    $policy.force_from = if ($oldLatest -and $oldLatest -ne $v) { $oldLatest } else { $null }
+    if ($oldLatest -and $oldLatest -ne $v) {
+        $policy.force_from = $oldLatest
+    } else {
+        # 重新生成同一个热修时，强制基线仍应是它的上一个三段版本。
+        $policy.force_from = $v -replace '\.\d+$', ''
+    }
 } elseif ($oldLatestIsHotfix -and $policy.force -eq $true -and $policy.force_from -eq ($oldLatest -replace '\.\d+$', '')) {
     # 上一个热修设置的自动强制范围，不要带到下一个普通版本。
     $policy.force = $null

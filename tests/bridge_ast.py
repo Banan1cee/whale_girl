@@ -14,6 +14,7 @@ import ast
 import copy
 import glob
 import os
+import re
 import sys
 
 BRIDGE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'bridge')
@@ -105,6 +106,29 @@ def load_class(name, env):
                     ast.Module(body=[copy.deepcopy(node)], type_ignores=[])), path, 'exec'), env)
                 return env[name]
     raise AssertionError('bridge class not found: %s' % name)
+
+
+# send_text / care_watch 共用的「会话名归一」小工具。单函数抽取不会带上它们，
+# 需要执行的测试调 load_chat_name_helpers(env) 装一下。
+_CHAT_NAME_HELPERS = ('is_raw_chat_id', 'same_account', 'ui_chat_name', 'is_self_chat')
+_CHAT_NAME_CONSTS = ('_RAW_CHAT_ID_RE', '_ACCOUNT_HASH_RE')
+
+
+def load_chat_name_helpers(env):
+    init(env)
+    env.setdefault('re', re)
+    for const in _CHAT_NAME_CONSTS:
+        if const in env:
+            continue
+        try:
+            path, node = find_assignment(const)
+            env[const] = eval(compile(ast.Expression(node), path, 'eval'), env)
+        except AssertionError:
+            pass
+    for name in _CHAT_NAME_HELPERS:
+        if name not in env:
+            load_function(name, env)
+    return env
 
 
 def find_assignment(name):

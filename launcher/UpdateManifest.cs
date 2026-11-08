@@ -63,7 +63,7 @@ namespace WhaleLauncher
                 .Where(line => !Regex.IsMatch(line, @"^\s*(?:#{1,6}\s|$)|^\s{2,}[-*]\s"))
                 .Select(line => FormatReleaseLine(line.Trim()))
                 .Where(line => line.Length > 0)
-                .Take(3)
+                .Take(5)
                 .Select(line =>
                 {
                     var text = new StringInfo(line);
@@ -215,7 +215,7 @@ namespace WhaleLauncher
             return now >= due ? UpdatePolicy.Force : UpdatePolicy.Warn;
         }
 
-        /// <summary>逐段数值比较，3.9 &lt; 3.64。移植 scripts/update.ps1 的 Compare-Ver 语义。</summary>
+        /// <summary>逐段数值比较，3.9 &lt; 3.64。</summary>
         public static int CompareVersion(string a, string b)
         {
             var x = VersionParts(a);

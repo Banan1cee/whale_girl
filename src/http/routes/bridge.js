@@ -14,7 +14,7 @@ module.exports = function register(router) {
     return json(res, 200, gw.heartbeat(hb));
   });
 
-  // 通用网关入口：POST /webhook/{wechat|douyin}
+  // 网关入口：POST /webhook/{platform}（当前只有 wechat）
   router.pattern(/^\/webhook\/([a-zA-Z]+)$/, async (runtime, req, res, info) => {
     const { params, method, url } = info;
     const platform = params[0].toLowerCase();

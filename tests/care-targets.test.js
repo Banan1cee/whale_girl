@@ -114,6 +114,20 @@ test('联系人缓存能存能查，群按 wxid 后缀识别', (t) => {
   assert.equal(contacts.payload({ q: '鱼塘' }).items[0].wxid, '1@chatroom');
 });
 
+test('白名单/主人填成账号目录名（多 4 位哈希）也能认出主人和昵称', (t) => {
+  // 启动器账号列表给的是 wxid_master_c248，联系人缓存里存的是 wxid_master。
+  // 以前 careTargets 拿目录名查不到名字，只能把 wxid 当会话名交给桥接，
+  // 桥接就会拿 wxid 去搜会话（2026-11-08 21:35 卡死的直接原因）。
+  const { config, contacts } = fixture(t);
+  assert.equal(contacts.get('wxid_master_c248').name, '测试主人');
+  config.persona.master = { names: [], wxids: ['wxid_master_c248'] };
+  const out = decide(config, contacts);
+  assert.equal(out.due, true);
+  assert.equal(out.target.wxid, 'wxid_master_c248');
+  assert.equal(out.target.kind, 'master');
+  assert.equal(out.target.name, '测试主人', '要能解析成昵称，不能把 wxid 当名字');
+});
+
 test('联系人缓存落盘后能重新读出来（原子写）', (t) => {
   const { config, contacts } = fixture(t);
   const again = new ContactsCache(config);

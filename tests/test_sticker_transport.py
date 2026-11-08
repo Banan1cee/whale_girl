@@ -453,13 +453,15 @@ class TransportTest(unittest.TestCase):
             transport.resolve_target(self.db, 'Peer')
 
 
-from bridge_ast import init, load_function
+from bridge_ast import init, load_chat_name_helpers, load_function
 
 BRIDGE = ROOT / 'bridge' / 'engine.py'
 
 
 def bridge_functions(names, environment):
     init(environment)
+    if 'send_text' in names or 'send_at' in names:
+        load_chat_name_helpers(environment)
     for name in names:
         load_function(name, environment)
     return environment

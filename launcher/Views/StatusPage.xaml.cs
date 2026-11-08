@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
-using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -24,10 +23,6 @@ namespace WhaleLauncher.Views
     public partial class StatusPage : UserControl, IRefreshable
     {
         private readonly RuntimeSupervisor _sup;
-        private readonly HttpClient _http = new HttpClient(new HttpClientHandler { UseProxy = false })
-        {
-            Timeout = TimeSpan.FromSeconds(3)
-        };
 
         private DateTime _lastCare = DateTime.MinValue;
         private RuntimeSupervisor.CareState _care;
@@ -169,25 +164,30 @@ namespace WhaleLauncher.Views
             }
             try
             {
-                var json = await _http.GetStringAsync(_sup.Url + "/api/recent?limit=10");
-                if (!IsLoaded || json == _recentJson) return;
-                using var doc = JsonDocument.Parse(json);
+                var res = await Api.Get(_sup.Url, "/api/recent?limit=10", 3);
+                if (!res.Ok)
+                {
+                    RecentHint.Text = "更新暂时失败，正在重试";
+                    return;
+                }
+                if (!IsLoaded || res.Raw == _recentJson) return;
                 var items = new List<RecentItem>();
-                if (doc.RootElement.TryGetProperty("items", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                var arr = res.Prop("items");
+                if (arr.ValueKind == JsonValueKind.Array)
                 {
                     foreach (var it in arr.EnumerateArray())
                     {
-                        var ts = it.TryGetProperty("ts", out var t) && t.ValueKind == JsonValueKind.Number ? t.GetInt64() : 0;
+                        var ts = JsonRead.Long(it, "ts");
                         items.Add(new RecentItem
                         {
                             Time = ts > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(ts).LocalDateTime.ToString("HH:mm") : "",
-                            Who = Get(it, "who"),
-                            Text = Get(it, "text")
+                            Who = JsonRead.Str(it, "who"),
+                            Text = JsonRead.Str(it, "text")
                         });
                     }
                 }
                 Recent.ItemsSource = items;
-                _recentJson = json;
+                _recentJson = res.Raw;
                 RecentEmpty.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
                 if (items.Count == 0) RecentEmpty.Text = "还没有消息。先在微信里跟她说一句。";
                 RecentHint.Text = items.Count > 0 ? items.Count + " 条" : "";
@@ -198,9 +198,6 @@ namespace WhaleLauncher.Views
                 RecentHint.Text = "更新暂时失败，正在重试";
             }
         }
-
-        private static string Get(JsonElement e, string name)
-            => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? (v.GetString() ?? "") : "";
 
         private static string Short(long sec)
         {
