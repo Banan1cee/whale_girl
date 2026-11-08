@@ -135,7 +135,7 @@ test('换模型服务不会把自定义看图配置冲掉', async () => {
       visionBaseUrl: 'http://127.0.0.1:8000/v1',
     });
 
-    // 网页 / 其它入口只改聊天服务商，不带 vision 字段
+    // 启动器 / 其它入口只改聊天服务商，不带 vision 字段
     const res = await post(app, {
       provider: 'opencode',
       baseUrl: 'https://opencode.ai/inference/go/openai/v1',

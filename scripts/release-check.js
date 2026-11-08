@@ -81,7 +81,7 @@ if (release) {
 // 5) 版本号与 CHANGELOG 首条一致
 try {
   const pkg = JSON.parse(read('package.json'));
-  const cl = read('CHANGELOG.md');
+  const cl = read('docs/CHANGELOG.md');
   const m = cl.match(/^##\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)/m);
   check('package.json 版本 = CHANGELOG 最新条目', Boolean(m) && m[1] === pkg.version,
     `package=${pkg.version} changelog=${m ? m[1] : '没找到'}`);
@@ -156,7 +156,7 @@ try {
 
 // 9) 不能把自己的隐私带进包里：密钥、真实 wxid、账号目录名、群号、手机号、邮箱、
 //    本机用户名路径，以及 exe/dll 里的调试路径。
-//    这些以前都漏过：BUGS.md 写了真实路径、真实小号目录名进了测试、带 PDB 路径的 exe
+//    这些以前都漏过：docs/BUGS.md 写了真实路径、真实小号目录名进了测试、带 PDB 路径的 exe
 //    进了仓库。规则与遍历统一收在 scripts/privacy-scan.js，这里只把它接进自检。
 try {
   const privacy = require('./privacy-scan');

@@ -406,7 +406,7 @@ class ReceiverMixin:
             if data.get('mock') and (not G.MOCK_NOTICED['done']):
                 G.MOCK_NOTICED['done'] = True
                 G.log('[!] 服务端现在是「演示模式」：没配置 API Key，她回的是内置台词，不是真模型。')
-                G.log('    去网页右上角「设置」填一把 Key（DeepSeek / 智谱 都行）就会切成真模型。')
+                G.log('    去启动器「设置」填一把 Key（DeepSeek / 智谱 都行）就会切成真模型。')
             target = self.display_name(username)
             bubbles = data.get('bubbles')
             if not isinstance(bubbles, list):

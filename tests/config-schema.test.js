@@ -55,7 +55,7 @@ test('缺省字段不算错（用默认值）', () => {
   assert.deepEqual(validate({}), []);
 });
 
-test('调试台保存非法值时整批拒绝，而且一个字节都不写', () => {
+test('设置接口保存非法值时整批拒绝，而且一个字节都不写', () => {
   const { runtime, configFile, cleanup } = makeRuntime();
   const before = fs.readFileSync(configFile, 'utf8');
   assert.throws(

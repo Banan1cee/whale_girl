@@ -218,7 +218,7 @@ def account_wxid(account):
 
 
 def resolve_account_dir(db_dir, wanted):
-    """把配置/网页里的账号写法解析成真实账号目录名。
+    """把配置/启动器里的账号写法解析成真实账号目录名。
 
     依次尝试：完整目录名（wxid_xxx_cedb）→ 去掉 4 位哈希的 wxid（wxid_xxx）
     → 唯一前缀 → 昵称（要开库读 contact.db，慢，所以放最后）。

@@ -47,4 +47,42 @@ Copy-Item launcher/publish/WhaleLauncher.exe .\WhaleLauncher.exe -Force
 
 - 不直接 push `main`：改分支 → PR → CI 绿了再合并。
 - 提交信息按 `docs/协作规范.md`（新增 / 改进 / 修复 / 其他 四段）。
-- 用户可见行为变了，`CHANGELOG.md` 补一段。
+- 用户可见行为变了，`docs/CHANGELOG.md` 补一段，版本规则见第 5 节。
+
+## 5. 版本与 CHANGELOG
+
+- **已发布版本冻结**：GitHub Releases 上已经发过的版本，不再往它的条目里加内容。
+- **所有版本都要标发布状态**，在版本标题下面单独一行，不要写在标题行：
+  - 已发布：`> 已发布（GitHub Releases）`
+  - 两个发布之间、没有单独发版的中间版本：`> 未单独发布，随 X 发布`，X 是它跟随的下一个已发布版本
+    （例：`4.0.2`～`4.0.4` 标 `随 4.0.5 发布`）。
+  - 正在开发的最新版本**不标发布状态**，等它确定发布或已经有下一个版本时再补。
+- 标记只能写在 `## 4.0.8` 这种纯版本标题的下一行，`release-check` 和 `release-notes` 依赖标题格式；
+  `release-notes` 会自动剔除状态行，不会带进 GitHub Release 或更新弹窗。
+- **新改动进下一个补丁版本**：已发布版本是 `4.0.8`，新的修复 / 改进就写进 `4.0.9`；
+  已发布 `4.0.9` 就写进 `4.0.10`。同时把 `package.json` 的 `version` 改成同一个版本，
+  保证 `release-check` 的「package.json 版本 = CHANGELOG 最新条目」通过。
+- **不要补旧账**：发现已发布版本漏写了内容，不要回头补，直接记到下一个补丁版本，并说明是修正遗漏。
+
+## 6. 根目录保持干净
+
+根目录只放 GitHub 识别的文件、项目元数据和 EXE：
+
+- 必须保留：`README.md`、`LICENSE`、`CONTRIBUTING.md`、`.gitignore`、`.gitattributes`、`.github/`、`WhaleLauncher.exe`。
+- 兼容性例外，不要移动：`AGENTS.md`（agent 规则入口）、`package.json`（Node/npm 与启动器读版本）、`server.js`（老版 `update.ps1` 靠它识别安装目录）、`release-manifest.json`（已发布启动器固定从根目录拉更新清单）。
+- 其余文档放 `docs/`（`CHANGELOG.md`、`BUGS.md`、`NOTICE.md`、`PRIVACY.md`、`README.zh-CN.md`），配置模板放 `config/config.example.json`，Python 依赖放 `bridge/requirements.txt`。
+- 新增文件先想清楚归属目录，不要再往根目录丢新的 `.md` / `.json` / `.txt` / `.js`。
+
+## 7. Release 更新报告与用户摘要
+
+- **GitHub Release 正文是写给开发者的**：可以详细，但必须分类，保留「修复 / 改进 / 新增 / 其他」等小标题；同类条目合并，按用户影响或重要性排序，不堆无关噪音。
+- **启动器更新弹窗是写给普通用户的**：只保留最重要的变化，最多 5 行，每行不超过 15 个汉字（含标点），不写文件名、模块名、实现细节和排查过程。
+- 详细内容留在 `docs/CHANGELOG.md` 和 GitHub Release 正文；弹窗摘要只做索引，让用户快速知道“这版对我有什么影响”。
+- 示例（启动器弹窗）：
+  ```
+  修复启动器残留
+  同一账号多窗口
+  恢复朋友圈日记
+  官网域名已更新
+  ```
+

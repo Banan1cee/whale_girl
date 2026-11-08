@@ -197,14 +197,14 @@ test('端到端闸门：时间窗全开时，到点该发、刚发过不该发',
   }
 });
 
-test('调试台保存 care 设置后，闸门立刻按新设置算', async () => {
+test('设置接口保存 care 设置后，闸门立刻按新设置算', async () => {
   const app = await boot();
   try {
     // 一开始用默认配置（当前这个点大概不在窗内，先不假设）
     const before = await (await fetch(app.url + '/api/care/due?last=0&sentToday=0')).json();
     assert.ok(before.reason);
 
-    // 模拟调试台提交：全开时间窗 + 1 分钟一次
+    // 模拟设置接口提交：全开时间窗 + 1 分钟一次
     const save = await fetch(app.url + '/api/config', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

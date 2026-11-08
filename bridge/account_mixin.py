@@ -3,6 +3,38 @@
 import engine as G
 
 
+def choose_main_window(cands, pinned=0):
+    """从同一账号的多个主窗里挑一个。
+
+    微信多开或独立聊天窗会让同一账号出现多个标题为「微信」的顶层窗口。
+    它们都持有同一份账号数据库，发消息不会串号；这里只需要稳定地挑一个，
+    避免以前直接报「多个主窗口」把 UIA 永久卡在等待状态。
+
+    优先级：上次钉住的窗口 > 唯一的前台窗口 > 面积最大 > hwnd 最小。
+    """
+    items = []
+    for c in cands or ():
+        if isinstance(c, dict):
+            items.append((int(c.get('hwnd') or 0), int(c.get('pid') or 0),
+                          int(c.get('area') or 0), bool(c.get('foreground'))))
+        else:
+            items.append((int(c[0]), int(c[1]) if len(c) > 1 else 0,
+                          int(c[2]) if len(c) > 2 else 0,
+                          bool(c[3]) if len(c) > 3 else False))
+    items = [it for it in items if it[0]]
+    if not items:
+        return None
+    if pinned:
+        for it in items:
+            if it[0] == int(pinned):
+                return it
+    foreground = [it for it in items if it[3]]
+    if len(foreground) == 1:
+        return foreground[0]
+    items.sort(key=lambda it: (-it[2], it[0]))
+    return items[0]
+
+
 class AccountMixin:
 
     def _open_db_with_timeout(self, timeout=90):
@@ -256,11 +288,17 @@ class AccountMixin:
                     continue
             except Exception:
                 continue
+            try:
+                _l, _t, _r, _b = win32gui.GetWindowRect(h)
+                _area = max(0, _r - _l) * max(0, _b - _t)
+                _fg = win32gui.GetForegroundWindow() == h
+            except Exception:
+                _area, _fg = 0, False
             if selected:
                 if _cpid not in ownership:
                     ownership[_cpid] = self._window_account_matches(_cpid)
                 if ownership[_cpid] is True:
-                    matched.append((h, _cpid))
+                    matched.append((h, _cpid, _area, _fg))
                 if ownership[_cpid] is not None:
                     continue
             unknown.append(h)
@@ -364,7 +402,7 @@ class AccountMixin:
         return True
 
     def pick_account_window(self, force=False, quiet=False):
-        """确认哪个微信窗口是 config/网页指定的账号，并钉死它。"""
+        """确认哪个微信窗口是 config/启动器指定的账号，并钉死它。"""
         if self.ACCOUNT['verified'] and (not force):
             return True
         if G.WINDOW_HWND:
@@ -383,10 +421,16 @@ class AccountMixin:
                 pass
         probe, cands, matched = self._probe_wechat_windows()
         if matched:
-            if len(matched) != 1:
-                self.ACCOUNT.update(verified=False, hwnd=0, why='所选账号对应多个主窗口，暂未绑定')
+            chosen = choose_main_window(matched, pinned=int(self.ACCOUNT.get('hwnd') or 0))
+            if chosen is None:
+                self.ACCOUNT.update(verified=False, hwnd=0, why='识别到多个微信主窗但都不可用')
                 return False
-            h, pid = matched[0]
+            h, pid = chosen[0], chosen[1]
+            if len(matched) > 1:
+                G.log('账号窗口：同账号有 %d 个主窗，选择 hwnd=%s（pid=%s，面积=%s%s）' % (
+                    len(matched), h, pid, chosen[2], '，前台' if chosen[3] else ''))
+                for _h, _pid, _area, _fg in matched:
+                    G.log('   候选 hwnd=%s pid=%s 面积=%s%s' % (_h, _pid, _area, ' 前台' if _fg else ''))
             self.ACCOUNT.update(hwnd=h, pid=pid, verified=True, label='hwnd=%s' % h, why='微信进程持有该账号数据库')
             self.rebind_uia(h)
             G.log('账号窗口：按数据库归属锁定 hwnd=%s' % h)

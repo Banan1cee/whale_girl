@@ -35,7 +35,7 @@ test('默认参数不再逼模型「避开常用词」', () => {
 });
 
 test('config.example.json 和代码默认值一致（新装的用户不该踩坑）', () => {
-  const ex = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.example.json'), 'utf8'));
+  const ex = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'config.example.json'), 'utf8'));
   assert.equal(Number(ex.deepseek.frequencyPenalty) || 0, 0);
   assert.equal(Number(ex.deepseek.presencePenalty) || 0, 0);
   assert.equal(Number(ex.deepseek.temperature), Number(DEFAULT_CONFIG.deepseek.temperature));

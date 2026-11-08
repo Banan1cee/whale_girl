@@ -2,7 +2,7 @@
 
 /**
  * 「怎么称呼你」必须真的进提示词。
- * 回归的是：网页设置里把称呼改成「爸爸」，私聊里她还在叫「主人」。
+ * 回归的是：启动器设置里把称呼改成「爸爸」，私聊里她还在叫「主人」。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');

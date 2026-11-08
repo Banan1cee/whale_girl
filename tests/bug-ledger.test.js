@@ -18,7 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
-const BUGS_MD = path.join(ROOT, 'BUGS.md');
+const BUGS_MD = path.join(ROOT, 'docs', 'BUGS.md');
 const TESTS_DIR = path.join(ROOT, 'tests');
 
 /** 表格行 → { line, id, symptom, cause, fix, version, regression, cells } */

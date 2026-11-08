@@ -36,9 +36,17 @@
         <SolidColorBrush x:Key="ScrollThumb" Color="#FF35465A" />
         <SolidColorBrush x:Key="BackdropTint" Color="#AD080C12" />
 
+        <!-- 文字描边：Appearance.cs 会按深浅色换成黑 / 白柔光；这里是深色默认值 -->
+        <DropShadowEffect x:Key="TextHalo" Color="#FF000000" ShadowDepth="0"
+                          BlurRadius="0.9" Opacity="0.7" RenderingBias="Performance" />
+
         <!-- 基础文字 -->
+        <Style TargetType="TextBlock">
+            <Setter Property="Effect" Value="{DynamicResource TextHalo}" />
+        </Style>
         <Style TargetType="TextBlock" x:Key="H1">
             <Setter Property="Foreground" Value="{DynamicResource Text}" />
+            <Setter Property="Effect" Value="{DynamicResource TextHalo}" />
             <Setter Property="FontSize" Value="30" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="LineHeight" Value="34" />
@@ -46,19 +54,23 @@
         </Style>
         <Style TargetType="TextBlock" x:Key="H2">
             <Setter Property="Foreground" Value="{DynamicResource Text}" />
+            <Setter Property="Effect" Value="{DynamicResource TextHalo}" />
             <Setter Property="FontSize" Value="13.5" />
             <Setter Property="FontWeight" Value="SemiBold" />
         </Style>
         <Style TargetType="TextBlock" x:Key="Label">
             <Setter Property="Foreground" Value="{DynamicResource Muted}" />
+            <Setter Property="Effect" Value="{DynamicResource TextHalo}" />
             <Setter Property="FontSize" Value="12" />
         </Style>
         <Style TargetType="TextBlock" x:Key="Small">
             <Setter Property="Foreground" Value="{DynamicResource Dim}" />
+            <Setter Property="Effect" Value="{DynamicResource TextHalo}" />
             <Setter Property="FontSize" Value="11" />
         </Style>
         <Style TargetType="TextBlock" x:Key="Value">
             <Setter Property="Foreground" Value="{DynamicResource Text}" />
+            <Setter Property="Effect" Value="{DynamicResource TextHalo}" />
             <Setter Property="FontSize" Value="13.5" />
         </Style>
 
@@ -288,11 +300,20 @@
                                           IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
                                 <ToggleButton.Template>
                                     <ControlTemplate TargetType="ToggleButton">
-                                        <Border Background="{DynamicResource FieldBg}" BorderBrush="{DynamicResource FieldBorder}"
+                                        <Border x:Name="bd" Background="{DynamicResource FieldBg}" BorderBrush="{DynamicResource FieldBorder}"
                                                 BorderThickness="1" CornerRadius="8">
                                             <Path Data="M0,0 L8,0 L4,5 Z" Fill="{DynamicResource Muted}"
                                                   HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" />
                                         </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                                                <Setter TargetName="bd" Property="BorderThickness" Value="2" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
                                     </ControlTemplate>
                                 </ToggleButton.Template>
                             </ToggleButton>
@@ -350,8 +371,12 @@
                                           VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
                         </Border>
                         <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                            </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                                <Setter TargetName="bd" Property="BorderThickness" Value="2" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.5" />
@@ -386,8 +411,12 @@
                                           VerticalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                            </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                                <Setter TargetName="bd" Property="BorderThickness" Value="2" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.5" />

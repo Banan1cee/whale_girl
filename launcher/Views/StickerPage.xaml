@@ -86,7 +86,7 @@
                         <CheckBox x:Name="ChkCollect" Content="自动收集收到的表情包" Click="OnToggleCollect" VerticalAlignment="Center" />
                         <Button Content="打开收集文件夹" Style="{StaticResource Ghost}" Margin="10,0,0,0" Click="OnOpenCollected" />
                     </WrapPanel>
-                    <TextBlock Text="原图去重，动图保留。独立于发送开关，收到的表情包保存在单独的文件夹里。" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                    <TextBlock Text="保存到 data/收集的表情包；原图去重，动图保留原文件。独立于发送开关，不自动加入发送图库；缓存或下载不可用时跳过。" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" />
                     <TextBlock x:Name="CollectStatus" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,4,0,0" />
                 </StackPanel>
 

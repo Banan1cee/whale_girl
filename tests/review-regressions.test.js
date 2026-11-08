@@ -23,6 +23,47 @@ test('远程读取记忆和密钥必须鉴权，本机读取不受影响', () =>
   }
 });
 
+test('启动器异常退出（stdin 直接断开）时内核也要退出', { timeout: 20000 }, async (t) => {
+  if (pipedSpawnBlocked()) return t.skip(SKIP_REASON);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-parent-dead-'));
+  const source = path.resolve(__dirname, '..');
+  for (const name of ['src', 'assets', 'server.js', 'package.json'])
+    fs.cpSync(path.join(source, name), path.join(root, name), { recursive: true });
+  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ server: { port: 0, openBrowser: false }, watchConfig: false, deepseek: { mock: true }, gateway: { wechat: { enabled: true, inboundToken: 'regression-bridge-token' } } }));
+  const child = spawn(process.execPath, ['server.js', '--port=0', '--no-browser'], {
+    cwd: root, env: { ...process.env, WHALE_CONTROL_STDIN: '1' }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+  });
+  let output = '';
+  child.stdout.on('data', b => { output += b; });
+  child.stderr.on('data', b => { output += b; });
+  t.after(async () => {
+    if (child.exitCode === null) {
+      child.kill();
+      await once(child, 'exit').catch(() => {});
+    }
+    for (let i = 0; i < 10; i += 1) {
+      try {
+        fs.rmSync(root, { recursive: true, force: true, maxRetries: 6, retryDelay: 60 });
+        break;
+      } catch (err) {
+        if (i === 9) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+  });
+  const portFile = path.join(root, 'data', 'server-port.txt');
+  for (let i = 0; i < 150 && !fs.existsSync(portFile); i++) {
+    assert.equal(child.exitCode, null, output);
+    await new Promise(r => setTimeout(r, 30));
+  }
+  assert.ok(fs.existsSync(portFile), output);
+  // 启动器被强杀时不会先发 shutdown，管道只会关闭；内核必须把 EOF 当父进程已死。
+  const exited = once(child, 'exit');
+  child.stdin.end();
+  const [code] = await exited;
+  assert.equal(code, 0, output);
+});
+
 test('切换服务不回退旧配置密钥，切回后保留原凭据，清空后不复活', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-keys-fix-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

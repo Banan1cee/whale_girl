@@ -133,7 +133,7 @@ function isOn(config, key) {
   return toBool(getByPath(config, f.path), f.default);
 }
 
-/** 给控制台看的：所有开关 + 当前值 */
+/** 给启动器和接口看的：所有开关 + 当前值 */
 function list(config) {
   return REGISTRY.map((f) => ({
     key: f.key,

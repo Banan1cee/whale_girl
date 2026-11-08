@@ -2,6 +2,7 @@
 """bridge composition root: creates BridgeRuntime and runs start()."""
 import engine as G
 from account_mixin import AccountMixin
+from parent_watch import start_watchdog
 from window_mixin import WindowMixin
 from sender_mixin import SenderMixin
 from sticker_mixin import StickerMixin
@@ -18,6 +19,9 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
             return G.list_accounts_cli()
         if '--bg-probe' in G.sys.argv or '--bg-send' in G.sys.argv:
             return G._bg_cli()
+        # 启动器正常关闭会直接结束进程树；被强杀时只剩 stdin 管道关闭，
+        # 这里读到 EOF 就退出，避免留下孤儿桥接。
+        start_watchdog(on_close=lambda: G.log('启动器已退出，桥接随之关闭。'))
         try:
             import bg_sender
             bg_sender.ensure_dpi_aware()
@@ -139,7 +143,7 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
             if hit != self.acct:
                 G.log('配置账号 %r → 账号目录 %s' % (self.acct, hit))
             self.acct = hit
-            G.log('指定账号：', self.acct, '（网页设置 / config.json → wechat.account）')
+            G.log('指定账号：', self.acct, '（启动器设置 / config.json → wechat.account）')
         elif len(self.acct_dirs) > 1:
             G.log('⚠️ 这台机器有 %d 个微信账号：%s' % (len(self.acct_dirs), '、'.join(self.acct_dirs)))
             G.log('   没指定账号 → 按「最近活跃」自动选，可能选到大号。')
@@ -192,7 +196,7 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
             G.log('当前登录账号：', self._self_nick or self.me)
         except Exception:
             G.log('当前登录账号 wxid：', self.me)
-        G.log('账号目录：', self.db.account, '（网页/config 指定）' if self.acct else '（自动选：最近活跃）')
+        G.log('账号目录：', self.db.account, '（启动器/config 指定）' if self.acct else '（自动选：最近活跃）')
         if len(self.acct_dirs) > 1:
             G.log('（这台机器有 %d 个账号目录：%s）' % (len(self.acct_dirs), '、'.join(self.acct_dirs)))
         G.log('数据库目录：', self.db.db_dir)
@@ -242,6 +246,26 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
         G.threading.Thread(target=self.listener_watch, daemon=True).start()
         G.threading.Thread(target=self.contacts_sync_once, daemon=True).start()
         G.REMINDER_RUNNER = self.start_reminder_watch()
+        moments_reader = None
+        try:
+            from moments import MomentsReader
+
+            def moments_interact(action, query):
+                from moments_actions import perform
+                from wechatauto import WeChat
+                with self.send_lock:
+                    # game_running 已随「打游戏就休息」一起删除（见 tests/scripts.test.js），
+                    # 这里再调它就是 NameError；全屏 / 账号闸仍然照拦。
+                    if self.foreground_is_fullscreen() or (not self.account_send_allowed('朋友圈')):
+                        return False
+                    with self.gui_lock:
+                        if self.gui is None:
+                            return False
+                        self.bind_gui_window(self.gui)
+                        return perform(WeChat(gui=self.gui, db=self.db).Moment, action, query, log=G.log)
+            moments_reader = MomentsReader(self.db, G.LOCAL_HTTP, self.bot_url.rsplit('/webhook', 1)[0], {'x-bot-token': self.token, 'x-whale-bridge': '1'}, G.log, interact=moments_interact).start()
+        except Exception as exc:
+            G.log('朋友圈读取通道未启动 type=%s' % type(exc).__name__)
         G.log('已启动。鲸鲸地址：', self.bot_url)
         try:
             import json as _json, datetime as _dt
@@ -254,6 +278,8 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
                 G.time.sleep(1)
         except KeyboardInterrupt:
             G.log('正在退出…')
+            if moments_reader is not None:
+                moments_reader.stop()
             if G.REMINDER_RUNNER is not None:
                 try:
                     G.REMINDER_RUNNER.stop()

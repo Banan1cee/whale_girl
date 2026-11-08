@@ -23,11 +23,11 @@ const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
 
 // 反向断言的固定清单（git 不可用时的退化对照）
 const REQUIRED = [
-  '.gitattributes', '.gitignore', 'AGENTS.md', 'BUGS.md', 'CHANGELOG.md', 'CONTRIBUTING.md',
-  'LICENSE', 'README.md', 'WhaleLauncher.exe', 'config.example.json', 'package.json',
-  'release-manifest.json', 'requirements.txt', 'server.js',
-  '.github', 'assets', 'bridge', 'docs', 'examples', 'installer', 'launcher', 'scripts',
-  'src', 'tests', 'vendor',
+  '.gitattributes', '.gitignore', 'AGENTS.md', 'CONTRIBUTING.md',
+  'LICENSE', 'README.md', 'WhaleLauncher.exe', 'package.json',
+  'release-manifest.json', 'server.js',
+  '.github', 'assets', 'bridge', 'config', 'docs', 'examples', 'installer', 'launcher', 'scripts',
+  'src', 'tests', 'vendor', 'website',
 ];
 
 const FORBIDDEN = ['data', 'runtime', 'artifacts', 'config.json', 'web', 'tools', 'personas', 'resources'];
@@ -74,7 +74,7 @@ test('目录树：每个一级路径都在 git 跟踪条目里', () => {
   }
 });
 
-test('目录树：25 个必须出现的跟踪条目一个都不能少', () => {
+test('目录树：必须出现的跟踪条目一个都不能少', () => {
   const names = new Set(firstLevel(treeLines()));
   for (const rel of REQUIRED) {
     assert.ok(names.has(rel), `目录树漏了跟踪条目 ${rel}`);

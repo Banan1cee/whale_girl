@@ -2,9 +2,9 @@
 
 /**
  * 称呼的两个入口必须写同一份数据：
- * A. 网页「⚙️ 设置」里的「怎么称呼你」
- * B. 调试台的 config.json `persona.ownerName`
- * 以前两边各存各的，网页改了调试台还是旧的，私聊也还是叫「主人」。
+ * A. 启动器「设置」里的「怎么称呼你」
+ * B. config.json 的 `persona.ownerName`
+ * 以前两边各存各的，启动器改了另一处还是旧的，私聊也还是叫「主人」。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -31,7 +31,7 @@ async function boot(configPatch = {}) {
 
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
 
-test('网页设置改称呼，config.json 里也同步写进去', async () => {
+test('启动器设置改称呼，config.json 里也同步写进去', async () => {
   const inst = await boot();
   const url = `${inst.url}/api/settings`;
   const res = await fetch(url, {
@@ -46,7 +46,7 @@ test('网页设置改称呼，config.json 里也同步写进去', async () => {
   await inst.close();
 });
 
-test('调试台改 persona.ownerName，网页设置读到的也是同一个值', async () => {
+test('配置接口改 persona.ownerName，启动器设置读到的也是同一个值', async () => {
   const inst = await boot();
   const base = inst.url;
   const res = await fetch(`${base}/api/config`, {
@@ -56,7 +56,7 @@ test('调试台改 persona.ownerName，网页设置读到的也是同一个值',
   });
   assert.equal(res.status, 200);
   const state = await (await fetch(`${base}/api/settings`)).json();
-  assert.equal(state.userName, '妈妈', '网页设置里也要显示调试台改的值');
+  assert.equal(state.userName, '妈妈', '启动器设置里也要显示配置接口改的值');
   await inst.close();
 });
 
@@ -71,6 +71,6 @@ test('老数据迁移：只有 settings.userName 时，启动后写进 config.js
   const inst = await startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0, openBrowser: false });
   assert.equal(inst.runtime.config.persona.ownerName, '爸爸', '启动时要把老设置搬过来');
   const saved = readJson(path.join(root, 'config.json'));
-  assert.equal(saved.persona.ownerName, '爸爸', '并且落盘，调试台一眼能看到');
+  assert.equal(saved.persona.ownerName, '爸爸', '并且落盘，启动器一眼能看到');
   await inst.close();
 });

@@ -36,6 +36,12 @@ const BINARY_EXT = /\.(exe|dll|pdb|node|sys)$/i;
 
 const WXID_PLACEHOLDER = /(test|demo|self|master|someone|fake|other|boss|chat|peer|fast|friend|stranger|owner|weixin|account|nope|xxx|aaaa|bbbb|cccc)/i;
 const EMAIL_ALLOWED = /(^|[.@])(example\.(com|org|net)|localhost|users\.noreply\.github\.com)$/i;
+// 共同作者在 LICENSE / NOTICE 里公开署名的提交邮箱。这是有意公开的信息，
+// 不是泄露；但只放行精确地址，不按域名放行 —— 否则任何 qq.com 邮箱都能混过去。
+const EMAIL_PUBLIC = new Set([
+  'chrisgao0312@qq.com',
+  '2117286908@qq.com',
+]);
 const GROUP_PLACEHOLDER = /^(\d)\1+@/;
 
 function looksPlanted(value) {
@@ -73,7 +79,7 @@ function textRules() {
     {
       name: '邮箱',
       re: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
-      keep: (m) => !EMAIL_ALLOWED.test(m),
+      keep: (m) => !EMAIL_ALLOWED.test(m) && !EMAIL_PUBLIC.has(m.toLowerCase()),
     },
     ...[...names].map((n) => ({
       name: `本机用户名路径（${n}）`,

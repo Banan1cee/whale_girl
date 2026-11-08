@@ -16,7 +16,7 @@ const GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'bas
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
 test('新配置默认关闭表情发送和收集，微信示例配置使用后台发送', () => {
-  const example = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json'), 'utf8'));
+  const example = JSON.parse(fs.readFileSync(path.join(ROOT, 'config', 'config.example.json'), 'utf8'));
   for (const cfg of [DEFAULT_CONFIG, example]) {
     assert.equal(cfg.features.stickers, false);
     assert.equal(cfg.sticker.collectReceived, false);

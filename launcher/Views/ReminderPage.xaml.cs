@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -30,6 +32,8 @@ namespace WhaleLauncher.Views
         private DateTime _lastLoad = DateTime.MinValue;
         private bool _busy;
         private bool _formsLoaded;   // 表单（提醒规则 / 主动搭话）载入过没有（M30）
+        private bool _diaryEnabled;  // 最近一次从服务端读到的日记开关，保存失败时用来回滚界面
+        private bool _diarySendToOwner;
 
         public ReminderPage(RuntimeSupervisor sup)
         {
@@ -40,6 +44,9 @@ namespace WhaleLauncher.Views
             TxtMaxPerDay.LostFocus += async (_, __) => await SaveRulesAsync();
             TxtQuiet.LostFocus += async (_, __) => await SaveRulesAsync();
             ChkEnabled.Click += async (_, __) => await SaveRulesAsync();
+            ChkDiaryEnabled.Click += async (_, __) => await SaveDiaryAsync();
+            ChkDiarySend.Click += async (_, __) => await SaveDiaryAsync();
+            TxtDiaryTime.LostFocus += async (_, __) => await SaveDiaryAsync();
             foreach (var box in new[] { TxtCareEvery, TxtCareJitter, TxtCareMax, TxtCareQuiet, TxtCareWindows })
                 box.LostFocus += async (_, __) => await SaveCareAsync();
             foreach (var chk in new[] { ChkCareEnabled, ChkCareOnlyMaster, ChkCareGroups, ChkCareOthers })
@@ -104,6 +111,7 @@ namespace WhaleLauncher.Views
                     EmptyText.Visibility = Visibility.Collapsed;
                 }
                 LoadRules(res.Prop("rules"), full || !_formsLoaded);
+                await LoadDiaryAsync(full || !_formsLoaded);
                 if (full || !_formsLoaded) await LoadCareAsync();   // 周期刷新不碰表单，免得覆盖正在编辑的值（M30）
                 _formsLoaded = true;
                 StatusText.Text = "共 " + rows.Count + " 条 · " + DateTime.Now.ToString("HH:mm:ss") + " 刷新";
@@ -124,6 +132,99 @@ namespace WhaleLauncher.Views
         {
             _lastLoad = DateTime.MinValue;
             await RefreshAsync(true);   // 手动刷新 = 全量回填（M30）
+        }
+
+        private async Task LoadDiaryAsync(bool full)
+        {
+            var res = await Api.Get(_sup.Url, "/api/diary");
+            if (!res.Ok) { DiaryStatus.Text = "读取日记状态失败：" + res.Error; return; }
+            if (full)
+            {
+                _diaryEnabled = res.Prop("enabled").ValueKind == JsonValueKind.True;
+                _diarySendToOwner = res.Prop("sendToOwner").ValueKind == JsonValueKind.True;
+                if (!ChkDiaryEnabled.IsKeyboardFocusWithin) ChkDiaryEnabled.IsChecked = _diaryEnabled;
+                if (!ChkDiarySend.IsKeyboardFocusWithin) ChkDiarySend.IsChecked = _diarySendToOwner;
+                if (!TxtDiaryTime.IsKeyboardFocusWithin) TxtDiaryTime.Text = res.Str("time");
+            }
+            DiaryStatus.Text = res.Str("message");
+            BtnWriteDiary.IsEnabled = res.Str("status") != "running";
+        }
+
+        private async void OnSaveDiary(object sender, RoutedEventArgs e) => await SaveDiaryAsync();
+
+        private async Task SaveDiaryAsync()
+        {
+            // 保存失败时把勾选框退回上一次服务端的值，否则周期刷新不回读 enabled，
+            // 界面会一直显示一个实际上没写进配置的开关状态。
+            if (!_sup.NodeRunning)
+            {
+                ChkDiaryEnabled.IsChecked = _diaryEnabled;
+                ChkDiarySend.IsChecked = _diarySendToOwner;
+                DiarySettingsStatus.Text = "请先启动内核，再保存日记设置。";
+                return;
+            }
+            var time = TxtDiaryTime.Text.Trim();
+            if (!System.Text.RegularExpressions.Regex.IsMatch(time, @"^([01]\d|2[0-3]):[0-5]\d$"))
+            {
+                ChkDiaryEnabled.IsChecked = _diaryEnabled;
+                ChkDiarySend.IsChecked = _diarySendToOwner;
+                DiarySettingsStatus.Text = "时间请填 HH:mm，例如 23:00。";
+                return;
+            }
+            try
+            {
+                var res = await Api.Post(_sup.Url, "/api/config", JsonSerializer.Serialize(new
+                {
+                    patch = new Dictionary<string, object>
+                    {
+                        ["diary.enabled"] = ChkDiaryEnabled.IsChecked == true,
+                        ["diary.sendToOwner"] = ChkDiarySend.IsChecked == true,
+                        ["diary.time"] = time
+                    }
+                }));
+                if (res.Ok)
+                {
+                    _diaryEnabled = ChkDiaryEnabled.IsChecked == true;
+                    _diarySendToOwner = ChkDiarySend.IsChecked == true;
+                    DiarySettingsStatus.Text = "日记设置已保存";
+                }
+                else
+                {
+                    ChkDiaryEnabled.IsChecked = _diaryEnabled;
+                    ChkDiarySend.IsChecked = _diarySendToOwner;
+                    DiarySettingsStatus.Text = "保存失败：" + res.Error;
+                }
+            }
+            catch (Exception ex)
+            {
+                ChkDiaryEnabled.IsChecked = _diaryEnabled;
+                ChkDiarySend.IsChecked = _diarySendToOwner;
+                DiarySettingsStatus.Text = Api.FriendlyError(ex);
+            }
+        }
+
+        private async void OnWriteDiary(object sender, RoutedEventArgs e)
+        {
+            BtnWriteDiary.IsEnabled = false;
+            try
+            {
+                var res = await Api.Post(_sup.Url, "/api/diary/generate", "{}");
+                DiaryStatus.Text = res.Ok ? res.Str("message") : "生成失败：" + res.Error;
+                if (res.Ok) await LoadDiaryAsync(false);
+                else BtnWriteDiary.IsEnabled = true;
+            }
+            catch (Exception ex) { DiaryStatus.Text = Api.FriendlyError(ex); BtnWriteDiary.IsEnabled = true; }
+        }
+
+        private void OnOpenDiary(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var dir = Path.Combine(_sup.DataDir, "diary");
+                Directory.CreateDirectory(dir);
+                Process.Start(new ProcessStartInfo("explorer.exe", "\"" + dir + "\"") { UseShellExecute = true });
+            }
+            catch (Exception ex) { DiaryStatus.Text = Api.FriendlyError(ex); }
         }
 
         private async void OnCancelReminder(object sender, RoutedEventArgs e)

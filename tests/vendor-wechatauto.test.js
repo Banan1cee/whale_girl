@@ -98,7 +98,7 @@ test('dist-info 齐全：METADATA 有 Version，licenses 非空', () => {
 });
 
 test('requirements.txt 不再要求 wechatauto-replica（改由 vendor 提供）', () => {
-  const text = fs.readFileSync(path.join(root, 'requirements.txt'), 'utf8');
+  const text = fs.readFileSync(path.join(root, 'bridge', 'requirements.txt'), 'utf8');
   assert.doesNotMatch(text, /^\s*wechatauto-replica\b/m, 'requirements.txt 还在装 wechatauto-replica');
   assert.match(text, /vendor\/wechatauto/, '要有一句指向 vendor 的说明');
   // 其余依赖必须精确锁定，不能 >= 浮动

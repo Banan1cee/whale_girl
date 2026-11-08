@@ -56,7 +56,7 @@ test('默认配置里没有 openBrowser（开关连带整条链路都删了）',
 test('示例配置里没有 openBrowser，也不提网页 / 浏览器', () => {
   // config.example.json 会被 ensureConfigFile 复制成用户的 config.json，
   // 里面留一句「启动时自动开浏览器」等于给新用户埋一个 404。
-  const raw = fs.readFileSync(path.join(root, 'config.example.json'), 'utf8');
+  const raw = fs.readFileSync(path.join(root, 'config', 'config.example.json'), 'utf8');
   assert.equal(raw.includes('openBrowser'), false, '示例配置不该再出现 openBrowser');
   assert.equal(raw.includes('网页'), false, '示例配置的注释不该再提「网页」');
   assert.equal(raw.includes('浏览器'), false, '示例配置的注释不该再提「浏览器」');

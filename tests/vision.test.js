@@ -68,7 +68,7 @@ test('config.json 里填了 vision.apiKey 就优先用它', () => {
   cleanup();
 });
 
-test('网页「设置」里存的 visionApiKey 能被读到（这正是以前一直提示未配置的原因）', () => {
+test('启动器「设置」里存的 visionApiKey 能被读到（这正是以前一直提示未配置的原因）', () => {
   const { config, cleanup } = makeCfg({ visionApiKey: 'web-ui-key-123456' });
   assert.equal(vision.resolveKey(config), 'web-ui-key-123456');
   assert.equal(vision.status(config).configured, true);

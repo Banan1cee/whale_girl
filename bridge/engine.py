@@ -104,7 +104,7 @@ LOW_BATTERY_PCT = 5.0
 GOODNIGHT_TEXT = '晚安，电量快没了，我先睡啦，明天见～'
 _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config.json')
 if not os.path.exists(_cfg_path):
-    _example = os.path.join(os.path.dirname(_cfg_path), 'config.example.json')
+    _example = os.path.join(os.path.dirname(_cfg_path), 'config', 'config.example.json')
     if os.path.exists(_example):
         try:
             import shutil
@@ -214,8 +214,8 @@ def log_throttled(key, *args, ttl=600, emit=None):
 def reload_config(path=None):
     """把 config.json 重新读一遍，覆盖上面这些「启动时定型」的开关。
 
-    为什么需要：调试台（/debug）改的是 config.json，但桥接以前只在启动时读一次，
-    用户在页面上关掉「主动搭话」、改「忽略名单」、调「群聊开关」……全都没反应，
+    为什么需要：启动器改的是 config.json，但桥接以前只在启动时读一次，
+    用户在启动器里关掉「主动搭话」、改「忽略名单」、调「群聊开关」……全都没反应，
     只能在启动器里手动重启桥接，表现出来就是「调了没用，还是默认」。
     现在 config.json 一变，5 秒内自动生效。
 
@@ -334,7 +334,7 @@ def resolve_account_dir(db_dir, wanted):
     return _resolve_account_dir(db_dir, wanted)
 
 def list_accounts_cli():
-    """--list-accounts：扫描本机所有微信账号，写 data/accounts.json 给网页下拉用。
+    """--list-accounts：扫描本机所有微信账号，写 data/accounts.json 给启动器下拉用。
 
     昵称要开库读 contact.db（必须微信在登录、能取到密钥），所以是「尽力而为」：
     单个账号失败就留空，整件事最多花 20 秒，绝不因为读不到昵称就报错。

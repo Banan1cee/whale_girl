@@ -115,7 +115,7 @@ class TransportTest(unittest.TestCase):
                                    copy_files_to_clipboard=Mock(return_value=True))
 
     def test_sole_window_accepted_when_configured_account_matches_database(self):
-        # 现场故障：机器上有 3 个历史账号目录，现在只登一个号，网页里已经选好了小号，
+        # 现场故障：机器上有 3 个历史账号目录，现在只登一个号，启动器里已经选好了小号，
         # 文字能发，表情包却一直 "target account window could not be verified"。
         allowed = transport.account_evidence_allowed(
             configured_account='wxid_test_account_0001',
@@ -127,7 +127,7 @@ class TransportTest(unittest.TestCase):
         self.assertTrue(allowed, '明确指定了账号且数据库就是这个号，应当放行')
 
     def test_sole_logged_in_account_is_enough_without_picking_one(self):
-        # 现场故障：默认配置（网页里没选账号、机器上有 3 个历史账号目录），
+        # 现场故障：默认配置（启动器里没选账号、机器上有 3 个历史账号目录），
         # 明明只登着一个号，表情包却一条也发不出去，还提示「去选一个账号」。
         allowed = transport.account_evidence_allowed(
             configured_account='', db_account='wxid_a', reason='本机只登了一个号',
@@ -790,7 +790,7 @@ class BridgeContractTest(unittest.TestCase):
         self.assertIn('peer', env['sticker_draft_quarantine'])
 
     def test_sole_visible_window_needs_the_configured_account(self):
-        # 现场回归 1：只登着一个号时，不需要在网页里选账号，表情包也应该能发。
+        # 现场回归 1：只登着一个号时，不需要在启动器里选账号，表情包也应该能发。
         env, _, _ = self.quarantine_environment()
         env['ACCOUNT']['why'] = '本机只登了一个号'
         env['acct_dirs'] = ['test-account', 'another-account']

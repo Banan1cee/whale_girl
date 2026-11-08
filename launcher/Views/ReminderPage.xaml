@@ -26,6 +26,105 @@
                       HorizontalScrollBarVisibility="Disabled" FocusVisualStyle="{x:Null}">
             <StackPanel Margin="0,0,10,0">
 
+                <Border Style="{StaticResource Card}" Padding="0" Margin="0,0,0,12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="240" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- 左：设置。说明收进一行提示，避免一上来就是一大段文字。 -->
+                        <StackPanel Margin="18,16,16,16">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Width="4" Height="28" CornerRadius="2"
+                                            Background="{DynamicResource Accent}" VerticalAlignment="Center" />
+                                    <StackPanel Margin="10,0,12,0">
+                                        <TextBlock Text="日记" Style="{StaticResource H2}" FontSize="15" />
+                                        <TextBlock Text="把当天的聊天，写成一篇 Markdown 日记" TextWrapping="Wrap"
+                                                   Style="{StaticResource Small}" Margin="0,2,0,0" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <CheckBox x:Name="ChkDiaryEnabled" Content="每天自动写" />
+                                    <CheckBox x:Name="ChkDiarySend" Content="写完发给主人" Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Grid>
+
+                            <Border Background="{DynamicResource Surface3}" BorderBrush="{DynamicResource Line}"
+                                    BorderThickness="1" CornerRadius="12" Padding="12,10" Margin="0,14,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="1" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="生成时间" Style="{StaticResource Label}" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                            <TextBox x:Name="TxtDiaryTime" Text="23:00" Width="72" />
+                                            <TextBlock Text="本地时间" Style="{StaticResource Small}"
+                                                       VerticalAlignment="Center" Margin="8,0,0,0" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Background="{DynamicResource Line}" Margin="16,2" />
+                                    <StackPanel Grid.Column="2" Margin="16,0,0,0" VerticalAlignment="Center">
+                                        <TextBlock Text="保存位置" Style="{StaticResource Label}" />
+                                        <TextBlock Text="data/diary/年份/月-日.md" Style="{StaticResource Small}"
+                                                   Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="BtnSaveDiary" Content="保存日记设置" Style="{StaticResource Primary}"
+                                        Click="OnSaveDiary" />
+                                <TextBlock x:Name="DiarySettingsStatus" Grid.Column="1" Style="{StaticResource Small}"
+                                           Margin="10,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" />
+                            </Grid>
+
+                            <TextBlock Style="{StaticResource Small}" Margin="0,10,0,0" TextWrapping="Wrap"
+                                       Text="每天最多一篇；只记录主人私聊；当天已有就跳过；错过时间会补写；失败每 5 分钟重试，最多 3 次。"
+                                       ToolTip="沿用当前人设和聊天模型，只根据当天和主人的聊天素材记录，保存为 Markdown。打开「写完发给主人」后，每篇生成完会把全文交给桥接发送。过去日期不补写，当天没有和主人的聊天不生成。" />
+                        </StackPanel>
+
+                        <!-- 右：状态。用浅色面板和左边设置区分开，按钮放在状态下面。 -->
+                        <Border Grid.Column="1" Background="{DynamicResource Surface3}"
+                                CornerRadius="0,18,18,0" Padding="16,16,18,16">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="当前状态" Style="{StaticResource Label}" />
+                                    <TextBlock x:Name="DiaryStatus" Text="尚未生成日记"
+                                               Foreground="{DynamicResource Text2}" FontSize="12"
+                                               TextWrapping="Wrap" LineHeight="18" Margin="0,6,0,0" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="2">
+                                    <Border Height="1" Background="{DynamicResource Line}" Margin="0,0,0,12" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button x:Name="BtnWriteDiary" Content="立即写一篇" Style="{StaticResource Primary}"
+                                                Click="OnWriteDiary" />
+                                        <Button Content="打开文件夹" Style="{StaticResource Ghost}"
+                                                Margin="8,0,0,0" Click="OnOpenDiary" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Border>
+
                 <!-- 提醒规则：字段语义和「主动搭话」一致，但这是提醒自己的配置 -->
                 <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
                     <StackPanel>

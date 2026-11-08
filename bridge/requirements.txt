@@ -1,5 +1,5 @@
 # 微信桥接的可选依赖（仅 Windows 需要）
-# 安装：py -3.12 -m pip install -r requirements.txt
+# 安装：py -3.12 -m pip install -r bridge/requirements.txt
 # wechatauto 由仓库 vendor/wechatauto 提供，不走 pip（见 vendor/README.md）；
 # 源码直跑桥接时把 vendor 加进 PYTHONPATH。
 #

@@ -11,7 +11,7 @@ const { estimateTokens } = require('../memory/tokens');
 const { recentSenders, budgetSnapshot } = require('./status');
 const envInfo = require('./envInfo');
 
-// 程序版本：调试台的 system 预览要跟真实发出去的一致，环境块里也有版本号
+// 程序版本：启动器诊断页的 system 预览要跟真实发出去的一致，环境块里也有版本号
 const VERSION = require('../../package.json').version;
 
 function debugState(runtime) {
@@ -32,7 +32,7 @@ function debugState(runtime) {
       master: {
         names: master.names || [],
         wxids: master.wxids || [],
-        // 填错了（比如把微信号当 wxid）的时候，调试台直接说出来，别让人瞎猜
+        // 填错了（比如把微信号当 wxid）的时候，启动器诊断页直接说出来，别让人瞎猜
         warnings: masterWarnings(config),
       },
     },
@@ -93,7 +93,7 @@ function debugState(runtime) {
 function debugSessions(runtime) {
   const list = [];
   for (const chat of runtime.store.chatStore.chats.values()) {
-    // 调试台只给计数，不给记忆正文（用户看不到任何记忆）
+    // 诊断页只给计数，不给记忆正文（用户看不到任何记忆）
     let people = 0;
     let events = 0;
     for (const card of chat.people.values()) {
@@ -124,7 +124,7 @@ async function debugPrompt(runtime, body) {
   const chatType = body.chatType === 'group' ? 'group' : 'private';
   const chatTitle = String(body.chatTitle || '').trim();
   const text = String(body.text || '');
-  // 和微信里真正跑消息时用同一个判定（src/core/master.js），否则调试台会「说认了、实际没认」
+  // 和微信里真正跑消息时用同一个判定（src/core/master.js），否则诊断页会「说认了、实际没认」
   const masterHit = matchMaster(config, { platform: 'wechat', senderId, senderName });
   const isMaster = masterHit.isMaster;
 
@@ -144,7 +144,7 @@ async function debugPrompt(runtime, body) {
   const msg = { platform: 'wechat', chatType, senderName, chatTitle, isMaster, linkText, text, ts: now.getTime() };
   // system 只放静态块；每轮会变的东西（说话人、时间、字数、梗、链接、联网…）在 tail 里，
   // 真发请求时 tail 挂在最后一条 user 消息后面。这里两块分开返回，方便对照。
-  // 环境块也按真实配置拼一份带进来，调试台看到的 system 跟实际发出的才是同一份。
+  // 环境块也按真实配置拼一份带进来，诊断页看到的 system 跟实际发出的才是同一份。
   const parts = persona.buildPromptParts({
     config,
     msg,
@@ -162,7 +162,7 @@ async function debugPrompt(runtime, body) {
     system: parts.system,
     tail: parts.tail,
     turns,
-    // 拼装后模型真正看到的东西（system + 历史 + 尾部），测试和调试台都看这个
+    // 拼装后模型真正看到的东西（system + 历史 + 尾部），测试和诊断页都看这个
     prompt,
     systemTokens: estimateTokens(parts.system),
     tailTokens: estimateTokens(parts.tail),
