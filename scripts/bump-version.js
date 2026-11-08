@@ -5,7 +5,8 @@
  *
  * 用法：
  *   node scripts/bump-version.js "修好了 XXX"              # 补丁号 +1（默认）
- *   node scripts/bump-version.js "新增 XXX" --level=minor  # 次版本
+ *   node scripts/bump-version.js "新增 XXX" --level=minor  # 次版本（只给新功能）
+ *   node scripts/bump-version.js "紧急修 XXX" --level=hotfix # 第四位热修
  *   node scripts/bump-version.js "重构 XXX" --level=major  # 主版本
  *   npm run bump -- "修好了 XXX"
  *
@@ -26,11 +27,11 @@ const level = levelArg ? levelArg.split('=')[1] : 'patch';
 const desc = argv.filter((a) => !a.startsWith('--')).join(' ').trim();
 
 if (!desc) {
-  console.error('用法：node scripts/bump-version.js "这次改了什么" [--level=patch|minor|major]');
+  console.error('用法：node scripts/bump-version.js "这次改了什么" [--level=patch|minor|hotfix|major]');
   process.exit(1);
 }
-if (!['patch', 'minor', 'major'].includes(level)) {
-  console.error('--level 只能是 patch / minor / major');
+if (!['patch', 'minor', 'hotfix', 'major'].includes(level)) {
+  console.error('--level 只能是 patch / minor / hotfix / major');
   process.exit(1);
 }
 
@@ -43,9 +44,11 @@ const maj = parts[0];
 const min = parts[1] || 0;
 const threePart = parts.length >= 3;
 const pat = threePart ? parts[2] : 0;
+const hot = parts.length >= 4 ? parts[3] : 0;
 const next = level === 'major' ? `${maj + 1}.0.0`
   : level === 'minor' ? (threePart ? `${maj}.${min + 1}.0` : `${maj}.${min + 1}`)
-    : (threePart ? `${maj}.${min}.${pat + 1}` : `${maj}.${min}.1`);
+    : level === 'hotfix' ? (threePart ? `${maj}.${min}.${pat}.${hot + 1}` : `${maj}.${min}.1`)
+      : (threePart ? `${maj}.${min}.${pat + 1}` : `${maj}.${min}.1`);
 
 let cl = fs.readFileSync(clPath, 'utf8');
 const dupRe = new RegExp('^##\\s*' + next.replace(/\./g, '\\.') + '\\b', 'm');

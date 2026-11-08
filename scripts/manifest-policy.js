@@ -11,6 +11,8 @@
  *   npm run brake                          # force=false：只提示，不强制
  *   npm run unbrake                        # force=null ：恢复时间闸
  *   npm run force-now                      # force=true ：立即强制
+ *   node scripts/manifest-policy.js --force-from 4.0.8      # 只强制 >= 4.0.8
+ *   node scripts/manifest-policy.js --force-from null       # 取消强制范围
  *   node scripts/manifest-policy.js --kill-below 4.0.2     # 熔断
  *   node scripts/manifest-policy.js --kill-below null      # 取消熔断
  *   node scripts/manifest-policy.js --force-after-hours 6  # 时间闸改成 6 小时
@@ -38,6 +40,8 @@ if (wantHelp) {
   npm run brake                          刹车：force=false（只提示，不强制）
   npm run unbrake                        恢复：force=null（按时间闸）
   npm run force-now                      立即强制：force=true
+  node scripts/manifest-policy.js --force-from 4.0.8      只强制 >= 4.0.8
+  node scripts/manifest-policy.js --force-from null       取消强制范围
   node scripts/manifest-policy.js --kill-below 4.0.2       熔断：低于 4.0.2 不许启动
   node scripts/manifest-policy.js --kill-below null        取消熔断
   node scripts/manifest-policy.js --force-after-hours 6    时间闸改成 6 小时
@@ -79,6 +83,12 @@ if (killArg !== undefined) {
   touched = true;
 }
 
+const forceFromArg = arg('force-from');
+if (forceFromArg !== undefined) {
+  m.force_from = forceFromArg === 'null' || forceFromArg === '' ? null : forceFromArg.replace(/^[vV]/, '');
+  touched = true;
+}
+
 const hoursArg = arg('force-after-hours');
 if (hoursArg !== undefined) {
   const n = Number(hoursArg);
@@ -107,6 +117,7 @@ console.log('已更新 ' + path.relative(root, file));
 console.log('  manifest_version   ' + m.manifest_version);
 console.log('  latest             ' + m.latest);
 console.log('  force              ' + forceText);
+console.log('  force_from         ' + (m.force_from || 'null'));
 console.log('  kill_below         ' + killText);
 console.log('  force_after_hours  ' + m.force_after_hours);
 console.log('');
