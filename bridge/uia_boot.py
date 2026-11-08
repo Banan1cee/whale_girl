@@ -51,6 +51,24 @@ def is_wechat_main_title(title: str) -> bool:
     return (title or "").strip().casefold() in ("微信", "weixin", "wechat")
 
 
+def is_wechat_account_window(win32gui, hwnd: int) -> bool:
+    """登录账号的主窗候选。微信 4.x 的隐藏辅助窗也可能用相同标题和 Qt 类名。"""
+    try:
+        cls = (win32gui.GetClassName(hwnd) or "").casefold()
+        if "login" in cls or not ("qwindowicon" in cls or cls == "mmui::mainwindow"):
+            return False
+        if not is_wechat_main_title(win32gui.GetWindowText(hwnd)):
+            return False
+        if win32gui.IsIconic(hwnd):
+            # 最小化时窗口矩形可能退化，使用还原后的主窗尺寸。
+            left, top, right, bottom = win32gui.GetWindowPlacement(hwnd)[4]
+        else:
+            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+        return right - left >= 250 and bottom - top >= 250
+    except Exception:
+        return False
+
+
 def _iter_windows() -> List[dict]:
     """所有候选主窗（不过滤 PID 有没有 Weixin.dll）。"""
     try:

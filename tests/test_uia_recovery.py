@@ -77,10 +77,14 @@ class RecoveryTests(unittest.TestCase):
             222: ('mmui::MainWindow', 'WeChat'),
             333: ('Qt51514QWindowIcon', 'WeChat Settings'),
             444: ('mmui::LoginWindow', 'WeChat'),
+            555: ('Qt51514QWindowIcon', 'Weixin'),
         }
         win32gui = SimpleNamespace(GetClassName=lambda hwnd: windows[hwnd][0],
-                                   GetWindowText=lambda hwnd: windows[hwnd][1])
-        win32process = SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, hwnd + 1))
+                                   GetWindowText=lambda hwnd: windows[hwnd][1],
+                                   IsIconic=lambda hwnd: hwnd == 222,
+                                   GetWindowPlacement=lambda hwnd: (0, 2, (), (), (0, 0, 722, 601)),
+                                   GetWindowRect=lambda hwnd: (0, 0, 175, 197) if hwnd == 555 else (0, 0, 722, 601))
+        win32process = SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 223 if hwnd == 555 else hwnd + 1))
         probe = Mock()
         probe._wechat_hwnds.return_value = list(windows)
         driver = SimpleNamespace(WeChatUIA=lambda: probe)
@@ -90,10 +94,20 @@ class RecoveryTests(unittest.TestCase):
         with patch.dict(sys.modules, {'win32gui': win32gui, 'win32process': win32process,
                                       'wechatauto.uia_driver': driver}):
             self.assertEqual(load_function('_probe_wechat_windows', env)()[1:], ([], [(222, 223)]))
+            self.assertEqual(load_function('wechat_main_window_count', env)(), 2)
         env['ensure_uia_ready'].assert_not_called()
         probe._hot_activate_accessibility.assert_not_called()
         probe._anchor.assert_not_called()
         self.assertEqual([c.args[0] for c in owner.call_args_list], [112, 223])
+
+    def test_two_real_windows_with_same_ownership_still_require_unique_binding(self):
+        rebind = Mock()
+        env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False}, log=Mock(),
+                   _probe_wechat_windows=lambda: (None, [], [(111, 333), (222, 333)]),
+                   rebind_uia=rebind)
+        self.assertFalse(load_function('pick_account_window', env)())
+        self.assertFalse(env['ACCOUNT']['verified'])
+        rebind.assert_not_called()
 
     def test_wechat_title_has_priority_over_a_large_detached_chat(self):
         windows = [
