@@ -19,3 +19,8 @@ Check(UpdateManifestService.ReleaseDetails(current) == "详细说明\n• 按账
 var longNotes = new UpdateManifest { ReleaseNotes = "- 一\n- 二\n- 三\n- 四", ReleaseDetails = new string('详', 3000) };
 Check(!UpdateManifestService.ReleaseSummary(longNotes).Contains("四"), "摘要最多显示三条");
 Check(UpdateManifestService.ReleaseDetails(longNotes).Length == 3000, "展开后保留完整详情");
+var hotfix = (UpdateManifest)parse.Invoke(null, new object[] { "{\"latest\":\"4.0.8.1\",\"force\":true,\"force_from\":\"4.0.8\"}" });
+var now = DateTimeOffset.UtcNow;
+Check(UpdateManifestService.Decide("4.0.8", hotfix, now) == UpdatePolicy.Force, "紧急热修只强制上一个发布版本");
+Check(UpdateManifestService.Decide("4.0.7", hotfix, now) == UpdatePolicy.Warn, "更老版本不被热修强制");
+Check(UpdateManifestService.Decide("4.0.8.1", hotfix, now) == UpdatePolicy.Ok, "已是最新版本不再强制");

@@ -131,12 +131,15 @@ test('维护手册写了「重置全部 = 恢复出厂」和备份位置', () =>
 test('版本号工具存在，且 release-check 会拦「重复/跳号/空条目」', () => {
   assert.ok(fs.existsSync(path.join(root, 'scripts', 'bump-version.js')), '缺少 scripts/bump-version.js');
   const bump = fs.readFileSync(path.join(root, 'scripts', 'bump-version.js'), 'utf8');
-  assert.match(bump, /--level=/, '支持 patch/minor/major');
+  assert.match(bump, /--level=/, '支持 patch/minor/hotfix/major');
+  assert.match(bump, /hotfix/, '支持第四位紧急热修');
   assert.match(bump, /CHANGELOG/, '要写 CHANGELOG');
   const rc = fs.readFileSync(path.join(root, 'scripts', 'release-check.js'), 'utf8');
   assert.match(rc, /CHANGELOG 没有重复版本号/);
   assert.match(rc, /版本号连续（不跳号）/);
   assert.match(rc, /每个版本都有说明内容/);
+  assert.match(rc, /次版本号只用于新增功能/);
+  assert.match(rc, /紧急热修版本必须跟在同一条已发布版本后/);
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(pkg.scripts.bump, 'node scripts/bump-version.js');
 });

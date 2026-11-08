@@ -24,10 +24,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# 归一化成三段式（4.0 -> 4.0.0）
+# 归一化成三段式（4.0 -> 4.0.0）；四位 4.0.8.1 是紧急热修。
 $v = "$Version".Trim() -replace '^[vV]', ''
 if ($v -match '^\d+\.\d+$') { $v = "$v.0" }
-if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "版本号不合法：$Version（要 x.y.z）" }
+if ($v -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') { throw "版本号不合法：$Version（要 x.y.z 或 x.y.z.w）" }
+$isHotfix = $v -match '^\d+\.\d+\.\d+\.\d+$'
 
 # 第一次生成用的默认策略。之后一律以现有文件为准，这里的值不会再覆盖你的修改。
 $policy = [ordered]@{
@@ -35,6 +36,7 @@ $policy = [ordered]@{
     released_at       = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     force_after_hours = 12
     force             = $null      # null=按时间闸 / true=立即强制 / false=只提示
+    force_from        = $null      # 紧急热修只强制 >= 这个版本；null=不限制
     kill_below        = $null      # 填版本号 = 低于它的直接不许启动
     message           = ''
     manifest_version  = 1
@@ -50,6 +52,7 @@ if (-not $Fresh -and (Test-Path -LiteralPath $OutFile)) {
         $names = @($old.PSObject.Properties.Name)
         if ($names -contains 'force_after_hours') { $policy.force_after_hours = [int]$old.force_after_hours }
         if ($names -contains 'force') { $policy.force = $old.force }
+        if ($names -contains 'force_from') { $policy.force_from = if ($old.force_from) { [string]$old.force_from } else { $null } }
         if ($names -contains 'kill_below') { $policy.kill_below = $old.kill_below }
         if ($names -contains 'channel') { $policy.channel = [string]$old.channel }
         if ($names -contains 'latest') { $oldLatest = [string]$old.latest }
@@ -60,6 +63,18 @@ if (-not $Fresh -and (Test-Path -LiteralPath $OutFile)) {
     }
 }
 $policy.manifest_version = $oldVer + 1
+
+# 紧急热修（x.y.z.w）发布后改为强制更新，但只强制上一个发布版本：
+# 4.0.8.1 只强制 4.0.8，4.0.7 及更早版本仍然只提示，避免把历史版本全部锁死。
+$oldLatestIsHotfix = $oldLatest -match '^\d+\.\d+\.\d+\.\d+$'
+if ($isHotfix) {
+    $policy.force = $true
+    $policy.force_from = if ($oldLatest -and $oldLatest -ne $v) { $oldLatest } else { $null }
+} elseif ($oldLatestIsHotfix -and $policy.force -eq $true -and $policy.force_from -eq ($oldLatest -replace '\.\d+$', '')) {
+    # 上一个热修设置的自动强制范围，不要带到下一个普通版本。
+    $policy.force = $null
+    $policy.force_from = $null
+}
 
 # message 优先级：命令行 -Message > 手写文案 > 自动跟随版本。
 # 判据：上一版 message 是不是当初自动生成的（「更新到 v<上一版」），是就当作自动值刷新掉。
@@ -80,5 +95,6 @@ Write-Host ("  时间闸     $($policy.force_after_hours) 小时")
 $forceText = if ($null -eq $policy.force) { 'null（到点自动强制）' } else { "$($policy.force)" }
 Write-Host ("  force      $forceText")
 $killText = if ($null -eq $policy.kill_below) { 'null（不熔断）' } else { "$($policy.kill_below)" }
+Write-Host ("  force_from $($policy.force_from)")
 Write-Host ("  kill_below $killText")
 Write-Host ("  序号       $($policy.manifest_version)")

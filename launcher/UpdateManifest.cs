@@ -26,6 +26,7 @@ namespace WhaleLauncher
         public DateTimeOffset ReleasedAt { get; set; }
         public double ForceAfterHours { get; set; } = 24;
         public bool? Force { get; set; }
+        public string ForceFrom { get; set; } = "";
         public string KillBelow { get; set; } = "";
         public string Message { get; set; } = "";
         public string ReleaseNotes { get; set; } = "";
@@ -198,7 +199,14 @@ namespace WhaleLauncher
             if (!string.IsNullOrWhiteSpace(m.KillBelow) && CompareVersion(local, m.KillBelow) < 0)
                 return UpdatePolicy.Kill;
 
-            if (m.Force == true) return UpdatePolicy.Force;
+            if (m.Force == true)
+            {
+                // 紧急热修只强制「上一个发布版本」；更老的版本只提示，
+                // 避免一次热修把所有历史版本都锁死。
+                if (!string.IsNullOrWhiteSpace(m.ForceFrom) && CompareVersion(local, m.ForceFrom) < 0)
+                    return UpdatePolicy.Warn;
+                return UpdatePolicy.Force;
+            }
             if (m.Force == false) return UpdatePolicy.Warn;
 
             // released_at 解析不出来 → 当成「还没到点」，只提示
@@ -281,6 +289,7 @@ namespace WhaleLauncher
             }
 
             m.KillBelow = Str(r, "kill_below");
+            m.ForceFrom = Str(r, "force_from");
             m.Message = Str(r, "message");
             m.ReleaseNotes = Str(r, "release_notes");
             m.ReleaseDetails = Str(r, "release_details");
@@ -306,6 +315,7 @@ namespace WhaleLauncher
                     released_at = m.ReleasedAt == default ? "" : m.ReleasedAt.ToString("o", CultureInfo.InvariantCulture),
                     force_after_hours = m.ForceAfterHours,
                     force = m.Force,
+                    force_from = m.ForceFrom,
                     kill_below = m.KillBelow,
                     message = m.Message,
                     release_notes = m.ReleaseNotes,

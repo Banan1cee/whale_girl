@@ -122,13 +122,16 @@ test('更新浮层先显示摘要，展开才显示另存的详细说明', () =>
 });
 
 test('release-manifest.json 的字段与 UpdateManifest.Parse 一一对应', () => {
-  const fields = ['latest', 'released_at', 'force_after_hours', 'force', 'kill_below', 'message', 'manifest_version'];
+  const fields = ['latest', 'released_at', 'force_after_hours', 'force', 'force_from', 'kill_below', 'message', 'manifest_version'];
   for (const f of fields) {
     assert.ok(Object.prototype.hasOwnProperty.call(manifest, f), `release-manifest.json 缺字段 ${f}`);
     assert.ok(manifestCode.includes(`"${f}"`), `UpdateManifest.cs 没有解析 ${f}`);
   }
   assert.ok(manifest.latest.length > 0, 'latest 是空的，客户端永远显示已是最新');
   assert.equal(typeof manifest.manifest_version, 'number', 'manifest_version 必须是数字（多源比较用）');
+  if (manifest.force === true && manifest.force_from) {
+    assert.ok(/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(manifest.force_from), 'force_from 必须是版本号');
+  }
 });
 
 /**
