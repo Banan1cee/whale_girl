@@ -24,13 +24,13 @@ namespace WhaleLauncher
         public static bool HasBackdrop => !string.IsNullOrWhiteSpace(Backdrop) && File.Exists(Backdrop);
 
         /// <summary>背景图模糊半径（0–60），直接喂给 BlurEffect。</summary>
-        public static double BackdropBlur { get; private set; } = 24;
+        public static double BackdropBlur { get; private set; } = 12;
 
         /// <summary>背景图不透明度（0–1）。1 = 图片最清楚，0 = 只剩主题底色。</summary>
         public static double BackdropOpacity { get; private set; } = 0.88;
 
         /// <summary>面板 / 卡片的不透明度（0–1）。0 = 文字框完全透明，只留描边。</summary>
-        public static double SurfaceOpacity { get; private set; } = 0.18;
+        public static double SurfaceOpacity { get; private set; } = 0.45;
 
         /// <summary>背景图铺法：fill = 等比裁剪，stretch = 拉伸，uniform = 等比完整。</summary>
         public static string BackdropFit { get; private set; } = "fill";
@@ -62,7 +62,7 @@ namespace WhaleLauncher
         // 莫奈取色缓存：换图才重新统计；明暗两套配色提前算好，切主题时直接换表。
         private static string _monetPath = "";
         private static double _monetHue = 215;
-        private static bool _monetBright;
+        private static double _monetLum = 0.5;
         private static bool _monetReady;
 
         private static Dictionary<string, Color> _lightPalette;
@@ -79,10 +79,12 @@ namespace WhaleLauncher
             ["BgDeep"] = "#FFEEF1F6",
             ["BgNav"] = "#E6F4F6F9",
             ["BgTop"] = "#F2FFFFFF",
+            ["BgFoot"] = "#F2FFFFFF",
+            ["BgContent"] = "#FFF4F6F9",
             ["CardBg"] = "#FFFFFFFF",
-            ["CardBorder"] = "#FFE5E9F0",
-            ["Line"] = "#FFEEF1F5",
-            ["LineSoft"] = "#FFF1F4F8",
+            ["CardBorder"] = "#FFD8E0EA",
+            ["Line"] = "#FFE4E9F0",
+            ["LineSoft"] = "#FFEDF1F6",
             ["Text"] = "#FF121722",
             ["Text2"] = "#FF465164",
             ["Muted"] = "#FF5E6A7C",
@@ -101,7 +103,7 @@ namespace WhaleLauncher
             ["GhostHover"] = "#FFF1F4F8",
             ["Hover"] = "#FFF1F4F8",
             ["FieldBg"] = "#FFF7F9FC",
-            ["FieldBorder"] = "#FFD5DCE6",
+            ["FieldBorder"] = "#FFC9D3E0",
             ["PopupBg"] = "#FFFFFFFF",
             ["ChipBg"] = "#FFFFFFFF",
             ["Surface3"] = "#FFF1F4F8",
@@ -116,6 +118,8 @@ namespace WhaleLauncher
             ["BgDeep"] = "#FF05080D",
             ["BgNav"] = "#E6080C12",
             ["BgTop"] = "#F20C121A",
+            ["BgFoot"] = "#F20C121A",
+            ["BgContent"] = "#FF080C12",
             ["CardBg"] = "#FF0F151E",
             ["CardBorder"] = "#FF243140",
             ["Line"] = "#FF202B38",
@@ -262,7 +266,7 @@ namespace WhaleLauncher
             foreach (var kv in map) colors[kv.Key] = ParseColor(kv.Value);
 
             ApplyPalette(colors, dark);
-            if (HasBackdrop) ApplyGlassSurfaces(colors);
+            if (HasBackdrop) ApplyGlassSurfaces(colors, dark);
             ApplyTextPalette(colors, dark);
 
             tint = ResolveTint(colors, dark);
@@ -313,33 +317,53 @@ namespace WhaleLauncher
         }
 
         /// <summary>
-        /// 文字色：用户手选优先；否则有背景图时按图片明暗自动配黑 / 白。
+        /// 文字色：用户手选优先；否则跟主题走——深色配亮字、浅色配暗字。
+        /// 以前按背景图平均亮度翻转文字色，但面板 / 卡片始终是主题色，
+        /// 亮图 + 深色主题就会变成「暗字压暗玻璃」，反而看不清。
         /// Text2 / Muted / Dim 朝正文的反色方向退，跟着自定义文字色一起变。
         /// </summary>
         private static void ApplyTextPalette(Dictionary<string, Color> colors, bool dark)
         {
-            if (string.IsNullOrEmpty(TextOverride) && !HasBackdrop) return;
+            var hasOverride = !string.IsNullOrEmpty(TextOverride);
+            if (!hasOverride && !HasBackdrop) return;
 
-            var text = !string.IsNullOrEmpty(TextOverride)
-                ? ParseColor(TextOverride)
-                : AutoTextColor(dark);
+            var text = hasOverride ? ParseColor(TextOverride) : colors["Text"];
             var fade = IsLight(text) ? Colors.Black : Colors.White;
+
+            // 有背景图时底是花的，灰字整体往正文方向收一档，别让说明文字糊进图里。
+            var muted = HasBackdrop ? (dark ? 0.18 : 0.14) : 0.30;
+            var dim = HasBackdrop ? (dark ? 0.28 : 0.18) : 0.44;
+
             colors["Text"] = text;
             colors["Text2"] = Blend(text, fade, 0.14);
-            colors["Muted"] = Blend(text, fade, 0.30);
-            colors["Dim"] = Blend(text, fade, 0.44);
+            colors["Muted"] = Blend(text, fade, muted);
+            colors["Dim"] = Blend(text, fade, dim);
         }
 
-        /// <summary>整窗蒙版：用户选了遮罩色就按用户的来，否则跟随莫奈；透明度仍由背景透明度滑块控制。</summary>
+        /// <summary>
+        /// 整窗蒙版：用户选了遮罩色就按用户的来，否则跟随莫奈。
+        /// 厚度跟着背景图的平均亮度走——图越亮，深色主题压得越重；
+        /// 浅色主题反过来，暗图多盖一点白，保证深色字始终有底。
+        /// </summary>
         private static Color ResolveTint(Dictionary<string, Color> colors, bool dark)
         {
             var tint = colors["Bg"];
             if (!string.IsNullOrEmpty(TintOverride)) tint = ParseColor(TintOverride);
             else if (HasBackdrop && MonetEnabled && TryGetMonet()) tint = MonetTint(dark);
 
-            tint.A = HasBackdrop
-                ? (byte)Math.Round((dark ? 0.14 : 0.08) * BackdropOpacity * 255)
-                : (byte)0;
+            if (!HasBackdrop)
+            {
+                tint.A = 0;
+                return tint;
+            }
+
+            // 莫奈关掉也要统计亮度：蒙版厚度只跟图的明暗有关，跟取不取色无关。
+            var lum = TryGetMonet() ? _monetLum : 0.5;
+            var k = Math.Clamp((lum - 0.20) / 0.60, 0, 1);   // 0 = 很暗的图，1 = 很亮的图
+            var alpha = dark
+                ? 0.08 + 0.50 * k
+                : 0.08 + 0.18 * (1 - k);
+            tint.A = (byte)Math.Round(alpha * 255);
             return tint;
         }
 
@@ -359,7 +383,7 @@ namespace WhaleLauncher
                 Color = haloColor,
                 ShadowDepth = 0,
                 BlurRadius = 0.9,
-                Opacity = 0.7,
+                Opacity = 0.45,
                 RenderingBias = RenderingBias.Performance,
             };
             halo.Freeze();
@@ -372,8 +396,9 @@ namespace WhaleLauncher
         /// </summary>
         private static readonly (string Key, double Min, double Max)[] GlassSurfaces =
         {
-            ("BgNav", 0.28, 0.92),
-            ("BgTop", 0.28, 0.92),
+            ("BgNav", 0.40, 0.94),
+            ("BgTop", 0.55, 0.96),
+            ("BgFoot", 0.55, 0.96),
             ("CardBg", 0.00, 0.86),
             ("CardBorder", 0.18, 0.90),
             ("ChipBg", 0.15, 0.88),
@@ -392,14 +417,34 @@ namespace WhaleLauncher
             ("ScrollThumb", 0.25, 0.86),
         };
 
-        private static void ApplyGlassSurfaces(Dictionary<string, Color> colors)
+        private static void ApplyGlassSurfaces(Dictionary<string, Color> colors, bool dark)
         {
             var ratio = Math.Clamp(SurfaceOpacity, 0, 1);
+            // 浅色玻璃上的深色字比深色玻璃上的亮字更吃底子：同一档滑块，
+            // 浅色主题多给一点不透明度，卡片才立得住，背景图也还透得出来。
+            if (!dark) ratio = 0.26 + 0.74 * ratio;
             foreach (var (key, min, max) in GlassSurfaces)
             {
                 if (!colors.TryGetValue(key, out var color)) continue;
                 color.A = (byte)Math.Round((min + (max - min) * ratio) * 255);
                 colors[key] = color;
+            }
+
+            // 浅色顶栏单独再透一点：白顶栏压在亮图上会变成一条纯白，跟下面的导航脱节。
+            if (!dark && colors.TryGetValue("BgTop", out var topBar))
+            {
+                topBar.A = (byte)Math.Round(Math.Clamp(0.20 + 0.40 * ratio, 0, 0.90) * 255);
+                colors["BgTop"] = topBar;
+            }
+
+            // 内容区纸面：桥接 / 设置这些页的正文直接压在图上，暗图 + 浅色主题根本看不清。
+            // 纸面厚度跟图片明暗走：暗图盖厚一点，亮图薄一点，图还透得出来。
+            if (colors.TryGetValue("BgContent", out var content))
+            {
+                var k = TryGetMonet() ? Math.Clamp((_monetLum - 0.20) / 0.60, 0, 1) : 0.5;
+                var a = (dark ? 0.10 + 0.25 * k : 0.24 + 0.34 * (1 - k)) * (0.55 + 0.45 * ratio);
+                content.A = (byte)Math.Round(a * 255);
+                colors["BgContent"] = content;
             }
         }
 
@@ -463,7 +508,7 @@ namespace WhaleLauncher
                 }
                 found = bestBin >= 0 && best > 0.4;
                 if (found) hue = bestBin * 10 + 5;
-                _monetBright = lumCount > 0 && lumSum / lumCount > 0.55;
+                _monetLum = lumCount > 0 ? lumSum / lumCount : 0.5;
             }
             catch { }
 
@@ -521,16 +566,24 @@ namespace WhaleLauncher
         }
 
         /// <summary>
-        /// 没有自选文字色时的默认值：面板很透明时看背景图平均亮度——
-        /// 暗图配亮字、亮图配暗字；面板不透明度拉高后回到主题本色。
+        /// 顶栏专用：颜色仍取主题本色（不跟莫奈染色），但透明度跟当前玻璃档位一致，
+        /// 这样有背景图时顶栏也能透出图，而不是一条纯白 / 纯黑的实心带。
         /// </summary>
-        private static Color AutoTextColor(bool dark)
+        public static Color TopBarColor(string key)
         {
-            var fallback = dark ? Colors.White : Color.FromRgb(0x05, 0x08, 0x0D);
-            if (!HasBackdrop || SurfaceOpacity >= 0.5) return fallback;
-            if (!TryGetMonet()) return fallback;
-            return _monetBright ? Color.FromRgb(0x05, 0x08, 0x0D) : Colors.White;
+            var c = BaseColor(key);
+            if (!HasBackdrop) return c;
+            var palette = IsDark ? _darkPalette : _lightPalette;
+            if (palette != null && palette.TryGetValue(key, out var glass)) c.A = glass.A;
+            return c;
         }
+
+        /// <summary>
+        /// 没有自选文字色时的默认值：跟主题走，不再按背景图亮度翻转。
+        /// 面板和卡片是主题色的，字也跟着主题色才稳定。
+        /// </summary>
+        private static Color AutoTextColor(bool dark) =>
+            dark ? Color.FromRgb(0xF4, 0xF7, 0xFA) : Color.FromRgb(0x0B, 0x12, 0x20);
 
         public static Color EffectiveColor(string kind)
         {

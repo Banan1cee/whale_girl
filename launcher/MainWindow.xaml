@@ -207,11 +207,14 @@
                 </DockPanel>
             </Border>
 
-            <ContentControl x:Name="Host" Grid.Column="1" />
+            <!-- 内容区纸面：正文压在背景图上时给一层底，暗图 / 花图也能看清字 -->
+            <Border Grid.Column="1" Background="{DynamicResource BgContent}">
+                <ContentControl x:Name="Host" />
+            </Border>
         </Grid>
 
         <!-- 底栏 -->
-        <Border Grid.Row="2" Background="{DynamicResource BgTop}"
+        <Border Grid.Row="2" Background="{DynamicResource BgFoot}"
                 BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0">
             <DockPanel Margin="24,0" VerticalAlignment="Center">
                 <TextBlock x:Name="StatusLine" DockPanel.Dock="Left" Text="启动器就绪"
