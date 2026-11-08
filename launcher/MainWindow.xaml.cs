@@ -507,15 +507,18 @@ namespace WhaleLauncher
             "GhostBg", "GhostHover", "PrimaryBg", "PrimaryFg", "PrimaryHover",
         };
 
-        private string _appliedTopBarTheme;
+        private string _appliedTopBarKey;
         private string _appliedTitleTheme;
 
         private void ApplyTopBarDefaults()
         {
-            if (TopBar == null || _appliedTopBarTheme == Appearance.Theme) return;
-            foreach (var key in TopBarKeys)
-                TopBar.Resources[key] = new SolidColorBrush(Appearance.BaseColor(key));
-            _appliedTopBarTheme = Appearance.Theme;
+            if (TopBar == null) return;
+            // 背景图有无会改变顶栏的玻璃厚度，缓存键里带上它，换图 / 清除时才会重刷。
+            var key = Appearance.Theme + "|" + (Appearance.HasBackdrop ? "1" : "0");
+            if (_appliedTopBarKey == key) return;
+            foreach (var k in TopBarKeys)
+                TopBar.Resources[k] = new SolidColorBrush(Appearance.TopBarColor(k));
+            _appliedTopBarKey = key;
         }
 
         private void OnAppearanceChanged() => ApplyAppearance();

@@ -6,6 +6,8 @@
         <SolidColorBrush x:Key="BgDeep" Color="#FF05080D" />
         <SolidColorBrush x:Key="BgNav" Color="#E6080C12" />
         <SolidColorBrush x:Key="BgTop" Color="#F20C121A" />
+        <SolidColorBrush x:Key="BgFoot" Color="#F20C121A" />
+        <SolidColorBrush x:Key="BgContent" Color="#00000000" />
         <SolidColorBrush x:Key="CardBg" Color="#FF0F151E" />
         <SolidColorBrush x:Key="CardBorder" Color="#FF243140" />
         <SolidColorBrush x:Key="Line" Color="#FF202B38" />

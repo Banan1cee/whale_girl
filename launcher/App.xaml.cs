@@ -24,6 +24,18 @@ namespace WhaleLauncher
                 finally { Shutdown(code); }
                 return;
             }
+            // 开发用：离屏渲染一张主窗口截图，调深浅色 / 背景图时不用真开窗口。
+            if (e.Args.Length >= 2 && e.Args[0] == "--render-preview")
+            {
+                ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                var scale = 1.0;
+                if (e.Args.Length >= 3) double.TryParse(e.Args[2], out scale);
+                if (scale <= 0) scale = 1;
+                var nav = -1;
+                if (e.Args.Length >= 4) int.TryParse(e.Args[3], out nav);
+                _ = PreviewRenderer.RunAsync(e.Args[1], scale, nav);
+                return;
+            }
             // 自更新后重启会带 --replace <pid>：等旧实例真的退出，再去抢单实例锁
             WaitForReplacedInstance();
             CleanupOldExes();
