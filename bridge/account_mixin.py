@@ -150,6 +150,73 @@ class AccountMixin:
             return None
         return owners == {G.os.path.normcase(G.os.path.normpath(account_dir))}
 
+    def _logged_in_account_dirs(self):
+        """本机真的登录着的微信账号目录（按进程打开的 db_storage 反查）。
+
+        为什么不看窗口：微信 4.x 是"多进程 + 一个登录页窗口"，没登录的号也会留一个
+        标题叫「微信」的 Qt 窗口。只看窗口会把它当成主窗，然后一直报「读不到会话列表」。
+        进程打开的文件骗不了人：登录了才会有 db_storage 句柄。
+        """
+        import psutil
+        from pathlib import Path
+        out = set()
+        for proc in psutil.process_iter(['pid', 'name']):
+            try:
+                if (proc.info.get('name') or '').lower() not in ('weixin.exe', 'wechat.exe'):
+                    continue
+                for item in proc.open_files():
+                    for directory in Path(item.path).parents:
+                        if directory.name.lower() == 'db_storage':
+                            out.add(directory.parent.name)
+                            break
+            except (psutil.Error, OSError):
+                continue
+        return out
+
+    def _account_label(self, account):
+        """账号目录 → 给人看的「昵称(wxid)」；读不到昵称就退回 wxid。"""
+        account = str(account or '')
+        if not account:
+            return '（未指定）'
+        nick = ''
+        try:
+            path = G.os.path.join(G.ROOT, 'data', 'accounts.json')
+            with open(path, 'r', encoding='utf-8') as f:
+                rows = (G.json.load(f) or {}).get('accounts') or []
+            for row in rows:
+                if str(row.get('account') or '') == account and row.get('nick'):
+                    nick = str(row['nick']).strip()
+                    break
+        except Exception:
+            nick = ''
+        parts = account.split('_')
+        wxid = '_'.join(parts[:2]) if len(parts) >= 2 else account
+        return '%s(%s)' % (nick, wxid) if nick else wxid
+
+    def _explain_unverified(self, fallback):
+        """把「账号未确认」翻译成用户能照着做的一句话。
+
+        原来无论哪种原因都只说「未确认 / 请打开已选账号的主窗口」，而最常见的其实是
+        "配置里选的号没登录，微信现在登着另一个号"——点窗口、刷新都救不了，用户只能猜。
+        """
+        selected = str(getattr(self.db, 'account', '') or '')
+        if not selected:
+            return fallback
+        try:
+            logged = self._logged_in_account_dirs()
+        except Exception:
+            return fallback
+        if selected in logged:
+            return fallback
+        others = [self._account_label(a) for a in sorted(logged)]
+        if others:
+            return ('已选账号 %s 没登录；当前微信登录的是 %s。请登录这个号，'
+                    '或在「微信桥接 → 账号」里改用当前登录的号' % (
+                        self._account_label(selected), '、'.join(others)))
+        return '已选账号 %s 没登录，也没扫到其它已登录的微信账号（请先在微信里登录）' % (
+            self._account_label(selected))
+
+
     def _probe_wechat_windows(self):
         """先识别进程账号归属，再按需读取会话行。"""
         import win32gui
@@ -221,6 +288,18 @@ class AccountMixin:
                 if rows:
                     break
                 G.time.sleep(0.4)
+            # 登录页不是主窗：它永远没有会话列表，也不属于任何已登录账号。
+            # 以前把它算成「唯一主窗」，于是日志只说「读不到会话列表」，
+            # 界面一直「账号未确认」，用户点窗口、刷新都没用。
+            try:
+                _lpid = int(win32process.GetWindowThreadProcessId(h)[1] or 0)
+            except Exception:
+                _lpid = 0
+            owns = self._window_account_matches(_lpid) if (_lpid and selected) else None
+            if (c is not None and not rows and owns is not True
+                    and str(getattr(c, 'ClassName', '') or '').endswith('LoginWindow')):
+                G.log('账号窗口：hwnd=%s 停在登录页（这个号没登录），跳过' % h)
+                continue
             out.append((h, c, rows))
         return probe, out, matched
 
@@ -313,7 +392,7 @@ class AccountMixin:
             G.log('账号窗口：按数据库归属锁定 hwnd=%s' % h)
             return True
         if not cands:
-            self.ACCOUNT.update(verified=False, hwnd=0, why='没扫到微信主窗')
+            self.ACCOUNT.update(verified=False, hwnd=0, why=self._explain_unverified('没扫到微信主窗'))
             return False
         if len(cands) == 1 and not getattr(self, 'acct', ''):
             h, _c, _rows = cands[0]
@@ -352,7 +431,7 @@ class AccountMixin:
                         break
             scored.append((bool(hits and hits[0] == 0), len(hits), h, c, rows))
         if not scored:
-            self.ACCOUNT.update(verified=False, hwnd=0, why='每个微信窗口都读不到会话列表')
+            self.ACCOUNT.update(verified=False, hwnd=0, why=self._explain_unverified('每个微信窗口都读不到会话列表'))
             return False
         scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
         newest_ok, nhit, h, _c, rows = scored[0]
@@ -360,13 +439,13 @@ class AccountMixin:
             self.ACCOUNT.update(verified=False, hwnd=0, why='多个微信窗口的账号证据相同，不能唯一确认')
             return False
         if len(cands) == 1 and nhit < 2:
-            self.ACCOUNT.update(verified=False, hwnd=0, why='单个可见窗口缺少所选账号的会话证据')
+            self.ACCOUNT.update(verified=False, hwnd=0, why=self._explain_unverified('单个可见窗口缺少所选账号的会话证据'))
             return False
         if not newest_ok:
             best_hits = scored[0][1]
             tied = [x for x in scored if x[1] == best_hits]
             if best_hits < 2 or len(tied) > 1:
-                self.ACCOUNT.update(verified=False, hwnd=0, why='没有一个窗口对得上账号 %s 的最近会话' % self.db.account)
+                self.ACCOUNT.update(verified=False, hwnd=0, why=self._explain_unverified('没有一个窗口对得上账号 %s 的最近会话' % self.db.account))
                 return False
         self.ACCOUNT.update(hwnd=h, verified=True, label='hwnd=%s' % h, why='命中最近会话 %d 条' % nhit)
         m = self._compat_mod()

@@ -68,3 +68,22 @@ test('WM_CHAR 编码：探测只对明确传入的窗口做，离线脚本不碰
   assert.match(BG, /if not int\(hwnd or 0\):\s*\n\s*return mode/);
   assert.match(BG, /_DETECTED_MODES/, '探测结果要缓存，避免每条消息都测');
 });
+
+/**
+ * 4.0.8 现场：配置里选的是鲸鲸，微信里登录的却是另一个号，另一个窗口停在登录页。
+ * 桥接把登录页当成「唯一主窗」，永远读不到会话列表 → 界面一直「账号未确认」，
+ * 用户点窗口、刷新都没用。这里守住修复的两个关键点。
+ */
+test('未登录的号不许把登录页当主窗（否则永远「账号未确认」）', () => {
+  assert.match(ENGINE, /def _logged_in_account_dirs\(\):/, '要按进程打开的 db_storage 反查已登录账号');
+  assert.match(ENGINE, /endswith\(['"]LoginWindow['"]\)/, 'UIA 根类名是 LoginWindow 的要能认出来');
+  assert.match(ENGINE, /停在登录页（这个号没登录），跳过/, '登录页不能进候选主窗');
+});
+
+test('账号未确认时要指出「选的号没登录 + 现在登录的是谁」', () => {
+  assert.match(ENGINE, /def _explain_unverified\(fallback\):/);
+  assert.match(ENGINE, /已选账号 %s 没登录；当前微信登录的是 %s/);
+  const picks = ENGINE.slice(ENGINE.indexOf('def pick_account_window'), ENGINE.indexOf('def ensure_account_window'));
+  const hits = picks.match(/_explain_unverified\(/g) || [];
+  assert.ok(hits.length >= 3, `pick_account_window 里至少 3 处失败分支要把原因翻译成人话，实际 ${hits.length} 处`);
+});

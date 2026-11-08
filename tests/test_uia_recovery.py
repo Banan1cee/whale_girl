@@ -57,6 +57,7 @@ class RecoveryTests(unittest.TestCase):
                    db=SimpleNamespace(account='selected-account'),
                    _probe_wechat_windows=lambda: (None, [candidate], []),
                    _account_recent_names=lambda: ['共同会话', '所选账号的会话'],
+                   _explain_unverified=lambda fallback: fallback,
                    log=Mock())
         self.assertFalse(load_function('pick_account_window', env)())
         self.assertFalse(env['ACCOUNT']['verified'])
