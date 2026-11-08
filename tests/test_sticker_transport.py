@@ -819,7 +819,9 @@ class BridgeContractTest(unittest.TestCase):
             103: ('Chrome_WidgetWin_1', '群公告-某个群'),
         }
         fake_gui = SimpleNamespace(GetClassName=lambda h: windows[int(h)][0],
-                                   GetWindowText=lambda h: windows[int(h)][1])
+                                   GetWindowText=lambda h: windows[int(h)][1],
+                                   IsIconic=lambda h: False,
+                                   GetWindowRect=lambda h: (0, 0, 900, 531))
         fake_driver = SimpleNamespace(WeChatUIA=lambda: SimpleNamespace(_wechat_hwnds=lambda: list(windows)))
         env = bridge_functions({'wechat_main_window_count'}, {})
         with patch.dict(sys.modules, {'win32gui': fake_gui,
