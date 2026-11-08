@@ -383,10 +383,15 @@ class AccountMixin:
                 pass
         probe, cands, matched = self._probe_wechat_windows()
         if matched:
-            if len(matched) != 1:
-                self.ACCOUNT.update(verified=False, hwnd=0, why='所选账号对应多个主窗口，暂未绑定')
-                return False
-            h, pid = matched[0]
+            chosen = matched[0]
+            if len(matched) > 1:
+                chosen, evidence = G.uia_boot.resolve_account_windows(matched)
+                G.log_throttled('account-window-disambiguation', '账号窗口：同账号候选=%d，择窗=%s，结构=%r' %
+                                (len(matched), chosen, evidence), ttl=60)
+                if chosen is None or self._window_account_matches(chosen[1]) is not True:
+                    self.ACCOUNT.update(verified=False, hwnd=0, pid=0, why='所选账号有多个候选窗口，未能确认聊天主窗')
+                    return False
+            h, pid = chosen
             self.ACCOUNT.update(hwnd=h, pid=pid, verified=True, label='hwnd=%s' % h, why='微信进程持有该账号数据库')
             self.rebind_uia(h)
             G.log('账号窗口：按数据库归属锁定 hwnd=%s' % h)
