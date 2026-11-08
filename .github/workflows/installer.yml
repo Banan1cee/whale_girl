@@ -756,5 +756,5 @@ jobs:
           tr -d '\r' < SHA256SUMS.txt | sha256sum -c -
           jq -e --arg version "$VERSION" '.latest == $version and .manifest_version >= 10 and .force == false
             and .kill_below == null and .force_from == null
-            and (.release_notes | startswith("- 🔴 仅建议微信窗口或 UIA 无法识别的用户更新，正常使用可跳过。"))' release-manifest.json
+            and (.release_notes | gsub("\r"; "") | startswith("- 🔴 窗口/UIA异常才建议更新\n- 正常使用可跳过"))' release-manifest.json
           gh release upload "$TAG" "whale-girl-$VERSION-setup.exe" SHA256SUMS.txt release-manifest.json
