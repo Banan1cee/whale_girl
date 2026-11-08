@@ -386,9 +386,15 @@ class AccountMixin:
             chosen = matched[0]
             if len(matched) > 1:
                 chosen, evidence = G.uia_boot.resolve_account_windows(matched)
-                G.log_throttled('account-window-disambiguation', '账号窗口：同账号候选=%d，择窗=%s，结构=%r' %
-                                (len(matched), chosen, evidence), ttl=60)
-                if chosen is None or self._window_account_matches(chosen[1]) is not True:
+                confirmed = chosen is not None and self._window_account_matches(chosen[1]) is True
+                code = 'main_window_verified' if confirmed else (
+                    'ownership_changed' if chosen is not None else 'main_window_ambiguous')
+                status = 'confirmed' if confirmed else 'blocked'
+                detail = {'candidates': len(matched), 'chosen': chosen, 'windows': evidence}
+                G.log_throttled('account-window-' + code,
+                                '账号窗口 type=window_binding code=%s status=%s detail=%r' % (code, status, detail),
+                                ttl=60, emit=G.log if confirmed else G.log_warn)
+                if not confirmed:
                     self.ACCOUNT.update(verified=False, hwnd=0, pid=0, why='所选账号有多个候选窗口，未能确认聊天主窗')
                     return False
             h, pid = chosen
