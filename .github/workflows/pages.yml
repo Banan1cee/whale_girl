@@ -11,6 +11,12 @@ on:
     paths:
       - 'website/**'
       - '.github/workflows/pages.yml'
+      - 'scripts/render-website-releases.js'
+  release:
+    types: [published, edited, unpublished, deleted]
+  schedule:
+    # 旧维护分支没有此工作流时，用定时部署补齐。
+    - cron: '23 2 * * *'
   workflow_dispatch:
 
 permissions:
@@ -18,12 +24,24 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
+  refresh-on-release:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      # Release 事件的 ref 是标签，Pages 环境只允许 main 部署。
+      - run: gh workflow run pages.yml --ref main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+
   deploy:
+    if: github.event_name != 'release' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -31,11 +49,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 从正式 Release 生成官网版本区
+        run: |
+          gh api "repos/$GH_REPO/releases/latest" > "$RUNNER_TEMP/latest-release.json"
+          gh api "repos/$GH_REPO/releases?per_page=20" > "$RUNNER_TEMP/recent-releases.json"
+          node scripts/render-website-releases.js "$RUNNER_TEMP/latest-release.json" "$RUNNER_TEMP/recent-releases.json" "$RUNNER_TEMP/site"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: website
+          path: ${{ runner.temp }}/site
 
       - id: deployment
         uses: actions/deploy-pages@v4
