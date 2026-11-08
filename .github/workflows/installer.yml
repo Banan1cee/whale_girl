@@ -68,8 +68,38 @@ env:
   SIGNING_MODE: ${{ vars.SIGNING_MODE }}
 
 jobs:
+  version-gate:
+    name: 判断是否需要构建安装包
+    runs-on: windows-latest
+    outputs:
+      build: ${{ steps.gate.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: gate
+        shell: pwsh
+        run: |
+          $build = $true
+          if ("${{ github.event_name }}" -eq 'pull_request') {
+            $baseRef = "${{ github.base_ref }}"
+            git fetch --no-tags --depth=1 origin $baseRef
+            $baseVer = (git show FETCH_HEAD:package.json | ConvertFrom-Json).version
+            $headVer = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            $bp = $baseVer.Split('.')
+            $hp = $headVer.Split('.')
+            # 只有第二位版本号增加（新增功能）才构建安装包；
+            # 补丁和四位热修只跑测试，不重新出包。
+            $build = ([int]$hp[0] -gt [int]$bp[0]) -or ([int]$hp[1] -gt [int]$bp[1])
+            Write-Host "base=$baseVer head=$headVer build=$build"
+          }
+          "build=$($build.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
   installer:
     name: 构建安装包
+    needs: version-gate
+    # tag / 手动触发 / test/** 仍由 version-gate 输出 true；PR 只在次版本增加时构建。
+    if: needs.version-gate.outputs.build == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
 

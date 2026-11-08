@@ -168,6 +168,14 @@ test('发布自检会扫个人信息（密钥 / 真实 wxid / 群号 / 手机号
   assert.match(ps, /raw\\.githubusercontent/, '二进制里的源码托管链接要扫');
 });
 
+test('安装包只在第二位版本号增加（新增功能）时构建', () => {
+  const wf = fs.readFileSync(path.join(root, '.github/workflows/installer.yml'), 'utf8');
+  assert.match(wf, /version-gate/, 'installer.yml 缺少版本判断 job');
+  assert.match(wf, /needs:\s*version-gate/, 'installer job 没有依赖版本判断');
+  assert.match(wf, /\[int\]\$hp\[1\] -gt \[int\]\$bp\[1\]/, 'PR 只有次版本增加时才应构建安装包');
+  assert.match(wf, /github\.event_name.*pull_request/, '只在 PR 上做次版本判断');
+});
+
 test('引用回复默认关闭（开着的话每条要多走一遍 UI，回复明显变慢）', () => {
   const bridge = require('./helpers/bridge-source');
   assert.match(bridge, /QUOTE_REPLY = _as_bool\(_wechat\.get\(['"]quoteReply['"], False\), False\)/, '启动读配置时默认必须是 False');
