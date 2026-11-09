@@ -120,6 +120,7 @@ namespace WhaleLauncher.Views
             SectionsHost.Children.Clear();
 
             AddSection(BuildModelSection());
+            AddSection(BuildAssistantModeSection());
             AddSection(BuildAdminSpellSection());
             AddSection(BuildAdvancedSection());
             AddSection(BuildAppearanceSection());
@@ -1289,6 +1290,52 @@ namespace WhaleLauncher.Views
                 g.Children.Add(right);
             }
             return g;
+        }
+
+        /// <summary>
+        /// 小助手模式：从大肥鱼的追问逻辑移植过来的「只跟同一个人接着聊」窗口。
+        /// 和「群聊」里按 engagedMinutes 算的旧接话窗口是两套东西，所以单独一块、
+        /// 单独一个开关（features.assistantMode），不跟群聊那一堆参数混在一起。
+        /// </summary>
+        private Border BuildAssistantModeSection()
+        {
+            var card = Card("小助手模式 · 她说完还能接着聊几句",
+                "移植自大肥鱼的追问规则。打开后：她回完一句，只对「她刚回的那个人」开一小段时间的窗口，最多再顺接几句；别人一插话、或者这条明显是在叫别人，窗口当场收口，想继续聊要重新 @ 她或叫名字。关掉 = 回到旧行为（只按「群聊」里的接话分钟数放行）。",
+                out var body);
+
+            body.Children.Add(BuildField(new FieldSpec
+            {
+                Path = "features.assistantMode",
+                Label = "开启小助手模式",
+                Kind = "bool",
+                Hint = "关掉后不再「只跟同一个人续聊」；旧的时间窗接话仍然有效",
+            }));
+            body.Children.Add(BuildField(new FieldSpec
+            {
+                Path = "group.assistantTurns",
+                Label = "最多再顺接几句",
+                Kind = "num",
+                Min = 0,
+                Max = 20,
+                Hint = "0 = 说完就停，等别人重新 @ 她；默认 3",
+            }));
+            body.Children.Add(BuildField(new FieldSpec
+            {
+                Path = "group.assistantSeconds",
+                Label = "窗口有效时长(秒)",
+                Kind = "num",
+                Min = 10,
+                Max = 3600,
+                Hint = "她说完最后一句之后，多久之内算「还在聊」；默认 180",
+            }));
+            body.Children.Add(BuildField(new FieldSpec
+            {
+                Path = "group.assistantHints",
+                Label = "追问信号",
+                Kind = "text",
+                Hint = "逗号分隔，例如：最近,忙啥,怎么说。命中这些词就当她正在跟你聊，接着回；留空 = 只用内置词表（为啥/然后/帮我/你说…）。像「你」「吗」「哈哈」这种太弱的词会被自动忽略",
+            }));
+            return card;
         }
 
         private Border BuildModelSection()

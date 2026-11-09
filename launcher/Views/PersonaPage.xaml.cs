@@ -41,7 +41,7 @@ namespace WhaleLauncher.Views
         /// </summary>
         private static readonly HashSet<string> HiddenFlags = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "wechatAccountGuard", "quoteReply", "stickers",
+            "wechatAccountGuard", "quoteReply", "stickers", "assistantMode",
             "proactiveCare", "careOnlyMaster", "careGroups", "careOthers",
         };
 

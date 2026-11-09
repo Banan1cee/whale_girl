@@ -30,6 +30,7 @@ const personaStore = require('../persona/store');
 const { sanitizeForModel, nameMatches, clampInt } = require('../core/text');
 const { sendDenial } = require('../core/wechatSendPolicy');
 const trigger = require('../core/trigger');
+const assistantMode = require('../core/assistantMode');
 const { INSULT_RE, INSULT_LOOSE_RE, namedHerIn } = require('../core/trigger');
 const context = require('../core/context');
 const { isEcho } = require('../core/echo');
@@ -1782,6 +1783,24 @@ class Bot {
     const storeText = hasDiaryMark
       ? text.replace(/\[\[diary:[^\]]{1,32}\]\]/gi, '（读取日记）')
       : text;
+    // 小助手模式：记一笔「她刚回了谁」，之后那一小段时间里只跟这个人续聊，
+    // 别人一插话就收口（对应大肥鱼的 note_bot_reply / FOLLOW_UP_BLOCK_ON_OTHER）。
+    // 只对群聊生效：私聊本来是一问一答，不需要窗口约束。
+    if (assistantMode.isOn(this.config) && decision.msg
+        && (decision.msg.chatType === 'group' || decision.msg.isGroup === true)) {
+      try {
+        const state = this.store.ensureSession(decision.key).state;
+        assistantMode.noteReply({
+          config: this.config,
+          state,
+          senderId: decision.msg.senderId,
+          text: storeText,
+          nowMs: this.now().getTime(),
+        });
+      } catch (err) {
+        this.logger && this.logger.error('写接话窗口失败（照常发送）：' + describeError(err));
+      }
+    }
     try {
       this.store.appendMessage(decision.key, {
         role: 'assistant',

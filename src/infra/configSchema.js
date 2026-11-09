@@ -52,6 +52,13 @@ const FIELDS = {
   'group.maxRepliesPerMinute': { type: 'int', min: 5, max: 30 },
   'group.silentMinutes': { type: 'int', min: 1, max: 10080 },
   'group.engagedMinutes': { type: 'int', min: 1, max: 1440 },
+  // 接话窗口：0 = 只回被点到的那一句；窗口秒数太短会聊不顺，太长等于旧行为。
+  'group.assistantTurns': { type: 'int', min: 0, max: 20 },
+  'group.assistantSeconds': { type: 'int', min: 10, max: 3600 },
+  // 追问信号（对应大肥鱼的 FOLLOW_UP_HINTS）：在内置词表之外，用户自己追加
+  // 「听到这些词就当是在跟我说」。太弱的词（"你" "吗" "哈哈"）由内核的
+  // WEAK_HINTS 过滤掉，写了也不生效，免得旁人的感慨被当成接话。
+  'group.assistantHints': { type: 'list', maxItems: 60, maxItemLen: 24 },
   'group.masterAlwaysReply': { type: 'bool' },
 
   // ---- 表情包 ----
@@ -148,6 +155,8 @@ function describe(expected) {
       return '字符串';
     case 'enum':
       return `以下之一：${(expected.values || []).join(' / ')}`;
+    case 'list':
+      return `字符串列表（用逗号分隔，最多 ${expected.maxItems || 60} 项）`;
     default:
       return expected.type;
   }
@@ -188,6 +197,20 @@ function checkValue(value, spec) {
     if (typeof value !== 'string') return `应该是字符串，实际是 ${JSON.stringify(value)}`;
     if (spec.pattern && !spec.pattern.test(value)) return '请填写 24 小时制时间 HH:mm（如 23:00）';
     if (spec.maxLen && value.length > spec.maxLen) return `太长（最多 ${spec.maxLen} 个字符）`;
+    return null;
+  }
+  if (spec.type === 'list') {
+    // 设置接口收到的是逗号/换行分隔的字符串，内核在 coerceValue 里已经拆成数组；
+    // 这里只校验「拆完之后长什么样」，免得一长串手滑的词进到判定逻辑里。
+    if (!Array.isArray(value)) return `应该是 ${describe(spec)}，实际是 ${JSON.stringify(value)}`;
+    if (spec.maxItems && value.length > spec.maxItems) return `最多 ${spec.maxItems} 项（实际 ${value.length} 项）`;
+    for (const item of value) {
+      if (typeof item !== 'string') return `每一项都应该是字符串，实际有 ${JSON.stringify(item)}`;
+      if (!item.trim()) return '不要留空项（多余的逗号删掉）';
+      if (spec.maxItemLen && item.trim().length > spec.maxItemLen) {
+        return `「${item.trim()}」太长（每项最多 ${spec.maxItemLen} 个字符）`;
+      }
+    }
     return null;
   }
   return null;

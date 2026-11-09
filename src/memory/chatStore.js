@@ -49,6 +49,13 @@ function defaultState() {
     discussUntil: 0,
     engagedUntil: 0,
     engagedBy: '',
+    // 接话窗口：followLeft = 还能顺接几句；followInterrupted = 这一段已经收口；
+    // lastBot* = 她最后一句说了什么、说给谁（决定窗口只对谁有效）。
+    followLeft: 0,
+    followInterrupted: false,
+    lastBotAt: 0,
+    lastBotText: '',
+    lastBotSenderId: '',
     silentUntil: 0,
     externalTargets: {},
     replyTimes: [],

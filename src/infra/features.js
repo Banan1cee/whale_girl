@@ -36,6 +36,13 @@ const REGISTRY = [
     default: true,
   },
   {
+    key: 'assistantMode',
+    path: 'features.assistantMode',
+    label: '小助手模式（她说完还能接着聊几句）',
+    desc: '移植自大肥鱼的追问逻辑，单列成一块：她回完一句后，只对「她刚回的那个人」开接话窗口，最多再顺接 group.assistantTurns 句；别人一插话、或话题明显转向别人，窗口立刻收口，想继续聊要重新 @ / 叫名字。关掉 = 回到只按时间算接话窗口的旧行为。开关在设置页「小助手模式」板块。',
+    default: true,
+  },
+  {
     key: 'fightQuoteCheck',
     path: 'features.fightQuoteCheck',
     label: '开怼前必须引用对方原话',

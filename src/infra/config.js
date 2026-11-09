@@ -222,6 +222,8 @@ const DEFAULT_CONFIG = {
     // 环境信息注入（系统 / 时区 / 所在地）：关掉 = system 里没有 <env> 块
     envContext: true,
     groupAddressGuard: true,
+    // 小助手模式（她说完还能接着聊几句）：开关在设置页「小助手模式」板块
+    assistantMode: true,
     fightQuoteCheck: true,
     mediaCleanup: true,
     memorySnapshot: true,
@@ -268,6 +270,11 @@ const DEFAULT_CONFIG = {
     cooldownSec: 0,
     masterAlwaysReply: true,
     engagedMinutes: 6,
+    // 接话窗口：她回完一句后，最多再顺接几句 / 这段窗口的有效秒数。
+    // 移植自大肥鱼的 FOLLOW_UP_TURNS / FOLLOW_UP_SECONDS。
+    assistantTurns: 3,
+    assistantSeconds: 180,
+    assistantHints: [],
     silentMinutes: 10,
     maxRepliesPerMinute: 15,
     muteDefaultMinutes: 30,

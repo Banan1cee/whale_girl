@@ -1,6 +1,7 @@
 'use strict';
 
 const features = require('../infra/features');
+const assistantMode = require('./assistantMode');
 const { clampInt } = require('./text');
 
 /** 读布尔开关：兼容老配置里的字符串 "false" / "0"（configSchema 允许这种写法） */
@@ -41,6 +42,8 @@ function computeTrigger(bot, { msg, atMe, clean, isGroup, state, nowMs, isMaster
     const mins = Math.max(1, Number(bot.config.group.engagedMinutes) || 6);
     state.engagedUntil = nowMs + mins * 60000;
     state.engagedBy = String(msg.senderId || '');
+    // 被明确叫到 = 重新开一轮接话额度（对应对方的 FOLLOW_UP_TURNS 重置）
+    assistantMode.noteExplicitTrigger(bot.config, state);
     return { wake: true, reason: 'addressed' };
   }
   // 任何人单发一个问号，她也回一个问号
@@ -53,6 +56,7 @@ function computeTrigger(bot, { msg, atMe, clean, isGroup, state, nowMs, isMaster
     const mins = Math.max(1, Number(bot.config.group.engagedMinutes) || 6);
     state.engagedUntil = nowMs + mins * 60000;
     state.engagedBy = String(msg.senderId || '');
+    assistantMode.noteExplicitTrigger(bot.config, state);
     return { wake: true, reason: 'directed' };
   }
   // 被赶走后的静默期：高于「主人说话就回」，否则主人说完「让她滚」下一句又把她叫起来。
@@ -60,6 +64,13 @@ function computeTrigger(bot, { msg, atMe, clean, isGroup, state, nowMs, isMaster
   if (Number(state.silentUntil) > nowMs) {
     return { wake: false, reason: 'silent' };
   }
+  // 小助手模式（移植自大肥鱼的 follow-up，单独一个模块 + 单独一个开关）：
+  // 她刚说完话的一小段时间里，只有「她最后回的那个人」能接着聊，最多顺接几句；
+  // 别人一插话就当场收口 —— 这是和旧逻辑最大的区别：旧逻辑只看时间，谁在群里
+  // 说话都可能被她接，于是她老在别人的对话里插嘴。
+  const modeDecision = assistantMode.judge({ config: bot.config, msg, clean, state, nowMs });
+  if (modeDecision && modeDecision.wake) return { wake: true, reason: modeDecision.reason };
+  const followupOn = assistantMode.isOn(bot.config);
   if (isMaster && toBool(bot.config.group.masterAlwaysReply, true)) return { wake: true, reason: 'master' };
   if (Number(state.engagedUntil) > nowMs) {
     const txt = String(clean.text || '');
@@ -80,10 +91,10 @@ function computeTrigger(bot, { msg, atMe, clean, isGroup, state, nowMs, isMaster
     }
     return { wake: false, reason: 'engaged_side_chatter' };
   }
-  // 她刚在群里说过话（3 分钟内），紧接着有人用「你」冲她说话 → 也算在跟她说
+  // 旧版接话判定：只按「3 分钟内 + 带你」放行，太宽，留给关掉落开关的场景兜底。
   const lastBotAt = Number(state.lastReplyAt) || 0;
   const txtNow = String(clean.text || '');
-  if (lastBotAt && nowMs - lastBotAt < 3 * 60000 && /你|你们|鲸鲸|小鲸|肥鱼/.test(txtNow) && txtNow.length <= 60) {
+  if (!followupOn && lastBotAt && nowMs - lastBotAt < 3 * 60000 && /你|你们|鲸鲸|小鲸|肥鱼/.test(txtNow) && txtNow.length <= 60) {
     return { wake: true, reason: 'followup' };
   }
 
