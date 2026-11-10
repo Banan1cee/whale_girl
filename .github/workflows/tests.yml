@@ -218,7 +218,9 @@ jobs:
       - name: 插件安装与运行回归
         if: always()
         shell: pwsh
-        run: dotnet run --project tests/plugin-market/Checks.csproj -c Release -- (Get-Command node -CommandType Application).Source
+        run: |
+          $node = Get-Command node -CommandType Application | Select-Object -First 1 -ExpandProperty Source
+          dotnet run --project tests/plugin-market/Checks.csproj -c Release -- "$node"
 
       - name: 启动器进程生命周期回归（模拟桥接）
         if: always()
