@@ -4,6 +4,8 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>disable</Nullable>
     <UseWPF>true</UseWPF>
+    <!-- 旧版 Windows 报 CET FailFast 时，单独发布兼容启动器供复测。 -->
+    <CetCompat Condition="'$(WhaleLegacyWindows)' == 'true'">false</CetCompat>
     <AssemblyName>WhaleLauncher</AssemblyName>
     <RootNamespace>WhaleLauncher</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
