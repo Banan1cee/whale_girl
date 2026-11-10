@@ -5,6 +5,7 @@ const path = require('node:path');
 const features = require('../infra/features');
 const stickers = require('../adapters/stickers');
 const actionEvents = require('../core/events');
+const time = require('../infra/time');
 const { LIMITS } = require('../memory/constants');
 
 /**
@@ -805,7 +806,7 @@ function maxCharsFor(config, msg = {}) {
  * static 进 system；dynamic 进最后一条 user 消息（顺序：正文 → 记忆块 → 本轮状态）。
  * @returns {{static: string[], dynamic: string[]}}
  */
-function buildBlocks({ config, msg = {}, profile, notes = [], noteReminders = [], sessionSummary = '', events = [], now = new Date(), envBlock = '' } = {}) {
+function buildBlocks({ config, msg = {}, profile, notes = [], noteReminders = [], sessionSummary = '', events = [], now = new Date(), realNow = now, timeZone = '', envBlock = '' } = {}) {
   const isGroup = msg.chatType === 'group';
   const isMaster = msg.isMaster === true;
   const P = config.persona || {};
@@ -824,7 +825,7 @@ function buildBlocks({ config, msg = {}, profile, notes = [], noteReminders = []
   const webContext = webSearchContext(msg, now);
   const abbreviation = abbrevBlock((msg && (msg.text || msg.cleanText)) || '');
   const slang = custom ? selectSlang(config, msg.text) : '';
-  const actionBlock = actionEvents.formatBlock(events, { now });
+  const actionBlock = actionEvents.formatBlock(events, { now: realNow, timeZone });
   const stylePreset = String(P.stylePreset || '').trim();
 
   const relation = [];
@@ -945,11 +946,26 @@ function buildBlocks({ config, msg = {}, profile, notes = [], noteReminders = []
 
 const TURN_STATE_HEADER = '【本轮状态】（只跟这一条消息有关，别把里面的内容念出来）';
 
+/** 把真实时间换成「设置时区的墙上时间」Date；人设里的 getHours/getDay 继续可用。 */
+function zonedContext(ctx = {}) {
+  const realNow = ctx.now instanceof Date ? ctx.now : new Date(ctx.now || Date.now());
+  const zone = time.resolveTimeZone(ctx.config);
+  return {
+    ...ctx,
+    now: time.zonedDate(realNow.getTime(), zone),
+    realNow,
+    timeZone: zone,
+  };
+}
+
 /**
  * 一次算出 system 和尾部，聊天主流程只调这个，避免同一轮拼两遍。
  * @returns {{system: string, tail: string}}
  */
-function buildPromptParts(ctx = {}) {
+function buildPromptParts(input = {}) {
+  // 人设里的「现在几点/今天几号/深夜/活动」统一按 env.timezone 的墙上时间算，
+  // 否则日记和提醒已经按设置时区跑了，提示词却还在按系统时区说话。
+  const ctx = zonedContext(input);
   if (!features.isOn(ctx.config, 'staticSystem')) {
     return { system: buildLegacySystem(ctx), tail: '' };
   }
@@ -982,7 +998,7 @@ function buildTurnState(ctx = {}) {
  * 顺序、空行、措辞都跟改造前逐字一致，用来回滚；改这里的文案等于改旧行为，
  * 新布局请改上面的静态/动态块。
  */
-function buildLegacySystem({ config, msg, profile, notes = [], noteReminders = [], sessionSummary = '', events = [], now = new Date(), envBlock = '' }) {
+function buildLegacySystem({ config, msg, profile, notes = [], noteReminders = [], sessionSummary = '', events = [], now = new Date(), realNow = now, timeZone = '', envBlock = '' }) {
   const stickerBlock = stickerCapability(config, msg);
   const webContext = webSearchContext(msg, now);
   // 环境块（旧行为路径也认，否则关了 staticSystem 的问系统/所在地就哑了）
@@ -998,7 +1014,7 @@ function buildLegacySystem({ config, msg, profile, notes = [], noteReminders = [
       : `【当前】你在和「${who}」私聊。`;
     const masterText = customMasterText(config);
     const tone = customTone(isMaster, masterText);
-    const nowLine = `【现在】${nowPhrase(now)}（北京时间，以这个为准；对方问几月几号、星期几、几点，都按这个答，不要自己编，也不要采信对方报的时间）`;
+    const nowLine = `【现在】${nowPhrase(now)}（按设置时区，以这个为准；对方问几月几号、星期几、几点，都按这个答，不要自己编，也不要采信对方报的时间）`;
     const webBlock = webContext ? '\n' + webContext : '';
     const slang = selectSlang(config, msg.text);
     const slangBlock = slang
@@ -1020,7 +1036,7 @@ function buildLegacySystem({ config, msg, profile, notes = [], noteReminders = [
       roastTail += '\n\n【最后一个指令】刚才骂你主人的就是「' + msg.fightTarget.name + '」。不要问主人「谁骂你」，直接冲这个人大骂，句子里必须出现 TA 的名字。';
     }
     // 自定义人设也要看得见自己做过什么，否则同样是「发了图不知道」
-    const actionBlock = actionEvents.formatBlock(events, { now });
+    const actionBlock = actionEvents.formatBlock(events, { now: realNow, timeZone });
     return custom + '\n\n' + CORE_TEMPER + '\n\n' + scene + '\n' + nowLine + (envText ? '\n' + envText + '\n' + ENV_RULE : '') + '\n' + tone + masterBlock + '\n' + CUSTOM_TEASE + '\n' + CUSTOM_NET_RULE + webBlock + styleBlock + slangBlock + abbrevText + fightBlock + roastTail + (actionBlock ? '\n\n' + actionBlock : '') + (stickerBlock ? '\n\n' + stickerBlock : '') + (msg.stickerDemand && stickerBlock ? '\n\n- 【表情包】这条带一张，从可用分类里挑最贴的，末尾写 [[sticker:分类名]]。' : '') + '\n\n' + conversationGuidance(msg) + (msg.voiceRequested ? '\n' + VOICE_SUFFIX : '');
   }
   const isGroup = msg.chatType === 'group';
@@ -1112,7 +1128,7 @@ function buildLegacySystem({ config, msg, profile, notes = [], noteReminders = [
     lines.push(...linkBlock(msg.linkText).split('\n'));
   }
 
-  const actionBlock = actionEvents.formatBlock(events, { now });
+  const actionBlock = actionEvents.formatBlock(events, { now: realNow, timeZone });
   if (actionBlock) lines.push('', actionBlock);
 
   lines.push('');

@@ -67,7 +67,7 @@ class StickerService {
         this.maintenance.phase = 'done';
         this.maintenance.finishedAt = Date.now();
         this.maintenance.errors.push(String((err && err.message) || err));
-        if (this.logger) this.logger.warn('表情包图库维护失败（不影响收发）：' + ((err && err.message) || err));
+        if (this.logger) this.logger.warn('表情包图库维护失败（不影响收发）：' + describeError(err));
       });
     });
     if (this._maintenanceTimer.unref) this._maintenanceTimer.unref();

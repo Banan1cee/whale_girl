@@ -238,6 +238,20 @@ test('滚动条是自定义圆角滑块，页面/输入控件关掉默认焦点�
   assert.match(readLauncher('Views/SettingsPage.xaml'), /FocusVisualStyle="\{x:Null\}"/, '设置页 FocusVisualStyle 没关');
 });
 
+test('时间输入统一走 TimeField：日记用 Clock，搭话用 Ranges，设置页能改全局时区', () => {
+  const field = readLauncher('TimeField.cs');
+  assert.ok(field.includes('TryNormalizeClock') && field.includes('TryNormalizeRanges'), 'TimeField 缺少统一解析入口');
+  assert.match(field, /24:00/, '时间段结束点应该支持 24:00');
+  assert.match(field, /Replace\('：', ':'\)/, '24:00 的全角冒号也应规范化');
+  const xaml = readLauncher('Views/ReminderPage.xaml');
+  assert.match(xaml, /<ui:TimeField[^>]*x:Name="TxtDiaryTime"[^>]*Mode="Clock"/, '日记时间没用 TimeField(Clock)');
+  assert.match(xaml, /<ui:TimeField[^>]*x:Name="TxtCareWindows"[^>]*Mode="Ranges"/, '搭话时间段没用 TimeField(Ranges)');
+  const code = readLauncher('Views/ReminderPage.xaml.cs');
+  assert.ok(code.includes('TxtDiaryTime.TryRead') && code.includes('TxtCareWindows.TryRead'), '保存时应该走 TimeField.TryRead');
+  const settings = readLauncher('Views/SettingsPage.xaml.cs');
+  assert.ok(settings.includes('Path = "env.timezone"'), '设置页缺少全局时区');
+});
+
 test('新版 exe 都在仓库里', () => {
   for (const rel of ['WhaleLauncher.exe', 'launcher/publish/WhaleLauncher.exe']) {
     const file = path.join(root, rel);

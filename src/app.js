@@ -24,6 +24,7 @@ const personaStore = require('./persona/store');
 const { StickerService } = require('./services/stickerService');
 const stickersAdapter = require('./adapters/stickers');
 const probe = require('./infra/probe');
+const { Scheduler } = require('./infra/scheduler');
 const { ContactsCache } = require('./services/contacts');
 const { MomentsService } = require('./services/moments');
 const { MomentsPublisher } = require('./services/momentsPublisher');
@@ -102,25 +103,22 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
       if (mc.removed) logger.info(`媒体缓存清理：删 ${mc.removed} 个文件，释放 ${mc.freedMB} MB`);
     }
   } catch (err) {
-    logger.warn('媒体缓存清理失败（不影响使用）：' + err.message);
+    logger.warn('媒体缓存清理失败（不影响使用）：' + describeError(err));
   }
 
   const runtime = { config, logger, store, startedAt: Date.now(), version: VERSION, loopProbe };
   runtime.child = child;
+  // 进程内定时任务统一入口：日记 tick、记忆快照、朋友圈定时读取共用，
+  // 关服务只需要 stopAll；请求超时/桥接轮询不归它管。
+  runtime.scheduler = new Scheduler({ logger: child('scheduler') });
 
   // 长时间挂着也要有断点：每 30 分钟留一份（启动那份可能已经是几十小时前了）
   try {
-    const timer = setInterval(() => {
-      try {
-        if (!features.isOn(runtime.config, 'memorySnapshot')) return;
-        const file = memoryBackup.writeSnapshot(root, 'cron');
-        if (file) logger.info('记忆快照（定时）：' + file);
-      } catch (err) {
-        logger.warn('定时记忆快照失败：' + describeError(err));
-      }
-    }, 30 * 60 * 1000);
-    if (timer.unref) timer.unref();
-    runtime.snapshotTimer = timer;
+    runtime.scheduler.every('memory.snapshot', 30 * 60 * 1000, () => {
+      if (!features.isOn(runtime.config, 'memorySnapshot')) return;
+      const file = memoryBackup.writeSnapshot(root, 'cron');
+      if (file) logger.info('记忆快照（定时）：' + file);
+    });
   } catch { /* 定时器起不来不影响主流程 */ }
 
   runtime.llm = new DeepSeekClient({ config, logger: child('llm') });
@@ -128,6 +126,7 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
     store,
     llm: runtime.llm,
     logger: child('diary'),
+    scheduler: runtime.scheduler,
     // 日记写完要发给主人时，借用提醒的主动发送队列；runtime.reminders 在下面才创建，
     // 所以这里用闭包延迟取，真正发日记时它已经存在。
     enqueue: (item) => runtime.reminders.enqueueNow(item),
@@ -157,7 +156,7 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   try {
     runtime.stopLocationProbe = locationProbe.startAutoProbe(config, { logger: child('env') });
   } catch (err) {
-    logger.warn('所在地探测没起来（不影响聊天）：' + ((err && err.message) || err));
+    logger.warn('所在地探测没起来（不影响聊天）：' + describeError(err));
   }
   // 表情包任务队列：内存态，重启不重放（避免把上一条没发出去的表情再补发一次）
   // store 用来记动作账：发了哪张、桥接确认没确认，下一轮提示词才看得见
@@ -171,6 +170,7 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
     logger: child('moments'),
     llm: runtime.llm,
     config,
+    scheduler: runtime.scheduler,
   });
   runtime.bot.moments = runtime.moments;
   runtime.moments.startAutoRead();
@@ -198,7 +198,7 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
     const swept = runtime.reminders.sweepStale();
     if (swept.expired) logger.info(`提醒清理：${swept.expired} 条已过期（过了提醒时间，不再补发）`);
   } catch (err) {
-    logger.warn('提醒清理失败（不影响使用）：' + err.message);
+    logger.warn('提醒清理失败（不影响使用）：' + describeError(err));
   }
   // 启动：检测 30 分钟空闲的 episode 补写 L2；超过 3,200 token 的按需压缩。
   // 后台跑，不阻塞服务启动；原文已经在磁盘上，补写失败也只是晚一轮。

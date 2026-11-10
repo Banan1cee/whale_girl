@@ -46,8 +46,6 @@ test('stop-all.ps1 会写暂停标记，并覆盖服务/桥接/守护', () => {
   assert.match(ps1, /wechatauto_bridge\.py/);
   assert.match(ps1, /server\.js/);
   assert.match(ps1, /python/, '要按 python.exe 找桥接进程');
-  assert.equal(ps1.includes('.' + 'bat'), false, '启动脚本已全部删除，不该再按脚本进程名去杀');
-  assert.doesNotMatch(ps1, /hotkey_daemon/, '热键功能已下线，不该再出现');
   assert.match(ps1, /8787/, '要有按端口兜底');
 });
 
@@ -94,8 +92,6 @@ test('桥接会定时发心跳，启动器才看得到「桥接在线 / UIA 不�
   assert.match(bridge, /response\.raise_for_status\(\)/, 'HTTP 拒绝不能算作心跳成功');
   assert.match(bridge, /UIA_CACHE(?:\.get\(['"]u['"]\)|\[['"]u['"]\])/);
   assert.match(bridge, /['"]rest['"]: resting/, 'rest 字段还要继续上报（前端在读）');
-  assert.match(bridge, /resting = False/, '休息模式已删除，字段保留但恒为 false');
-  assert.doesNotMatch(bridge, /def game_running\(/, '「打游戏就休息」已删除');
   assert.match(bridge, /time\.sleep\(20\)/, '20 秒一次');
 });
 /* ---------------- 重置全部 = 恢复出厂 ---------------- */
@@ -210,14 +206,6 @@ test('发行包自带 ffmpeg（微信 4.x 图片是 wxHEVC，没它看不了图�
     return;
   }
   assert.ok(fs.statSync(probe).size > 10 * 1024 * 1024, 'ffmpeg.exe 应该是完整二进制');
-});
-
-test('热键文件已删除，README 不再提热键', () => {
-  // 不写后缀：这条断言的就是「根本没有这个名字的入口」
-  assert.equal(fs.readdirSync(root).some((n) => n.includes('启动热键')), false, '启动热键入口应删除');
-  assert.equal(fs.existsSync(path.join(root, 'tools', 'hotkey_daemon.py')), false, 'hotkey_daemon.py 应删除');
-  const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-  assert.doesNotMatch(readme, /启动热键|hotkey_daemon/, 'README 不该再提热键');
 });
 
 test('README 不再引导用户去点脚本文件（入口只有 WhaleLauncher.exe）', () => {

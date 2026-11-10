@@ -6,9 +6,10 @@ const { randomUUID } = require('node:crypto');
 const { toBool } = require('../infra/features');
 const { describeError } = require('../infra/errors');
 const { matchMaster } = require('../core/master');
+const time = require('../infra/time');
 
-const pad = (n) => String(n).padStart(2, '0');
-const dayKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+// 保留旧导出：测试和外部调用还按 dayKey(date) 用。
+const dayKey = (value, tz = '') => time.dayKey(value instanceof Date ? value.getTime() : value, tz);
 
 const RETRY_DELAY_MS = 5 * 60000;
 // 失败后每 5 分钟重试，但只给 3 次：模型/Key 坏了不该整晚反复烧 token。
@@ -17,8 +18,8 @@ const LINK_FALLBACK_CODES = new Set(['EPERM', 'EACCES', 'EINVAL', 'ENOTSUP', 'EO
 const DIARY_INDEX_LIMIT = 400;
 
 class DiaryService {
-  constructor(config, { store, llm, logger, enqueue = null, now = () => Date.now() }) {
-    Object.assign(this, { config, store, llm, logger, now });
+  constructor(config, { store, llm, logger, enqueue = null, scheduler = null, now = () => Date.now() }) {
+    Object.assign(this, { config, store, llm, logger, scheduler, now });
     this.enqueue = typeof enqueue === 'function' ? enqueue : null;
     this.dir = path.join(config.paths.dataDir, 'diary');
     this.indexFile = path.join(this.dir, 'index.json');
@@ -27,6 +28,7 @@ class DiaryService {
     this.retryAt = 0;
     this.stopped = false;
     this.timer = null;
+    this.scheduled = false;
     this.failures = 0;      // 当天的自动失败次数
     this.seenDay = '';      // 上一次 tick 看到的日期，用来在新的一天清掉旧状态
     this.doneKey = '';      // 已经确认完成的日期，避免成功后每 5 分钟再进一次 generate
@@ -43,12 +45,20 @@ class DiaryService {
   }
 
   start() {
-    if (this.timer) return;
+    if (this.timer || this.scheduled) return;
     this.stopped = false;
     this.cleanupStaleTemps();
     this.restoreExisting();
-    this.timer = setInterval(() => { void this.tick(); }, 15000);
-    this.timer.unref?.();
+    this.logger?.debug?.(`[diary] start enabled=${toBool(this.config.diary?.enabled, false)} time=${this.config.diary?.time || '23:00'} tz=${time.zoneName(this.config) || 'system'}`);
+    if (this.scheduler) {
+      // 15 秒 tick 保留：要处理「错过时间补写」和失败后 5 分钟重试，
+      // 只是把计时和关停交给统一调度器。
+      this.scheduler.every('diary.tick', 15000, () => this.tick());
+      this.scheduled = true;
+    } else {
+      this.timer = setInterval(() => { void this.tick(); }, 15000);
+      this.timer.unref?.();
+    }
   }
 
   /** 进程在写临时文件时崩过会留下 .tmp；启动时清掉一天前的垃圾，别越堆越多。 */
@@ -82,6 +92,8 @@ class DiaryService {
 
   stop() {
     this.stopped = true;
+    if (this.scheduler) this.scheduler.cancel('diary.tick');
+    this.scheduled = false;
     clearInterval(this.timer);
     this.timer = null;
     // 生成中途停止时（关服务 / 测试）不能让状态永远停在 running。
@@ -90,16 +102,17 @@ class DiaryService {
     }
   }
 
-  fileFor(date) {
-    return `${date.getFullYear()}/${pad(date.getMonth() + 1)}-${pad(date.getDate())}.md`;
+  fileFor(day) {
+    const [year, month, date] = String(day).split('-');
+    return `${year}/${month}-${date}.md`;
   }
 
   /**
    * 只读探测当天是否已有日记，返回相对路径或 null。
    * 探测不写状态，tick 用它短路，避免「已保存」成功后又被改成「已跳过」。
    */
-  existingFile(date) {
-    const nested = this.fileFor(date);
+  existingFile(day) {
+    const nested = this.fileFor(day);
     try {
       if (fs.statSync(path.join(this.dir, nested)).isFile()) return nested;
     } catch (err) {
@@ -110,15 +123,15 @@ class DiaryService {
     catch (err) { if (err.code === 'ENOENT') return null; throw err; }
     // 升级前写下的自动/手动日记也算当天已完成，不能换文件名后又生成一篇。
     return names.find((name) => {
-      if (!name.startsWith(dayKey(date) + '-') || !name.endsWith('.md')) return false;
+      if (!name.startsWith(day + '-') || !name.endsWith('.md')) return false;
       try { return fs.statSync(path.join(this.dir, name)).isFile(); } catch { return false; }
     }) || null;
   }
 
-  skipExisting(date) {
-    const file = this.existingFile(date);
+  skipExisting(day) {
+    const file = this.existingFile(day);
     if (!file) return false;
-    this.doneKey = dayKey(date);
+    this.doneKey = day;
     this.seenDay = this.doneKey;
     if (!(this.state.status === 'done' && this.state.file === file)) {
       this.state = { status: 'done', message: `今天已有日记，已跳过：data/diary/${file}`, file };
@@ -129,10 +142,10 @@ class DiaryService {
   /** 内核重启后当天文件可能已经在磁盘上，启动先探一次，别一直显示「尚未生成」。 */
   restoreExisting() {
     try {
-      const date = new Date(this.now());
-      const file = this.existingFile(date);
+      const day = time.dayKey(this.now(), time.resolveTimeZone(this.config));
+      const file = this.existingFile(day);
       if (!file) return;
-      this.doneKey = dayKey(date);
+      this.doneKey = day;
       this.seenDay = this.doneKey;
       if (!(this.state.status === 'done' && this.state.file === file)) {
         this.state = { status: 'done', message: `今天已有日记：data/diary/${file}`, file };
@@ -158,27 +171,29 @@ class DiaryService {
   async tick() {
     if (this.stopped || this.pending) return;
     const now = this.now();
-    const d = new Date(now);
-    const day = dayKey(d);
+    const tz = time.resolveTimeZone(this.config);
+    const day = time.dayKey(now, tz);
     this.rollDay(day);
     if (!toBool(this.config.diary?.enabled, false)) return;
-    const time = this.config.diary?.time;
-    if (typeof time !== 'string' || time.length !== 5 || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
-      if (this.badTimeWarned !== String(time)) {
-        this.badTimeWarned = String(time);
-        this.logger?.warn(`日记时间配置不合法：${JSON.stringify(time)}（应为 HH:mm，如 23:00）`);
+    const clock = this.config.diary?.time;
+    const target = time.parseClock(clock);
+    if (target === null) {
+      if (this.badTimeWarned !== String(clock)) {
+        this.badTimeWarned = String(clock);
+        this.logger?.warn(`日记时间配置不合法：${JSON.stringify(clock)}（应为 HH:mm，如 23:00）`);
       }
       return;
     }
-    if (`${pad(d.getHours())}:${pad(d.getMinutes())}` < time || now < this.retryAt) return;
+    if (time.minutesOfDay(now, tz) < target || now < this.retryAt) return;
     if (this.doneKey === day) return;
     // 先只读检查文件：成功后 doneKey 已置位；这里再兜一层磁盘检查，
     // 覆盖「手动写完 -> 自动时间到」和用户手动删文件后的情况。
     let existing = null;
-    try { existing = this.existingFile(d); }
+    try { existing = this.existingFile(day); }
     catch (err) { this.logger?.warn('检查当天日记失败：' + describeError(err)); }
     if (existing) {
       this.doneKey = day;
+      this.logger?.debug?.(`[diary] skip day=${day} reason=exists file=${existing}`);
       if (!(this.state.status === 'done' && this.state.file === existing)) {
         this.state = { status: 'done', message: `今天已有日记，已跳过：data/diary/${existing}`, file: existing };
       }
@@ -193,7 +208,7 @@ class DiaryService {
     if (this.pending) return this.pending;
     if (this.stopped) return Promise.resolve();
     // 手动生成也可能发生在第一次 tick 之前；先记下日期，失败状态才不会在 15 秒后被当成「昨天」清掉。
-    this.seenDay = dayKey(new Date(this.now()));
+    this.seenDay = time.dayKey(this.now(), time.resolveTimeZone(this.config));
     this.state = { status: 'running', message: '正在生成日记…', file: '' };
     this.pending = this.write(automatic).then((result) => {
       if (result === 'saved' || result === 'existing') this.failures = 0;
@@ -254,8 +269,9 @@ class DiaryService {
     return candidates[0] || null;
   }
 
-  formatDocument(day, date, automatic, body) {
-    return `# ${day} 日记\n\n> 生成时间：${date.toLocaleString('zh-CN', { hour12: false })} · ${automatic ? '自动' : '手动'}生成 · 只记录与主人的聊天\n\n${body.trim()}\n`;
+  formatDocument(day, now, automatic, body) {
+    const stamp = time.formatDateTime(now, time.resolveTimeZone(this.config), { seconds: true });
+    return `# ${day} 日记\n\n> 生成时间：${stamp} · ${automatic ? '自动' : '手动'}生成 · 只记录与主人的聊天\n\n${body.trim()}\n`;
   }
 
   loadIndex() {
@@ -322,7 +338,7 @@ class DiaryService {
       file = this.latestFile();
     } else {
       let day = raw;
-      if (/^(?:today|今天)$/i.test(day)) day = dayKey(new Date(this.now()));
+      if (/^(?:today|今天)$/i.test(day)) day = time.dayKey(this.now(), time.resolveTimeZone(this.config));
       if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
       const entry = this.loadIndex().entries[day];
       file = entry && /^\d{4}\/\d{2}-\d{2}\.md$/.test(String(entry.file || ''))
@@ -365,21 +381,21 @@ class DiaryService {
 
   async write(automatic) {
     const now = this.now();
-    const date = new Date(now);
-    if (this.skipExisting(date)) return 'existing';
-    const day = dayKey(date);
+    const tz = time.resolveTimeZone(this.config);
+    const day = time.dayKey(now, tz);
+    if (this.skipExisting(day)) return 'existing';
     const target = this.ownerTarget();
     if (!target) {
+      this.logger?.debug?.(`[diary] empty day=${day} reason=no_owner_session`);
       this.state = { status: 'empty', message: '还没配置主人，或找不到主人的私聊会话，未生成日记', file: '' };
       return 'empty';
     }
-    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
     const persona = this.config.persona || {};
     const ownerName = target.name || persona.ownerName || '主人';
     const rows = [];
     for (const m of Array.isArray(target.session.messages) ? target.session.messages : []) {
       const ts = Number(m.ts);
-      if (!Number.isFinite(ts) || ts < start || ts > now || !['user', 'assistant'].includes(m.role) || !String(m.text || '').trim()) continue;
+      if (!Number.isFinite(ts) || time.dayKey(ts, tz) !== day || ts > now || !['user', 'assistant'].includes(m.role) || !String(m.text || '').trim()) continue;
       rows.push({
         ts,
         role: m.role,
@@ -388,6 +404,7 @@ class DiaryService {
       });
     }
     if (!rows.length) {
+      this.logger?.debug?.(`[diary] empty day=${day} reason=no_chat_today`);
       this.state = { status: 'empty', message: '今天没有和主人的聊天，未生成日记', file: '' };
       return 'empty';
     }
@@ -413,11 +430,11 @@ class DiaryService {
     });
     if (typeof body !== 'string' || !body.trim()) throw Object.assign(new Error('模型返回空日记'), { code: 'DIARY_EMPTY' });
     if (this.stopped) return 'stopped';
-    if (this.skipExisting(date)) return 'existing';
-    const file = this.fileFor(date);
+    if (this.skipExisting(day)) return 'existing';
+    const file = this.fileFor(day);
     const targetPath = path.join(this.dir, file);
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-    const content = this.formatDocument(day, date, automatic, body);
+    const content = this.formatDocument(day, now, automatic, body);
     const tmp = targetPath + '.' + randomUUID() + '.tmp';
     try {
       fs.writeFileSync(tmp, content, 'utf8');
@@ -426,7 +443,7 @@ class DiaryService {
         fs.linkSync(tmp, targetPath);
       } catch (err) {
         if (err.code === 'EEXIST') {
-          if (this.skipExisting(date)) return 'existing';
+          if (this.skipExisting(day)) return 'existing';
           throw Object.assign(new Error('当天日记路径已被占用'), { code: 'DIARY_FILE_CONFLICT' });
         }
         // FAT32 / exFAT / 部分网络盘不支持硬链接：退回独占创建（wx），仍然不覆盖。
@@ -434,7 +451,7 @@ class DiaryService {
         try {
           fs.copyFileSync(tmp, targetPath, fs.constants.COPYFILE_EXCL);
         } catch (copyErr) {
-          if (copyErr.code === 'EEXIST' && this.skipExisting(date)) return 'existing';
+          if (copyErr.code === 'EEXIST' && this.skipExisting(day)) return 'existing';
           throw copyErr;
         }
       }

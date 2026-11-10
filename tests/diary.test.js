@@ -213,16 +213,16 @@ test('日记：停止后不落盘；跨午夜仍归属于请求时日期', async
   assert.equal(dayKey(new Date(2026, 0, 2)), '2026-01-02');
 });
 
-test('日记配置：旧配置默认关闭，时间严格校验，保存后重载保留', (t) => {
+test('日记配置：旧配置默认关闭，时间统一规范化，保存后重载保留', (t) => {
   const f = fixture(t);
   fs.writeFileSync(path.join(f.dir, 'config.json'), '{}');
   const runtime = { config: loadConfig({ root: f.dir, env: {} }), logger: { info() {} }, llm: { reload() {} } };
   assert.deepEqual(runtime.config.diary, { enabled: false, time: '23:00', sendToOwner: false });
-  for (const time of ['24:00', '12:60', '8:00', '', '23:00\n']) {
+  for (const time of ['24:00', '12:60', '25:00', '']) {
     assert.throws(() => applyConfigPatch(runtime, { 'diary.time': time }), { statusCode: 400 });
   }
-  applyConfigPatch(runtime, { 'diary.enabled': true, 'diary.sendToOwner': true, 'diary.time': '00:15' });
-  assert.deepEqual(loadConfig({ root: f.dir, env: {} }).diary, { enabled: true, time: '00:15', sendToOwner: true });
+  applyConfigPatch(runtime, { 'diary.enabled': true, 'diary.sendToOwner': true, 'diary.time': '8:00' });
+  assert.deepEqual(loadConfig({ root: f.dir, env: {} }).diary, { enabled: true, time: '08:00', sendToOwner: true });
 });
 
 test('日记接口：仅本机可读写，后台生成立即返回且不会重复启动', async (t) => {

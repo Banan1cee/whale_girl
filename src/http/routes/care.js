@@ -11,6 +11,7 @@
 const care = require('../../services/care');
 const { careForChat } = require('../../services/careChat');
 const { json } = require('../util');
+const { describeError } = require('../../infra/errors');
 
 module.exports = function register(router) {
   // 桥接定时来问「现在该发吗、发给谁」
@@ -28,6 +29,9 @@ module.exports = function register(router) {
       sentToday: Number.isFinite(sentToday) ? sentToday : 0,
       activeWxids: active,
     });
+    runtime.logger?.debug?.(`[care] due=${Boolean(out.due)} reason=${out.reason || '-'} ` +
+      `target=${out.target ? (out.target.kind || 'unknown') : 'none'} windows=${(out.windows || []).length} ` +
+      `gap=${out.gapMinutes ?? '-'} sent=${out.sentToday ?? 0}/${out.maxPerDay ?? 0}`);
     return json(res, 200, {
       ok: true,
       due: Boolean(out.due),
@@ -46,9 +50,10 @@ module.exports = function register(router) {
   router.get('/api/care', async (runtime, req, res, info) => {
     try {
       const out = await careForChat(runtime, info.url.searchParams.get('chat') || '');
+      runtime.logger?.debug?.(`[care] generate mock=${Boolean(out.mock)} fallback=${Boolean(out.fallback)} len=${String(out.text || '').length}`);
       return json(res, 200, out);
     } catch (err) {
-      runtime.logger.warn('生成搭话失败：' + (err && err.message));
+      runtime.logger.warn('生成搭话失败：' + describeError(err));
       return json(res, 500, { ok: false, error: String((err && err.message) || err) });
     }
   });

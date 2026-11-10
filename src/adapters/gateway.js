@@ -1,6 +1,7 @@
 'use strict';
 
 const { sendDenial } = require('../core/wechatSendPolicy');
+const { describeError } = require('../infra/errors');
 
 /**
  * 通用 HTTP 网关适配器：把微信中转服务发来的 JSON 变成统一消息，
@@ -195,6 +196,7 @@ class Gateway {
       );
     const localWechat = local && this.platform === 'wechat';
     const result = await this.bot.handle(msg, { localWechat });
+    this.logger?.debug?.(`[${this.platform}] event=gateway.result action=${result.action || '-'} reason=${result.reason || '-'} bubbles=${(result.bubbles || []).length}`);
     if (result.action !== 'reply' || !result.reply) {
       return { ok: true, action: 'ignore', reason: result.reason || 'ignored' };
     }
@@ -240,7 +242,7 @@ class Gateway {
         }, result.reply);
       }
     } catch (err) {
-      this.logger && this.logger.warn && this.logger.warn('挑表情包失败：' + (err && err.message ? err.message : err));
+      this.logger && this.logger.warn && this.logger.warn('挑表情包失败：' + describeError(err));
     }
     return {
       ok: true,
@@ -313,7 +315,7 @@ class Gateway {
       if (lastErr) {
         this.stats.failed += 1;
         this.stats.lastError = lastErr.message;
-        this.logger && this.logger.error(`[${this.platform}] 发送失败：${lastErr.message}`);
+        this.logger && this.logger.error(`[${this.platform}] 发送失败：${describeError(lastErr)}`);
       }
       if (lines.length > 1 && i < lines.length - 1) await sleep(400);
     }

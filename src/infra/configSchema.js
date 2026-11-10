@@ -1,6 +1,7 @@
 'use strict';
 
 const { getByPath } = require('./objpath');
+const time = require('./time');
 
 /**
  * 配置校验：一张纯数据的表 + 两个函数。
@@ -73,7 +74,14 @@ const FIELDS = {
   // ---- 管理员 / 主动搭话 ----
   'admin.minutes': { type: 'int', min: 1, max: 1440 },
   'care.enabled': { type: 'bool' },
+  'care.onlyMaster': { type: 'bool' },
+  'care.allowGroups': { type: 'bool' },
+  'care.allowOthers': { type: 'bool' },
+  'care.windows': { type: 'windows' },
   'care.everyMinutes': { type: 'int', min: 1, max: 1440 },
+  'care.jitterMinutes': { type: 'int', min: 0, max: 180 },
+  'care.maxPerDay': { type: 'int', min: 0, max: 50 },
+  'care.quietAfterMinutes': { type: 'int', min: 0, max: 1440 },
 
   // ---- 联网 / 链接 ----
   'links.enabled': { type: 'bool' },
@@ -85,13 +93,14 @@ const FIELDS = {
   // 环境块（提示词里的 <env>）：地点只到区，时区留空就用系统自己的。
   // 太长的地址一定是把门牌粘进来了，直接拒掉，别等到拼提示词时才截断。
   'env.location': { type: 'string', maxLen: 40 },
-  'env.timezone': { type: 'string', maxLen: 64 },
+  // 唯一的时区来源：日记、主动搭话、提醒、朋友圈、聊天时间戳都读它。
+  'env.timezone': { type: 'timezone' },
   // 自动探测所在地（Windows 定位服务优先）；false = 只用手填和 websearch.city
   'env.autoDetect': { type: 'bool' },
   // ---- 提醒（规则字段和 care 对齐，配置独立）----
   'reminder.enabled': { type: 'bool' },
   'diary.enabled': { type: 'bool' },
-  'diary.time': { type: 'string', maxLen: 5, pattern: /^([01]\d|2[0-3]):[0-5]\d$/ },
+  'diary.time': { type: 'clock' },
   // ---- 朋友圈 ----
   'moments.autoLike': { type: 'bool' },
   'moments.autoLikeMaxPerDay': { type: 'int', min: 0, max: 20 },
@@ -152,6 +161,12 @@ function describe(expected) {
       return 'true / false';
     case 'string':
       return '字符串';
+    case 'clock':
+      return '24 小时制时间（如 23:00）';
+    case 'windows':
+      return '时间段列表（如 09:00-12:00，一行一个）';
+    case 'timezone':
+      return 'IANA 时区（如 Asia/Shanghai；留空 = 系统时区）';
     case 'enum':
       return `以下之一：${(expected.values || []).join(' / ')}`;
     default:
@@ -190,9 +205,25 @@ function checkValue(value, spec) {
     if (values.includes(text)) return null;
     return `只能是 ${values.join(' / ')}，实际是 ${JSON.stringify(value)}`;
   }
+  if (spec.type === 'clock') {
+    if (time.parseClock(value) === null) return `请填写 24 小时制时间（如 23:00），实际是 ${JSON.stringify(value)}`;
+    return null;
+  }
+  if (spec.type === 'windows') {
+    const bad = time.invalidWindows(value);
+    if (bad.length) return `时间段写错了：${bad.join('、')}；请用 09:00-12:00 这样的格式`;
+    return null;
+  }
+  if (spec.type === 'timezone') {
+    const text = String(value == null ? '' : value).trim();
+    if (text && !time.isValidTimeZone(text)) {
+      return `不是有效时区：${JSON.stringify(text)}（如 Asia/Shanghai；留空 = 系统时区）`;
+    }
+    return null;
+  }
   if (spec.type === 'string') {
     if (typeof value !== 'string') return `应该是字符串，实际是 ${JSON.stringify(value)}`;
-    if (spec.pattern && !spec.pattern.test(value)) return '请填写 24 小时制时间 HH:mm（如 23:00）';
+    if (spec.pattern && !spec.pattern.test(value)) return '格式不对';
     if (spec.maxLen && value.length > spec.maxLen) return `太长（最多 ${spec.maxLen} 个字符）`;
     return null;
   }

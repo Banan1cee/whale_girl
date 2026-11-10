@@ -23,6 +23,8 @@ const crypto = require('node:crypto');
 
 const { toBool } = require('../infra/features');
 const { clean } = require('../infra/text');
+const { describeError } = require('../infra/errors');
+const time = require('../infra/time');
 
 const MAX_TOTAL = 500;
 const MAX_ACTIVE_PER_CHAT = 20;
@@ -79,7 +81,7 @@ class ReminderService {
       } catch (err) {
         if (err.code !== 'ENOENT') {
           damaged = true;
-          if (this.logger) this.logger.warn('提醒读取失败：' + file + '：' + err.message);
+          if (this.logger) this.logger.warn('提醒读取失败：' + file + '：' + describeError(err));
         }
       }
     }
@@ -102,11 +104,11 @@ class ReminderService {
         fs.writeFileSync(this.file + '.bak.tmp', body, 'utf8');
         fs.renameSync(this.file + '.bak.tmp', this.file + '.bak');
       } catch (err) {
-        if (this.logger) this.logger.warn('提醒备份写入失败：' + err.message);
+        if (this.logger) this.logger.warn('提醒备份写入失败：' + describeError(err));
       }
       return true;
     } catch (err) {
-      if (this.logger) this.logger.warn('提醒写入失败：' + err.message);
+      if (this.logger) this.logger.warn('提醒写入失败：' + describeError(err));
       return false;
     }
   }
@@ -125,17 +127,17 @@ class ReminderService {
   /** 当前时刻的规则状态（时间段 / 今天还能发几条） */
   rules(now = this.now()) {
     const rules = normalizeRules(this.config);
-    const d = new Date(now);
-    const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const tz = time.resolveTimeZone(this.config);
+    const today = time.dayKey(now, tz);
     // 已发送 + 在途（sending/retrying）都占当日额度：
     // 只数 done 的话，桥接还没回执时连续领取能突破每日上限。
     const sentToday = this.items.filter((it) => {
       // 日记发送是内核自己的存档通知，不占用户提醒的每日额度。
       if (it.kind === 'diary') return false;
-      if (it.status === 'done') return Number(it.finishedAt) >= dayStart;
+      if (it.status === 'done') return time.dayKey(Number(it.finishedAt) || 0, tz) === today;
       if (it.status === 'sending' || it.status === 'retrying') {
         const at = Number(it.claimedAt || it.dueAt || 0);
-        return at >= dayStart;
+        return time.dayKey(at || 0, tz) === today;
       }
       return false;
     }).length;
@@ -188,6 +190,7 @@ class ReminderService {
     this.items.push(item);
     this.trim();
     this.commit(previous);
+    this.logger?.debug?.(`[reminder] add id=${item.id} chatType=${item.chatType} dueAt=${item.dueAt} textLen=${item.text.length}`);
     return { ...item };
   }
 
@@ -224,6 +227,7 @@ class ReminderService {
     this.items.push(item);
     this.trim();
     this.commit(previous);
+    this.logger?.debug?.(`[reminder] enqueue id=${item.id} kind=${item.kind} chatType=${item.chatType} textLen=${item.text.length}`);
     return { ...item };
   }
 

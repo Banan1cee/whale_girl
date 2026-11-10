@@ -13,6 +13,13 @@ test('路由提示词带上真实日期：判「今天/最新」不能靠训练�
   assert.match(system, /以这个时间为基准/);
 });
 
+test('路由提示词跟随传入时区；不传仍保持北京时间', () => {
+  const at = new Date('2026-11-06T20:30:00Z');
+  assert.match(systemFor(at), /2026-11-07 周六 04:30（北京时间）/);
+  assert.match(systemFor(at, 'America/New_York'), /2026-11-06 周五 15:30（时区 America\/New_York）/);
+  assert.match(systemFor(at, ''), /（系统时区）/);
+});
+
 test('route 把当前时间传给模型（可注入 now，便于测试）', async () => {
   let seen = '';
   const llm = {

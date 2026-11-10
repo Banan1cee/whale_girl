@@ -10,6 +10,8 @@
  * 设计原则：**宁可不识别，也不瞎猜时间**。解析失败就返回 null，当作普通聊天。
  */
 
+const time = require('../infra/time');
+
 const CN_NUM = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
 const PERIOD = [
   { re: /(凌晨)/, hours: [0, 5] },
@@ -104,9 +106,10 @@ function dayOffset(word) {
  * 解析提醒时间。
  * @param {string} text 用户原话
  * @param {Date} now
+ * @param {string} timeZone 统一的 IANA 时区；空串 = 系统时区
  * @returns {{at:Date, rest:string, matched:string}|null}
  */
-function parseWhen(text, now = new Date()) {
+function parseWhen(text, now = new Date(), timeZone = '') {
   const raw = String(text || '');
   if (!raw) return null;
 
@@ -132,20 +135,22 @@ function parseWhen(text, now = new Date()) {
   const period = periodOf(raw) || (/明晚|今晚|晚上/.test(dayWord) ? [18, 23] : null);
   let hour = applyPeriod(clock.hour, period);
   if (hour > 23 || hour < 0) return null;
-  let offset = dayOffset(dayWord);
-  const at = new Date(now.getTime());
-  at.setSeconds(0, 0);
-  at.setHours(hour, clock.minute, 0, 0);
+  const offset = dayOffset(dayWord);
+  const base = time.addDays(time.parts(now.getTime(), timeZone), offset);
+  let at = time.toEpoch({ ...base, hour, minute: clock.minute, second: 0 }, timeZone);
   // 没说「明天」但那个点已经过了 → 顺延到明天（「八点提醒我」晚上说就是明早八点）
-  if (!dayWord && at.getTime() <= now.getTime()) {
-    at.setDate(at.getDate() + 1);
+  if (!dayWord && at <= now.getTime()) {
+    at = time.toEpoch({ ...time.addDays(base, 1), hour, minute: clock.minute, second: 0 }, timeZone);
   }
-  if (offset) at.setDate(at.getDate() + offset);
-  if (at.getTime() <= now.getTime()) {
+  if (at <= now.getTime()) {
     // 明确说了今天但已经过了 → 不猜，交给调用方当普通聊天
     return null;
   }
-  return { at, rest: raw.replace(dayWord, '').replace(clock.raw, ''), matched: `${dayWord}${clock.raw}` };
+  return {
+    at: new Date(at),
+    rest: raw.replace(dayWord, '').replace(clock.raw, ''),
+    matched: `${dayWord}${clock.raw}`,
+  };
 }
 
 // 只认「明确在让她做事」的说法。
@@ -187,34 +192,34 @@ function extractWhat(text) {
  * 完整解析：像提醒 + 有时间 + 有事可提醒，三者齐了才算数。
  * @returns {{at:Date, what:string, when:string}|null}
  */
-function parseReminder(text, now = new Date()) {
+function parseReminder(text, now = new Date(), timeZone = '') {
   if (!looksLikeReminder(text)) return null;
-  const when = parseWhen(text, now);
+  const when = parseWhen(text, now, timeZone);
   if (!when) return null;
   const what = extractWhat(text);
   if (!what || what.length < 1) return null;
   return { at: when.at, what, when: when.matched || '' };
 }
 
-function pad2(n) {
-  return String(n).padStart(2, '0');
-}
-
 /** 「今天 20:30」/「明天 08:00」这种人话 */
-function describeWhen(at, now = new Date()) {
+function describeWhen(at, now = new Date(), timeZone = '') {
   const d = at instanceof Date ? at : new Date(at);
   if (!Number.isFinite(d.getTime())) return '';
-  const sameDay = d.toDateString() === now.toDateString();
-  const tomorrow = new Date(now.getTime() + 24 * 3600 * 1000).toDateString() === d.toDateString();
-  const clock = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-  if (sameDay) return `今天 ${clock}`;
-  if (tomorrow) return `明天 ${clock}`;
-  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${clock}`;
+  const day = time.dayKey(d.getTime(), timeZone);
+  const today = time.dayKey(now.getTime(), timeZone);
+  // 用日历加一天，不要用 now + 24h：夏令时回拨那天是 25 小时，
+  // +24h 可能还停在前一天，「明天」就会显示成具体日期。
+  const tomorrow = time.dayKeyOf(time.addDays(time.parts(now.getTime(), timeZone), 1));
+  const clock = time.formatClock(time.minutesOfDay(d.getTime(), timeZone));
+  if (day === today) return `今天 ${clock}`;
+  if (day === tomorrow) return `明天 ${clock}`;
+  const p = time.parts(d.getTime(), timeZone);
+  return `${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')} ${clock}`;
 }
 
 /** 设好提醒之后的回执（不经过模型，保证时间和事情都对） */
-function confirmText({ at, what }, { now = new Date(), group = false, who = '' } = {}) {
-  const when = describeWhen(at, now);
+function confirmText({ at, what }, { now = new Date(), group = false, who = '', timeZone = '' } = {}) {
+  const when = describeWhen(at, now, timeZone);
   const target = group && who ? `到点我会在群里 @${who}` : '到点我在这里提醒你';
   return `好，${when} 提醒你${what}。${target}。`;
 }

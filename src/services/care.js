@@ -2,6 +2,7 @@
 
 const { configuredWhitelist, sendDenial } = require('../core/wechatSendPolicy');
 const { sameWxid } = require('../core/master');
+const time = require('../infra/time');
 
 // 读布尔开关：兼容老配置里的字符串 "false"（Boolean("false") 会被当成开）
 const { toBool } = require('../infra/features');
@@ -21,66 +22,12 @@ const { toBool } = require('../infra/features');
 
 const DEFAULT_WINDOW = '09:00-23:00';
 
-/** 一天里的分钟数：'09:30' → 570 */
-function parseClock(text) {
-  const m = String(text || '').trim().match(/^(\d{1,2})[:：](\d{2})$/);
-  if (!m) return null;
-  const h = Number(m[1]);
-  const min = Number(m[2]);
-  if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
-  if (h < 0 || h > 24 || min < 0 || min > 59) return null;
-  if (h === 24 && min !== 0) return null;
-  return h * 60 + min;
-}
-
-/** '09:00-12:00' → { start: 540, end: 720, raw: '09:00-12:00' }；写错了返回 null */
-function parseWindow(text) {
-  const raw = String(text == null ? '' : text).trim();
-  if (!raw) return null;
-  const cleaned = raw.replace(/[~～—–到至]/g, '-');
-  const m = cleaned.match(/^(.+?)-(.+)$/);
-  if (!m) return null;
-  const start = parseClock(m[1]);
-  const end = parseClock(m[2]);
-  if (start === null || end === null) return null;
-  // 24:00 当一天结束处理
-  return { start, end: end === 1440 ? 1440 : end, raw };
-}
-
-function pad2(n) {
-  return String(n).padStart(2, '0');
-}
-
-function formatMinutes(min) {
-  const m = Math.max(0, Math.min(1440, Math.round(min)));
-  return `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
-}
-
-/** 把配置里的时间段整理成数组；空/写错就退回默认（全天 09:00-23:00） */
-function parseWindows(list) {
-  const arr = Array.isArray(list) ? list : list ? String(list).split(/[\n,;，；]+/) : [];
-  const out = [];
-  for (const item of arr) {
-    const w = parseWindow(item);
-    if (w) out.push(w);
-  }
-  return out;
-}
-
-/** 一个时间点在不在这些时间段里（支持跨零点） */
-function inWindows(minutesOfDay, windows) {
-  const list = windows && windows.length ? windows : parseWindows([DEFAULT_WINDOW]);
-  const now = ((Math.round(minutesOfDay) % 1440) + 1440) % 1440;
-  for (const w of list) {
-    if (w.start === w.end) continue;                    // 空区间（09:00-09:00）跳过
-    if (w.start < w.end) {
-      if (now >= w.start && now < w.end) return true;
-    } else if (now >= w.start || now < w.end) {          // 跨零点，比如 22:00-02:00
-      return true;
-    }
-  }
-  return false;
-}
+// 时间解析统一在 infra/time：这里只保留同名入口，老调用方/测试不用改。
+const parseClock = time.parseClock;
+const parseWindow = time.parseWindow;
+const parseWindows = time.parseWindows;
+const inWindows = time.inWindows;
+const formatMinutes = time.formatClock;
 
 /** 配置 → 规范化的 care 设置（缺省值都在这里，别散落各处） */
 function normalizeCare(config) {
@@ -128,8 +75,8 @@ function careDue(config, { lastSentTs = 0, sentToday = 0, now = Date.now() } = {
   const care = normalizeCare(config);
   if (!care.enabled) return { due: false, reason: 'disabled', care };
 
-  const d = new Date(now);
-  const minutesOfDay = d.getHours() * 60 + d.getMinutes();
+  const tz = time.resolveTimeZone(config);
+  const minutesOfDay = time.minutesOfDay(now, tz);
   const windows = care.windows.length ? care.windows : parseWindows([DEFAULT_WINDOW]);
   if (!inWindows(minutesOfDay, windows)) {
     return {

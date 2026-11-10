@@ -120,7 +120,7 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
     logger.close();
   };
   server.on('close', () => {
-    clearInterval(runtime.snapshotTimer);
+    runtime.scheduler?.stopAll();
     runtime.moments?.stopAutoRead();
     runtime.diary?.stop();
     runtime.stopConfigWatch?.();

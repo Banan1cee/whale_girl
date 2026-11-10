@@ -1,6 +1,8 @@
 'use strict';
 
 const care = require('./care');
+const time = require('../infra/time');
+const { describeError } = require('../infra/errors');
 
 /**
  * 主动搭话的内容：问她一句「在干啥 / 累不累」。
@@ -9,7 +11,7 @@ const care = require('./care');
 async function careForChat(runtime, chatId) {
   const personaCfg = runtime.config.persona || {};
   const name = String(personaCfg.ownerName || '主人');
-  const hour = new Date().getHours();
+  const hour = time.hourOfDay(Date.now(), time.resolveTimeZone(runtime.config));
   let recent = [];
   if (chatId) {
     // 会话 key 可能是私聊（wechat:u:<id>）也可能是群（wechat:g:<id>），两边都试
@@ -36,7 +38,7 @@ async function careForChat(runtime, chatId) {
     const text = care.cleanCareText(raw) || care.pickTemplate();
     return { ok: true, text, mock: false, hour };
   } catch (err) {
-    runtime.logger.warn('搭话模型失败，用内置台词：' + (err && err.message));
+    runtime.logger.warn('搭话模型失败，用内置台词：' + describeError(err));
     return { ok: true, text: care.pickTemplate(), mock: true, fallback: true, hour };
   }
 }
