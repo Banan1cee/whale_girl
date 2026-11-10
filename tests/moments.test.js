@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { MomentsService } = require('../src/services/moments');
+const { Scheduler } = require('../src/infra/scheduler');
 const { momentsIntent, Bot } = require('../src/pipeline/chat');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
@@ -302,4 +303,57 @@ test('朋友圈 HTTP 全链路：请求、鉴权领取、回传与读取', async
     await app.close();
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 80 });
   }
+});
+
+test('朋友圈：定时读取接到统一调度，改设置后重排', async () => {
+  let now = Date.UTC(2026, 0, 1, 4, 0); // 上海 12:00，避开 0–7 点夜间跳过
+  let seq = 0;
+  const timers = new Map();
+  const clock = {
+    setTimeout(fn, ms) {
+      const t = { id: ++seq, at: now + ms, fn, unref() { return t; } };
+      timers.set(t.id, t);
+      return t;
+    },
+    clearTimeout(t) { if (t) timers.delete(t.id); },
+    async advance(ms) {
+      const end = now + ms;
+      for (;;) {
+        const due = [...timers.values()].filter((t) => t.at <= end).sort((a, b) => a.at - b.at)[0];
+        if (!due) break;
+        timers.delete(due.id);
+        now = due.at;
+        due.fn();
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      now = end;
+      await new Promise((resolve) => setImmediate(resolve));
+    },
+  };
+  const scheduler = new Scheduler({ now: () => now, timers: clock });
+  const service = new MomentsService({
+    scheduler,
+    now: () => now,
+    config: { env: { timezone: 'Asia/Shanghai' }, moments: { autoReadEveryHours: 4 }, wechat: {} },
+  });
+  let calls = 0;
+  service.request = () => { calls += 1; return { id: 'job' }; };
+
+  service.startAutoRead();
+  await clock.advance(4 * 3600 * 1000 - 1);
+  assert.equal(calls, 0);
+  await clock.advance(1);
+  assert.equal(calls, 1);
+
+  // 改设置立即重排：旧的 4 小时计划不能继续生效
+  service.config.moments.autoReadEveryHours = 6;
+  service.startAutoRead();
+  await clock.advance(4 * 3600 * 1000);
+  assert.equal(calls, 1);
+  await clock.advance(2 * 3600 * 1000);
+  assert.equal(calls, 2);
+
+  service.stopAutoRead();
+  await clock.advance(12 * 3600 * 1000);
+  assert.equal(calls, 2);
 });

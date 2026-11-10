@@ -5,6 +5,8 @@ const path = require('node:path');
 const { loadConfig, DEFAULT_CONFIG } = require('./config');
 const configSchema = require('./configSchema');
 const { getByPath } = require('./objpath');
+const time = require('./time');
+const { describeError } = require('./errors');
 
 /* ------------------------------------------------------------------ */
 /* 设置接口：直接读写 config.json（改完立刻生效，不用重启）            */
@@ -77,10 +79,38 @@ function coerceValue(config, dotted, value) {
   return String(value);
 }
 
+/**
+ * 时间类字段统一在这里落成规范形式：
+ * - diary.time：9:00 → 09:00
+ * - care.windows：09:00~12:00、09:00到12:00 → 09:00-12:00
+ * 非法值不在这里改，交给 configSchema 报错，避免“静默变成默认值”。
+ */
+function normalizeBySpec(value, spec) {
+  if (!spec) return value;
+  if (spec.type === 'clock') {
+    const minutes = time.parseClock(value);
+    return minutes === null ? value : time.formatClock(minutes);
+  }
+  if (spec.type === 'windows') {
+    if (time.invalidWindows(value).length) return value;
+    return time.normalizeWindows(value);
+  }
+  if (spec.type === 'timezone') return String(value == null ? '' : value).trim();
+  return value;
+}
+
 /** 给界面看的配置：去掉内部字段，密钥留空但告诉它「配没配」 */
 function publicConfig(config) {
   const internal = new Set(['env', 'paths', 'root', 'configExists', 'configError']);
   const out = JSON.parse(JSON.stringify(config, (k, v) => (internal.has(k) ? undefined : v)));
+  // env 是「进程环境变量 + config.json 的 env 段」的合体，不能整份吐给界面；
+  // 但时区/地点是用户设置，必须让设置页读得到。只回这三个安全字段。
+  const envCfg = (config && config.env) || {};
+  out.env = {
+    location: String(envCfg.location || ''),
+    timezone: String(envCfg.timezone || ''),
+    autoDetect: envCfg.autoDetect !== false,
+  };
   const secrets = {};
   for (const p of SECRET_PATHS) {
     const v = getByPath(config, p);
@@ -130,7 +160,18 @@ function clearSettingsShadow(runtime, paths) {
  */
 function mergeConfigInPlace(target, src) {
   for (const [key, value] of Object.entries(src || {})) {
-    if (key === 'paths' || key === 'env' || key === 'root' || key === 'configExists') continue;
+    if (key === 'paths' || key === 'root' || key === 'configExists') continue;
+    // env 比较特殊：它是「进程环境变量（原型）+ config.json 的 env 段（自有键）」。
+    // 不能整段跳过，否则启动器把 env.timezone 存进 config.json 后运行时读不到；
+    // 也不能整段替换，否则会丢掉 process.env 的原型视图。只同步自有键。
+    if (key === 'env') {
+      if (!isPlainObject(target.env)) target.env = {};
+      for (const envKey of Object.keys(target.env)) {
+        if (!Object.prototype.hasOwnProperty.call(value || {}, envKey)) delete target.env[envKey];
+      }
+      for (const [envKey, envValue] of Object.entries(value || {})) target.env[envKey] = envValue;
+      continue;
+    }
     const cur = target[key];
     const both = isPlainObject(value) && isPlainObject(cur);
     if (both) mergeConfigInPlace(cur, value);
@@ -194,8 +235,8 @@ function applyConfigPatch(runtime, patch) {
     if (!p) continue;
     // 密钥留空 = 不改（界面上看不到已存的 Key，不能一保存就把它清了）
     if (SECRET_PATHS.has(p) && p !== 'admin.spell' && (value === '' || value === null || value === undefined)) continue;
-    const next = coerceValue(runtime.config, p, value);
     const spec = configSchema.FIELDS[p];
+    const next = normalizeBySpec(coerceValue(runtime.config, p, value), spec);
     if (spec) {
       const message = configSchema.checkValue(next, spec);
       if (message) {
@@ -216,6 +257,8 @@ function applyConfigPatch(runtime, patch) {
   fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
   const cleared = clearSettingsShadow(runtime, changed);
   reloadRuntimeConfig(runtime);
+  // 定时任务里只有朋友圈读取的间隔来自配置；配置一改就重排，别等重启。
+  runtime.moments?.startAutoRead?.();
   runtime.stickerService?.reconcile();
   if (runtime.llm && typeof runtime.llm.reload === 'function') runtime.llm.reload();
   runtime.logger.info(`设置接口保存了配置：${changed.join('、')}${cleared.length ? `（同时清了 ${cleared.join('、')}，让改动真的生效）` : ''}`);
@@ -273,11 +316,12 @@ function watchConfigFile(runtime) {
           const raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
           JSON.parse(raw); // 先确认是合法 JSON，写坏了就别覆盖内存里的好配置
           reloadRuntimeConfig(runtime);
+          runtime.moments?.startAutoRead?.();
           runtime.stickerService?.reconcile();
                   if (runtime.llm && typeof runtime.llm.reload === 'function') runtime.llm.reload();
           runtime.logger.info('config.json 已重新加载（改动已生效，不用重启）');
         } catch (err) {
-          runtime.logger.warn(`config.json 改了但没读成功，先按老配置跑：${err && err.message}`);
+          runtime.logger.warn('config.json 改了但没读成功，先按老配置跑：' + describeError(err));
         }
       }, 250);
     });
@@ -285,14 +329,14 @@ function watchConfigFile(runtime) {
     // 目录被删/改名时 fs.watch 会 emit('error')，不接住就会把整个进程带崩
     // （沙箱/临时目录里实测：EPERM 直接 throw）。监听失效不该影响服务本身。
     watcher.on?.('error', (err) => {
-      runtime.logger.warn(`停止监听 config.json（${err && err.message}）；手动改完请重启服务`);
+      runtime.logger.warn('停止监听 config.json（' + describeError(err) + '）；手动改完请重启服务');
       try { watcher.close(); } catch { /* ignore */ }
       runtime.configWatcher = null;
     });
     runtime.configWatcher = watcher;
     runtime.stopConfigWatch = () => { if (timer) clearTimeout(timer); timer = null; watcher.close(); };
   } catch (err) {
-    runtime.logger.warn(`监听 config.json 失败（手动改完记得重启服务）：${err && err.message}`);
+    runtime.logger.warn('监听 config.json 失败（手动改完记得重启服务）：' + describeError(err));
   }
 }
 
@@ -309,8 +353,8 @@ function saveConfigPatch(config, patch) {
   const pending = [];
   const errors = [];
   for (const [dotted, value] of Object.entries(patch)) {
-    const next = coerceValue(config, dotted, value);
     const spec = configSchema.FIELDS[dotted];
+    const next = normalizeBySpec(coerceValue(config, dotted, value), spec);
     if (spec) {
       const message = configSchema.checkValue(next, spec);
       if (message) { errors.push(dotted + '：' + message); continue; }

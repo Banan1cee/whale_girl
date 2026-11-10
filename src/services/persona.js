@@ -4,6 +4,7 @@ const { saveSettings } = require('../infra/config');
 const personaStore = require('../persona/store');
 const { checkPersonaTokens } = require('../persona/tokenCheck');
 const { LIMITS } = require('../memory/constants');
+const { describeError } = require('../infra/errors');
 
 /* ---------------- 人设调教（/api/persona 用） ---------------- */
 
@@ -54,7 +55,7 @@ async function applyPersonaPatch(runtime, body) {
       saveSettings(runtime.config, { model: String(body.model).slice(0, 80), mock: false });
       runtime.llm.reload();
     } catch (err) {
-      runtime.logger.warn('人设调教：切模型失败 ' + (err && err.message));
+      runtime.logger.warn('人设调教：切模型失败 ' + describeError(err));
     }
   }
   runtime.logger.info('人设调教：已保存 ' + Object.keys(patch).join(','));

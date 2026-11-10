@@ -10,6 +10,8 @@
  * 失败时返回 { need:false, failed:true }，由调用方回退到关键词规则，保证不退化。
  */
 
+const time = require('../infra/time');
+
 const SCHEMA_HINT = `只输出 JSON，不要解释、不要代码块围栏。格式：
 {"need":true,"kind":"web|weather|hotlist","query":"简短检索词（保留完整专名和型号）","site":"bilibili|weibo|toutiao|","city":"地名原文或空","fresh":"strict|normal|any","timeRange":"current|today|tomorrow|week|history|future|any"}
 或
@@ -63,16 +65,17 @@ const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '�
 const { remaining, errorInfo, report, searchError } = require('./search/transport');
 
 /** 把「现在是什么时间」告诉路由器：不然它判「今天/最新」只能凭训练数据。 */
-function systemFor(now = new Date()) {
+function systemFor(now = new Date(), timeZone = 'Asia/Shanghai') {
   const day = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai',
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-    .formatToParts(day).map(x => [x.type, x.value]));
-  const weekday = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day))).getUTCDay();
-  const stamp = `${parts.year}-${parts.month}-${parts.day} ${WEEKDAYS[weekday]} ${parts.hour}:${parts.minute}`;
+  // 不传 = 保持旧行为（北京时间）；显式传空串 = 跟随系统时区。
+  const zone = timeZone === undefined || timeZone === null ? 'Asia/Shanghai' : String(timeZone);
+  const p = time.parts(day.getTime(), zone);
+  const weekday = new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay();
+  const stamp = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')} ${WEEKDAYS[weekday]} ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
+  const label = zone === 'Asia/Shanghai' ? '北京时间' : (zone ? `时区 ${zone}` : '系统时区');
   return `${SYSTEM}
 
-现在是 ${stamp}（北京时间）。判断「今天 / 最新 / 这周」时以这个时间为基准；检索词里不要自己加年份，除非用户原话提到了。`;
+现在是 ${stamp}（${label}）。判断「今天 / 最新 / 这周」时以这个时间为基准；检索词里不要自己加年份，除非用户原话提到了。`;
 }
 
 function parseRoute(raw) {
@@ -131,7 +134,7 @@ async function route(llm, text, opts = {}) {
     if (opts.signal?.aborted || timeoutMs <= 0) throw searchError(opts.signal?.aborted ? 'aborted' : 'deadline_exceeded');
     const raw = await Promise.race([
       Promise.resolve().then(() => llm.complete({
-        system: systemFor(opts.now),
+        system: systemFor(opts.now, opts.timeZone),
         turns: [{ role: 'user', content: `最近的对话：\n${history}\n\n这句话：${said}` }],
         maxTokens: 240,
         signal: controller.signal,

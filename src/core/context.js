@@ -3,6 +3,7 @@
 const { createHash } = require('node:crypto');
 const { sanitizeForModel, formatStamp } = require('./text');
 const { stripMasterDispute } = require('./identity');
+const time = require('../infra/time');
 
 // Qwen 需要足够的上下文才能分清群里是谁在说话；按字符限额而不是只给几条消息。
 const MAX_TURN_CHARS = 1800;
@@ -15,7 +16,7 @@ const STAMP_GAP_MS = 5 * 60 * 1000;
  * 时间戳节流器：同一条消息不管当「当前」还是当「历史」，formatStamp 出来的字符串一样；
  * 这里只决定「要不要打标记」。返回空串表示省略。
  */
-function makeStamper() {
+function makeStamper(timeZone = '') {
   let prevTs = 0;
   let seen = false;
   return (ts) => {
@@ -24,10 +25,10 @@ function makeStamper() {
     let need = false;
     if (!seen) need = true;
     else if (t - prevTs >= STAMP_GAP_MS) need = true;
-    else if (new Date(t).toDateString() !== new Date(prevTs).toDateString()) need = true;
+    else if (time.dayKey(t, timeZone) !== time.dayKey(prevTs, timeZone)) need = true;
     prevTs = t;
     seen = true;
-    return need ? `[${formatStamp(t)}] ` : '';
+    return need ? `[${formatStamp(t, timeZone)}] ` : '';
   };
 }
 
@@ -39,7 +40,7 @@ function makeStamper() {
  * 都放在**最后一条 user 消息**里，不塞 system：system 保持会话内稳定，前缀缓存才不会被每轮变化的
  * 记忆和状态打断。顺序固定：正文 → 记忆块 → 本轮状态。
  */
-function buildTurns(msg, history, memoryBlock = '', tailBlock = '') {
+function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '') {
   const memory = String(memoryBlock || '').trim();
   const tail = String(tailBlock || '').trim();
   const turns = [];
@@ -57,7 +58,7 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '') {
     };
     const entries = [];
     let previousTs = 0;
-    const stampOf = makeStamper();
+    const stampOf = makeStamper(timeZone);
     for (const event of past) {
       if (!event.text || event.error) continue;
       const ts = Number(event.ts || 0);
@@ -76,7 +77,7 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '') {
       entries.push(gap + stamp + JSON.stringify(record));
     }
     // 当前这条永远带时间戳：它就是「现在」。
-    const currentStamp = `[${formatStamp(Number(msg.ts) || Date.now())}] `;
+    const currentStamp = `[${formatStamp(Number(msg.ts) || Date.now(), timeZone)}] `;
     const current = currentStamp + JSON.stringify({
       发言人: speaker(msg),
       // 挨骂的时候要让它看见原话，否则不知道对面骂了什么，回怼就没劲
@@ -129,7 +130,7 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '') {
     }
   };
   let previousTs = 0;
-  const stampOf = makeStamper();
+  const stampOf = makeStamper(timeZone);
   for (const m of past) {
     if (m.error || !m.text) continue;
     const ts = Number(m.ts || 0);
@@ -151,7 +152,7 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '') {
   const current = msg.cleanText || msg.text;
   const currentBody = msg.fight ? String(current) : sanitizeForModel(current);
   // 当前这条永远带时间戳（它就是「现在」），同一 ts 的渲染和历史里完全一致。
-  const currentStamp = `[${formatStamp(Number(msg.ts) || Date.now())}] `;
+  const currentStamp = `[${formatStamp(Number(msg.ts) || Date.now(), timeZone)}] `;
   const currentText = isGroup
     ? `${currentStamp}[${msg.senderName || '群友'}] ${currentBody}`
     : `${currentStamp}${currentBody}`;

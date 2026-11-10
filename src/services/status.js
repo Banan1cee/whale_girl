@@ -89,6 +89,8 @@ function statusPayload(runtime) {
     },
     gateways: [...gateways.values()].map((g) => g.status()),
     webhookPaths: [...gateways.keys()].map((p) => `/webhook/${p}`),
+    // 统一调度的只读快照：下次什么时候跑、上轮有没有失败（不含业务正文）。
+    scheduler: runtime.scheduler && typeof runtime.scheduler.list === 'function' ? runtime.scheduler.list() : [],
   };
 }
 

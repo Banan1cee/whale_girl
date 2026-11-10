@@ -10,21 +10,24 @@ const context = require('../core/context');
 const { estimateTokens } = require('../memory/tokens');
 const { recentSenders, budgetSnapshot } = require('./status');
 const envInfo = require('./envInfo');
+const time = require('../infra/time');
 
 // 程序版本：启动器诊断页的 system 预览要跟真实发出去的一致，环境块里也有版本号
 const VERSION = require('../../package.json').version;
 
-function debugState(runtime) {
+function debugState(runtime, { now = Date.now() } = {}) {
   const { config, llm, gateways, store } = runtime;
   const rt = resolveRuntime(config);
-  const now = new Date();
-  const mood = persona.moodFor(now);
+  // 诊断页要跟真实提示词看同一个「现在」：人设按 env.timezone 换了墙上时间，
+  // 这里如果还用系统本地时间，时区一改就会出现「预览和实际不一样」。
+  const at = time.zonedDate(Number(now) || Date.now(), time.resolveTimeZone(config));
+  const mood = persona.moodFor(at);
   const master = (config.persona && config.persona.master) || {};
   return {
     ok: true,
-    nowLabel: `${persona.timeLabel(now)} ${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()]}`,
+    nowLabel: `${persona.timeLabel(at)} ${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][at.getDay()]}`,
     mood: { name: mood.name, hint: mood.hint },
-    activity: persona.activityFor(now),
+    activity: persona.activityFor(at),
     persona: {
       name: config.persona.name,
       aliases: config.persona.aliases || [],
@@ -153,7 +156,13 @@ async function debugPrompt(runtime, body) {
     now,
     envBlock: envInfo.systemBlock(config, VERSION),
   });
-  const turns = context.buildTurns({ ...msg, cleanText: text }, [], '', parts.tail);
+  const turns = context.buildTurns(
+    { ...msg, cleanText: text },
+    [],
+    '',
+    parts.tail,
+    time.resolveTimeZone(config)
+  );
   const prompt = parts.system + '\n\n' + turns.map((t) => t.content).join('\n\n');
   return {
     ok: true,

@@ -1,5 +1,7 @@
 'use strict';
 
+const time = require('../infra/time');
+
 /**
  * 文本处理纯函数：清洗、匹配、时间格式化、数值收敛。
  * 不依赖任何 IO，便于单测。
@@ -33,13 +35,10 @@ function nameMatches(a, b) {
  * 必须确定性：同一个 ts，不管当「当前消息」还是当「历史消息」，渲染结果一样。
  * 用本地时区手写补零，不走 toLocaleString（不同 ICU 版本格式会飘）。
  */
-function formatStamp(ts) {
+function formatStamp(ts, timeZone = '') {
   const t = Number(ts) || 0;
-  if (!t) return '';
-  const d = new Date(t);
-  if (Number.isNaN(d.getTime())) return '';
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (!t || Number.isNaN(new Date(t).getTime())) return '';
+  return time.formatStamp(t, timeZone);
 }
 
 /** 只留文字，用来比较「是不是把对方的话重复了一遍」 */

@@ -26,6 +26,7 @@ const searchService = require('../services/search');
 const { LlmError } = require('../llm/client');
 const { describeError } = require('../infra/errors');
 const { saveSettings } = require('../infra/config');
+const time = require('../infra/time');
 const personaStore = require('../persona/store');
 const { sanitizeForModel, nameMatches, clampInt } = require('../core/text');
 const { sendDenial } = require('../core/wechatSendPolicy');
@@ -187,6 +188,7 @@ class Bot {
   async tryReminder({ msg, clean, key, now, isGroup, atMe }) {
     const service = this.reminders;
     if (!service) return null;
+    const tz = time.resolveTimeZone(this.config);
     const text = String((clean && clean.text) || '').trim();
     if (!text || text.length > 120) return null;
 
@@ -205,13 +207,13 @@ class Bot {
     if (/^(?:提醒列表|我的提醒|有哪些提醒)[。.!！~～?？]*$/.test(text)) {
       const pending = service.pendingFor(msg.chatId);
       if (!pending.length) return { action: 'reply', key, msg, atMe, canned: '这会儿没有待发的提醒。', reason: 'reminder_list' };
-      const lines = pending.slice(0, 5).map((it) => `${reminderCore.describeWhen(new Date(it.dueAt), now)} ${it.text}`);
+      const lines = pending.slice(0, 5).map((it) => `${reminderCore.describeWhen(new Date(it.dueAt), now, tz)} ${it.text}`);
       return { action: 'reply', key, msg, atMe, canned: '还有这些：' + lines.join('；'), reason: 'reminder_list' };
     }
 
     if (!reminderCore.looksLikeReminder(text)) return null;
-    let parsed = reminderCore.parseReminder(text, now);
-    if (!parsed) parsed = await this.reminderFromModel(text, now);
+    let parsed = reminderCore.parseReminder(text, now, tz);
+    if (!parsed) parsed = await this.reminderFromModel(text, now, tz);
     if (!parsed) return null;
 
     try {
@@ -223,13 +225,13 @@ class Bot {
         at: parsed.at,
         atName: msg.senderName || '',
       });
-      this.logger && this.logger.info(`提醒已登记：${item.text} @ ${reminderCore.describeWhen(new Date(item.dueAt), now)}`);
+      this.logger && this.logger.info(`提醒已登记：${item.text} @ ${reminderCore.describeWhen(new Date(item.dueAt), now, tz)}`);
       return {
         action: 'reply',
         key,
         msg,
         atMe,
-        canned: reminderCore.confirmText(parsed, { now, group: isGroup, who: msg.senderName || '' }),
+        canned: reminderCore.confirmText(parsed, { now, group: isGroup, who: msg.senderName || '', timeZone: tz }),
         reason: 'reminder_set',
       };
     } catch (err) {
@@ -238,10 +240,9 @@ class Bot {
   }
 
   /** 规则解析不出来时，让模型把时间和事情抽成 JSON（模型不可用就放弃，不瞎猜） */
-  async reminderFromModel(text, now) {
+  async reminderFromModel(text, now, timeZone = '') {
     if (!this.llm || this.llm.isMock || typeof this.llm.complete !== 'function') return null;
-    const pad2 = (n) => String(n).padStart(2, '0');
-    const nowText = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+    const nowText = time.formatDateTime(now.getTime(), timeZone);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 3000);
     try {
@@ -259,11 +260,11 @@ class Bot {
       const jsonText = (String(raw || '').match(/\{[\s\S]*\}/) || [''])[0];
       if (!jsonText) return null;
       const obj = JSON.parse(jsonText);
-      const at = new Date(String(obj.at || '').replace(' ', 'T'));
+      const atMs = time.parseDateTimeLoose(obj.at, timeZone);
       const what = String(obj.what || '').trim().slice(0, 200);
-      if (!what || !Number.isFinite(at.getTime())) return null;
-      if (at.getTime() <= now.getTime()) return null;
-      return { at, what, when: obj.at };
+      if (!what || atMs === null) return null;
+      if (atMs <= now.getTime()) return null;
+      return { at: new Date(atMs), what, when: obj.at };
     } catch {
       return null;
     } finally {
@@ -325,7 +326,13 @@ class Bot {
   }
 
   buildTurns(msg, history, memoryBlock, tailBlock) {
-    return context.buildTurns({ ...msg, botName: this.config.persona.name }, history, memoryBlock, tailBlock);
+    return context.buildTurns(
+      { ...msg, botName: this.config.persona.name },
+      history,
+      memoryBlock,
+      tailBlock,
+      time.resolveTimeZone(this.config)
+    );
   }
 
   /**
@@ -759,6 +766,7 @@ class Bot {
       text: clean.text,
       history: () => this.recentHeard({ msg, key }).filter(line => line !== clean.text),
       llm: this.llm, config: this.config.websearch || {}, now: this.now(),
+      timeZone: time.resolveTimeZone(this.config),
       trace: (stage, data) => this.logger?.info('[search] stage=' + stage + ' ' + JSON.stringify(data)),
     });
     if (searchResult.status !== 'skipped') {

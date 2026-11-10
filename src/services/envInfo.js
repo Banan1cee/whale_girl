@@ -17,6 +17,7 @@
 const env = require('../core/env');
 const features = require('../infra/features');
 const locationProbe = require('./location');
+const time = require('../infra/time');
 
 // 同一配置下要求逐字节稳定（前缀缓存），所以按 key 记忆化。
 // 不需要无限增长：key 里只有系统信息 + 地点 + 版本，一个进程里通常就一两个。
@@ -90,13 +91,9 @@ function resolveLocation(config) {
 /** 配置里可以覆盖时区（换个时区跑同一台机器时用）；非法时区就按系统自己的来 */
 function snapshotFor(config) {
   const snap = env.snapshot();
-  const tz = String((config && config.env && config.env.timezone) || '').trim();
+  // 和日程/日记/提醒用同一个时区来源；非法值已经由 configSchema 拦截。
+  const tz = time.resolveTimeZone(config);
   if (!tz || tz === snap.tz) return snap;
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz });
-  } catch {
-    return snap;
-  }
   return { ...snap, tz };
 }
 

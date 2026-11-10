@@ -49,7 +49,7 @@ namespace WhaleLauncher.Views
             ChkDiaryEnabled.Click += async (_, __) => await SaveDiaryAsync();
             ChkDiarySend.Click += async (_, __) => await SaveDiaryAsync();
             TxtDiaryTime.LostFocus += async (_, __) => await SaveDiaryAsync();
-            foreach (var box in new[] { TxtCareEvery, TxtCareJitter, TxtCareMax, TxtCareQuiet, TxtCareWindows })
+            foreach (var box in new TextBox[] { TxtCareEvery, TxtCareJitter, TxtCareMax, TxtCareQuiet, TxtCareWindows })
                 box.LostFocus += async (_, __) => await SaveCareAsync();
             foreach (var chk in new[] { ChkCareEnabled, ChkCareOnlyMaster, ChkCareGroups, ChkCareOthers })
                 chk.Click += async (_, __) => await SaveCareAsync();
@@ -146,7 +146,7 @@ namespace WhaleLauncher.Views
                 _diarySendToOwner = res.Bool("sendToOwner");
                 if (!ChkDiaryEnabled.IsKeyboardFocusWithin) ChkDiaryEnabled.IsChecked = _diaryEnabled;
                 if (!ChkDiarySend.IsKeyboardFocusWithin) ChkDiarySend.IsChecked = _diarySendToOwner;
-                if (!TxtDiaryTime.IsKeyboardFocusWithin) TxtDiaryTime.Text = res.Str("time");
+                if (!TxtDiaryTime.IsKeyboardFocusWithin) TxtDiaryTime.Text = TimeField.NormalizeClockOrEmpty(res.Str("time"));
             }
             DiaryStatus.Text = res.Str("message");
             BtnWriteDiary.IsEnabled = res.Str("status") != "running";
@@ -165,14 +165,14 @@ namespace WhaleLauncher.Views
                 DiarySettingsStatus.Text = "请先启动内核，再保存日记设置。";
                 return;
             }
-            var time = TxtDiaryTime.Text.Trim();
-            if (!System.Text.RegularExpressions.Regex.IsMatch(time, @"^([01]\d|2[0-3]):[0-5]\d$"))
+            if (!TxtDiaryTime.TryRead(out var time))
             {
                 ChkDiaryEnabled.IsChecked = _diaryEnabled;
                 ChkDiarySend.IsChecked = _diarySendToOwner;
-                DiarySettingsStatus.Text = "时间请填 HH:mm，例如 23:00。";
+                DiarySettingsStatus.Text = TxtDiaryTime.ErrorText;
                 return;
             }
+            TxtDiaryTime.Text = time;
             try
             {
                 var res = await _saver.SaveAsync(() => new Dictionary<string, object>
@@ -269,7 +269,8 @@ namespace WhaleLauncher.Views
             if (!TxtCareJitter.IsKeyboardFocusWithin) TxtCareJitter.Text = JsonRead.Int(care, "jitterMinutes", 25).ToString();
             if (!TxtCareMax.IsKeyboardFocusWithin) TxtCareMax.Text = JsonRead.Int(care, "maxPerDay", 0).ToString();
             if (!TxtCareQuiet.IsKeyboardFocusWithin) TxtCareQuiet.Text = JsonRead.Int(care, "quietAfterMinutes", 0).ToString();
-            if (!TxtCareWindows.IsKeyboardFocusWithin) TxtCareWindows.Text = JsonRead.Lines(care, "windows");
+            if (!TxtCareWindows.IsKeyboardFocusWithin)
+                TxtCareWindows.Text = TimeField.NormalizeRangesOrEmpty(JsonRead.Lines(care, "windows"));
             CareStatus.Text = "";
         }
 
@@ -283,6 +284,14 @@ namespace WhaleLauncher.Views
                 || !IntOr(TxtCareMax, out var max)
                 || !IntOr(TxtCareQuiet, out var quiet))
                 return false;
+            if (!TxtCareWindows.TryRead(out var windowsText))
+            {
+                CareStatus.Text = TxtCareWindows.ErrorText;
+                return false;
+            }
+            TxtCareWindows.Text = windowsText;
+            var windows = (windowsText ?? "").Split('\n')
+                .Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
 
             BtnSaveCare.IsEnabled = false;
             try
@@ -297,7 +306,7 @@ namespace WhaleLauncher.Views
                     ["care.jitterMinutes"] = jitter,
                     ["care.maxPerDay"] = max,
                     ["care.quietAfterMinutes"] = quiet,
-                    ["care.windows"] = LineList(TxtCareWindows)
+                    ["care.windows"] = windows
                 });
                 if (!res.Ok)
                 {
@@ -320,11 +329,6 @@ namespace WhaleLauncher.Views
             return false;
         }
 
-
-        private static List<string> LineList(System.Windows.Controls.TextBox box)
-            => (box.Text ?? "").Split('\n')
-                .Select(x => x.Trim()).Where(x => x.Length > 0)
-                .ToList();
 
         private void LoadRules(JsonElement rules, bool apply)
         {
