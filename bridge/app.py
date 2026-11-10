@@ -263,7 +263,25 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
                             return False
                         self.bind_gui_window(self.gui)
                         return perform(WeChat(gui=self.gui, db=self.db).Moment, action, query, log=G.log)
-            moments_reader = MomentsReader(self.db, G.LOCAL_HTTP, self.bot_url.rsplit('/webhook', 1)[0], {'x-bot-token': self.token, 'x-whale-bridge': '1'}, G.log, interact=moments_interact).start()
+            def moments_publish(query, gate):
+                from moments_publish import publish
+                from wechatauto import WeChat
+                with self.send_lock:
+                    if (self.foreground_is_fullscreen() or not self.account_send_allowed('朋友圈发表')
+                            or not self.ACCOUNT.get('verified') or not self.wechat_window_alive()):
+                        return 'failed', 'account_not_verified'
+                    hwnd = int(self.ACCOUNT.get('hwnd') or 0)
+                    def allowed():
+                        return (self.ACCOUNT.get('verified') and self.ACCOUNT.get('hwnd') == hwnd
+                                and self.wechat_window_alive() and gate())
+                    with self.gui_lock:
+                        if self.gui is None or not allowed():
+                            return 'failed', 'account_not_verified'
+                        if not self.gui.use_window(hwnd) or int(self.gui.main_hwnd) != hwnd:
+                            return 'failed', 'account_not_verified'
+                        return publish(self, WeChat(gui=self.gui, db=self.db).Moment, query, allowed)
+
+            moments_reader = MomentsReader(self.db, G.LOCAL_HTTP, self.bot_url.rsplit('/webhook', 1)[0], {'x-bot-token': self.token, 'x-whale-bridge': '1'}, G.log, interact=moments_interact, publish=moments_publish).start()
         except Exception as exc:
             G.log('朋友圈读取通道未启动 type=%s' % type(exc).__name__)
         G.log('已启动。鲸鲸地址：', self.bot_url)

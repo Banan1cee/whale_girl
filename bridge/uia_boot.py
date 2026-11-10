@@ -52,6 +52,11 @@ def is_wechat_main_title(title: str) -> bool:
     return (title or "").strip().casefold() in ("微信", "weixin", "wechat")
 
 
+def _account_window_size(win32gui, hwnd, minimized):
+    rect = win32gui.GetWindowPlacement(hwnd)[4] if minimized else win32gui.GetWindowRect(hwnd)
+    return rect[2] - rect[0], rect[3] - rect[1]
+
+
 def is_wechat_account_window(win32gui, hwnd: int) -> bool:
     """登录账号的主窗候选。微信 4.x 的隐藏辅助窗也可能用相同标题和 Qt 类名。"""
     try:
@@ -60,14 +65,38 @@ def is_wechat_account_window(win32gui, hwnd: int) -> bool:
             return False
         if not is_wechat_main_title(win32gui.GetWindowText(hwnd)):
             return False
-        if win32gui.IsIconic(hwnd):
-            # 最小化时窗口矩形可能退化，使用还原后的主窗尺寸。
-            left, top, right, bottom = win32gui.GetWindowPlacement(hwnd)[4]
-        else:
-            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-        return right - left >= 250 and bottom - top >= 250
+        # 最小化时窗口矩形可能退化，使用还原后的主窗尺寸。
+        width, height = _account_window_size(win32gui, hwnd, win32gui.IsIconic(hwnd))
+        return width >= 250 and height >= 250
     except Exception:
         return False
+
+
+def account_window_candidates(win32gui, win32process, hwnds):
+    """微信 4.2 的小型隐藏 Qt 窗也可能使用主窗标题和类名。"""
+    candidates = {}
+    for hwnd in dict.fromkeys(map(int, hwnds)):
+        if not is_wechat_account_window(win32gui, hwnd):
+            continue
+        try:
+            pid = int(win32process.GetWindowThreadProcessId(hwnd)[1] or 0)
+        except Exception:
+            pid = 0
+        try:
+            minimized = bool(win32gui.IsIconic(hwnd))
+            visible = bool(win32gui.IsWindowVisible(hwnd)) or minimized
+            width, height = _account_window_size(win32gui, hwnd, minimized)
+            candidates[hwnd] = (pid, visible, width * height)
+        except Exception:
+            candidates[hwnd] = (pid, None, 0)
+
+    main_areas = {}
+    for pid, visible, area in candidates.values():
+        if pid and visible and area >= 500000:
+            main_areas[pid] = max(main_areas.get(pid, 0), area)
+    # 只排除同 PID、未最小化且明显更小的隐藏窗。独立进程和双开仍保留。
+    return [(hwnd, pid) for hwnd, (pid, visible, area) in candidates.items()
+            if not (visible is False and 0 < area * 4 <= main_areas.get(pid, 0))]
 
 
 def _iter_windows() -> List[dict]:
@@ -275,9 +304,8 @@ def resolve_account_windows(candidates):
                 row["tree"] = "changed"
                 continue
             minimized = bool(win32gui.IsIconic(hwnd))
-            rect = win32gui.GetWindowPlacement(hwnd)[4] if minimized else win32gui.GetWindowRect(hwnd)
             row.update(cls=win32gui.GetClassName(hwnd), visible=bool(win32gui.IsWindowVisible(hwnd)),
-                       minimized=minimized, size=(rect[2] - rect[0], rect[3] - rect[1]))
+                       minimized=minimized, size=_account_window_size(win32gui, hwnd, minimized))
         except Exception:
             continue
         try:

@@ -48,10 +48,11 @@ def collect(db, query, factory=None):
 
 
 class MomentsReader:
-    def __init__(self, db, http, base, headers, log, factory=None, interact=None):
+    def __init__(self, db, http, base, headers, log, factory=None, interact=None, publish=None):
         self.db, self.http, self.base = db, http, base
         self.headers, self.log, self.factory = headers, log, factory
         self.interact = interact
+        self.publish = publish
         self.stop_event = threading.Event()
         # 同一个错误只记一次，恢复后才允许记录下一轮；避免内核没启动时刷屏。
         self._claim_error = None
@@ -88,6 +89,17 @@ class MomentsReader:
         try:
             if action == 'read':
                 result['items'] = collect(self.db, job['query'], self.factory)
+            elif action == 'publish':
+                def allowed():
+                    try:
+                        response = self.http.post(self.base + '/api/moments/publish-gate',
+                                                  json={'id': job['id'], 'account': account},
+                                                  headers=self.headers, timeout=3)
+                        return response.status_code == 200 and response.json().get('allowed') is True
+                    except Exception:
+                        return False
+                status, code = self.publish(job['query'], allowed) if self.publish else ('failed', 'unsupported')
+                result.update(publishStatus=status, error=code)
             elif self.interact:
                 outcome = self.interact(action, job['query'])
                 # perform() 成功返回 True；失败返回固定错误码，便于内核给出准确提示。
@@ -104,6 +116,8 @@ class MomentsReader:
             # 异常正文可能含 XML/本机路径：日志只留异常类型，不输出朋友圈内容。
             self.log(('朋友圈互动失败' if action != 'read' else '朋友圈读取失败')
                      + ' type=%s' % type(exc).__name__)
+        if action == 'publish' and 'publishStatus' not in result:
+            result.update(publishStatus='unconfirmed', error='publish_exception')
         complete = self.http.post(self.base + '/api/moments/complete', json=result,
                                   headers=self.headers, timeout=8)
         if complete.status_code != 200:

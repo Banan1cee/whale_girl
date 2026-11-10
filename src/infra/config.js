@@ -194,7 +194,11 @@ const DEFAULT_CONFIG = {
   // 自动点赞默认开，但只对正文足够长、非自己、非丧事/求助/负面、且模型置信度高的
   // 动态执行；每次读取后延迟执行，先让启动器拿结果。autoReadEveryHours=0 表示
   // 不主动定时读取，只在主人问起或启动器手动读取时读。
-  moments: { autoLike: true, autoLikeMaxPerDay: 3, autoReadEveryHours: 0 },
+  moments: {
+    autoLike: true, autoLikeMaxPerDay: 3, autoReadEveryHours: 0,
+    publishFeatureEnabled: false, publishEnabled: false, publishIntervalHours: 6, publishMaxPerDay: 1,
+    publishAccount: '', publishWithImage: false,
+  },
   // 别人发链接时，读一下标题/摘要/文章正文（视频只读得到文案）
   links: { enabled: true, timeoutMs: 6000, cacheMinutes: 60 },
   // 魔咒：主人在微信私聊输入口令后，临时解锁当前会话的群禁言命令。

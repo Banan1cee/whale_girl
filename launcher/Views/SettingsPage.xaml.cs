@@ -1224,7 +1224,7 @@ namespace WhaleLauncher.Views
                 "恢复默认", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (answer != MessageBoxResult.Yes) return;
 
-            var res = await Api.PostJson(_sup.Url, "/api/config/reset", new { paths = list });
+            var res = await _sup.SaveConfigurationAsync("/api/config/reset", new { paths = list });
             if (!res.Ok)
             {
                 StatusText.Text = "恢复默认失败：" + Api.Message(res);
@@ -1681,11 +1681,11 @@ namespace WhaleLauncher.Views
             // 不用再记得点「保存」。手动按钮保留，老习惯照样能用。
             async Task AutoSaveChatAsync()
             {
-                if (suppressAuto || autoSaving || _loading || _loadingConfig || !_configLoaded || !_sup.NodeRunning) return;
+                if (suppressAuto || autoSaving || _loading || _loadingConfig || !_configLoaded) return;
                 autoSaving = true;
                 try
                 {
-                    var res = await Api.PostJson(_sup.Url, "/api/settings", ModelRequest());
+                    var res = await _sup.SaveConfigurationAsync("/api/settings", ModelRequest());
                     if (!res.Ok)
                     {
                         chatResult.Text = "自动保存失败：" + Api.Message(res);
@@ -1699,13 +1699,13 @@ namespace WhaleLauncher.Views
 
             async Task AutoSaveVisionAsync()
             {
-                if (suppressAuto || _loading || _loadingConfig || !_configLoaded || !_sup.NodeRunning) return;
+                if (suppressAuto || _loading || _loadingConfig || !_configLoaded) return;
                 await SaveVisionAsync("");
             }
 
             save.Click += async (s, e) =>
             {
-                var res = await Api.PostJson(_sup.Url, "/api/settings", ModelRequest());
+                var res = await _sup.SaveConfigurationAsync("/api/settings", ModelRequest());
                 if (!res.Ok) { chatResult.Text = "保存失败：" + Api.Message(res); return; }
                 key.Password = "";
                 chatResult.Text = "已保存。";
@@ -1774,7 +1774,7 @@ namespace WhaleLauncher.Views
                     + (VisionIsCustom() ? ",\"visionBaseUrl\":\"" + Api.Esc(visionUrl.Text.Trim()) + "\"" : "")
                     + (visionKey.Password.Length > 0 ? ",\"visionApiKey\":\"" + Api.Esc(visionKey.Password.Trim()) + "\"" : "")
                     + "}";
-                var res = await Api.Post(_sup.Url, "/api/settings", payload);
+                var res = await _sup.SaveConfigurationAsync("/api/settings", System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(payload));
                 if (!res.Ok)
                 {
                     visionResult.Text = "保存失败：" + Api.Message(res);
@@ -1793,7 +1793,7 @@ namespace WhaleLauncher.Views
             vcopy.Click += async (s, e) =>
             {
                 visionResult.Text = "正在从聊天复制…";
-                var res = await Api.PostJson(_sup.Url, "/api/settings", new { visionCopyFromChat = true });
+                var res = await _sup.SaveConfigurationAsync("/api/settings", new { visionCopyFromChat = true });
                 if (!res.Ok)
                 {
                     visionResult.Text = "复制失败：" + Api.Message(res);
@@ -1938,7 +1938,7 @@ namespace WhaleLauncher.Views
             }
             KernelHint.Text = _sup.NodeRunning
                 ? "改完立即写回 config.json（密钥留空表示不改）"
-                : "已读取本地配置，启动内核后可修改；外观设置仍可直接调整。";
+                : "可保存到本地，启动后生效。";
             if (!_configLoaded) await LoadConfigAsync();      // 还没回填过，补一次
         }
 
@@ -1978,9 +1978,6 @@ namespace WhaleLauncher.Views
                 }
                 _configLoaded = true;
                 _loadedOnline = _sup.NodeRunning;
-                // 外观是本地设置，内核停止时仍然可以编辑。
-                for (var i = 0; i < SectionsHost.Children.Count - 1; i++)
-                    ConfigurationControls.SetReadOnly(SectionsHost.Children[i], !_loadedOnline);
             }
             finally
             {

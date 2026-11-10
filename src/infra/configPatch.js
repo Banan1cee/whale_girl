@@ -144,7 +144,9 @@ function reloadRuntimeConfig(runtime) {
   // 人设另存在 persona.json；重载时必须与启动时一样合并，否则改称呼会把名字盖回默认。
   const personaStore = require('../persona/store');
   personaStore.apply(next, personaStore.load(next));
-  return mergeConfigInPlace(runtime.config, next);
+  const result = mergeConfigInPlace(runtime.config, next);
+  runtime.momentsPublisher?.reconcile();
+  return result;
 }
 
 /**

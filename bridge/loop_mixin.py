@@ -62,12 +62,9 @@ class LoopMixin:
             if not u:
                 continue
             if self.is_self_chat(u):
-                # 白名单里填的是机器人自己的账号（常见：从账号目录名复制，误以为是自己）。
-                # 微信没有「跟自己聊天」，搜 wxid 会空转到超时，统一改成文件传输助手。
-                G.log_throttled('care-self-target', '主动搭话：白名单里是机器人自己的 wxid，微信里发不了「和自己聊天」，这次改发文件传输助手（要收消息请把主人的 wxid 换成你自己的）', ttl=3600)
-                u, name = 'filehelper', '文件传输助手'
-            else:
-                name = self.ui_chat_name(u, name)
+                G.log_throttled('care-self-target', '主动搭话没发：目标是机器人自己的微信账号，请绑定接收消息的主人账号', ttl=3600)
+                continue
+            name = self.ui_chat_name(u, name)
             if not name:
                 # 读不到昵称就别去搜 —— 用 wxid 搜会话是纯粹的十几秒空转。
                 G.log_throttled('care-no-name-' + u[:18], '主动搭话没发：%s 在本地数据库里没有昵称/备注，微信搜不到这个会话（先给 TA 加个备注再试）' % u[:18], ttl=3600)
