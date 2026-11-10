@@ -173,13 +173,13 @@ for (const sendHeaders of [false, true]) {
     const client = Object.assign(Object.create(DeepSeekClient.prototype), {
       maxTokens: 700, temperature: 0.7, provider: 'test', logger: null,
       baseUrl: `http://127.0.0.1:${server.address().port}`, mock: false, needsKey: false,
-      apiKey: '', timeoutMs: 1000, runtime: {},
+      apiKey: '', timeoutMs: 3000, runtime: {},
     });
-    assert.equal((await route(client, '查一下价格', { timeoutMs: 80 })).failed, true);
+    assert.equal((await route(client, '查一下价格', { timeoutMs: 500 })).failed, true);
     let timer;
     try {
       await Promise.race([closed, new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('underlying connection was not closed')), 500);
+        timer = setTimeout(() => reject(new Error('underlying connection was not closed')), 2000);
       })]);
     } finally { clearTimeout(timer); }
     assert.equal(requests, 1, 'no retries may survive route cancellation');

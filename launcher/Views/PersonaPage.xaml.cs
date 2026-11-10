@@ -656,6 +656,10 @@ namespace WhaleLauncher.Views
         private async void OnImportPreset(object sender, RoutedEventArgs e)
         {
             if (!(CmbPreset.SelectedItem is PresetItem p)) return;
+            if (p.Id.StartsWith("market-", StringComparison.Ordinal) &&
+                MessageBox.Show(Window.GetWindow(this), "应用此人设会替换当前的自定义提示词。是否继续？",
+                    "应用插件人设", MessageBoxButton.OKCancel, MessageBoxImage.Question,
+                    MessageBoxResult.Cancel) != MessageBoxResult.OK) return;
             var res = await _sup.SaveConfigurationAsync("/api/persona/preset", new { id = p.Id });
             if (!res.Ok)
             {

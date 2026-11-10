@@ -22,5 +22,16 @@ test('插件入口固定在市场，设置在卡片内打开工具或人设', ()
 test('市场右侧可打开随启动器打包的规范', () => {
   assert.match(read('launcher/Views/PluginMarketPage.xaml'), /Content="插件市场规范".*Click="OnRulesGuide"/);
   assert.match(read('launcher/WhaleLauncher.csproj'), /LogicalName="WhaleLauncher\.PluginRulesGuide\.md"/);
-  assert.match(read('docs/插件市场规范.md'), /设置.*按次确认/);
+  const rules = read('docs/插件市场规范.md');
+  assert.match(rules, /权限确认.*插件卡片「设置」/);
+  assert.match(rules, /相应操作入口按次确认/);
+});
+
+test('本地安装提示来源和替换版本，人设页应用市场预设须确认', () => {
+  const market = read('launcher/Views/PluginMarketPage.xaml.cs');
+  const persona = read('launcher/Views/PersonaPage.xaml.cs');
+  assert.match(market, /InstallLocal\(picker.FileName,[\s\S]*ConfirmLocalInstall\(info, current\)/);
+  assert.match(market, /本地 ZIP 未经鲸鲸插件市场审核/);
+  assert.match(market, /将替换已安装/);
+  assert.match(persona, /StartsWith\("market-", StringComparison.Ordinal\)[\s\S]*MessageBoxResult.OK\) return;\s+var res/);
 });

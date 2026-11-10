@@ -66,20 +66,18 @@ class RecoveryTests(unittest.TestCase):
     def test_database_owner_is_pinned_without_waiting_for_uia(self):
         rebind = Mock()
         env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False}, log=Mock(),
-                   _probe_wechat_windows=lambda: (None, [], [(222, 333, 0, False)]), rebind_uia=rebind)
-        env['choose_main_window'] = load_function('choose_main_window', env)
+                   _probe_wechat_windows=lambda: (None, [], [(222, 333)]), rebind_uia=rebind)
         self.assertTrue(load_function('pick_account_window', env)())
         self.assertEqual(env['ACCOUNT']['pid'], 333)
         rebind.assert_called_once_with(222)
 
-    def test_multiple_windows_of_same_account_pick_foreground(self):
+    def test_multiple_windows_of_same_account_use_window_evidence(self):
         rebind = Mock()
         resolve = Mock(return_value=((444, 555), []))
         env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False}, log=Mock(),
                    _probe_wechat_windows=lambda: (None, [], [
-                       (222, 333, 800, False), (444, 555, 100, True)]), rebind_uia=rebind,
+                       (222, 333), (444, 555)]), rebind_uia=rebind,
                    uia_boot=SimpleNamespace(resolve_account_windows=resolve))
-        env['choose_main_window'] = load_function('choose_main_window', env)
         self.assertTrue(load_function('pick_account_window', env)())
         self.assertEqual(env['ACCOUNT']['hwnd'], 444)
         rebind.assert_called_once_with(444)
@@ -87,9 +85,8 @@ class RecoveryTests(unittest.TestCase):
     def test_unresolved_cross_process_windows_fail_closed(self):
         resolve = Mock(return_value=(None, []))
         env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False}, log=Mock(),
-                   _probe_wechat_windows=lambda: (None, [], [(111, 333, 10, False), (222, 444, 20, False)]),
+                   _probe_wechat_windows=lambda: (None, [], [(111, 333), (222, 444)]),
                    uia_boot=SimpleNamespace(resolve_account_windows=resolve), rebind_uia=Mock())
-        env['choose_main_window'] = load_function('choose_main_window', env)
         self.assertFalse(load_function('pick_account_window', env)())
         self.assertFalse(env['ACCOUNT']['verified'])
 
@@ -115,24 +112,22 @@ class RecoveryTests(unittest.TestCase):
                    _window_account_matches=owner, ensure_uia_ready=Mock())
         with patch.dict(sys.modules, {'win32gui': win32gui, 'win32process': win32process,
                                       'wechatauto.uia_driver': driver}):
-            self.assertEqual(load_function('_probe_wechat_windows', env)()[1:], ([], [(222, 223, 0, False)]))
+            self.assertEqual(load_function('_probe_wechat_windows', env)()[1:], ([], [(222, 223)]))
             self.assertEqual(load_function('wechat_main_window_count', env)(), 2)
         env['ensure_uia_ready'].assert_not_called()
         probe._hot_activate_accessibility.assert_not_called()
         probe._anchor.assert_not_called()
         self.assertEqual([c.args[0] for c in owner.call_args_list], [112, 223])
 
-    def test_two_real_windows_with_same_ownership_pick_one(self):
+    def test_two_unresolved_windows_with_same_ownership_fail_closed(self):
         rebind = Mock()
         resolve = Mock(return_value=(None, []))
         env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False}, log=Mock(),
-                   _probe_wechat_windows=lambda: (None, [], [(111, 333, 0, False), (222, 333, 0, False)]),
+                   _probe_wechat_windows=lambda: (None, [], [(111, 333), (222, 333)]),
                    uia_boot=SimpleNamespace(resolve_account_windows=resolve), rebind_uia=rebind)
-        env['choose_main_window'] = load_function('choose_main_window', env)
-        self.assertTrue(load_function('pick_account_window', env)())
-        self.assertTrue(env['ACCOUNT']['verified'])
-        self.assertEqual(env['ACCOUNT']['hwnd'], 111)
-        rebind.assert_called_once_with(111)
+        self.assertFalse(load_function('pick_account_window', env)())
+        self.assertFalse(env['ACCOUNT']['verified'])
+        rebind.assert_not_called()
 
     def test_account_tree_needs_session_controls_on_the_exact_hwnd(self):
         root = SimpleNamespace(NativeWindowHandle=222, ClassName='Qt51514QWindowIcon', GetChildren=Mock())

@@ -34,11 +34,25 @@ try
     File.WriteAllBytes(package, Pack(info with { MinAppVersion = "5.0.0" }));
     Reject(() => market.InstallLocal(package));
     File.WriteAllBytes(package, Pack(info));
+    Check(!market.InstallLocal(package, (incoming, current) =>
+    {
+        Check(incoming == info && current == null);
+        return false;
+    }));
+    Check(!Directory.Exists(Path.Combine(dir, "data")));
     market.InstallLocal(package);
     Check(market.Installed().Single() == info);
     Check(!market.Enabled(info.Id));
     market.SetEnabled(info.Id, true);
     Check(market.Enabled(info.Id));
+    var localUpdate = info with { Version = "1.1.0" };
+    File.WriteAllBytes(package, Pack(localUpdate));
+    Check(!market.InstallLocal(package, (incoming, current) =>
+    {
+        Check(incoming == localUpdate && current == info);
+        return false;
+    }));
+    Check(market.Installed().Single() == info && market.Enabled(info.Id));
     if (args.Length > 0)
     {
         var runtime = Directory.CreateDirectory(Path.Combine(dir, "runtime"));

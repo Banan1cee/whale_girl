@@ -168,13 +168,11 @@ test('桥接源码里必须留着「钉账号」的关键代码（别被后来�
   assert.match(compat, /def _session_rows_of/, '要能只读某个窗口的会话行（认账号用）');
 });
 
-test('同一账号多个微信主窗时选一个，不要卡在「暂未绑定」', () => {
+test('同一账号多个候选窗用窗口证据确认', () => {
   const bridge = require('./helpers/bridge-source');
-  assert.match(bridge, /def choose_main_window/, '要有一个稳定的多窗口选择函数');
-  assert.doesNotMatch(bridge, /len\(matched\)\s*!=\s*1/, '多个同账号主窗不能直接放弃');
-  assert.doesNotMatch(bridge, /所选账号对应多个主窗口，暂未绑定/, '旧失败提示会把 UIA 永久卡在等待');
-  assert.match(bridge, /matched\.append\(\(h, _cpid, _area, _fg\)\)/, '候选窗口要带上面积和前台状态');
-  assert.match(bridge, /choose_main_window\(matched, pinned=int/, '优先沿用上次钉住的窗口');
+  assert.doesNotMatch(bridge, /len\(matched\)\s*!=\s*1/);
+  assert.match(bridge, /account_window_candidates\(win32gui, win32process, hwnds\)/);
+  assert.match(bridge, /resolve_account_windows\(matched\)/);
 });
 
 test('微信 4.2 用会话列表证据区分主窗和隐藏辅助窗', () => {

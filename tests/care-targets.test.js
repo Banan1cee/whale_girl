@@ -39,9 +39,11 @@ const decide = (config, contacts, opts = {}) => care.careDecide(config, {
   contacts, lastSentTs: 0, sentToday: 0, now: Date.now(), ...opts,
 });
 
-test('白名单默认为「主人 + 文件传输助手」，不需要手填', () => {
+test('白名单默认只找主人，关掉限制才加入文件传输助手', () => {
   const config = { persona: { master: { wxids: ['wxid_master'], names: [] } }, care: {} };
-  assert.deepEqual(care.defaultWhitelist(config), ['wxid_master', 'filehelper']);
+  assert.deepEqual(care.defaultWhitelist(config), ['wxid_master']);
+  assert.deepEqual(care.careWhitelist(config), ['wxid_master']);
+  config.care.onlyMaster = false;
   assert.deepEqual(care.careWhitelist(config), ['wxid_master', 'filehelper']);
 });
 
@@ -57,12 +59,12 @@ test('wxids 为空时按昵称认主人，不再一个目标都发不出去', (t
 test('默认只找主人：白名单里的非主人私聊不会成为目标', (t) => {
   const { config, contacts } = fixture(t, { whitelist: ['wxid_other', 'filehelper'] });
   const out = decide(config, contacts);
-  assert.equal(out.due, true);
-  assert.equal(out.target.wxid, 'filehelper', '主人不在名单里，剩下的是文件传输助手');
+  assert.equal(out.due, false);
+  assert.equal(out.reason, 'whitelist_filtered');
 });
 
 test('允许主动找别人后，白名单里的非主人私聊才可用', (t) => {
-  const { config, contacts } = fixture(t, { whitelist: ['wxid_other'], allowOthers: true });
+  const { config, contacts } = fixture(t, { whitelist: ['wxid_other'], onlyMaster: false, allowOthers: true });
   const out = decide(config, contacts);
   assert.equal(out.target.wxid, 'wxid_other');
   assert.equal(out.target.kind, 'other');
@@ -71,7 +73,7 @@ test('允许主动找别人后，白名单里的非主人私聊才可用', (t) =
 test('群默认不主动，开了「允许进群」才可用', (t) => {
   const base = fixture(t, { whitelist: ['1@chatroom'] });
   assert.equal(decide(base.config, base.contacts).reason, 'whitelist_filtered');
-  const withGroups = fixture(t, { whitelist: ['1@chatroom'], allowGroups: true });
+  const withGroups = fixture(t, { whitelist: ['1@chatroom'], onlyMaster: false, allowGroups: true });
   const out = decide(withGroups.config, withGroups.contacts);
   assert.equal(out.target.wxid, '1@chatroom');
   assert.equal(out.target.isGroup, true);

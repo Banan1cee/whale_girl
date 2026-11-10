@@ -57,10 +57,26 @@ namespace WhaleLauncher.Views
             if (picker.ShowDialog() != true) return;
             await WithStatus(async () =>
             {
-                await Task.Run(() => _market.InstallLocal(picker.FileName));
+                var installed = await Task.Run(() => _market.InstallLocal(picker.FileName,
+                    (info, current) => Dispatcher.Invoke(() => ConfirmLocalInstall(info, current))));
+                if (!installed) return "已取消安装。";
                 _showInstalled = true;
                 return "已安装，可在「已安装」里启用。";
             });
+        }
+
+        private bool ConfirmLocalInstall(PluginInfo info, PluginInfo current)
+        {
+            var kind = info.IsPersona ? "人设预设" : "功能工具";
+            var details = $"{info.Name} · {info.Version}（{kind}）\n包内自报作者 · {info.Author}";
+            if (current != null)
+                details += $"\n将替换已安装的「{current.Name}」{current.Version}。";
+            if (info.IsPersona)
+                details += "\n\n应用人设才会替换当前自定义提示词。停用或卸载后，已应用的提示词仍会保留。";
+            return MessageBox.Show(Window.GetWindow(this),
+                "此本地 ZIP 未经鲸鲸插件市场审核。请确认你信任文件的提供者。\n\n" + details,
+                "安装本地插件", MessageBoxButton.OKCancel, MessageBoxImage.Warning,
+                MessageBoxResult.Cancel) == MessageBoxResult.OK;
         }
 
         private async Task WithStatus(Func<Task<string>> action)

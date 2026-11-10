@@ -80,8 +80,8 @@ class ExplainUnverifiedTest(unittest.TestCase):
     def test_no_account_logged_in(self):
         bot = _FakeBot('wxid_aaa_111', [])
         why = bot._explain_unverified('没扫到微信主窗')
-        self.assertIn('没登录', why)
-        self.assertIn('没扫到其它已登录', why)
+        self.assertIn('请确认该账号已登录', why)
+        self.assertIn('没扫到微信主窗', why)
 
     def test_selected_account_logged_in_keeps_original_reason(self):
         bot = _FakeBot('wxid_aaa_111', ['wxid_aaa_111'])

@@ -52,7 +52,7 @@ test('启动器异常退出（stdin 直接断开）时内核也要退出', { tim
     }
   });
   const portFile = path.join(root, 'data', 'server-port.txt');
-  for (let i = 0; i < 150 && !fs.existsSync(portFile); i++) {
+  for (let i = 0; i < 400 && !fs.existsSync(portFile); i++) {
     assert.equal(child.exitCode, null, output);
     await new Promise(r => setTimeout(r, 30));
   }

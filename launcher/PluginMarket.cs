@@ -269,27 +269,31 @@ namespace WhaleLauncher
             Install(bytes, info);
         }
 
-        internal void InstallLocal(string file)
+        internal bool InstallLocal(string file, Func<PluginInfo, PluginInfo, bool> confirm = null)
         {
             var bytes = ReadFile(file);
-            Install(bytes, ReadPackage(bytes).Info);
+            return Install(bytes, ReadPackage(bytes).Info, confirm);
         }
 
-        private void Install(byte[] bytes, PluginInfo info)
+        private bool Install(byte[] bytes, PluginInfo info, Func<PluginInfo, PluginInfo, bool> confirm = null)
         {
             if (!Compatible(info, UpdateManifestService.LocalVersion(_baseDir)))
                 throw new InvalidDataException("这个插件需要更新的鲸鲸版本");
-            EnsureRoot();
             var target = FileFor(info.Id, ".zip");
+            PluginInfo current = null;
+            if (Directory.Exists(_root)) EnsureRoot();
             if (File.Exists(target))
             {
-                var current = ReadPackage(ReadFile(target)).Info;
+                current = ReadPackage(ReadFile(target)).Info;
                 if (current.Kind != info.Kind) throw new InvalidDataException("同一插件 ID 不能更换类型");
                 if (Version.Parse(current.Version) >= Version.Parse(info.Version))
                     throw new InvalidDataException("已安装相同或更新版本");
-                if (info.IsPersona) SetEnabled(info.Id, false);
             }
+            if (confirm != null && !confirm(info, current)) return false;
+            EnsureRoot();
+            if (current != null && info.IsPersona) SetEnabled(info.Id, false);
             WriteAtomically(target, bytes);
+            return true;
         }
 
         private void WriteAtomically(string target, byte[] bytes)

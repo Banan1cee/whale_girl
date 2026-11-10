@@ -62,3 +62,5 @@ runtime/
 /backup/
 /tests/voice-send/bin/
 /tests/voice-send/obj/
+/tests/plugin-market/bin/
+/tests/plugin-market/obj/

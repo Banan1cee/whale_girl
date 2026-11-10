@@ -29,7 +29,7 @@ test('双开认窗：候选窗口不再被 pick_window() 砍成一个', () => {
     '只有已确认的账号窗口才允许当过滤器'
   );
   // 每个候选窗口单独校验 Weixin.dll
-  assert.match(ENGINE, /_cpid = int\(win32process\.GetWindowThreadProcessId\(h\)\[1\] or 0\)/);
+  assert.match(ENGINE, /pid = int\(win32process\.GetWindowThreadProcessId\(hwnd\)\[1\] or 0\)/);
   assert.match(ENGINE, /probe\._weixin_dll_module\(_cpid\)/);
 });
 
