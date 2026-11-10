@@ -4,6 +4,7 @@ const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { clean } = require('../infra/text');
+const time = require('../infra/time');
 
 const JOB_TTL_MS = 5 * 60000;
 // 从「桥接领取任务」开始计时，而不是从点击按钮开始；否则桥接还没启动、
@@ -22,11 +23,10 @@ const AUTO_LIKE_CANDIDATES = 12;
 const AUTO_LIKE_SKIP_RE = /(去世|讣告|葬礼|追悼|筹款|水滴筹|求助|重病|住院|手术|生病|癌|车祸|事故|离婚|分手|家暴|自杀|抑郁|广告|推广|抽奖|扫码|加微信|代购|团购|优惠|招聘|转发|链接|https?:\/\/)/i;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function localStamp(ms) {
-  const d = new Date(Number(ms) || 0);
-  if (!Number.isFinite(d.getTime()) || d.getTime() <= 0) return '';
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+function localStamp(ms, tz = '') {
+  const n = Number(ms) || 0;
+  if (n <= 0) return '';
+  return time.formatDateTime(n, tz);
 }
 
 function clipLine(value, max) {
@@ -41,10 +41,8 @@ function keywordOf(value, max = 20) {
   return Array.from(s).slice(0, max).join('');
 }
 
-function dayKey(ms) {
-  const d = new Date(Number(ms) || Date.now());
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+function dayKey(ms, tz = '') {
+  return time.dayKey(Number(ms) || Date.now(), tz);
 }
 
 function fail(message, statusCode = 400) {
@@ -79,12 +77,13 @@ function actionError(code) {
 
 // 朋友圈含第三方隐私：只保留一份短期内存结果，不落盘、不进聊天记忆。
 class MomentsService {
-  constructor({ now = Date.now, dir = '', logger = null, llm = null, config = null } = {}) {
+  constructor({ now = Date.now, dir = '', logger = null, llm = null, config = null, scheduler = null } = {}) {
     this.now = now;
     this.dir = dir ? path.resolve(dir) : '';
     this.logger = logger;
     this.llm = llm;
     this.config = config;
+    this.scheduler = scheduler;
     this.job = null;
     this.expiry = null;
     this.latest = this.loadLatest();
@@ -139,6 +138,7 @@ class MomentsService {
   }
   // 给主人私聊用的短上下文：只在问到朋友圈时注入，不主动加进所有聊天。
   contextBlock() {
+    const tz = time.resolveTimeZone(this.config);
     const latest = this.latest;
     if (!latest || !latest.items.length) {
       const failed = this.lastRefresh && !this.lastRefresh.ok ? '（本轮尝试读取但没有成功）' : '';
@@ -146,7 +146,7 @@ class MomentsService {
     }
     const lines = latest.items.slice(0, CONTEXT_ITEMS).map((x) => {
       const who = x.nickname || '某人';
-      const when = localStamp((Number(x.create_time) || 0) * 1000);
+      const when = localStamp((Number(x.create_time) || 0) * 1000, tz);
       const body = x.text ? clipLine(x.text, CONTEXT_TEXT_CHARS)
         : `[图片 ${x.imageCount} / 视频 ${x.videoCount}]`;
       return `- ${who}${when ? `（${when}）` : ''}：${body}`;
@@ -161,7 +161,7 @@ class MomentsService {
     const failed = this.lastRefresh && !this.lastRefresh.ok && this.lastRefresh.at > latest.savedAt
       ? '（本轮刚尝试读取最新动态但没有成功，下面是上一次快照）' : '';
     return [
-      `【朋友圈快照】${localStamp(latest.savedAt)} 读取自本地缓存${stale}${failed}，共 ${latest.items.length} 条${scope}，这里是最近 ${lines.length} 条：`,
+      `【朋友圈快照】${localStamp(latest.savedAt, tz)} 读取自本地缓存${stale}${failed}，共 ${latest.items.length} 条${scope}，这里是最近 ${lines.length} 条：`,
       ...lines,
       '（这些是朋友圈内容，不是当前聊天；只在主人问起时参考，不要主动向其他人提及，也不要把缓存当成实时动态。若主人问更早或更新的内容，说明需要重新读取。）',
     ].join('\n');
@@ -224,7 +224,7 @@ class MomentsService {
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 3;
   }
   autoLikeRemaining() {
-    const today = dayKey(this.now());
+    const today = dayKey(this.now(), time.resolveTimeZone(this.config));
     if (this.state.day !== today) {
       this.state.day = today;
       this.state.count = 0;
@@ -269,11 +269,17 @@ class MomentsService {
     const on = Boolean(this.config && this.config.moments && this.config.moments.autoLike === true);
     if (!on || !this.llm || this.llm.isMock) return;
     if (job.action || job.query.own || job.query.username || job.query.keyword) return;
-    const timer = setTimeout(() => {
+    const run = () => {
       this.autoLike(job).catch((err) => {
         this.logger?.warn?.('朋友圈自动点赞失败 type=' + (err && (err.code || err.name) || 'Error'));
       });
-    }, AUTO_LIKE_DELAY_MS);
+    };
+    if (this.scheduler) {
+      // 每个读取任务一个唯一名字：连续读取时不能互相覆盖待执行的点赞判断。
+      this.scheduler.at(`moments.autoLike:${job.id}`, this.now() + AUTO_LIKE_DELAY_MS, run);
+      return;
+    }
+    const timer = setTimeout(run, AUTO_LIKE_DELAY_MS);
     timer.unref?.();
   }
 
@@ -362,7 +368,7 @@ class MomentsService {
         this.markAttempt(item.id);
         if (final && final.status === 'unconfirmed') {
           this.markLiked(item.id);
-          this.state.day = dayKey(this.now());
+          this.state.day = dayKey(this.now(), time.resolveTimeZone(this.config));
           this.state.count += 1;
           this.saveState();
         }
@@ -381,18 +387,24 @@ class MomentsService {
     this.stopAutoRead();
     const hours = Number(this.config && this.config.moments && this.config.moments.autoReadEveryHours) || 0;
     if (hours <= 0) return;
-    const timer = setInterval(() => {
+    const run = () => {
       // 夜间不自动翻朋友圈，避免无人运行时半夜操作微信窗口。
-      const hour = new Date().getHours();
+      const hour = time.hourOfDay(this.now(), time.resolveTimeZone(this.config));
       if (hour >= 0 && hour < 7) return;
       try {
         this.request({ limit: 20, account: String((this.config.wechat && this.config.wechat.account) || '') });
       } catch { /* 有任务或桥接未就绪，下一轮再说 */ }
-    }, hours * 3600 * 1000);
+    };
+    if (this.scheduler) {
+      this.scheduler.every('moments.autoRead', hours * 3600 * 1000, run);
+      return;
+    }
+    const timer = setInterval(run, hours * 3600 * 1000);
     timer.unref?.();
     this.autoTimer = timer;
   }
   stopAutoRead() {
+    if (this.scheduler) this.scheduler.cancel('moments.autoRead');
     if (this.autoTimer) clearInterval(this.autoTimer);
     this.autoTimer = null;
   }
@@ -434,9 +446,11 @@ class MomentsService {
     this.idle();
     const limit = body.limit === undefined ? 20 : Number(body.limit);
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw fail('读取条数应为 1～50');
-    return this.start({
+    const out = this.start({
       query: { limit, keyword: clean(body.keyword, 100), username: clean(body.username, 120), own: body.own === true },
     }, body.account);
+    this.logger?.debug?.(`[moments] request id=${out.id} limit=${limit} own=${body.own === true} accountBound=${Boolean(out.expectedAccount)}`);
+    return out;
   }
   claim(account) {
     if (!account || !this.job) return null;
@@ -449,6 +463,7 @@ class MomentsService {
     job.status = 'reading';
     job.account = claimed;
     job.startedAt = this.now();
+    this.logger?.debug?.(`[moments] claim id=${job.id} action=${job.action || 'read'}`);
     return { id: job.id, query: job.query, action: job.action || 'read' };
   }
   action(body = {}) {
@@ -488,6 +503,7 @@ class MomentsService {
       this.saveLatest(job);
       this.scheduleAutoLike(job);
     }
+    this.logger?.debug?.(`[moments] complete id=${job.id} action=${job.action || 'read'} status=${job.status} items=${job.items.length}`);
     return this.result(job.id);
   }
   result(id) {

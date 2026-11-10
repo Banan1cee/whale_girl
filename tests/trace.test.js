@@ -34,10 +34,11 @@ function readAll(dir) {
   return out;
 }
 
-test('warn/error 行首带调用点（文件:行）', async () => {
+test('warn/error/debug 行首带调用点（文件:行）', async () => {
   const dir = tmpDir('whale-log-');
   const file = path.join(dir, 'x.log');
   const logger = createLogger({ level: 'debug', fileLevel: 'debug', file });
+  logger.debug('测试调试');
   logger.warn('测试警告');
   logger.error('测试错误');
   // 文件流是异步的：等它落盘再读，别跟 writeStream 抢时间
@@ -49,6 +50,7 @@ test('warn/error 行首带调用点（文件:行）', async () => {
   logger.close();
   fs.rmSync(dir, { recursive: true, force: true });
 
+  assert.match(text, /DEBUG\s+.*trace\.test\.js:\d+/, 'debug 要带调用点');
   assert.match(text, /WARN\s+.*trace\.test\.js:\d+/, 'warn 要带调用点');
   assert.match(text, /ERROR\s+.*trace\.test\.js:\d+/, 'error 要带调用点');
   // info 不抓栈，保持安静（否则每行都多一次栈开销）

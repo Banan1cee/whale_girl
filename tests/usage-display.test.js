@@ -47,11 +47,12 @@ test('costOf：cacheHit 大于输入时被夹到输入，负数命中被夹到 0
 });
 
 test('pricingFor：谷时 / 高峰 / 未知服务商返回 null', () => {
-  // 2026-11-03 周二；2026-11-07 周六
-  const peak = new Date(2026, 10, 3, 10, 0, 0);
-  const lunch = new Date(2026, 10, 3, 13, 0, 0);
-  const offWork = new Date(2026, 10, 3, 18, 0, 0);
-  const weekend = new Date(2026, 10, 7, 10, 0, 0);
+  // DeepSeek 峰谷按北京时间算；用 UTC 写死，测试不受机器时区影响。
+  // 2026-11-03 周二；2026-11-07 周六。
+  const peak = new Date('2026-11-03T02:00:00Z');      // 北京 10:00
+  const lunch = new Date('2026-11-03T05:00:00Z');     // 北京 13:00
+  const offWork = new Date('2026-11-03T10:00:00Z');   // 北京 18:00
+  const weekend = new Date('2026-11-07T02:00:00Z');   // 周六 10:00
 
   const p = pricingFor('deepseek', 'deepseek-flash', peak);
   assert.equal(p.band, 'peak');
@@ -62,17 +63,20 @@ test('pricingFor：谷时 / 高峰 / 未知服务商返回 null', () => {
 
   for (const at of [lunch, offWork, weekend]) {
     const r = pricingFor('deepseek', 'deepseek-flash', at);
-    assert.equal(r.band, 'idle', at.toString() + ' 应该是谷时');
+    assert.equal(r.band, 'idle', at.toISOString() + ' 应该是谷时');
     assert.equal(r.price.inputMiss, 1);
     assert.equal(r.price.output, 4);
   }
 
-  // 边界：9:00 / 14:00 算高峰，12:00 / 18:00 不算
-  assert.equal(pricingFor('deepseek', 'deepseek-flash', new Date(2026, 10, 3, 9, 0)).band, 'peak');
-  assert.equal(pricingFor('deepseek', 'deepseek-flash', new Date(2026, 10, 3, 11, 59)).band, 'peak');
-  assert.equal(pricingFor('deepseek', 'deepseek-flash', new Date(2026, 10, 3, 12, 0)).band, 'idle');
-  assert.equal(pricingFor('deepseek', 'deepseek-flash', new Date(2026, 10, 3, 14, 0)).band, 'peak');
-  assert.equal(pricingFor('deepseek', 'deepseek-flash', new Date(2026, 10, 3, 18, 0)).band, 'idle');
+  // 边界：北京 9:00 / 14:00 算高峰，12:00 / 18:00 不算
+  assert.equal(pricingFor('deepseek', 'deepseek-flash', new Date('2026-11-03T01:00:00Z')).band, 'peak');
+  assert.equal(pricingFor('deepseek', 'deepseek-flash', new Date('2026-11-03T03:59:00Z')).band, 'peak');
+  assert.equal(pricingFor('deepseek', 'deepseek-flash', new Date('2026-11-03T04:00:00Z')).band, 'idle');
+  assert.equal(pricingFor('deepseek', 'deepseek-flash', new Date('2026-11-03T06:00:00Z')).band, 'peak');
+  assert.equal(pricingFor('deepseek', 'deepseek-flash', new Date('2026-11-03T10:00:00Z')).band, 'idle');
+
+  // 显式换时区：同一时刻在纽约是周一 21:00，不应该算高峰
+  assert.equal(pricingFor('deepseek', 'deepseek-flash', peak, 'America/New_York').band, 'idle');
 
   // 有价目表的两个模型：DeepSeek 官方 deepseek-flash、OpenCode Go 的 deepseek-v4.1-flash
   const v41 = pricingFor('opencode', 'deepseek-v4.1-flash', peak);

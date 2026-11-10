@@ -13,6 +13,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { clean } = require('../infra/text');
+const { describeError } = require('../infra/errors');
 
 const MAX_ITEMS = 5000;
 
@@ -70,7 +71,7 @@ class ContactsCache {
       fs.renameSync(tmp, this.file);
       return true;
     } catch (err) {
-      if (this.logger) this.logger.warn('联系人缓存写入失败：' + err.message);
+      if (this.logger) this.logger.warn('联系人缓存写入失败：' + describeError(err));
       return false;
     }
   }
