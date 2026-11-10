@@ -171,7 +171,7 @@ test('接口 /api/care/due 会说清为什么不该发', async () => {
 
 test('端到端闸门：时间窗全开时，到点该发、刚发过不该发', async () => {
   const app = await boot({
-    care: { enabled: true, windows: ['00:00-24:00'], everyMinutes: 30, jitterMinutes: 0, maxPerDay: 5 },
+    care: { enabled: true, onlyMaster: false, windows: ['00:00-24:00'], everyMinutes: 30, jitterMinutes: 0, maxPerDay: 5 },
   });
   try {
     // 从没发过 → 该发
@@ -209,7 +209,7 @@ test('设置接口保存 care 设置后，闸门立刻按新设置算', async ()
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       // 主动搭话现在默认关，这里显式打开再测「改了设置立刻生效」
-      body: JSON.stringify({ patch: { 'care.enabled': true, 'care.windows': ['00:00-24:00'], 'care.everyMinutes': 1, 'care.maxPerDay': 5 } }),
+      body: JSON.stringify({ patch: { 'care.enabled': true, 'care.onlyMaster': false, 'care.windows': ['00:00-24:00'], 'care.everyMinutes': 1, 'care.maxPerDay': 5 } }),
     });
     const saved = await save.json();
     assert.equal(saved.ok, true, '保存失败：' + JSON.stringify(saved));

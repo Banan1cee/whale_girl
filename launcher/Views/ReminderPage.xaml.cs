@@ -117,8 +117,7 @@ namespace WhaleLauncher.Views
                 if (full || !_formsLoaded) await LoadCareAsync();   // 周期刷新不碰表单，免得覆盖正在编辑的值（M30）
                 _formsLoaded = true;
                 StatusText.Text = "共 " + rows.Count + " 条 · " + DateTime.Now.ToString("HH:mm:ss") + " 刷新";
-                if (!_sup.NodeRunning) StatusText.Text += " · 本地配置，启动内核后可修改";
-                ConfigurationControls.SetReadOnly(this, !_sup.NodeRunning);
+                if (!_sup.NodeRunning) StatusText.Text += " · 可保存到本地，启动后生效";
             }
             catch (Exception ex)
             {
@@ -138,7 +137,7 @@ namespace WhaleLauncher.Views
 
         private async Task LoadDiaryAsync(bool full)
         {
-            var res = await Api.Get(_sup.Url, "/api/diary");
+            var res = await _sup.ReadConfigurationAsync("/api/diary");
             if (!res.Ok) { DiaryStatus.Text = "读取日记状态失败：" + res.Error; return; }
             if (full)
             {
@@ -149,7 +148,7 @@ namespace WhaleLauncher.Views
                 if (!TxtDiaryTime.IsKeyboardFocusWithin) TxtDiaryTime.Text = TimeField.NormalizeClockOrEmpty(res.Str("time"));
             }
             DiaryStatus.Text = res.Str("message");
-            BtnWriteDiary.IsEnabled = res.Str("status") != "running";
+            BtnWriteDiary.IsEnabled = _sup.NodeRunning && res.Str("status") != "running";
         }
 
         private async void OnSaveDiary(object sender, RoutedEventArgs e) => await SaveDiaryAsync();
@@ -278,7 +277,6 @@ namespace WhaleLauncher.Views
 
         private async Task<bool> SaveCareAsync()
         {
-            if (!_sup.NodeRunning) return false;
             if (!IntOr(TxtCareEvery, out var every)
                 || !IntOr(TxtCareJitter, out var jitter)
                 || !IntOr(TxtCareMax, out var max)
@@ -348,7 +346,6 @@ namespace WhaleLauncher.Views
 
         private async Task<bool> SaveRulesAsync()
         {
-            if (!_sup.NodeRunning) return false;
             if (!TxtMaxPerDay.TryRead(out var maxPerDay))
             {
                 RulesStatus.Text = TxtMaxPerDay.ErrorText;

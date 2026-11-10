@@ -27,7 +27,7 @@ namespace WhaleLauncher
             await _gate.WaitAsync();
             try
             {
-                return await Api.PatchConfig(_sup.Url, build());
+                return await _sup.PatchConfigurationAsync(build());
             }
             catch (Exception ex)
             {

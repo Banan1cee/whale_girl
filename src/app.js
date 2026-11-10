@@ -27,8 +27,10 @@ const probe = require('./infra/probe');
 const { Scheduler } = require('./infra/scheduler');
 const { ContactsCache } = require('./services/contacts');
 const { MomentsService } = require('./services/moments');
+const { MomentsPublisher } = require('./services/momentsPublisher');
 const { ReminderService } = require('./services/reminderService');
 const { DiaryService } = require('./services/diary');
+const { DigestService } = require('./services/digest');
 const locationProbe = require('./services/location');
 
 const VERSION = require('../package.json').version;
@@ -130,6 +132,12 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
     enqueue: (item) => runtime.reminders.enqueueNow(item),
   });
   runtime.diary.start();
+  // 消息汇总：用户在启动器点「生成」时才跑，不占后台定时器，也不自动烧 token。
+  runtime.digest = new DigestService(config, {
+    store,
+    llm: runtime.llm,
+    logger: child('digest'),
+  });
   // 记忆层用同一个模型做 episode 摘要/抽取（后台跑，不在回复热路径）
   store.llm = runtime.llm;
   // 判定链：为什么回 / 为什么不回。默认只记原因和状态；正文在 data/trace/raw 里留 24 小时，
@@ -166,6 +174,7 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   });
   runtime.bot.moments = runtime.moments;
   runtime.moments.startAutoRead();
+  runtime.momentsPublisher = new MomentsPublisher({ config, store, llm: runtime.llm });
   // 提醒：到点由桥接来取（/api/reminders/due），这里只管存和状态
   runtime.reminders = new ReminderService(config, {
     logger: child('reminder'),

@@ -75,11 +75,27 @@ namespace WhaleLauncher
     {
         public string BaseDir { get; }
         private LocalConfiguration _localConfiguration;
+        private readonly System.Threading.SemaphoreSlim _configurationWrites = new(1, 1);
         private ContactDirectory _contacts;
         /// <summary>联系人缓存 / 搜索的统一入口，各页面共用，避免重复请求和搜索规则漂移。</summary>
         public ContactDirectory Contacts => _contacts ??= new ContactDirectory(this);
         public Task<ApiResult> ReadConfigurationAsync(string path)
             => NodeRunning ? Api.Get(Url, path) : (_localConfiguration ??= new LocalConfiguration(BaseDir)).ReadAsync(path);
+
+        public async Task<ApiResult> SaveConfigurationAsync(string path, object body)
+        {
+            await _configurationWrites.WaitAsync();
+            try
+            {
+                return NodeRunning ? await Api.PostJson(Url, path, body)
+                    : await (_localConfiguration ??= new LocalConfiguration(BaseDir)).SaveAsync(path, body);
+            }
+            finally { _configurationWrites.Release(); }
+        }
+
+        public Task<ApiResult> PatchConfigurationAsync(System.Collections.Generic.IDictionary<string, object> patch)
+            => SaveConfigurationAsync("/api/config", new { patch });
+
         public string DataDir { get; }
         public string LogPath { get; }
         public event Action<LogLine> Line;
@@ -349,8 +365,13 @@ namespace WhaleLauncher
             {
                 lock (_processLock) _bridgeRestarts.Clear();
             }
-            StartNode();
-            if (await WaitForNodeAsync()) StartBridge();
+            await _configurationWrites.WaitAsync();
+            try
+            {
+                StartNode();
+                if (await WaitForNodeAsync()) StartBridge();
+            }
+            finally { _configurationWrites.Release(); }
         }
 
         public void RestartBridge()

@@ -19,6 +19,7 @@ env:
   # 统一 UTF-8：CI 机器是英文区域（cp1252），中文断言消息和文件读写都靠这个。
   PYTHONUTF8: '1'
   PYTHONIOENCODING: utf-8
+  PYTHONDONTWRITEBYTECODE: '1'
 
 jobs:
   test:
@@ -213,6 +214,13 @@ jobs:
         if: always()
         timeout-minutes: 3
         run: dotnet run --project tests/voice-send/VoiceSendChecks.csproj -c Release
+
+      - name: 插件安装与运行回归
+        if: always()
+        shell: pwsh
+        run: |
+          $node = Get-Command node -CommandType Application | Select-Object -First 1 -ExpandProperty Source
+          dotnet run --project tests/plugin-market/Checks.csproj -c Release -- "$node"
 
       - name: 启动器进程生命周期回归（模拟桥接）
         if: always()

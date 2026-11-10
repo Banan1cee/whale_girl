@@ -823,10 +823,12 @@ class BridgeContractTest(unittest.TestCase):
         fake_gui = SimpleNamespace(GetClassName=lambda h: windows[int(h)][0],
                                    GetWindowText=lambda h: windows[int(h)][1],
                                    IsIconic=lambda h: False,
+                                   IsWindowVisible=lambda h: True,
                                    GetWindowRect=lambda h: (0, 0, 900, 531))
+        fake_process = SimpleNamespace(GetWindowThreadProcessId=lambda h: (1, h + 100))
         fake_driver = SimpleNamespace(WeChatUIA=lambda: SimpleNamespace(_wechat_hwnds=lambda: list(windows)))
         env = bridge_functions({'wechat_main_window_count'}, {})
-        with patch.dict(sys.modules, {'win32gui': fake_gui,
+        with patch.dict(sys.modules, {'win32gui': fake_gui, 'win32process': fake_process,
                                       'wechatauto.uia_driver': fake_driver}):
             self.assertEqual(env['wechat_main_window_count'](), 1, '只有一个标题为「微信」的主窗')
             windows[104] = ('mmui::MainWindow', 'WeChat')

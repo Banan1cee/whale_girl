@@ -1,32 +1,30 @@
+"""Only remove positively identified hidden helper windows from account candidates."""
+import sys
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 
-from bridge_ast import load_function
-
-
-class ChooseMainWindowTests(unittest.TestCase):
-    def setUp(self):
-        self.choose = load_function('choose_main_window', {})
-
-    def test_single_window_is_returned(self):
-        self.assertEqual(self.choose([(100, 7, 800, False)]), (100, 7, 800, False))
-
-    def test_pinned_window_wins_even_if_smaller(self):
-        cands = [(100, 7, 900, False), (200, 8, 100, False)]
-        self.assertEqual(self.choose(cands, pinned=200), (200, 8, 100, False))
-
-    def test_unique_foreground_window_wins(self):
-        cands = [(100, 7, 900, False), (200, 8, 100, True), (300, 9, 500, False)]
-        self.assertEqual(self.choose(cands), (200, 8, 100, True))
-
-    def test_largest_window_is_stable_fallback(self):
-        cands = [(100, 7, 900, False), (200, 8, 1200, False), (300, 9, 500, False)]
-        self.assertEqual(self.choose(cands), (200, 8, 1200, False))
-
-    def test_dict_candidates_and_empty_input(self):
-        cands = [{'hwnd': 11, 'pid': 2, 'area': 10}, {'hwnd': 12, 'pid': 3, 'area': 20}]
-        self.assertEqual(self.choose(cands), (12, 3, 20, False))
-        self.assertIsNone(self.choose([]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from bridge.uia_boot import account_window_candidates
 
 
-if __name__ == '__main__':
-    unittest.main()
+class AccountWindowCandidatesTests(unittest.TestCase):
+    def test_hidden_small_same_process_helper_is_removed(self):
+        windows = {
+            11: (1, True, False, (0, 0, 900, 600), '微信'),
+            22: (1, False, False, (0, 0, 300, 300), '微信'),
+            33: (2, False, False, (0, 0, 300, 300), 'WeChat'),
+            44: (1, False, True, (0, 0, 300, 300), '微信'),
+            55: (1, False, False, (0, 0, 300, 300), 'WeChat Settings'),
+        }
+        gui = SimpleNamespace(
+            GetClassName=lambda hwnd: 'Qt51514QWindowIcon',
+            GetWindowText=lambda hwnd: windows[hwnd][4],
+            IsWindowVisible=lambda hwnd: windows[hwnd][1],
+            IsIconic=lambda hwnd: windows[hwnd][2],
+            GetWindowRect=lambda hwnd: windows[hwnd][3],
+            GetWindowPlacement=lambda hwnd: (0, 0, (), (), windows[hwnd][3]),
+        )
+        process = SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (0, windows[hwnd][0]))
+        self.assertEqual(account_window_candidates(gui, process, [*windows, 11]), [(11, 1), (33, 2), (44, 1)])
+        self.assertEqual(account_window_candidates(gui, process, []), [])

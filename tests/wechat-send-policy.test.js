@@ -22,7 +22,7 @@ async function fixture(t) {
   fs.mkdirSync(path.join(root, 'data'));
   fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({
     gateway: { wechat: { enabled: true, inboundToken: token } }, watchConfig: false,
-    env: { autoDetect: false }, websearch: { enabled: false }, care: { allowGroups: true, allowOthers: true },
+    env: { autoDetect: false }, websearch: { enabled: false }, care: { onlyMaster: false, allowGroups: true, allowOthers: true },
     persona: { master: { wxids: [owner] } },
   }));
   fs.writeFileSync(path.join(root, 'data', 'persona.json'), JSON.stringify({ mutedGroups: ['旧静音群'] }));

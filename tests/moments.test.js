@@ -305,6 +305,93 @@ test('朋友圈 HTTP 全链路：请求、鉴权领取、回传与读取', async
   }
 });
 
+
+test('Moments test post with an empty image folder is claimed as a text post', t => {
+  const { MomentsPublisher } = require('../src/services/momentsPublisher');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-moments-publish-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const publisher = new MomentsPublisher({ config: {
+    paths: { dataDir: root }, moments: { publishFeatureEnabled: true, publishWithImage: true },
+  } });
+  assert.equal(publisher.queueTest('account', true), '');
+  publisher.save = patch => Object.assign(publisher.state, patch);
+  const job = publisher.claim('account');
+  assert.equal(job.action, 'publish');
+  assert.equal(job.query.image, '');
+  assert.ok(job.query.text);
+});
+
+
+test('定时发表从首次在线开始计时，重启后到六小时才生成、领取和回执', async t => {
+  const { MomentsPublisher } = require('../src/services/momentsPublisher');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-moments-clock-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const hour = 3600000;
+  let now = new Date(2026, 10, 10, 8).getTime();
+  const config = { paths: { dataDir: root }, moments: {
+    publishFeatureEnabled: true, publishEnabled: true, publishAccount: 'selected',
+    publishIntervalHours: 6, publishMaxPerDay: 1,
+  } };
+  const messages = ['昨天练了好几遍吉他', '今天试着弹了新的和弦', '周末想把整首曲子练熟']
+    .map(text => ({ role: 'user', ts: now, name: '小北', text }));
+  messages.push({ role: 'user', ts: now, name: '小北', text: '我的验证码 123456' });
+  const key = 'wechat:g:fixture';
+  const store = { sessions: new Map([[key, { title: '练琴群', messages }]]), messages: () => messages };
+  const prompts = [];
+  const llm = { async complete(request) {
+    prompts.push(request.turns[0].content);
+    return JSON.stringify({ text: '一点一点练，普通的日子也有自己的节奏。', emotion: 'happy' });
+  } };
+  const create = () => new MomentsPublisher({ config, store, llm, now: () => now });
+  let publisher = create();
+  assert.equal(publisher.claim('other'), null);
+  assert.equal(publisher.status().nextCheckAt, null);
+  assert.equal(publisher.claim('selected'), null);
+  assert.equal(publisher.status().nextCheckAt, now + 6 * hour);
+  assert.equal(prompts.length, 0);
+
+  now += 6 * hour - 1;
+  publisher = create();
+  assert.equal(publisher.claim('selected'), null);
+  assert.equal(prompts.length, 0);
+  now++;
+  assert.equal(publisher.claim('selected'), null, '本轮先生成，下一次轮询再领');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /吉他/);
+  assert.doesNotMatch(prompts[0], /验证码|123456/);
+  assert.equal(publisher.claim('other'), null);
+  const job = publisher.claim('selected');
+  assert.equal(job.action, 'publish');
+  assert.equal(job.query.image, '');
+  assert.equal(publisher.allowed(job.id, 'selected'), true);
+  assert.equal(publisher.claim('selected'), null, '同一任务不能重复领取');
+
+  assert.equal(publisher.complete({ id: job.id, account: 'selected', publishStatus: 'failed' }), true);
+  assert.equal(publisher.dailyCount(), 0);
+  assert.equal(publisher.state.lastSource, undefined, '明确未发表可以在下轮重新使用素材');
+  now += 6 * hour;
+  assert.equal(publisher.claim('selected'), null);
+  await new Promise(resolve => setImmediate(resolve));
+  const retry = publisher.claim('selected');
+  assert.equal(retry.action, 'publish');
+  assert.equal(publisher.complete({ id: retry.id, account: 'selected', publishStatus: 'unconfirmed' }), true);
+  assert.equal(publisher.dailyCount(), 1);
+  assert.ok(publisher.state.lastSource > 0);
+  assert.equal(publisher.allowed(retry.id, 'selected'), false);
+});
+
+test('无效的朋友圈发表状态显示为暂停而不是让查询报错', t => {
+  const { MomentsPublisher } = require('../src/services/momentsPublisher');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-moments-state-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'moments'));
+  fs.writeFileSync(path.join(root, 'moments', 'publish-state.json'), 'null');
+  const publisher = new MomentsPublisher({ config: { paths: { dataDir: root } } });
+  assert.equal(publisher.status().status, 'state_error');
+  assert.equal(publisher.claim('selected'), null);
+});
+
 test('朋友圈：定时读取接到统一调度，改设置后重排', async () => {
   let now = Date.UTC(2026, 0, 1, 4, 0); // 上海 12:00，避开 0–7 点夜间跳过
   let seq = 0;

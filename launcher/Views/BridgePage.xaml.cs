@@ -242,7 +242,6 @@ namespace WhaleLauncher.Views
             _lastRefresh = DateTime.Now;
 
             var s = await _sup.ProbeAsync();
-            ConfigurationControls.SetReadOnly(this, !s.NodeUp);
             UpdatePerm(s);
             if (!_configLoaded) await LoadConfigAsync();
             if ((DateTime.Now - _lastAccounts).TotalSeconds < 15) return;

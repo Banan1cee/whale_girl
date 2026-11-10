@@ -11,6 +11,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
         <!-- 页头与其它页面保持一致：H1 在左，说明在右 -->
@@ -23,8 +24,40 @@
         <TextBlock Grid.Row="1" Style="{StaticResource Small}" Margin="0,8,0,14" TextWrapping="Wrap"
                    Text="读取使用当前桥接账号的本地缓存，未浏览过的动态可能不在缓存里；互动会短暂操作微信窗口，执行后请在微信中确认。" />
 
+        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="18,14" Margin="0,0,0,12">
+            <StackPanel>
+                <TextBlock Text="自动发表朋友圈（OCR 实验）" Style="{StaticResource H2}" />
+                <TextBlock Text="发表会操作当前微信窗口。定时发表会参考近期微信群聊和私聊，包含与主人的聊天。"
+                           Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,10" />
+                <WrapPanel>
+                    <CheckBox x:Name="ChkPublishFeature" Content="启用朋友圈发表（总开关）" Margin="0,0,16,0" />
+                    <CheckBox x:Name="ChkPublish" Content="定时自动发表" Margin="0,0,16,0" />
+                    <CheckBox x:Name="ChkPublishImage" Content="按情绪配一张图片" />
+                </WrapPanel>
+                <WrapPanel Margin="0,8,0,0">
+                    <TextBlock Text="每隔（小时）" Style="{StaticResource Label}" VerticalAlignment="Center" />
+                    <TextBox x:Name="TxtPublishInterval" Width="56" Text="6" Margin="6,0,16,0" />
+                    <TextBlock Text="每天最多" Style="{StaticResource Label}" VerticalAlignment="Center" />
+                    <TextBox x:Name="TxtPublishLimit" Width="56" Text="1" Margin="6,0,16,0" />
+                    <Button x:Name="BtnSavePublish" Content="保存自动发表设置" Style="{StaticResource Primary}" />
+                    <Button x:Name="BtnTestPublish" Content="立即测试发表一条" Style="{StaticResource Ghost}" Margin="8,0,0,0" />
+                    <Button x:Name="BtnRefreshPublish" Content="刷新状态" Style="{StaticResource Ghost}" Margin="8,0,0,0" />
+                </WrapPanel>
+                <TextBlock Text="测试会真实发表固定文案。开启配图时会从「开心」选一张，测试计入每日上限。"
+                           Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                <WrapPanel Margin="0,8,0,0">
+                    <Button x:Name="BtnPublishHappy" Content="开心图片目录" Style="{StaticResource Ghost}" Margin="0,0,6,0" />
+                    <Button x:Name="BtnPublishCute" Content="傲娇图片目录" Style="{StaticResource Ghost}" Margin="0,0,6,0" />
+                    <Button x:Name="BtnPublishAngry" Content="炸毛图片目录" Style="{StaticResource Ghost}" />
+                </WrapPanel>
+                <TextBlock Text="配图只收 PNG / JPG，单张最多 8 MB。找不到对应图片或微信界面无法核验时，会跳过这条。"
+                           Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,7,0,0" />
+                <TextBlock x:Name="PublishStatus" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,5,0,0" />
+            </StackPanel>
+        </Border>
+
         <!-- 上半：左侧读取，右侧互动；和表情包/提醒页一样用两张卡片分栏 -->
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="*" />
@@ -118,7 +151,7 @@
         </Grid>
 
         <!-- 下半：读取结果 -->
-        <Border Grid.Row="3" Style="{StaticResource Card}" Margin="0,12,0,0" Height="280">
+        <Border Grid.Row="4" Style="{StaticResource Card}" Margin="0,12,0,0" Height="280">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />

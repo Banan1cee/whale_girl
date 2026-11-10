@@ -17,6 +17,7 @@ const modules = [
   require('./stickers'),
   require('./reminders'),
   require('./diary'),
+  require('./digest'),
   require('./budget'),
   require('./memory'),
   require('./moments'),

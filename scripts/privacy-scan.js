@@ -105,11 +105,13 @@ const BINARY_RULES = [
   },
   {
     // 启动器内置的强制更新清单地址指向本仓库自己（公开），不算泄露；
-    // 同时保留更名前的官方路径，兼容历史版本；其它 raw 链接照报。
+    // 兼容更名前的官方路径，并允许公开的官方插件市场目录；其它 raw 链接照报。
     name: '源码托管链接（二进制）',
     re: /raw\.githubusercontent\.com\/[A-Za-z0-9._-]+\//gi,
     keep: (m, index, text) =>
-      !['raw.githubusercontent.com/banan1cee/whale_girl/', 'raw.githubusercontent.com/banan1cee/whale_gril/']
+      !['raw.githubusercontent.com/banan1cee/whale_girl/', 'raw.githubusercontent.com/banan1cee/whale_gril/',
+        'raw.githubusercontent.com/banan1cee/whale-girl-plugins/main/index.json',
+        'raw.githubusercontent.com/banan1cee/whale-girl-plugins/main/index-v2.json']
         .some(prefix => text.slice(index).toLowerCase().startsWith(prefix)),
   },
 ];

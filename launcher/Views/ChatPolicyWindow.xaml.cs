@@ -31,8 +31,7 @@ namespace WhaleLauncher.Views
                 _muted.SetValue(Property(Property(config, "group"), "mutedGroups"));
                 _whitelist.SetValue(Property(Property(config, "care"), "whitelist"));
                 WhitelistOnly.IsChecked = Property(Property(config, "wechat"), "whitelistOnly").ValueKind == JsonValueKind.True;
-                SetEditable(_sup.NodeRunning);
-                if (!_sup.NodeRunning) SetStatus("启动内核后可以编辑名单。");
+                SetEditable(true);
                 await _muted.ReloadAsync();
                 await _whitelist.ReloadAsync();
             };
@@ -44,14 +43,14 @@ namespace WhaleLauncher.Views
             SetEditable(false);
             try
             {
-                var res = await Api.PatchConfig(_sup.Url, new Dictionary<string, object>
+                var res = await _sup.PatchConfigurationAsync( new Dictionary<string, object>
                 {
                     ["wechat.whitelistOnly"] = enabled
                 });
                 if (!res.Ok) WhitelistOnly.IsChecked = !enabled;
                 SetStatus(res.Ok ? "已保存并生效" : "保存失败：" + Api.Message(res));
             }
-            finally { SetEditable(_sup.NodeRunning); }
+            finally { SetEditable(true); }
         }
 
         private void SetEditable(bool enabled)

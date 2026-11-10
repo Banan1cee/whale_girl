@@ -190,7 +190,12 @@ function cleanCareText(raw) {
   return t.slice(0, 40).trim();
 }
 
-/** 白名单默认值：主人 + 文件传输助手（自己给自己发，永远安全） */
+function onlyMasterEnabled(config) {
+  const care = config?.care || {};
+  return typeof care.onlyMaster === 'boolean' ? care.onlyMaster : care.allowOthers !== true;
+}
+
+/** 默认找已绑定的主人；关闭「只找主人」时才保留文件传输助手。 */
 function defaultWhitelist(config) {
   const out = [];
   const masters = ((config && config.persona && config.persona.master) || {}).wxids || [];
@@ -198,24 +203,23 @@ function defaultWhitelist(config) {
     const wxid = String(id || '').trim();
     if (wxid) out.push(wxid);
   }
-  out.push('filehelper');
+  if (!onlyMasterEnabled(config)) out.push('filehelper');
   return [...new Set(out)];
 }
 
 /**
  * 当前生效的白名单（wxid 列表）。
- * 没配就退回默认值（主人 + 文件传输助手），而不是空数组 —— 空数组会让这个功能静默失效。
+ * 没配时使用默认名单；只找主人且没有绑定对象时，名单可以为空。
  */
 function careWhitelist(config = {}) {
   const list = configuredWhitelist(config);
   return list.length || config.wechat?.whitelistOnly === true ? list : defaultWhitelist(config);
 }
 
-/** 是不是主人（wxid 命中，或 filehelper 视为主人自己的会话） */
+/** 按绑定 wxid 或联系人昵称确认主人。 */
 function isMasterTarget(config, wxid, contacts = null) {
   const id = String(wxid || '').trim();
-  if (!id) return false;
-  if (id === 'filehelper') return true;
+  if (!id || id.toLowerCase() === 'filehelper') return false;
   const masters = ((config && config.persona && config.persona.master) || {}).wxids || [];
   // 主人 wxid 可能填的是账号目录名（多 4 位哈希），按归一化后的 id 比。
   if (masters.some((m) => String(m || '').trim() && sameWxid(m, id))) return true;
@@ -228,7 +232,7 @@ function isMasterTarget(config, wxid, contacts = null) {
 
 /**
  * 白名单是否被显式配置过（空数组 = 没配，走默认值）。
- * 默认值只带主人 wxid + filehelper；wxid 没填时靠这里再用昵称从联系人缓存里补。
+ * wxid 没填时可用主人昵称从联系人缓存里补。
  */
 function hasExplicitWhitelist(config) {
   return configuredWhitelist(config).length > 0;
@@ -255,7 +259,7 @@ function resolveByName(contacts, names) {
  */
 function careTargets(config, { contacts = null, onlyMaster, allowOthers, allowGroups } = {}) {
   const cfg = (config && config.care) || {};
-  const master = onlyMaster === undefined ? !(cfg.allowOthers === true) : Boolean(onlyMaster);
+  const master = onlyMaster === undefined ? onlyMasterEnabled(config) : Boolean(onlyMaster);
   const others = allowOthers === undefined ? cfg.allowOthers === true : Boolean(allowOthers);
   const groups = allowGroups === undefined ? cfg.allowGroups === true : Boolean(allowGroups);
   let whitelist = careWhitelist(config);
@@ -268,19 +272,14 @@ function careTargets(config, { contacts = null, onlyMaster, allowOthers, allowGr
   const out = [];
   for (const raw of whitelist) {
     const wxid = String(raw).trim();
-    const isFile = wxid === 'filehelper';
+    const isFile = wxid.toLowerCase() === 'filehelper';
     const isGroup = !isFile && /@chatroom$/i.test(wxid);
     const hit = contacts && typeof contacts.get === 'function' ? contacts.get(wxid) : null;
     const name = isFile ? '文件传输助手' : (hit ? hit.label || hit.name : wxid);
     if (sendDenial(config, { id: wxid, names: [name, hit?.name, hit?.remark], isGroup })) continue;
-    const masterHit = isFile || isMasterTarget(config, wxid, contacts);
-    if (isGroup) {
-      if (!groups) continue;
-    } else if (!masterHit) {
-      // 非主人的私聊：只有开了「允许主动找别人」才发
-      if (master && !others) continue;
-      if (!master && !others) continue;
-    }
+    const masterHit = !isGroup && isMasterTarget(config, wxid, contacts);
+    if (master && !masterHit) continue;
+    if (isGroup ? !groups : !isFile && !masterHit && !others) continue;
     out.push({ wxid, name, isGroup, kind: isGroup ? 'group' : (masterHit ? 'master' : 'other') });
   }
   // 排序：真主人 → 文件传输助手 → 别人的私聊 → 群（主人优先，别先发给自己）
@@ -313,7 +312,7 @@ function careDecide(config, { contacts = null, lastSentTs = 0, sentToday = 0, ac
       reason: whitelist.length ? 'whitelist_filtered' : 'whitelist_empty',
       target: null,
       whitelist,
-      onlyMaster: !(cfg.allowOthers === true),
+      onlyMaster: onlyMasterEnabled(config),
       allowOthers: cfg.allowOthers === true,
       allowGroups: cfg.allowGroups === true,
     };

@@ -175,9 +175,9 @@ namespace WhaleLauncher.Views
             SldDemand.Value = Math.Round(Math.Clamp(view.DemandChance, 0, 1) * 100);
             ChkEnsure.IsChecked = view.EnsureSend;
             TxtDemandValue.Text = Math.Round(SldDemand.Value) + "%";
-            var frequencyEnabled = view.Online && view.Enabled;
+            var frequencyEnabled = view.Enabled;
             SldDemand.IsEnabled = ChkEnsure.IsEnabled = BtnSaveDemand.IsEnabled = frequencyEnabled;
-            BtnImportPresets.IsEnabled = frequencyEnabled && !_importingPresets
+            BtnImportPresets.IsEnabled = view.Online && frequencyEnabled && !_importingPresets
                 && view.MaintPhase != "running" && view.MaintPhase != "pending";
             DemandHint.Opacity = frequencyEnabled ? 1 : 0.55;
 
@@ -271,8 +271,8 @@ namespace WhaleLauncher.Views
 
         private async void OnSaveStickerSettings(object sender, RoutedEventArgs e)
         {
-            if (_loading || !_sup.NodeRunning || TxtDir.Text.Trim() == _inventory.Str("configuredDir")) return;
-            var res = await Api.PatchConfig(_sup.Url, new Dictionary<string, object>
+            if (_loading || TxtDir.Text.Trim() == _inventory.Str("configuredDir")) return;
+            var res = await _sup.PatchConfigurationAsync( new Dictionary<string, object>
             {
                 ["sticker.dir"] = TxtDir.Text.Trim()
             });
@@ -294,10 +294,10 @@ namespace WhaleLauncher.Views
 
         private async void OnSaveDemand(object sender, RoutedEventArgs e)
         {
-            if (_loading || !_sup.NodeRunning) return;
+            if (_loading) return;
             var chance = Math.Round(Math.Clamp(SldDemand.Value / 100.0, 0, 1), 2);
             var ensure = ChkEnsure.IsChecked == true;
-            var res = await Api.PatchConfig(_sup.Url, new Dictionary<string, object>
+            var res = await _sup.PatchConfigurationAsync( new Dictionary<string, object>
             {
                 ["sticker.demandChance"] = chance,
                 ["sticker.ensureSend"] = ensure
@@ -614,9 +614,9 @@ namespace WhaleLauncher.Views
         // ── 动作 ────────────────────────────────────────────────
         private async void OnToggleEnabled(object sender, RoutedEventArgs e)
         {
-            if (_loading || !_sup.NodeRunning) return;
+            if (_loading) return;
             var on = ChkEnabled.IsChecked == true;
-            var res = await Api.PostJson(_sup.Url, "/api/features", new { key = "stickers", value = on });
+            var res = await _sup.SaveConfigurationAsync("/api/features", new { key = "stickers", value = on });
             StatusText.Text = res.Ok ? $"表情包已{(on ? "开启" : "关闭")}" : "保存失败：" + Api.Message(res);
             _loaded = false;
             _nextRefresh = DateTime.MinValue;
@@ -652,18 +652,18 @@ namespace WhaleLauncher.Views
 
         private async void OnToggleCollect(object sender, RoutedEventArgs e)
         {
-            if (!_sup.NodeRunning || _savingCollect) return;
+            if (_savingCollect) return;
             var enabled = ChkCollect.IsChecked == true;
             _savingCollect = true;
             ChkCollect.IsEnabled = false;
             try
             {
-                var res = await Api.PatchConfig(_sup.Url, new Dictionary<string, object>
+                var res = await _sup.PatchConfigurationAsync( new Dictionary<string, object>
                 {
                     ["sticker.collectReceived"] = enabled
                 });
                 if (!res.Ok) ChkCollect.IsChecked = !enabled;
-                CollectStatus.Text = res.Ok ? "已保存，桥接将在约 5 秒内应用" : "保存失败：" + Api.Message(res);
+                CollectStatus.Text = res.Ok ? "已保存，桥接运行后将读取设置" : "保存失败：" + Api.Message(res);
             }
             catch (Exception ex)
             {
@@ -673,7 +673,7 @@ namespace WhaleLauncher.Views
             finally
             {
                 _savingCollect = false;
-                ChkCollect.IsEnabled = _sup.NodeRunning;
+                ChkCollect.IsEnabled = true;
             }
         }
 

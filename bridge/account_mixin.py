@@ -28,38 +28,6 @@ def same_account(a, b):
     return _ACCOUNT_HASH_RE.sub('', sa).lower() == _ACCOUNT_HASH_RE.sub('', sb).lower()
 
 
-def choose_main_window(cands, pinned=0):
-    """从同一账号的多个主窗里挑一个。
-
-    微信多开或独立聊天窗会让同一账号出现多个标题为「微信」的顶层窗口。
-    它们都持有同一份账号数据库，发消息不会串号；这里只需要稳定地挑一个，
-    避免以前直接报「多个主窗口」把 UIA 永久卡在等待状态。
-
-    优先级：上次钉住的窗口 > 唯一的前台窗口 > 面积最大 > hwnd 最小。
-    """
-    items = []
-    for c in cands or ():
-        if isinstance(c, dict):
-            items.append((int(c.get('hwnd') or 0), int(c.get('pid') or 0),
-                          int(c.get('area') or 0), bool(c.get('foreground'))))
-        else:
-            items.append((int(c[0]), int(c[1]) if len(c) > 1 else 0,
-                          int(c[2]) if len(c) > 2 else 0,
-                          bool(c[3]) if len(c) > 3 else False))
-    items = [it for it in items if it[0]]
-    if not items:
-        return None
-    if pinned:
-        for it in items:
-            if it[0] == int(pinned):
-                return it
-    foreground = [it for it in items if it[3]]
-    if len(foreground) == 1:
-        return foreground[0]
-    items.sort(key=lambda it: (-it[2], it[0]))
-    return items[0]
-
-
 class AccountMixin:
 
     def _open_db_with_timeout(self, timeout=90):
@@ -301,8 +269,8 @@ class AccountMixin:
             return ('已选账号 %s 没登录；当前微信登录的是 %s。请登录这个号，'
                     '或在「微信桥接 → 账号」里改用当前登录的号' % (
                         self._account_label(selected), '、'.join(others)))
-        return '已选账号 %s 没登录，也没扫到其它已登录的微信账号（请先在微信里登录）' % (
-            self._account_label(selected))
+        return '未能确认已选账号 %s 的登录窗口。请确认该账号已登录并打开主窗口（%s）' % (
+            self._account_label(selected), fallback)
 
 
     def _probe_wechat_windows(self):
@@ -333,28 +301,19 @@ class AccountMixin:
         unknown = []
         matched = []
         ownership = {}
-        for h in dict.fromkeys(map(int, hwnds)):
+        for h, _cpid in G.uia_boot.account_window_candidates(win32gui, win32process, hwnds):
             if pinned and h != pinned:
                 continue
-            if not G.uia_boot.is_wechat_account_window(win32gui, h):
-                continue
             try:
-                _cpid = int(win32process.GetWindowThreadProcessId(h)[1] or 0)
                 if not _cpid or not probe._weixin_dll_module(_cpid):
                     continue
             except Exception:
                 continue
-            try:
-                _l, _t, _r, _b = win32gui.GetWindowRect(h)
-                _area = max(0, _r - _l) * max(0, _b - _t)
-                _fg = win32gui.GetForegroundWindow() == h
-            except Exception:
-                _area, _fg = 0, False
             if selected:
                 if _cpid not in ownership:
                     ownership[_cpid] = self._window_account_matches(_cpid)
                 if ownership[_cpid] is True:
-                    matched.append((h, _cpid, _area, _fg))
+                    matched.append((h, _cpid))
                 if ownership[_cpid] is not None:
                     continue
             unknown.append(h)
@@ -477,22 +436,15 @@ class AccountMixin:
                 pass
         probe, cands, matched = self._probe_wechat_windows()
         if matched:
-            h, pid = matched[0][0], matched[0][1]
+            h, pid = matched[0]
             if len(matched) > 1:
-                pairs = [(m[0], m[1]) for m in matched]
-                resolved, evidence = G.uia_boot.resolve_account_windows(pairs)
+                resolved, evidence = G.uia_boot.resolve_account_windows(matched)
                 G.log('账号窗口：同账号候选 %d，择窗=%r，证据=%r' % (len(matched), resolved, evidence))
                 if resolved is not None:
                     h, pid = resolved
                 else:
-                    # 窗口级证据分不出来时，只允许同一进程的多个顶层窗做兜底；
-                    # 不同进程仍可能对应不同账号，宁可继续等待，不能串号。
-                    pids = {m[1] for m in matched}
-                    fallback = choose_main_window(matched, pinned=int(self.ACCOUNT.get('hwnd') or 0)) if len(pids) == 1 else None
-                    if fallback is None:
-                        self.ACCOUNT.update(verified=False, hwnd=0, why='所选账号有多个候选窗口，未能确认聊天主窗')
-                        return False
-                    h, pid = fallback[0], fallback[1]
+                    self.ACCOUNT.update(verified=False, hwnd=0, why='所选账号有多个候选窗口，未能确认聊天主窗')
+                    return False
             self.ACCOUNT.update(hwnd=h, pid=pid, verified=True, label='hwnd=%s' % h, why='微信进程持有该账号数据库')
             self.rebind_uia(h)
             G.log('账号窗口：按数据库归属锁定 hwnd=%s' % h)
@@ -666,12 +618,13 @@ class AccountMixin:
         """
         try:
             import win32gui
+            import win32process
             from wechatauto.uia_driver import WeChatUIA
             probe = WeChatUIA()
             hwnds = list(probe._wechat_hwnds() or ())
         except Exception:
             return None
-        return sum(G.uia_boot.is_wechat_account_window(win32gui, h) for h in set(map(int, hwnds)))
+        return len(G.uia_boot.account_window_candidates(win32gui, win32process, hwnds))
 
     def sticker_account_evidence_allowed(self):
         explicit_pin = bool(G.WINDOW_HWND and int(G.WINDOW_HWND) == int(self.ACCOUNT.get('hwnd') or 0))

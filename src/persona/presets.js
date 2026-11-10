@@ -8,10 +8,34 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ID_RE = /^[a-z0-9][a-z0-9._-]{0,60}$/i;
+const MARKET_FILE = /^([a-z][a-z0-9-]{0,47})\.persona\.json$/;
+const MARKET_ID_PREFIX = 'market-';
 
 function dirFor(config) {
   const root = (config && config.paths && config.paths.root) || path.resolve(__dirname, '..', '..');
   return path.join(root, 'assets', 'personas');
+}
+
+function marketDir(config) {
+  return path.join(config?.paths?.dataDir || path.join(path.dirname(path.dirname(dirFor(config))), 'data'), 'plugins');
+}
+
+function marketPreset(config, name) {
+  const match = MARKET_FILE.exec(name);
+  if (!match) return null;
+  try {
+    const dir = marketDir(config);
+    if (!fs.lstatSync(dir).isDirectory() || !fs.lstatSync(path.dirname(dir)).isDirectory()) return null;
+    const file = path.join(dir, name);
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size > 192 * 1024) return null;
+    const data = readFile(file);
+    if (typeof data?.customPrompt !== 'string' || !data.customPrompt.trim() || data.customPrompt.length > 24000 ||
+        typeof data.name !== 'string' || !data.name.trim() || data.name.length > 80) return null;
+    return { id: MARKET_ID_PREFIX + match[1], file: name, name: data.name,
+      version: String(data.version || '').slice(0, 40), description: String(data.description || '').slice(0, 600),
+      customPrompt: data.customPrompt };
+  } catch { return null; }
 }
 
 /** 列出可用的预设文件（按 order 从小到大；没写 order 的排在后面，再按版本号） */
@@ -20,9 +44,7 @@ function list(config) {
   let names = [];
   try {
     names = fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith('.json'));
-  } catch {
-    return [];
-  }
+  } catch { /* 市场预设独立于内置目录 */ }
   const out = [];
   for (const name of names) {
     const data = readFile(path.join(dir, name));
@@ -42,6 +64,15 @@ function list(config) {
       chars: String(data.customPrompt || '').length,
     });
   }
+  try {
+    for (const name of fs.readdirSync(marketDir(config))) {
+      const item = marketPreset(config, name);
+      if (item && !out.some(preset => preset.id === item.id)) {
+        const { customPrompt, ...metadata } = item;
+        out.push({ ...metadata, order: 1e9, chars: customPrompt.length });
+      }
+    }
+  } catch { /* 插件目录通常在首次安装前不存在 */ }
   return out.sort((a, b) => a.order - b.order
     || a.version.localeCompare(b.version, 'en', { numeric: true })
     || a.id.localeCompare(b.id));
@@ -62,6 +93,8 @@ function load(config, id) {
   if (!key || !ID_RE.test(key)) return null;
   for (const item of list(config)) {
     if (item.id === key || item.file === key || item.file === key + '.json') {
+      if (item.id.startsWith(MARKET_ID_PREFIX) && MARKET_FILE.test(item.file))
+        return marketPreset(config, item.file);
       const data = readFile(path.join(dirFor(config), item.file));
       if (data) return { ...data, id: item.id, file: item.file };
     }

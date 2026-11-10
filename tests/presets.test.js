@@ -93,3 +93,21 @@ test('仓库自带的 persona-standard 是通用版：不含微信号、群昵�
     assert.ok(String(preset.customPrompt || '').length > 100, item.id + ' 应该有完整提示词');
   }
 });
+
+test('启用的人设插件加入预设，禁用后消失且不影响内置预设', (t) => {
+  const root = makeRoot();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  writePreset(root, 'standard.json', { id: 'standard', name: '内置', customPrompt: '内置正文' });
+  const plugins = path.join(root, 'data', 'plugins');
+  fs.mkdirSync(plugins, { recursive: true });
+  const config = { paths: { root } };
+  const marker = path.join(plugins, 'gentle-chat.persona.json');
+  assert.deepEqual(presets.list(config).map(x => x.id), ['standard']);
+  fs.writeFileSync(marker, JSON.stringify({
+    id: 'standard', name: '温和聊天', version: '1.0.0', customPrompt: '温和自然', personaName: '不可覆盖'
+  }));
+  assert.deepEqual(presets.list(config).map(x => x.id), ['standard', 'market-gentle-chat']);
+  assert.deepEqual(presets.toPatch(presets.load(config, 'market-gentle-chat')), { customPrompt: '温和自然' });
+  fs.unlinkSync(marker);
+  assert.equal(presets.load(config, 'market-gentle-chat'), null);
+});

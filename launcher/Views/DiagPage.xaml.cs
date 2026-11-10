@@ -883,9 +883,11 @@ namespace WhaleLauncher.Views
                 var sp = Path.Combine(_sup.BaseDir, "runtime", "python", "Lib", "site-packages");
                 if (!Directory.Exists(sp)) return "没有 site-packages（运行时可能没装好）";
                 var dirs = Directory.GetDirectories(sp);
-                var key = new[] { "win32gui", "win32api", "uiautomation", "wechatauto" }
+                var win32 = new[] { "win32gui", "win32api" }
+                    .Select(n => n + (File.Exists(Path.Combine(sp, "win32", n + ".pyd")) ? "✓" : "✗"));
+                var packages = new[] { "uiautomation", "wechatauto" }
                     .Select(n => n + (Directory.Exists(Path.Combine(sp, n)) ? "✓" : "✗"));
-                return dirs.Length + " 个包；关键依赖 " + string.Join(" ", key);
+                return dirs.Length + " 个包目录；关键依赖文件 " + string.Join(" ", win32.Concat(packages));
             }
             catch (Exception ex) { return "读取失败：" + ex.Message; }
         }
@@ -1044,7 +1046,13 @@ namespace WhaleLauncher.Views
                 foreach (var kv in obj.ToList())
                 {
                     // 密钥类：整个值换掉；隐私类（人名/别名/名单）：数组逐项换，保留条数
-                    if (SecretKey.IsMatch(kv.Key))
+                    if (kv.Key.Equals("keys", StringComparison.OrdinalIgnoreCase) && kv.Value is JsonObject providers)
+                    {
+                        // 供应商键名是 deepseek、minimax 等，不能靠字段名识别密钥。
+                        foreach (var provider in providers.ToList())
+                            providers[provider.Key] = "***";
+                    }
+                    else if (SecretKey.IsMatch(kv.Key))
                     {
                         if (kv.Value is JsonObject || kv.Value is JsonArray) RedactNode(kv.Value);
                         else obj[kv.Key] = "***";

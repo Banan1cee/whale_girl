@@ -78,6 +78,14 @@ const REGISTRY = [
     default: true,
   },
   {
+    key: 'momentsPublish',
+    path: 'moments.publishFeatureEnabled',
+    label: '朋友圈发表总开关（实验性）',
+    desc: '默认关闭。开启后可以测试发表，也可以单独设置定时发表。',
+    default: false,
+    experimental: true,
+  },
+  {
     key: 'careOnlyMaster',
     path: 'care.onlyMaster',
     label: '主动搭话只找主人',

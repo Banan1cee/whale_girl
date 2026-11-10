@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -17,6 +18,7 @@ public sealed partial class MomentsPage : UserControl
     readonly RuntimeSupervisor sup;
     bool reading;
     bool loadingSettings;
+    bool publishSettingsLoaded;
     int viewGeneration;
 
     public MomentsPage(RuntimeSupervisor supervisor)
@@ -29,14 +31,19 @@ public sealed partial class MomentsPage : UserControl
         BtnRead.Click += async (_, _) => await ReadAsync();
         BtnInteract.Click += async (_, _) => await InteractAsync();
         BtnDraft.Click += (_, _) => CopyDraft();
-        Loaded += async (_, _) => {
-            await LoadSettingsAsync();
-            await LoadLatestAsync();
-        };
+        BtnSavePublish.Click += async (_, _) => await SavePublishAsync();
+        BtnTestPublish.Click += async (_, _) => await TestPublishAsync();
+        BtnRefreshPublish.Click += async (_, _) => await LoadPublishAsync();
+        BtnPublishHappy.Click += async (_, _) => await OpenPublishFolderAsync("happy");
+        BtnPublishCute.Click += async (_, _) => await OpenPublishFolderAsync("cute");
+        BtnPublishAngry.Click += async (_, _) => await OpenPublishFolderAsync("angry");
+        Loaded += async (_, _) => await Task.WhenAll(LoadSettingsAsync(), LoadLatestAsync(), LoadPublishAsync());
 
         // 离开页面即清空第三方正文与输入，并让旧请求停止回填。
         Unloaded += (_, _) => {
             viewGeneration++;
+            publishSettingsLoaded = false;
+            BtnRefreshPublish.IsEnabled = true;
             TxtOutput.Clear();
             StatusText.Text = "";
             TxtKeyword.Clear(); TxtUsername.Clear(); TxtPublisher.Clear();
@@ -135,7 +142,7 @@ public sealed partial class MomentsPage : UserControl
         loadingSettings = true;
         try
         {
-            var res = await Api.Get(sup.Url, "/api/moments/settings");
+            var res = await sup.ReadConfigurationAsync("/api/moments/settings");
             if (!res.Ok) { AutoStatus.Text = "读不到自动策略设置：" + res.Error; return; }
             ChkAutoLike.IsChecked = res.Bool("autoLike");
             var hours = (int)res.Long("autoReadEveryHours");
@@ -170,7 +177,7 @@ public sealed partial class MomentsPage : UserControl
         if (loadingSettings) return;
         try
         {
-            var res = await Api.PostJson(sup.Url, "/api/moments/settings", new {
+            var res = await sup.SaveConfigurationAsync("/api/moments/settings", new {
                 autoLike = ChkAutoLike.IsChecked == true,
                 autoReadEveryHours = SelectedAutoReadHours(),
             });
@@ -244,6 +251,130 @@ public sealed partial class MomentsPage : UserControl
     }
 
     // 双开时把任务钉到当前桥接账号，避免另一个账号的桥接把任务领走。
+    async Task LoadPublishAsync()
+    {
+        if (!BtnRefreshPublish.IsEnabled) return;
+        BtnRefreshPublish.IsEnabled = false;
+        var generation = viewGeneration;
+        try
+        {
+            var res = await sup.ReadConfigurationAsync("/api/moments/publish-settings");
+            if (generation != viewGeneration) return;
+            if (!res.Ok)
+            {
+                PublishStatus.Text = "读取发表设置失败：" + Api.Message(res);
+                return;
+            }
+            // 刷新任务状态时保留用户尚未保存的输入。
+            if (!publishSettingsLoaded)
+            {
+                ChkPublishFeature.IsChecked = res.Bool("featureEnabled");
+                ChkPublish.IsChecked = res.Bool("enabled");
+                ChkPublishImage.IsChecked = res.Bool("withImage");
+                TxtPublishInterval.Text = res.Long("interval").ToString();
+                TxtPublishLimit.Text = res.Long("maxPerDay").ToString();
+                publishSettingsLoaded = true;
+            }
+            ShowPublishStatus(res);
+        }
+        finally { if (generation == viewGeneration) BtnRefreshPublish.IsEnabled = true; }
+    }
+
+    async Task SavePublishAsync()
+    {
+        if (!int.TryParse(TxtPublishInterval.Text, out var interval) || interval < 1 || interval > 24
+            || !int.TryParse(TxtPublishLimit.Text, out var maxPerDay) || maxPerDay < 1 || maxPerDay > 5)
+        {
+            PublishStatus.Text = "间隔须为 1～24 小时，每日上限须为 1～5 条。";
+            return;
+        }
+        var featureEnabled = ChkPublishFeature.IsChecked == true;
+        var enabled = featureEnabled && ChkPublish.IsChecked == true;
+        BtnSavePublish.IsEnabled = false;
+        try
+        {
+            var res = await sup.SaveConfigurationAsync("/api/moments/publish-settings",
+                new { featureEnabled, enabled, withImage = ChkPublishImage.IsChecked == true, interval, maxPerDay });
+            if (!res.Ok) { PublishStatus.Text = Api.Message(res); return; }
+            publishSettingsLoaded = true;
+            ChkPublish.IsChecked = res.Bool("enabled");
+            ShowPublishStatus(res);
+        }
+        finally { BtnSavePublish.IsEnabled = true; }
+    }
+
+    async Task TestPublishAsync()
+    {
+        if (ChkPublishFeature.IsChecked != true)
+        {
+            PublishStatus.Text = "请先开启并保存朋友圈发表总开关。";
+            return;
+        }
+        var generation = viewGeneration;
+        BtnTestPublish.IsEnabled = false;
+        try
+        {
+            var res = await Api.PostJson(sup.Url, "/api/moments/publish-test",
+                new { confirm = true, withImage = ChkPublishImage.IsChecked == true });
+            if (generation != viewGeneration) return;
+            if (!res.Ok) { PublishStatus.Text = Api.Message(res); return; }
+            ShowPublishStatus(res);
+            for (var i = 0; i < 60; i++)
+            {
+                await Task.Delay(2000);
+                if (generation != viewGeneration) return;
+                res = await Api.Get(sup.Url, "/api/moments/publish-settings");
+                if (generation != viewGeneration) return;
+                if (!res.Ok) { PublishStatus.Text = Api.Message(res); return; }
+                ShowPublishStatus(res);
+                if (res.Str("status") is not ("queued" or "sending")) return;
+            }
+            PublishStatus.Text = "测试结果待确认，请到微信核对。";
+        }
+        catch (Exception ex) { if (generation == viewGeneration) PublishStatus.Text = Api.FriendlyError(ex); }
+        finally { BtnTestPublish.IsEnabled = true; }
+    }
+
+    void ShowPublishStatus(ApiResult res)
+    {
+        var reason = res.Str("error");
+        var detail = res.Str("status") switch
+        {
+            "generating" => "正在生成文案",
+            "queued" => "已排队，等待微信",
+            "sending" => "正在识别微信界面",
+            "confirmed" => "已在自己的朋友圈缓存中确认",
+            "unconfirmed" => "已尝试发表，需在微信确认",
+            "no_material" => "没有足够的新素材，已跳过",
+            "filtered" => "文案重复或未通过检查，已跳过",
+            "missing_image" => $"「{reason}」目录没有可用图片，已跳过",
+            "state_error" => "发布状态文件无法读取，已暂停",
+            "failed" => reason switch {
+                "timeline_not_recognized" => "未识别到朋友圈页面",
+                "text_menu_not_recognized" => "未识别到发表文字菜单",
+                "image_dialog_not_recognized" => "未识别到微信选图窗口",
+                "image_preview_not_recognized" => "无法确认图片预览，已停止",
+                "editor_not_empty" => "无法确认空白编辑框，已停止",
+                "draft_not_verified" => "无法确认待发文案，已停止",
+                _ => "本次未完成，请查看桥接诊断",
+            },
+            _ => "等待下一次检查",
+        };
+        var preview = res.Str("preview");
+        var mode = res.Bool("enabled") ? "定时发表已开" : "定时发表已关";
+        PublishStatus.Text = res.Bool("featureEnabled")
+            ? $"{mode} · 今日占用 {res.Long("count")} 条额度 · {detail}" + (preview.Length > 0 ? Environment.NewLine + preview : "")
+            : "朋友圈发表总开关已关闭";
+    }
+
+    async Task OpenPublishFolderAsync(string emotion)
+    {
+        var res = await Api.PostJson(sup.Url, "/api/moments/publish-folder", new { emotion });
+        if (!res.Ok) { PublishStatus.Text = Api.Message(res); return; }
+        try { using var folder = Process.Start(new ProcessStartInfo(res.Str("dir")) { UseShellExecute = true }); }
+        catch (Exception ex) { PublishStatus.Text = Api.FriendlyError(ex); }
+    }
+
     async Task<string> AccountAsync()
     {
         try { var snapshot = await sup.ProbeAsync(); return snapshot.BrAccount ?? ""; }
