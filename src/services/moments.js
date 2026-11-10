@@ -498,6 +498,10 @@ class MomentsService {
         text: cleanText(x.text, 6000), create_time: Number.isFinite(Number(x.create_time)) ? Number(x.create_time) : 0,
         imageCount: Math.max(0, Math.min(100, Number(x.imageCount) || 0)),
         videoCount: Math.max(0, Math.min(100, Number(x.videoCount) || 0)),
+        // 自动点赞要跳过自己的动态和已经点过赞的动态；这两个布尔值不能在这一层丢掉，
+        // 否则 autoLike() 里的 !own / !likedByMe 永远看到 undefined。
+        own: x.own === true,
+        likedByMe: x.likedByMe === true,
       }));
       job.status = 'done';
       this.saveLatest(job);

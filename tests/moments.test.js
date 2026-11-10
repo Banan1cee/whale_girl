@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { MomentsService } = require('../src/services/moments');
+const { MomentsPublisher } = require('../src/services/momentsPublisher');
 const { Scheduler } = require('../src/infra/scheduler');
 const { momentsIntent, Bot } = require('../src/pipeline/chat');
 const { Store } = require('../src/memory/store');
@@ -443,4 +444,73 @@ test('朋友圈：定时读取接到统一调度，改设置后重排', async ()
   service.stopAutoRead();
   await clock.advance(12 * 3600 * 1000);
   assert.equal(calls, 2);
+});
+
+test('朋友圈：读取结果保留 own/likedByMe，自动点赞不会点自己或已点过赞的', () => {
+  const service = new MomentsService({
+    config: { moments: { autoLike: true } },
+    now: () => 1000,
+  });
+  const job = service.request({ limit: 20, account: 'acct' });
+  assert.equal(service.claim('acct').id, job.id);
+  const done = service.complete({
+    id: job.id,
+    account: 'acct',
+    items: [
+      { id: 'own', nickname: 'Me', text: '我自己的动态', own: true, likedByMe: false },
+      { id: 'liked', nickname: 'Peer', text: '已经点过赞的动态', own: false, likedByMe: true },
+      { id: 'ok', nickname: 'Peer2', text: '今天天气真好', own: false, likedByMe: false },
+    ],
+  });
+  assert.equal(done.items.find((x) => x.id === 'own').own, true);
+  assert.equal(done.items.find((x) => x.id === 'liked').likedByMe, true);
+  assert.equal(done.items.find((x) => x.id === 'ok').own, false);
+  assert.equal(done.items.find((x) => x.id === 'ok').likedByMe, false);
+});
+
+test('朋友圈发表：每日额度按 env.timezone 的日期重置', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-moments-tz-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 80 }));
+  const now = Date.UTC(2026, 0, 1, 4, 0); // 上海 12:00；纽约仍是 2025-12-31 23:00
+  const publisher = new MomentsPublisher({
+    config: {
+      paths: { dataDir: root },
+      env: { timezone: 'America/New_York' },
+      moments: {
+        publishFeatureEnabled: true, publishEnabled: true, publishAccount: 'acct',
+        publishIntervalHours: 6, publishMaxPerDay: 1, publishWithImage: false,
+      },
+    },
+    now: () => now,
+  });
+  assert.equal(publisher.queueTest('acct', false), '');
+  const job = publisher.claim('acct');
+  assert.equal(publisher.state.day, '2025-12-31');
+  assert.equal(publisher.dailyCount(), 1);
+  assert.equal(publisher.complete({ id: job.id, account: 'acct', publishStatus: 'failed' }), true);
+  assert.equal(publisher.dailyCount(), 0);
+});
+
+test('朋友圈发表：领取后从领取时刻计时，排队久也不会误判过期', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-moments-ttl-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 80 }));
+  let now = 1_000_000;
+  const publisher = new MomentsPublisher({
+    config: {
+      paths: { dataDir: root },
+      moments: {
+        publishFeatureEnabled: true, publishEnabled: true, publishAccount: 'acct',
+        publishIntervalHours: 6, publishMaxPerDay: 1, publishWithImage: false,
+      },
+    },
+    now: () => now,
+  });
+  assert.equal(publisher.queueTest('acct', false), '');
+  now += 110_000; // 排队 110 秒，仍可领取
+  const job = publisher.claim('acct');
+  assert.ok(job, '排队 110 秒后仍应能领取');
+  now += 60_000; // 领取后 60 秒，应仍然有效
+  assert.equal(publisher.allowed(job.id, 'acct'), true);
+  now += 70_000; // 领取后 130 秒，超过任务时限
+  assert.equal(publisher.allowed(job.id, 'acct'), false);
 });
