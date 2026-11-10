@@ -50,7 +50,7 @@
                     <Button x:Name="BtnPublishCute" Content="傲娇图片目录" Style="{StaticResource Ghost}" Margin="0,0,6,0" />
                     <Button x:Name="BtnPublishAngry" Content="炸毛图片目录" Style="{StaticResource Ghost}" />
                 </WrapPanel>
-                <TextBlock Text="配图只收 PNG / JPG，单张最多 8 MB。找不到对应图片或微信界面无法核验时，会跳过这条。"
+                <TextBlock Text="配图只收 PNG / JPG，单张最多 8 MB。找不到对应图片时按纯文字发表；微信界面无法核验时跳过这条。"
                            Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,7,0,0" />
                 <TextBlock x:Name="PublishStatus" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,5,0,0" />
             </StackPanel>

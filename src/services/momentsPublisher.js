@@ -4,17 +4,13 @@ const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { EMOTIONS, listImages } = require('../adapters/stickers');
+const time = require('../infra/time');
 
 const HOUR = 3600000;
 const SENSITIVE = /https?:\/\/|www\.|wxid_|@|\d{6,}|电话|住址|身份证|密钥|密码|验证码|订单号|银行卡|患者|病历|转账|私聊/i;
 
 function digest(value) {
   return createHash('sha256').update(value).digest('hex');
-}
-
-function dayOf(ms) {
-  const d = new Date(ms);
-  return [d.getFullYear(), d.getMonth() + 1, d.getDate()].join('-');
 }
 
 function normalized(text) {
@@ -72,6 +68,12 @@ class MomentsPublisher {
     };
   }
 
+  // 和日记/朋友圈读取用同一个时区口径：每日上限按 env.timezone 的午夜重置，
+  // 不再按运行桥接的机器本地时间。
+  today(ms = this.now()) {
+    return time.dayKey(ms, time.resolveTimeZone(this.config));
+  }
+
   reconcile() {
     const settings = this.settings();
     const key = JSON.stringify(settings);
@@ -115,7 +117,11 @@ class MomentsPublisher {
   }
 
   expire() {
-    if (this.job && this.now() - this.job.at > 120000) this.job = null;
+    if (!this.job) return;
+    // 队列里放太久可以丢；一旦桥接领取，就从领取时刻重新计时，
+    // 否则排队 100 秒后领取，OCR 发表只剩 20 秒，会被误判取消。
+    const at = Number(this.job.claimedAt || this.job.at) || 0;
+    if (this.now() - at > 120000) this.job = null;
   }
 
   async generate(settings, account, revision) {
@@ -167,7 +173,7 @@ class MomentsPublisher {
   }
 
   dailyCount() {
-    return this.state.day === dayOf(this.now()) ? Number(this.state.count) || 0 : 0;
+    return this.state.day === this.today() ? Number(this.state.count) || 0 : 0;
   }
 
   queueTest(account, withImage) {
@@ -190,7 +196,7 @@ class MomentsPublisher {
     if (this.stateError || !settings.featureEnabled || !account) return null;
     if (this.job?.status === 'queued') {
       if (this.job.account !== account) return null;
-      const today = dayOf(this.now());
+      const today = this.today();
       const count = this.dailyCount();
       if (count >= settings.maxPerDay) { this.job = null; return null; }
       // 保留上次的素材游标。只有桥接明确没点过「发表」，才允许下轮重新选这批素材。
@@ -204,6 +210,7 @@ class MomentsPublisher {
       });
       this.job.day = today;
       this.job.status = 'sending';
+      this.job.claimedAt = this.now();
       return { id: this.job.id, action: 'publish', query: this.job.query };
     }
     if (!settings.enabled || settings.account !== account || this.job || this.generating) return null;

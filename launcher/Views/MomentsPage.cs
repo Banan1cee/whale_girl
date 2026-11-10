@@ -347,7 +347,6 @@ public sealed partial class MomentsPage : UserControl
             "unconfirmed" => "已尝试发表，需在微信确认",
             "no_material" => "没有足够的新素材，已跳过",
             "filtered" => "文案重复或未通过检查，已跳过",
-            "missing_image" => $"「{reason}」目录没有可用图片，已跳过",
             "state_error" => "发布状态文件无法读取，已暂停",
             "failed" => reason switch {
                 "timeline_not_recognized" => "未识别到朋友圈页面",
