@@ -3,7 +3,7 @@
 
 现场（本机 2026-10-23 实测，pid 29208）
 --------------------------------------
-wechatauto-replica 1.2.7.0 / 1.2.9 认微信主窗都要同时满足四个条件，本机一个都不满足：
+wechatauto-replica 1.2.7.0 / 1.2.9 / 1.2.10 认微信主窗都要同时满足四个条件，本机一个都不满足：
 
     _wechat_hwnds()   # uia_driver.py:355
       if win32gui.IsWindowVisible(h) and _title_is_main(title):      # ①要可见 ②标题含「微信/Weixin」
@@ -38,6 +38,9 @@ os._exit(2) 重启，循环往复。
 3) `_weixin_dll_module()`：加 4 次重试（模块枚举本身会抖，日志里反复出现
    「扫到 1 个微信窗口，但每个都定位不到 Weixin.dll 模块」）。
 4) 兜底：一个窗口都扫不到时，按「标题含微信/Weixin」再扫一轮。
+5) 自动找主窗时排除朋友圈 / 设置 / 图片 / 视频 / 弹窗等**页面窗口**；新增
+   `ensure_chat_page()`，从通讯录 / 收藏 / 发现 / 朋友圈 / 搜索 / 设置回到聊天页，
+   必要时用 Esc 关掉挡住导航栏的浮层。
 
 用法
 ----
@@ -77,6 +80,18 @@ _HWND_AREA_MIN = 300 * 250
 # `Qt51514QWindowIcon`；gate 生效的版本是 `mmui::MainWindow`。未知版本会掉到下面
 # 的 Weixin.dll 探测兜底。
 _WECHAT_CLS_HINTS = ("qt51514", "mmui::", "wechat")
+# 朋友圈 / 设置 / 图片 / 视频 / 弹窗都是**页面窗口**，不是主聊天窗。
+# 它们同样属于微信进程、同样有 mmui 子树；如果被当成主窗，后面所有
+# 会话列表/输入框操作都会失败。自动发现时必须排除。
+_AUX_WINDOW_PREFIXES = (
+    "mmui::sns", "mmui::settings", "mmui::image", "mmui::video",
+    "mmui::dialog", "mmui::popup",
+)
+
+
+def _is_aux_window(cls: str) -> bool:
+    return (cls or "").lower().startswith(_AUX_WINDOW_PREFIXES)
+
 # 兜底探测的规模上限：最多看 50 个大窗口、最多拍 8 个进程快照，避免每次枚举都几十秒。
 _MAX_PROBE_WINDOWS = 50
 _MAX_DLL_PROBES = 8
@@ -165,8 +180,17 @@ def apply(verbose: bool = True) -> bool:
     # 才去拍进程快照查 Weixin.dll——那步慢（受限令牌下还常失败），不能放在热路径上。
     def _looks_wechat(cls: str, title: str) -> bool:
         c = (cls or "").lower()
+        if _is_aux_window(cls):
+            return False
+        # 独立聊天窗 / 聊天记录窗只能由调用方显式绑定，不能当主窗自动发现；
+        # 否则主窗缩在托盘时会把某个聊天窗认成主窗。
+        if cls in tuple(getattr(ud, "CHAT_WINDOW_CLASSES", ())) + \
+                tuple(getattr(ud, "HISTORY_WINDOW_CLASSES", ())):
+            return False
         if c.startswith(_WECHAT_CLS_HINTS) or "weixin" in c or "wechat" in c:
             return True
+        # 其他 mmui 顶层窗（未知页面/新版独立窗）只按主窗标题认，避免把
+        # 朋友圈、设置、图片查看器当成主聊天窗。
         return bool(title_is_main(title or ""))
 
     def _wechat_hwnds(self, diag=None):
@@ -229,6 +253,9 @@ def apply(verbose: bool = True) -> bool:
         # 兜底：类名/标题都不像微信（换了 UI 框架的版本）→ 按 pid 查 Weixin.dll
         probed, cache, out = 0, {}, []
         for area, h, _c, _t, _ok in sorted(rows, reverse=True)[:_MAX_PROBE_WINDOWS]:
+            if _is_aux_window(_c):
+                # 朋友圈/设置/图片窗口也有 Weixin.dll，不能当主窗兜底。
+                continue
             try:
                 pid = self._pid_from_hwnd(h)
             except Exception:                    # noqa: BLE001
@@ -283,8 +310,10 @@ def apply(verbose: bool = True) -> bool:
 
     def _find_main(self):
         # ⓪ 钉住窗口优先：多账号时这一条是「发出去的到底是谁」的唯一保证。
-        #    钉住的窗口没了（被关掉/自更新）也不换窗口，返回 None 让上层明确失败。
-        pin = int(getattr(self, "_pinned_hwnd", 0) or _PIN["hwnd"] or 0)
+        #    1.2.10 起 WeChatUIA(hwnd=...) 会显式绑定窗口（self.hwnd）；显式绑定
+        #    比进程级 pin 更具体，先认它，再退回 uia_compat.pin_window() 的全局钉窗。
+        bound = int(getattr(self, "hwnd", 0) or 0)
+        pin = bound or int(getattr(self, "_pinned_hwnd", 0) or _PIN["hwnd"] or 0)
         if pin:
             try:
                 import win32gui
@@ -292,6 +321,10 @@ def apply(verbose: bool = True) -> bool:
             except Exception:                    # noqa: BLE001
                 alive = False
             if not alive:
+                if bound:
+                    # 显式绑定的是临时窗口（聊天记录/独立聊天窗），它没了就明确失败，
+                    # 不能顺手换成全局 pin 的主窗。
+                    return None
                 log.warning("uia_compat: 钉住的微信窗口 hwnd=%s 已经不在了"
                             "（微信重启/换号了），本次不发；由桥接重新认账号再钉", pin)
                 self._pinned_hwnd = 0
@@ -304,10 +337,18 @@ def apply(verbose: bool = True) -> bool:
             if c is None:
                 return None
             try:
-                if (c.ClassName or "") in main_classes:
-                    return c
+                cls = c.ClassName or ""
             except Exception:                    # noqa: BLE001
-                pass
+                cls = ""
+            # 1.2.10 的显式绑定允许独立聊天窗 / 聊天记录窗；自动发现仍只认主窗。
+            accepted = set(main_classes)
+            if bound:
+                accepted.update(getattr(ud, "CHAT_WINDOW_CLASSES", ()))
+                accepted.update(getattr(ud, "HISTORY_WINDOW_CLASSES", ()))
+            if cls in accepted:
+                return c
+            if "login" in cls.lower():
+                return None
             try:
                 if self._mmui_present(pin, timeout=0.5):
                     return c
@@ -541,6 +582,66 @@ def apply(verbose: bool = True) -> bool:
                 return 2
         return None
 
+    # ④ 页面归位：从通讯录 / 收藏 / 发现 / 朋友圈 / 搜索 / 设置回到聊天页 ------
+    def _chat_page_visible(self):
+        """当前是不是聊天页：输入框、会话列表、搜索框任一在树里即可。"""
+        try:
+            if self._chat_input() is not None:
+                return True
+        except Exception:                        # noqa: BLE001
+            pass
+        try:
+            return bool(self._chat_page_ready(self._win))
+        except Exception:                        # noqa: BLE001
+            return False
+
+    def ensure_chat_page(self, settle: float = 0.45, max_clicks: int = 2) -> bool:
+        """把主窗带回聊天页；停在微信任意页面都能用。
+
+        先走上游 ``back_to_chat_tab``（通讯录/收藏/发现/朋友圈都由它点「微信」栏），
+        失败时再用 Esc 关掉搜索框、设置页、大图/菜单这类挡住导航栏的浮层。
+        Esc 只在确认微信已经抢到前台时才发，避免把按键送到别的程序。
+        """
+        if self._win is None and not self.ensure_window():
+            return False
+        try:
+            cls = str(getattr(self._win, "ClassName", "") or "")
+            if cls in tuple(getattr(ud, "CHAT_WINDOW_CLASSES", ())) + \
+                    tuple(getattr(ud, "HISTORY_WINDOW_CLASSES", ())):
+                return True
+        except Exception:                        # noqa: BLE001
+            pass
+        if self._chat_page_visible():
+            return True
+        try:
+            if self.back_to_chat_tab(settle=settle, max_clicks=max_clicks) \
+                    and self._chat_page_visible():
+                return True
+        except Exception as exc:                 # noqa: BLE001
+            log.debug("uia_compat: back_to_chat_tab 失败：%r", exc)
+
+        for _ in range(2):
+            try:
+                import win32gui
+                self._activate(self._win)
+                if int(win32gui.GetForegroundWindow()) != int(self._win.NativeWindowHandle):
+                    break
+                import uiautomation as _auto
+                _auto.SendKeys("{Esc}")
+                time.sleep(0.35)
+            except Exception:                    # noqa: BLE001
+                break
+            if self._chat_page_visible():
+                return True
+            try:
+                if self.back_to_chat_tab(settle=settle, max_clicks=max_clicks) \
+                        and self._chat_page_visible():
+                    return True
+            except Exception:                    # noqa: BLE001
+                pass
+        log.warning("uia_compat: 没能从当前页面回到聊天页，后续会话操作可能失败")
+        return False
+
     def open_chat(self, keyword, index=None, section=None, retries=2):  # noqa: D401
         """keyword 可以是名字，也可以是一串候选名（list/tuple）。"""
         if not self.ensure_window():
@@ -559,10 +660,16 @@ def apply(verbose: bool = True) -> bool:
         aliases = searchable
         target = aliases[0]
         try:
-            if not self.back_to_chat_tab():
+            cur = self.current_chat()
+            if cur and any(cur == a for a in aliases):
+                return True
+        except Exception:                        # noqa: BLE001
+            pass
+        try:
+            if not self.ensure_chat_page():
                 log.warning("uia_compat: 没能确认回到聊天页，仍然在会话列表里找")
         except Exception as e:                   # noqa: BLE001
-            log.warning("uia_compat: back_to_chat_tab 异常：%s", e)
+            log.warning("uia_compat: ensure_chat_page 异常：%s", e)
         try:
             self._force_foreground(self._win)
         except Exception:                        # noqa: BLE001
@@ -646,6 +753,7 @@ def apply(verbose: bool = True) -> bool:
     cls._has_chat_ui = _has_chat_ui
     cls._session_list = _session_list
     cls._session_rows_of = _session_rows_of
+    cls.ensure_chat_page = ensure_chat_page
     # 方便单独测「这句话该点哪一行」，不碰任何窗口
     cls._row_score = staticmethod(_row_score)
     cls._name_tokens = staticmethod(_name_tokens)

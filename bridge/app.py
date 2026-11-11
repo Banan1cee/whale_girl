@@ -100,6 +100,21 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
                     G.boot('uia_compat 已按文件路径加载并生效')
                 except Exception:
                     G.boot('uia_compat 未生效: %r' % (_compat_err,))
+            G.boot('应用 moment_compat 补丁')
+            try:
+                import moment_compat
+                _moment_ok = moment_compat.install()
+                G.boot('moment_compat.install() = %r' % (_moment_ok,))
+                if not _moment_ok:
+                    G.log_warn('朋友圈兼容层未生效：wechatauto 可能升级改了结构')
+            except Exception as _moment_err:
+                G.boot('moment_compat 未生效: %r' % (_moment_err,))
+                G.log_warn('朋友圈兼容层加载失败 type=%s' % type(_moment_err).__name__)
+            try:
+                import wechatauto as _wechatauto_pkg
+                G.log('wechatauto 版本：%s' % getattr(_wechatauto_pkg, '__version__', '?'))
+            except Exception:
+                pass
             G.boot('import 完成')
         except Exception as e:
             G.boot('导入失败: %r' % (e,))
@@ -113,7 +128,8 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
                 G.log('    装完重启电脑，再回启动器「微信 · 桥接」页点「重启桥接」。')
                 G.log('    提示：Windows Server 默认不装 MFC，家庭版/专业版一般已有。')
             else:
-                G.log('请先运行："%LOCALAPPDATA%\\Programs\\Python\\Python312\\python.exe" -m pip install wechatauto-replica requests')
+                G.log('源码运行：先装 bridge/requirements.txt 里的依赖，并把 vendor/wechatauto 加进 PYTHONPATH；')
+                G.log('用启动器时它会自动从 runtime/python 加载，不用手动装包。')
             return 1
         self.cfg = G.read_config()
         self.token = G.bridge_config.wechat_token(self.cfg)

@@ -291,7 +291,7 @@
         <Style TargetType="ComboBox" x:Key="DarkCombo">
             <Setter Property="Foreground" Value="{DynamicResource Text}" />
             <Setter Property="FontSize" Value="12" />
-            <Setter Property="Height" Value="30" />
+            <Setter Property="Height" Value="32" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboItem}" />
             <Setter Property="Template">
@@ -351,17 +351,18 @@
         </Style>
         <Style TargetType="ComboBox" BasedOn="{StaticResource DarkCombo}" />
 
-        <!-- 输入框 -->
+        <!-- 输入框：所有 TextBox / NumberField / TimeField 共用这一套模板 -->
         <Style TargetType="TextBox">
             <Setter Property="Background" Value="{DynamicResource FieldBg}" />
             <Setter Property="Foreground" Value="{DynamicResource Text}" />
             <Setter Property="CaretBrush" Value="{DynamicResource Text}" />
             <Setter Property="BorderBrush" Value="{DynamicResource FieldBorder}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="9,5" />
-            <Setter Property="MinHeight" Value="30" />
+            <!-- 上下留 4：聚焦时边框会加粗 2px，仍要给文字留够行高，否则会削顶/削底 -->
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="MinHeight" Value="32" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
-            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontSize" Value="12.5" />
             <Setter Property="SelectionBrush" Value="{DynamicResource Accent}" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="Template">
@@ -369,8 +370,12 @@
                     <ControlTemplate TargetType="TextBox">
                         <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
-                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
-                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                            <!-- 不要给 PART_ContentHost 绑 VerticalAlignment：那会让内容按
+                                 文本行高缩成一条，聚焦边框一加粗就把字裁掉。 -->
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                                          Margin="{TemplateBinding Padding}"
+                                          HorizontalScrollBarVisibility="{TemplateBinding HorizontalScrollBarVisibility}"
+                                          VerticalScrollBarVisibility="{TemplateBinding VerticalScrollBarVisibility}" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -400,17 +405,20 @@
             <Setter Property="CaretBrush" Value="{DynamicResource Text}" />
             <Setter Property="BorderBrush" Value="{DynamicResource FieldBorder}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="9,5" />
-            <Setter Property="MinHeight" Value="30" />
-            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="FontSize" Value="12.5" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="PasswordBox">
                         <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
-                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
-                                          VerticalAlignment="Center" />
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                                          Margin="{TemplateBinding Padding}"
+                                          HorizontalScrollBarVisibility="Hidden"
+                                          VerticalScrollBarVisibility="Hidden" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">

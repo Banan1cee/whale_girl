@@ -46,7 +46,7 @@ namespace WhaleLauncher
             catch (AbandonedMutexException) { _ownsInstance = true; }
             if (!_ownsInstance)
             {
-                MessageBox.Show("鲸鲸已经在运行，请切回已有窗口。", "鲸鲸");
+                AppDialog.Show(null, "鲸鲸已经在运行，请切回已有窗口。", "鲸鲸", danger: true);
                 Shutdown();
                 return;
             }

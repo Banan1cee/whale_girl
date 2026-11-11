@@ -165,7 +165,13 @@
                 <!-- 主动搭话：和提醒同一页，省得在两处来回对规则 -->
                 <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
                     <StackPanel>
-                        <TextBlock Text="主动搭话" Style="{StaticResource H2}" Margin="0,0,0,6" />
+                        <DockPanel LastChildFill="False" Margin="0,0,0,6">
+                            <TextBlock Text="主动搭话" Style="{StaticResource H2}" DockPanel.Dock="Left"
+                                       VerticalAlignment="Center" />
+                            <Button x:Name="BtnCarePolicy" Content="黑白名单" Style="{StaticResource Ghost}"
+                                    DockPanel.Dock="Right" Click="OnOpenCarePolicy"
+                                    ToolTip="独立管理主动搭话白名单和全局发言黑名单" />
+                        </DockPanel>
                         <TextBlock Text="没聊的时候她自己来一句。判定只在服务端做一次：时间窗、频率、每日上限、白名单、下面三个开关都算在内。"
                                    Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,0,0,10" />
 
