@@ -1,0 +1,61 @@
+name: codeql
+
+# CodeQL 高级扫描：Security 面板里的代码扫描结果来自这里。
+# 只在 main 上跑，PR 合并前先扫一遍，避免把高危写法带进主线。
+# 语言矩阵按仓库实际代码选：launcher（C#）、bridge/scripts（Python）、
+# 内核与插件（JS）、以及 .github/workflows 本身。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 工作日 UTC 12:00（北京时间 20:00）做一次全量扫描
+    - cron: '0 12 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: 扫描 / ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # 上传扫描结果到 Security 面板需要 security-events: write
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 全部用无构建模式：解释型语言本来就不需要编译，
+          # C# 走 build-mode: none 可以避开启动器对 net10.0-windows 的依赖
+          - language: actions
+            build-mode: none
+          - language: csharp
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
