@@ -44,6 +44,7 @@ const envInfo = require('../services/envInfo');
 const { LIMITS } = require('../memory/constants');
 const tokenCalibration = require('../memory/calibration');
 const budgetPricing = require('../services/budget');
+const { MessagePlugins } = require('../services/messagePlugins');
 const SEPARATE_REPLY_RE = /(?:^|[，。！？\s])(?:请|麻烦|能不能|可以|记得)?\s*你?\s*(?:要|给我)?\s*(?:分[条段开](?:来)?(?:发(?:送)?|回(?:复)?|说)|(?:一条一条|一句一句)地?[发回]|每(?:条|句|段)(?:话)?单独[发回]|分(?:成)?[两二三四五六七八九十\d]+[条段](?:气泡|发|回)?)(?:一下)?(?=$|[\s，。！？?!吧嘛哦啊,])/;
 
 // 主人私聊问起朋友圈时才注入快照；普通聊天和群聊都不带，避免第三方内容乱入。
@@ -155,6 +156,7 @@ class Bot {
     this.globalReplyTimes = [];
     this.lastBudget = null;
     this.lastUsage = null;
+    this.messagePlugins = new MessagePlugins({ dataDir: config.paths?.dataDir || path.join(process.cwd(), 'data'), logger });
   }
 
   /** 按 provider|model 分别学习估算倍数；默认落在 data/calibration.json。 */
@@ -383,6 +385,16 @@ class Bot {
    */
   async decide(rawMsg) {
     const decision = await this._decide(rawMsg);
+    if (decision.action === 'reply') {
+      const output = await this.messagePlugins.run('chat.prompt', this.pluginContext(decision, { system: decision.system }));
+      decision.system = output.system;
+      const generated = await this.messagePlugins.run('chat.generate', this.pluginContext(decision));
+      if (generated.text !== undefined) {
+        decision.canned = generated.text;
+        decision.text = generated.text;
+        if (!generated.text.trim()) { decision.action = 'ignore'; decision.reason = 'plugin_empty'; }
+      }
+    }
     // 判定链：为什么回 / 为什么不回。只记原因、长度和状态，正文交给 trace 的短期原文副本
     // （默认不进导出包）。追踪本身出错也绝不能影响回消息。
     try {
@@ -622,7 +634,15 @@ class Bot {
 
     // 4) 群聊里没被叫到就先不说话
     // （triggerResult 以前叫 trigger，把模块导入 trigger 遮蔽了（L12），改个名）
+    const pluginInput = this.pluginContext({ key, msg });
+    await this.messagePlugins.run('chat.received', pluginInput);
+    const pluginTrigger = await this.messagePlugins.run('chat.pre_reply', pluginInput);
+    if (pluginTrigger.action === 'skip') return { action: 'ignore', reason: 'plugin_skip', key, msg, atMe };
     const triggerResult = this.computeTrigger({ msg, atMe, clean, isGroup, state, nowMs, isMaster });
+    if (pluginTrigger.action === 'wake' && !['silent', 'minute_cap', 'no_text'].includes(triggerResult.reason)) {
+      triggerResult.wake = true;
+      triggerResult.reason = 'plugin';
+    }
     // 群里被人骂了但没 @：只有「骂的是她」才唤醒她反击。
     // 以前这里只看「文本带脏字」+「她刚说过话/在接话窗口」就唤醒 —— 于是群里任何人
     // 抱怨一句「这天气真垃圾」「股票跌了滚蛋吧」，她都会跳出来，还绕过静默期。
@@ -1066,6 +1086,26 @@ class Bot {
 
   computeTrigger(args) {
     return trigger.computeTrigger(this, args);
+  }
+
+  pluginContext(decision, extra = {}) {
+    const msg = decision.msg || {};
+    let history = [];
+    try {
+      history = this.store.messages(decision.key, 12).map(m => ({ role: m.role, text: m.text, uid: m.uid,
+        targetId: m.replyToUserId, at: m.ts }));
+    } catch { /* 记忆不可读时沿用宿主只回当前消息的降级路径。 */ }
+    const last = history.filter(m => m.role === 'assistant').at(-1);
+    return { key: decision.key, now: this.now().getTime(),
+      message: { platform: msg.platform, chatId: msg.chatId, chatType: msg.chatType,
+        senderId: msg.senderId, text: msg.text, atMe: Boolean(msg.atMe), replyToBot: Boolean(msg.replyToBot),
+        mentionedNames: msg.mentionedNames || [] }, history, lastBot: last, ...extra };
+  }
+
+  async transformPluginReply(decision, text) {
+    const output = await this.messagePlugins.run('chat.reply', this.pluginContext(decision, { text }));
+    const beforeSend = await this.messagePlugins.run('chat.before_send', this.pluginContext(decision, { text: output.text }));
+    return beforeSend.text;
   }
 
   unlockAdminSpell(msg, key, state, spell, nowMs) {
@@ -1794,6 +1834,7 @@ class Bot {
       this.store.appendMessage(decision.key, {
         role: 'assistant',
         name: this.config.persona.name,
+        replyToUserId: msg.senderId,
         text: storeText,
         ts: this.now().getTime(),
         error,
@@ -2029,6 +2070,7 @@ class Bot {
     }
     text = String(text == null ? '' : text).trim();
     this.recordUsage(decision, this.usageSince(usageMark));
+    text = await this.transformPluginReply(decision, text);
     const bubbles = this.finalize(decision, text);
     if (!bubbles.length) return { action: 'ignore', reason: 'empty_reply' };
     // 群里骂人时要真 @ 到对方：优先用靶子，其次看正文开头有没有 @名字

@@ -125,6 +125,38 @@ try
             .Single() == known);
         market.Uninstall(summaryId);
     }
+    var messageInfo = info with { Id = "message-demo", Api = 3, Kind = "message", MinAppVersion = "4.1.0", Hooks = ["chat.pre_reply"], Permissions = [] };
+    Reject(() => PluginMarket.ReadPackage(Pack(messageInfo with { MinAppVersion = "4.0.8" })));
+    Reject(() => PluginMarket.ReadPackage(Pack(messageInfo with { Hooks = ["unknown"] })));
+    Reject(() => PluginMarket.ReadPackage(Pack(messageInfo with { Permissions = ["filesystem"] })));
+    File.WriteAllBytes(package, Pack(messageInfo));
+    market.InstallLocal(package);
+    Check(!market.Enabled(messageInfo.Id));
+    market.SetEnabled(messageInfo.Id, true);
+    market.SetMessageSettings(messageInfo.Id, "{\"turns\":3}");
+    Check(market.MessageSettings(messageInfo.Id).Contains("3"));
+    var grantFile = Path.Combine(dir, "data", "plugins", "message-demo.flow-grant.json");
+    Check(File.Exists(grantFile));
+    if (args.Length > 2)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo(args[0]) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+        start.ArgumentList.Add("-e");
+        start.ArgumentList.Add("const {MessagePlugins}=require(process.argv[1]); console.log(new MessagePlugins({dataDir:process.argv[2]}).installed().map(p=>p.id).join(','));");
+        start.ArgumentList.Add(args[2]);
+        start.ArgumentList.Add(Path.Combine(dir, "data"));
+        using var node = System.Diagnostics.Process.Start(start);
+        var output = await node.StandardOutput.ReadToEndAsync();
+        await node.WaitForExitAsync();
+        Check(node.ExitCode == 0 && output.Contains(messageInfo.Id));
+    }
+    market.SetEnabled(messageInfo.Id, false);
+    Check(!File.Exists(grantFile));
+    market.SetEnabled(messageInfo.Id, true);
+    Check(market.MessageSettings(messageInfo.Id).Contains("3"));
+    File.WriteAllBytes(package, Pack(messageInfo with { Version = "1.1.0" }));
+    market.InstallLocal(package);
+    Check(!market.Enabled(messageInfo.Id) && !File.Exists(grantFile));
+    market.Uninstall(messageInfo.Id);
     if (args.Length > 1 && args[1] == "--live")
     {
         var listed = (await PluginMarket.CatalogAsync()).Single(x => x.Id == info.Id);
@@ -134,7 +166,15 @@ try
     }
     Console.WriteLine("插件市场回归通过");
 }
-finally { Directory.Delete(dir, recursive: true); }
+finally
+{
+    for (var attempt = 0; ; attempt++)
+    {
+        try { Directory.Delete(dir, recursive: true); break; }
+        // Windows 映像文件的短暂占用可在进程退出后释放，持续占用仍然报错。
+        catch (IOException) when (attempt < 5) { await Task.Delay(100 * (attempt + 1)); }
+    }
+}
 
 namespace WhaleLauncher
 {
