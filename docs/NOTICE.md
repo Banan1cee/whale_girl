@@ -80,3 +80,58 @@ AGPL-3.0 允许商业使用，不需要额外交费。但如果你分发修改�
 联系方式：<https://github.com/Banan1cee/whale_girl/issues>
 
 请勿在公开 Issue 中发送 API Key、聊天记录或其他敏感信息。
+
+## 6. 许可证说明与附加署名条款（AGPL §7(b)）
+
+鲸鲸 / Whale Girl — GNU Affero General Public License v3.0 only
+
+Copyright (c) 2026 鲸鲸 / Whale Girl contributors
+
+Developers (attribution parties, in order of first contribution):
+  @Banan1cee  高晨阳  chrisgao0312@qq.com  https://github.com/Banan1cee
+  @xmuzhou    周政    2117286908@qq.com    https://github.com/xmuzhou
+  @Muzi0336           265007223+Muzi0336@users.noreply.github.com  https://github.com/Muzi0336
+
+Project: https://github.com/Banan1cee/whale_girl
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, version 3 only.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+details.
+
+本项目的原创源代码、文档和原创素材，除 docs/NOTICE.md 另有说明外，采用
+GNU Affero General Public License v3.0 only（AGPL-3.0-only）许可。
+这是 OSI 认可的开源许可证：允许商业使用，但分发修改版、或让用户通过网络
+使用修改版时，必须按 AGPL-3.0 提供完整对应的源代码。
+
+适用范围
+--------
+本许可证适用于 4.0.x 系列及之后由本项目发布的新版本。此前已经按 MIT 许可证
+发布的副本，其原有授权不因本次变更而撤销；从本次变更后发布的新版本按本许可证授权。
+
+第三方与角色
+------------
+- vendor/ 下的第三方组件、字体、运行时和角色原创设定不在本许可证授权范围内，
+  分别适用其原有许可证或权利人的授权，详见 docs/NOTICE.md。
+- 图标及角色相关素材的原创角色作者为上善无形；本项目图标是在其原创角色基础上的
+  二创作品。本许可证不授予任何第三方对原创角色、商标或肖像的权利。
+
+附加署名条款（AGPL 第 7(b) 条）
+--------------------------------
+在保留 AGPL 要求的版权与许可声明之外，分享修改版本时，请在 README、关于页、
+应用内致谢或其它合理位置注明：
+“基于鲸鲸 / Whale Girl（作者 @Banan1cee，https://github.com/Banan1cee/whale_girl）修改”
+并标明你做了哪些修改。具体署名与第三方清单见 docs/NOTICE.md。
+
+完整法律条款
+------------
+以下为 Free Software Foundation 发布的 GNU Affero General Public License
+version 3 官方正文。官方地址：https://www.gnu.org/licenses/agpl-3.0.html
+
+=======================================================================
+
+完整 AGPL-3.0 正文见仓库根目录 `LICENSE`。
