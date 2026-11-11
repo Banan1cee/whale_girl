@@ -33,18 +33,11 @@ on:
     tags:
       - 'v*'
   # PR 也跑：只改打包/安装器/启动器的 PR 必须证明「装得上、覆盖升级不丢数据」。
-  # paths 过滤把范围压到打包相关文件，改文案、改内核逻辑的 PR 不会被拖慢十分钟。
+  # 这里不能加 paths 过滤：main 的必需检查「构建安装包」要求每个 PR 都有上报，
+  # 被 paths 挡掉的工作流会让检查一直停在「预期检查」，PR 永远合不了。
+  # 会不会真打包仍由 version-gate 按版本号判定：补丁版 PR 的 installer 任务
+  # 被 if 跳过，跳过的必需检查算通过，不会白跑十几分钟。
   pull_request:
-    paths:
-      - 'installer/**'
-      - '.github/workflows/installer.yml'
-      - 'scripts/build-runtime.ps1'
-      - 'scripts/fetch-dotnet-runtime.ps1'
-      - 'scripts/fetch-vb-cable.ps1'
-      - 'scripts/vb-cable-package.ps1'
-      - 'scripts/vb-cable-pack45.json'
-      - 'scripts/sign-windows.ps1'
-      - 'launcher/**'
 
 permissions:
   contents: write
