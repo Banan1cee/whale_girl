@@ -6,7 +6,7 @@
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](../LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-339933)](https://nodejs.org/)
 [![Python](https://img.shields.io/badge/python-3.12-3776AB)](https://www.python.org/)
-[![Wechatauto](https://img.shields.io/badge/wechatauto-1.2.9-4B8BBE)](https://pypi.org/project/wechatauto-replica/)
+[![Wechatauto](https://img.shields.io/badge/wechatauto-1.2.10-4B8BBE)](https://pypi.org/project/wechatauto-replica/)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4)
 [![GitHub stars](https://img.shields.io/github/stars/Banan1cee/whale_girl)](https://github.com/Banan1cee/whale_girl/stargazers)
 

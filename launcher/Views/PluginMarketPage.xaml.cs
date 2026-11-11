@@ -73,10 +73,9 @@ namespace WhaleLauncher.Views
                 details += $"\n将替换已安装的「{current.Name}」{current.Version}。";
             if (info.IsPersona)
                 details += "\n\n应用人设才会替换当前自定义提示词。停用或卸载后，已应用的提示词仍会保留。";
-            return MessageBox.Show(Window.GetWindow(this),
+            return AppDialog.Confirm(Window.GetWindow(this),
                 "此本地 ZIP 未经鲸鲸插件市场审核。请确认你信任文件的提供者。\n\n" + details,
-                "安装本地插件", MessageBoxButton.OKCancel, MessageBoxImage.Warning,
-                MessageBoxResult.Cancel) == MessageBoxResult.OK;
+                "安装本地插件", danger: true, okText: "仍然安装");
         }
 
         private async Task WithStatus(Func<Task<string>> action)
@@ -223,8 +222,8 @@ namespace WhaleLauncher.Views
             panel.Children.Add(apply);
             apply.Click += async (_, _) =>
             {
-                if (MessageBox.Show("将这份人设应用到当前鲸鲸？", "应用人设",
-                    MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+                if (!AppDialog.Confirm(Window.GetWindow(this), "将这份人设应用到当前鲸鲸？", "应用人设",
+                    okText: "应用")) return;
                 apply.IsEnabled = false;
                 try
                 {

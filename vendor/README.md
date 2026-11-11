@@ -1,16 +1,27 @@
-# vendored wechatauto（上游 PyPI 包 wechatauto-replica 1.2.9）
+# vendored wechatauto（上游 PyPI 包 wechatauto-replica 1.2.10）
 
-这个目录是**上游源码树的原样副本**，不是本项目写的代码。
+这个目录是**上游源码树的逐字节副本**，不是本项目写的代码；本项目不在这里打补丁。
 
 ## 上游与版本
 
 - 包名：`wechatauto-replica`
-- 版本：`1.2.9`
-- 来源：PyPI（wheel 名 `wechatauto_replica-1.2.9-py3-none-any.whl`）
-- 落库日期：2026-11-05
-- 内容：`wechatauto/` 是包本体（71 个 `.py` + 3 个 `.png` + `py.typed`），
+- 版本：`1.2.10`
+- 来源：PyPI（wheel 名 `wechatauto_replica-1.2.10-py3-none-any.whl`）
+- 落库日期：2026-11-11
+- 内容：`wechatauto/` 是包本体（76 个文件，含 `.py`、资源与 `py.typed`），
   `wechatauto/dist-info/` 是从 wheel 里带出来的 `dist-info`（METADATA / WHEEL / RECORD /
   entry_points.txt / top_level.txt / licenses/LICENSE），用于许可证合规与来源追溯。
+
+## 补丁放在哪里
+
+本项目需要的朋友圈补丁不写进这个目录，统一放在 `bridge/moment_compat.py`：
+
+- 发布者和关键词同时给出时必须两者都匹配；
+- 取消赞只找「取消」，找不到就失败；
+- `parse_feed` 使用数据库里的真实 `tid`。
+
+这样 `vendor/wechatauto` 永远能和上游 manifest 对齐，升级只需换目录、重算清单；
+`tests/vendor-wechatauto.test.js` 会同时检查「vendor 没有本地补丁」和「兼容层还有这些补丁」。
 
 ## 为什么固定
 

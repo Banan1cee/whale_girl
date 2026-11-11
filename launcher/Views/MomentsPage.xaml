@@ -79,11 +79,11 @@
                     </Grid>
 
                     <TextBlock Text="正文关键词（可留空）" Style="{StaticResource Label}" Margin="0,16,0,6" />
-                    <TextBox x:Name="TxtKeyword" Height="34" VerticalContentAlignment="Center"
+                    <TextBox x:Name="TxtKeyword"
                              ToolTip="留空读取最近动态；填写后只显示正文包含该关键词的动态" />
 
                     <TextBlock Text="发布者内部 ID（可留空，不是昵称）" Style="{StaticResource Label}" Margin="0,12,0,6" />
-                    <TextBox x:Name="TxtUsername" Height="34" VerticalContentAlignment="Center"
+                    <TextBox x:Name="TxtUsername"
                              ToolTip="只筛选指定 wxid 的动态，不是昵称" />
 
                     <Button x:Name="BtnRead" Content="读取最近 20 条" Style="{StaticResource Primary}"
@@ -99,7 +99,7 @@
                                Style="{StaticResource Small}" Margin="0,4,0,0" TextWrapping="Wrap" />
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                         <TextBlock Text="自动读取" Style="{StaticResource Small}" VerticalAlignment="Center" />
-                        <ComboBox x:Name="CmbAutoRead" Width="132" Height="28" FontSize="12"
+                        <ComboBox x:Name="CmbAutoRead" Width="132" FontSize="12"
                                   Margin="8,0,0,0" SelectionChanged="OnAutoReadChanged">
                             <ComboBoxItem Content="关闭" Tag="0" />
                             <ComboBoxItem Content="每 4 小时" Tag="4" />
@@ -125,19 +125,19 @@
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
                             <TextBlock Text="发布者准确昵称" Style="{StaticResource Label}" Margin="0,0,0,6" />
-                            <TextBox x:Name="TxtPublisher" Height="34" VerticalContentAlignment="Center" />
+                            <TextBox x:Name="TxtPublisher" />
                         </StackPanel>
                         <StackPanel Grid.Column="2">
                             <TextBlock Text="动作" Style="{StaticResource Label}" Margin="0,0,0,6" />
-                            <ComboBox x:Name="ActionBox" Height="34" FontSize="12" VerticalContentAlignment="Center" />
+                            <ComboBox x:Name="ActionBox" FontSize="12" VerticalContentAlignment="Center" />
                         </StackPanel>
                     </Grid>
 
                     <TextBlock Text="评论内容 / 发布文案草稿" Style="{StaticResource Label}" Margin="0,12,0,6" />
-                    <TextBox x:Name="TxtComment" Height="34" VerticalContentAlignment="Center" />
+                    <TextBox x:Name="TxtComment" />
 
                     <TextBlock Text="被回复者昵称（仅回复评论）" Style="{StaticResource Label}" Margin="0,12,0,6" />
-                    <TextBox x:Name="TxtReplyTo" Height="34" VerticalContentAlignment="Center" />
+                    <TextBox x:Name="TxtReplyTo" />
 
                     <WrapPanel Margin="0,16,0,0">
                         <Button x:Name="BtnInteract" Content="执行所选互动" Style="{StaticResource Ghost}" />

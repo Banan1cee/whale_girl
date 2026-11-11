@@ -31,10 +31,19 @@ class PublishFlowTest(unittest.TestCase):
         self.assertEqual(screen.click.call_count, 3)
         screen.select_image.assert_not_called()
         self.assertEqual([call[0] for call in actions.mock_calls],
-                         ['click', 'click', 'fill_empty', 'text_matches', 'publish_button', 'click', 'return_to_chat'])
+                         ['click', 'click', 'fill_empty', 'text_matches', 'publish_button', 'click'])
         self.assertEqual(screen.click.call_args.args[1], (400, 450))
         self.assertEqual(screen.capture.call_args_list[0].kwargs, {'recognize': False})
         self.assertEqual(screen.click.call_args_list[0].kwargs, {'right': True})
+        screen.editor_closed.assert_not_called()
+        screen.return_to_chat.assert_not_called()
+
+    def test_menu_label_tolerates_ocr_suffix(self):
+        from moments_publish import label
+        lines = [('发表文字(C)', 10, 20, 40, 12), ('发表图片', 70, 20, 40, 12)]
+        self.assertEqual(label(lines, '发表文字', fuzzy=True), (30, 26))
+        self.assertIsNone(label(lines, '发表文字'))
+        self.assertIsNone(label(lines, '发表文字', top=10, fuzzy=True))
 
     def test_camera_uses_header_not_list_origin(self):
         screen = WeChatPostScreen.__new__(WeChatPostScreen)
