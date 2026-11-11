@@ -7,7 +7,7 @@ import time
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 SOURCE = Path(os.environ.get('WHALE_TEST_ENGINE_SOURCE') or Path(__file__).resolve().parents[1] / 'bridge/engine.py')
@@ -63,6 +63,28 @@ class BridgeUserFlows(unittest.TestCase):
 
     def message(self, **changes):
         return dict(username='peer', sender_username='friend', type='文本', content='问题', create_time=200., local_id=1, **changes)
+
+    def test_is_latest_message_compares_local_id_and_shard(self):
+        env = {'db': types.SimpleNamespace(
+            get_messages=lambda u, limit=1: [{'local_id': 7, 'shard': 1}])}
+        fn = function('is_latest_message', env)
+        self.assertTrue(fn('peer', {'local_id': 7, 'shard': 1}))
+        self.assertFalse(fn('peer', {'local_id': 8, 'shard': 1}))
+        self.assertFalse(fn('peer', {'local_id': 7, 'shard': 2}))
+        self.assertFalse(fn('peer', {'local_id': 7}))
+
+    def test_quote_latest_only_when_message_is_still_last(self):
+        env, clock, sent, _, _ = self.env()
+        env['QUOTE_REPLY'] = True
+        env['is_latest_message'] = lambda u, m: True
+        env['send_text'] = Mock(return_value=True)
+        function('on_message_inner', env)(self.message(), None)
+        env['send_text'].assert_called_once_with('回答', '好友', 'peer', quote_latest=True)
+
+        env['is_latest_message'] = lambda u, m: False
+        env['send_text'] = Mock(return_value=True)
+        function('on_message_inner', env)(self.message(), None)
+        env['send_text'].assert_called_once_with('回答', '好友', 'peer', quote_latest=False)
 
     def test_slow_image_recognition_does_not_make_fresh_message_stale(self):
         env, clock, sent, _, _ = self.env()

@@ -196,13 +196,13 @@ namespace WhaleLauncher.Views
         private async void OnResetChatMemory(object sender, RoutedEventArgs e)
         {
             if (!_sup.NodeRunning || CmbMemoryChat.SelectedItem is not MemoryChatItem group) return;
-            var result = MessageBox.Show(Window.GetWindow(this),
+            if (!AppDialog.Confirm(Window.GetWindow(this),
                 $"确定清空「{group.Title}」的全部内部记忆吗？\n\n" +
                 "将清除：上下文聊天记录、摘要、人物卡、事件与关系记忆。\n" +
                 "微信聊天记录、其他会话记忆和人设设置保留。\n\n" +
                 "此操作无法直接撤销；之后从新消息开始记忆。已有的手动备份与自动快照保留。",
-                "清空该对话记忆", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
-            if (result != MessageBoxResult.Yes) return;
+                "清空该对话记忆", danger: true, okText: "清空", cancelText: "取消"))
+                return;
             BtnResetMemory.IsEnabled = false;
             BtnRefreshMemory.IsEnabled = false;
             CmbMemoryChat.IsEnabled = false;
@@ -657,9 +657,8 @@ namespace WhaleLauncher.Views
         {
             if (!(CmbPreset.SelectedItem is PresetItem p)) return;
             if (p.Id.StartsWith("market-", StringComparison.Ordinal) &&
-                MessageBox.Show(Window.GetWindow(this), "应用此人设会替换当前的自定义提示词。是否继续？",
-                    "应用插件人设", MessageBoxButton.OKCancel, MessageBoxImage.Question,
-                    MessageBoxResult.Cancel) != MessageBoxResult.OK) return;
+                !AppDialog.Confirm(Window.GetWindow(this), "应用此人设会替换当前的自定义提示词。是否继续？",
+                    "应用插件人设", okText: "应用")) return;
             var res = await _sup.SaveConfigurationAsync("/api/persona/preset", new { id = p.Id });
             if (!res.Ok)
             {

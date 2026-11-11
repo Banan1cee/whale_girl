@@ -94,3 +94,19 @@ Copy-Item launcher/publish/WhaleLauncher.exe .\WhaleLauncher.exe -Force
   官网域名已更新
   ```
 
+## 8. 第三方 / 环境目录只读
+
+以下目录是**上游源码、生成产物或运行环境**，默认只读，禁止为了修 bug 直接改里面的文件：
+
+- `vendor/`（`vendor/wechatauto` 等固定上游源码）
+- `runtime/`（随包 Node / Python / ffmpeg / .NET 运行时）
+- `node_modules/`、`wheelhouse/`、`data/` 里的第三方缓存
+- 任何 `dist-info/`、`site-packages/`、`.venv/`、`venv/`、`__pycache__/` 里的内容
+
+需要兼容/修复时：
+
+1. 优先写外部兼容层，例如 `bridge/moment_compat.py`、`bridge/wechatauto_*`、`scripts/prepare-*.py`，在加载或构建时注入；
+2. 不修改 `vendor/wechatauto` 的源码；升级上游只做“替换目录 + 重算 `vendor/MANIFEST.sha256` + 更新版本断言/测试”，不手改文件；
+3. `runtime/` 不手改；需要补丁时改 `scripts/build-runtime.ps1` 或 `scripts/prepare-*.py`，重新生成运行时；
+4. 如果确实必须修改第三方源码，先在任务书/PR 说明原因，并把改动移出 vendor；否则 `tests/vendor-wechatauto.test.js`、构建期的 MANIFEST 校验或 CI 会失败。
+

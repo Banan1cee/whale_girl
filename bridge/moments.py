@@ -98,7 +98,9 @@ class MomentsReader:
                         return response.status_code == 200 and response.json().get('allowed') is True
                     except Exception:
                         return False
+                self.log('朋友圈发表：开始 id=%s' % job['id'])
                 status, code = self.publish(job['query'], allowed) if self.publish else ('failed', 'unsupported')
+                self.log('朋友圈发表：完成 status=%s code=%s' % (status, code or '-'))
                 result.update(publishStatus=status, error=code)
             elif self.interact:
                 outcome = self.interact(action, job['query'])

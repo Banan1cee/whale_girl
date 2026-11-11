@@ -1035,49 +1035,46 @@ class Moment:
 
     def _target_idx(self, db_posts: List[dict], publisher: Optional[str],
                     keyword: Optional[str]) -> Optional[int]:
-        """返回目标在 db_posts 中的索引（最新在前，0=最顶部）。
-
-        同时给出 publisher 和 keyword 时必须两者同时匹配：否则同一发布者
-        的多条动态永远命中最新一条，指定旧动态的点赞/评论会落空。
-        """
+        """返回目标在 db_posts 中的索引（最新在前，0=最顶部）。"""
         for i, f in enumerate(db_posts):
-            if publisher and f.get('nickname') != publisher:
-                continue
-            if keyword and keyword not in (f.get('text') or ''):
-                continue
-            return i
+            if publisher and f.get('nickname') == publisher:
+                return i
+            if keyword and keyword in f.get('text', ''):
+                return i
+        # 以关键词子串尽量宽松再找一次
+        if keyword:
+            for i, f in enumerate(db_posts):
+                if keyword in f.get('text', ''):
+                    return i
         return None
 
     def _matches(self, item: MomentItem, publisher: Optional[str],
                  keyword: Optional[str]) -> bool:
         """判断单个可见 cell 是否匹配目标（作者 / 正文关键词）。
 
-        publisher 和 keyword 同时给出时要求两者都匹配；只给其中一个时
-        才退化为单条件匹配。优先复用 item 的解析结果，取不到时退回
-        control.Name 原文。
+        优先复用 item 的解析结果；取不到时退回匹配 control.Name 原文。
         """
-        if not publisher and not keyword:
-            return False
-        name = ''
-        try:
-            name = item.control.Name or ''
-        except Exception:
-            pass
         if publisher:
             try:
-                nick = item.publisher
+                if item.publisher == publisher:
+                    return True
             except Exception:
-                nick = ''
-            if nick != publisher and publisher not in name:
-                return False
+                pass
+            name = (item.control.Name or '')
+            if publisher in name:
+                return True
+            return False
         if keyword:
             try:
-                text = item.text or ''
+                if keyword in item.text:
+                    return True
             except Exception:
-                text = ''
-            if keyword not in text and keyword not in name:
-                return False
-        return True
+                pass
+            name = (item.control.Name or '')
+            if keyword in name:
+                return True
+            return False
+        return False
 
     def find_moment(self, publisher: Optional[str] = None,
                     keyword: Optional[str] = None,
@@ -1708,11 +1705,11 @@ class Moment:
     def _like_open(self, cancel: bool = False) -> bool:
         """在 “…” 浮层已弹出的前提下，点击「赞」（``cancel=True`` 用于取消赞）。
 
-        取消赞不再回退点「赞」：浮层里没有「取消」时无法确认当前点赞状态，
-        宁可失败也不能把「取消点赞」执行成一次点赞。
+        取消赞在有的版本里是独立文案「取消」，有的版本还是那个「赞」按钮再点
+        一次，所以先按取消文案找，找不到再点「赞」。
         """
         rhythm.gate('like')
-        names = ([_lang(MOMENTS, '取消')] if cancel
+        names = ([_lang(MOMENTS, '取消'), _lang(MOMENTS, '赞')] if cancel
                  else [_lang(MOMENTS, '赞')])
         for nm in names:
             if self._click_float_button(nm, timeout=2.5):
@@ -2839,12 +2836,13 @@ class MomentActionMenu(BaseUISubWnd):
         return None
 
     def like(self, cancel: bool = False) -> WxResponse:
-        # 取消模式只找「取消」，找不到就失败；回退点「赞」会把取消操作变成点赞。
-        target_names = [_lang(MOMENTS, '取消')] if cancel else [_lang(MOMENTS, '赞')]
+        target_names = [_lang(MOMENTS, '赞')]
+        if cancel:
+            target_names.insert(0, _lang(MOMENTS, '取消'))
 
         button = self._find_button(target_names)
         if not button:
-            return WxResponse.failure('未找到取消点赞按钮' if cancel else '未找到点赞按钮')
+            return WxResponse.failure('未找到点赞按钮')
         rhythm.gate('like')
         button.Click()
         return WxResponse.success('操作成功')
@@ -3044,7 +3042,7 @@ class MomentDB:
         finally:
             conn.close()
 
-        feeds = [self.parse_feed(r["content"], r["user_name"], r["tid"]) for r in rows]
+        feeds = [self.parse_feed(r["content"], r["user_name"]) for r in rows]
         if want_since or want_until or want_key:
             out = []
             kw = keyword
@@ -3070,7 +3068,7 @@ class MomentDB:
             ).fetchone()
         finally:
             conn.close()
-        return self.parse_feed(r["content"], r["user_name"], r["tid"]) if r else None
+        return self.parse_feed(r["content"], r["user_name"]) if r else None
 
     def get_my_moments(self, limit: int = 20) -> List[dict]:
         return self.get_moments(limit=limit, username=self.db.wxid)
@@ -3180,7 +3178,7 @@ class MomentDB:
     # ------------------------------------------------------------------
     # XML 解析
     # ------------------------------------------------------------------
-    def parse_feed(self, xml: str, fallback_user: str = "", tid=None) -> dict:
+    def parse_feed(self, xml: str, fallback_user: str = "") -> dict:
         if isinstance(xml, bytes):
             xml = xml.decode("utf-8", "replace")
         m = re.search(r"<id>(\d+)</id>", xml)
@@ -3240,7 +3238,7 @@ class MomentDB:
 
         return {
             "id": feed_id,
-            "tid": tid if tid is not None else fallback_user,
+            "tid": fallback_user,
             "username": author,
             "nickname": self._nick(author),
             "text": text,

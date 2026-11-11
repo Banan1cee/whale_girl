@@ -3,11 +3,19 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bridge'))
 from moments import collect, MomentsReader
 from moments_actions import perform
+
+
+def _ok():
+    return SimpleNamespace(is_success=True)
+
+
+def _failed():
+    return SimpleNamespace(is_success=False)
 
 
 class MomentsTest(unittest.TestCase):
@@ -19,23 +27,75 @@ class MomentsTest(unittest.TestCase):
                          'target_mismatch')
         moment.Comment.assert_not_called()
 
-    def test_like_cancel_and_comment_single_attempt(self):
+    @patch('moments_actions._bring_foreground', return_value=True)
+    def test_like_cancel_comment_and_reply_delegate_to_library(self, _foreground):
         moment = Mock()
-        moment.find_moment.return_value = SimpleNamespace(nickname='Peer', content='spring', _ensure_parsed=lambda: None)
-        moment.Like.return_value = True
-        moment.Comment.return_value = True
+        item = SimpleNamespace(nickname='Peer', content='spring', _ensure_parsed=lambda: None)
+        moment.find_moment.return_value = item
+        moment.Like.return_value = _ok()
+        moment.Comment.return_value = _ok()
+        moment.ReplyComment.return_value = _ok()
         query = {'publisher': 'Peer', 'keyword': 'spring', 'content': 'hello'}
+        self.assertIs(perform(moment, 'like', query), True)
+        moment.Like.assert_called_once_with(item, cancel=False, max_retry=6)
         self.assertIs(perform(moment, 'unlike', query), True)
-        moment.Like.assert_called_once_with(moment.find_moment.return_value, cancel=True, max_retry=1)
+        moment.Like.assert_called_with(item, cancel=True, max_retry=6)
         self.assertIs(perform(moment, 'comment', query), True)
-        moment.Comment.assert_called_once_with(moment.find_moment.return_value, 'hello', max_retry=1)
+        moment.Comment.assert_called_once_with(item, 'hello', max_retry=6)
+        reply = dict(query, replyTo='Peer')
+        self.assertIs(perform(moment, 'reply', reply), True)
+        moment.ReplyComment.assert_called_once_with(item, reply_to='Peer', content='hello')
 
-    def test_unlike_does_not_fall_back_to_like(self):
+    @patch('moments_actions._bring_foreground', return_value=True)
+    def test_unlike_does_not_fall_back_to_like(self, _foreground):
         moment = Mock()
         moment.find_moment.return_value = SimpleNamespace(nickname='Peer', content='spring', _ensure_parsed=lambda: None)
-        moment.Like.return_value = None
+        moment.Like.return_value = _failed()
         self.assertEqual(perform(moment, 'unlike', {'publisher': 'Peer', 'keyword': 'spring'}),
                          'cancel_not_found')
+
+    @patch('moments_actions._bring_foreground', return_value=True)
+    def test_failed_comment_is_not_reported_as_success(self, _foreground):
+        moment = Mock()
+        moment.find_moment.return_value = SimpleNamespace(nickname='Peer', content='spring', _ensure_parsed=lambda: None)
+        moment.Comment.return_value = _failed()
+        self.assertEqual(perform(moment, 'comment',
+                                 {'publisher': 'Peer', 'keyword': 'spring', 'content': 'hello'}),
+                         'interaction_failed')
+
+    @patch('moments_actions._bring_foreground', return_value=True)
+    def test_opens_moments_before_locating_and_writing(self, _foreground):
+        order = []
+
+        class Wx:
+            _db = None
+            _gui = SimpleNamespace(main_hwnd=0)
+
+            def SwitchToMoments(inner):
+                order.append('switch')
+                return True
+
+        item = SimpleNamespace(nickname='Peer', content='spring', _ensure_parsed=lambda: None)
+
+        def find_moment(**kwargs):
+            order.append('find')
+            return item
+
+        moment = Mock()
+        moment._wx = Wx()
+        moment.find_moment = find_moment
+        moment.Like.return_value = _ok()
+        moment.Like.side_effect = lambda *a, **kw: order.append('like') or _ok()
+        self.assertIs(perform(moment, 'like', {'publisher': 'Peer', 'keyword': 'spring'}), True)
+        self.assertEqual(order, ['switch', 'find', 'like'], '手动互动必须先打开朋友圈、再定位、最后写操作')
+
+    @patch('moments_actions._bring_foreground', return_value=False)
+    def test_does_not_click_when_wechat_is_not_foreground(self, _foreground):
+        moment = Mock()
+        moment.find_moment.return_value = SimpleNamespace(nickname='Peer', content='spring', _ensure_parsed=lambda: None)
+        self.assertEqual(perform(moment, 'like', {'publisher': 'Peer', 'keyword': 'spring'}),
+                         'interaction_failed')
+        moment.Like.assert_not_called()
 
     def test_bounded_read_and_own_account(self):
         reader = Mock()

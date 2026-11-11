@@ -29,7 +29,6 @@ namespace WhaleLauncher
         {
             // 显式引用全局 TextBox 样式；隐式样式对派生控件不保证生效。
             SetResourceReference(StyleProperty, typeof(TextBox));
-            VerticalContentAlignment = VerticalAlignment.Center;
         }
 
         public TimeFieldMode Mode { get; set; } = TimeFieldMode.Clock;
