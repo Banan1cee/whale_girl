@@ -11,6 +11,36 @@ from bridge import uia_boot as boot
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_unknown_process_owner_can_warm_uia_before_account_confirmation(self):
+        for owns, same_chat, expected in [(None, True, True), (None, False, False), (False, True, False)]:
+            with self.subTest(owns=owns, same_chat=same_chat):
+                activated = set()
+                probe = Mock()
+                probe._wechat_hwnds.return_value = [222]
+                probe._hot_activate_accessibility.side_effect = lambda h: activated.add(h)
+                probe._anchor.return_value = SimpleNamespace(ClassName='Qt51514QWindowIcon')
+                names = ['recent-one', 'recent-two'] if same_chat else ['other-one', 'other-two']
+                probe._session_rows_of.side_effect = lambda _c: [(n, None) for n in names] if activated else []
+                probe._row_score = None
+                gui = SimpleNamespace(GetWindowThreadProcessId=None)
+                process = SimpleNamespace(GetWindowThreadProcessId=lambda _h: (1, 333))
+                env = dict(acct='selected-account', WINDOW_HWND=0, ACCOUNT={'verified': False},
+                           db=SimpleNamespace(account='selected-account'),
+                           _window_account_matches=Mock(return_value=owns),
+                           _account_recent_names=lambda: ['recent-one', 'recent-two'],
+                           _explain_unverified=lambda fallback: fallback, rebind_uia=Mock(), _compat_mod=lambda: None,
+                           log=Mock(), uia_boot=SimpleNamespace(account_window_candidates=lambda *_: [(222, 333)]))
+                env['_probe_wechat_windows'] = load_function('_probe_wechat_windows', env)
+                with patch.dict(sys.modules, {'win32gui': gui, 'win32process': process,
+                                              'wechatauto.uia_driver': SimpleNamespace(WeChatUIA=lambda: probe)}):
+                    result = load_function('pick_account_window', env)()
+                self.assertEqual(result, expected)
+                self.assertEqual(env['ACCOUNT'].get('verified', False), expected)
+                if owns is False:
+                    probe._hot_activate_accessibility.assert_not_called()
+                else:
+                    probe._hot_activate_accessibility.assert_called_once_with(222)
+
     def setUp(self):
         boot._LAST_RESTORE[0] = 0
 
@@ -217,3 +247,4 @@ class RecoveryTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
