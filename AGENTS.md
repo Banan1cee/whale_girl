@@ -55,7 +55,7 @@ Copy-Item launcher/publish/WhaleLauncher.exe .\WhaleLauncher.exe -Force
 ## 4. 协作方式
 
 - 不直接 push `main`：改分支 → PR → CI 绿了再合并。
-- 提交信息按 `docs/协作规范.md`（新增 / 改进 / 修复 / 其他 四段）。
+- 提交信息按 `CONTRIBUTING.md` 第三节（新增 / 改进 / 修复 / 其他 四段），不再另设规范副本。
 - 用户可见行为变了，`docs/CHANGELOG.md` 补一段，版本规则见第 5 节。
 
 ## 5. 版本与 CHANGELOG
