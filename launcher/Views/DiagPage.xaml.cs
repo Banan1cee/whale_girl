@@ -359,7 +359,7 @@ namespace WhaleLauncher.Views
             }
             catch (Exception ex)
             {
-                MessageBox.Show("打开数据目录失败：" + ex.Message, "数据目录");
+                AppDialog.Show(Window.GetWindow(this), "打开数据目录失败：" + ex.Message, "数据目录", danger: true);
             }
         }
 
@@ -463,7 +463,7 @@ namespace WhaleLauncher.Views
             }
             catch (Exception ex)
             {
-                MessageBox.Show("导出失败：" + ex.Message, "日志包");
+                AppDialog.Show(Window.GetWindow(this), "导出失败：" + ex.Message, "日志包", danger: true);
             }
             finally
             {
@@ -1179,6 +1179,9 @@ namespace WhaleLauncher.Views
                     StandardOutputEncoding = Encoding.UTF8,
                     StandardErrorEncoding = Encoding.UTF8,
                 };
+                // Windows 上子 Python 默认用 GBK 打 stdout；uia-check 自己的提示会变乱码。
+                psi.Environment["PYTHONIOENCODING"] = "utf-8";
+                psi.Environment["PYTHONUTF8"] = "1";
                 using var p = Process.Start(psi);
                 var so = p.StandardOutput.ReadToEndAsync();
                 var se = p.StandardError.ReadToEndAsync();
@@ -1197,97 +1200,6 @@ namespace WhaleLauncher.Views
             }
         }
 
-        /// <summary>把一段长输出放进可滚动的只读窗口（不弹一屏 MessageBox）。</summary>
-        private void ShowTextWindow(string title, string text)
-        {
-            var box = new TextBox
-            {
-                Text = string.IsNullOrEmpty(text) ? "（没有输出）" : text,
-                IsReadOnly = true,
-                BorderThickness = new Thickness(1),
-                Padding = new Thickness(12),
-                FontFamily = new FontFamily("Cascadia Mono, Consolas, monospace"),
-                FontSize = 12,
-                TextWrapping = TextWrapping.Wrap,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                VerticalContentAlignment = VerticalAlignment.Top,
-                MinHeight = 320,
-            };
-            var win = new Window
-            {
-                Title = title,
-                Width = 760,
-                Height = 540,
-                Owner = Window.GetWindow(this),
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Content = box,
-            };
-            // 全局 TextBox 样式给的是浅色字 + 深色底；新开窗口默认白底，会出现「白屏」，
-            // 所以窗口背景和文字颜色都显式跟主题走。
-            win.SetResourceReference(Window.BackgroundProperty, "Bg");
-            box.SetResourceReference(Control.BackgroundProperty, "FieldBg");
-            box.SetResourceReference(Control.ForegroundProperty, "Text");
-            win.ShowDialog();
-        }
-
-        /// <summary>应用内确认弹窗：和界面同一套配色，替代系统 MessageBox。</summary>
-        private bool AskInline(string title, string body, string okText, bool danger = false)
-        {
-            var win = new Window
-            {
-                Title = title,
-                Width = 520,
-                SizeToContent = SizeToContent.Height,
-                ResizeMode = ResizeMode.NoResize,
-                Owner = Window.GetWindow(this),
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                ShowInTaskbar = false,
-            };
-            win.SetResourceReference(Window.BackgroundProperty, "Bg");
-
-            var panel = new StackPanel { Margin = new Thickness(22, 20, 22, 18) };
-
-            var head = new TextBlock { Text = title, FontSize = 15, FontWeight = FontWeights.SemiBold };
-            head.SetResourceReference(TextBlock.ForegroundProperty, "Text");
-            panel.Children.Add(head);
-
-            var text = new TextBlock
-            {
-                Text = body,
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 10, 0, 0),
-                LineHeight = 21,
-            };
-            text.SetResourceReference(TextBlock.ForegroundProperty, "Text2");
-            panel.Children.Add(text);
-
-            var row = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 18, 0, 0),
-            };
-            var cancel = new Button { Content = "取消", Style = (Style)FindResource("Primary"), Padding = new Thickness(16, 5, 16, 5) };
-            var ok = new Button
-            {
-                Content = okText,
-                Style = (Style)FindResource("Ghost"),
-                Padding = new Thickness(16, 5, 16, 5),
-                Margin = new Thickness(10, 0, 0, 0),
-            };
-            if (danger) ok.SetResourceReference(Control.ForegroundProperty, "Bad");
-            row.Children.Add(cancel);
-            row.Children.Add(ok);
-            panel.Children.Add(row);
-
-            var answered = false;
-            cancel.Click += (s, e) => win.Close();
-            ok.Click += (s, e) => { answered = true; win.Close(); };
-            win.Content = panel;
-            win.ShowDialog();
-            return answered;
-        }
-
         private async void OnUiaCheck(object sender, RoutedEventArgs e)
         {
             MaintenanceHint.Text = "正在检查微信 UIA 控件树（3~15 秒）…";
@@ -1295,7 +1207,7 @@ namespace WhaleLauncher.Views
             {
                 var (code, output) = await RunToolAsync(PythonExe(), "\"" + Path.Combine(_sup.BaseDir, "scripts", "tools", "uia-check.py") + "\"", 60000);
                 MaintenanceHint.Text = code == 0 ? "UIA 自检完成。" : "UIA 自检没通过，看窗口里的结论。";
-                ShowTextWindow("UIA 自检", output);
+                AppDialog.ShowText("UIA 自检", output);
             }
             finally
             {
@@ -1319,13 +1231,13 @@ namespace WhaleLauncher.Views
             if (code == 0)
             {
                 MaintenanceHint.Text = "已备份到 " + dlg.FileName;
-                MessageBox.Show(Window.GetWindow(this), "已备份到：\n" + dlg.FileName + "\n\n默认不含 API Key；要连 Key 一起带走请用命令行加 --secrets。",
-                    "备份记忆", MessageBoxButton.OK, MessageBoxImage.Information);
+                AppDialog.Show(Window.GetWindow(this), "已备份到：\n" + dlg.FileName + "\n\n默认不含 API Key；要连 Key 一起带走请用命令行加 --secrets。",
+                    "备份记忆");
             }
             else
             {
                 MaintenanceHint.Text = "备份失败";
-                ShowTextWindow("备份失败", output);
+                AppDialog.ShowText("备份失败", output);
             }
         }
 
@@ -1414,12 +1326,12 @@ namespace WhaleLauncher.Views
 
             if (string.IsNullOrEmpty(chosen)) return;
 
-            var confirm = MessageBox.Show(
+            if (!AppDialog.Confirm(
                 Window.GetWindow(this),
                 "要恢复这个备份吗？\n\n" + chosen + "\n\n" +
                 "恢复前会先停止内核，并把当前记忆自动备份到 data\\backups\\。",
-                "恢复记忆", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-            if (confirm != MessageBoxResult.Yes) return;
+                "恢复记忆", danger: true, okText: "恢复"))
+                return;
 
             if (_sup.NodeRunning || _sup.BridgeRunning)
             {
@@ -1433,14 +1345,14 @@ namespace WhaleLauncher.Views
             if (code != 0)
             {
                 MaintenanceHint.Text = "恢复失败";
-                ShowTextWindow("恢复失败", output);
+                AppDialog.ShowText("恢复失败", output);
                 return;
             }
 
             MaintenanceHint.Text = "记忆已恢复";
-            var restart = MessageBox.Show(Window.GetWindow(this), "恢复完成。\n\n现在重新启动内核和桥接吗？",
-                "恢复记忆", MessageBoxButton.YesNo, MessageBoxImage.Question);
-            if (restart == MessageBoxResult.Yes)
+            var restart = AppDialog.Confirm(Window.GetWindow(this), "恢复完成。\n\n现在重新启动内核和桥接吗？",
+                "恢复记忆", okText: "立即重启", cancelText: "稍后");
+            if (restart)
             {
                 MaintenanceHint.Text = "正在启动…";
                 await _sup.StartAllAsync();
@@ -1450,14 +1362,14 @@ namespace WhaleLauncher.Views
 
         private async void OnFactoryReset(object sender, RoutedEventArgs e)
         {
-            if (!AskInline("重置全部（恢复出厂）",
+            if (!AppDialog.Confirm(Window.GetWindow(this),
                 "会清空：聊天记忆、API Key、人设调教、主人名单、网关令牌、所有设置。\n" +
                 "清空前会先自动备份到 backup\\reset-时间戳\\，但恢复要自己手动捞。",
-                "继续")) return;
+                "重置全部（恢复出厂）", okText: "继续")) return;
 
-            if (!AskInline("最后确认",
+            if (!AppDialog.Confirm(Window.GetWindow(this),
                 "真的要清空所有数据和设置吗？\n这一步不可撤销，只能从 backup\\reset-* 手动恢复。",
-                "确定重置", danger: true)) return;
+                "最后确认", danger: true, okText: "确定重置")) return;
 
             MaintenanceHint.Text = "正在重置，别关窗口…";
             var (code, output) = await RunToolAsync("powershell.exe",
@@ -1465,13 +1377,13 @@ namespace WhaleLauncher.Views
             if (code != 0)
             {
                 MaintenanceHint.Text = "重置失败";
-                ShowTextWindow("重置失败", output);
+                AppDialog.ShowText("重置失败", output);
                 return;
             }
             MaintenanceHint.Text = "已恢复出厂";
-            MessageBox.Show(Window.GetWindow(this),
+            AppDialog.Show(Window.GetWindow(this),
                 "已恢复出厂设置。\n\n请关闭并重新打开启动器（数据目录已重建）。",
-                "重置全部", MessageBoxButton.OK, MessageBoxImage.Information);
+                "重置全部");
         }
 
         private static JsonElement JsonProp(JsonElement e, string name)

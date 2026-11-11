@@ -275,6 +275,9 @@ namespace WhaleLauncher.Views
 
         private async void OnSaveCare(object sender, RoutedEventArgs e) => await SaveCareAsync();
 
+        private void OnOpenCarePolicy(object sender, RoutedEventArgs e)
+            => new ChatPolicyWindow(_sup) { Owner = Window.GetWindow(this) }.ShowDialog();
+
         private async Task<bool> SaveCareAsync()
         {
             if (!IntOr(TxtCareEvery, out var every)

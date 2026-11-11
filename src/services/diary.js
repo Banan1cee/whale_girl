@@ -408,6 +408,9 @@ class DiaryService {
       this.state = { status: 'empty', message: '今天没有和主人的聊天，未生成日记', file: '' };
       return 'empty';
     }
+    this.logger?.debug?.(`[diary] source day=${day} rows=${rows.length} ` +
+      `summaryUpto=${Number(target.session.summaryUpto) || 0} ` +
+      `summaryChars=${String(target.session.summary || '').length}`);
     if (!this.llm || this.llm.isMock) throw Object.assign(new Error('请先配置真实聊天模型'), { code: 'DIARY_MODEL_UNAVAILABLE' });
     rows.sort((a, b) => b.ts - a.ts);
     const picked = [];

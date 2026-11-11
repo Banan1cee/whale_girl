@@ -166,6 +166,9 @@ test('桥接源码里必须留着「钉账号」的关键代码（别被后来�
   assert.match(compat, /def pinned_window/, '要能查当前钉住哪个窗口');
   assert.match(compat, /_pinned_hwnd/, '_find_main 要先认钉住的窗口');
   assert.match(compat, /def _session_rows_of/, '要能只读某个窗口的会话行（认账号用）');
+  assert.match(compat, /def ensure_chat_page/, '要能从通讯录/收藏/发现/朋友圈回到聊天页');
+  assert.match(compat, /_AUX_WINDOW_PREFIXES/, '自动发现不能把朋友圈/设置/图片窗口当主窗');
+  assert.match(compat, /mmui::sns/, '要明确排除朋友圈页面窗口');
 });
 
 test('同一账号多个候选窗用窗口证据确认', () => {

@@ -364,7 +364,7 @@ class SenderMixin:
         G.log_throttled('send-policy-unavailable', '发言范围：内核未确认允许发送，已暂停', ttl=60)
         return False
 
-    def send_text(self, text, chat_display_name, chat_username='', force=False, quote_text=None):
+    def send_text(self, text, chat_display_name, chat_username='', force=False, quote_latest=False):
         if chat_username and chat_username in self.dead_chats:
             G.log('跳过已失效的会话：', chat_display_name)
             return False
@@ -418,12 +418,16 @@ class SenderMixin:
                     G.log('初始化微信窗口驱动…（会抢一下焦点，约 5~10 秒）')
                     self.gui = self.new_window_driver()
             self.bind_gui_window(self.gui)
-            if quote_text and G.QUOTE_REPLY:
+            if quote_latest and G.QUOTE_REPLY:
                 G.SEND_STATE['start'] = G.time.time()
                 try:
-                    if self.with_window_on_top(lambda: self.gui.quote_msg(text, who=chat_display_name, target_text=quote_text, verify=False)):
+                    # 不传 target_text：走上游 1.2.10 的「引用最近一条」路径
+                    # （UIA 行控件 + 像素重心），图片/表情/换行也不会 OCR 匹配失败。
+                    if self.with_window_on_top(lambda: self.gui.quote_msg(
+                            text, who=chat_display_name, verify=False)):
                         G.log('引用回复成功 →', chat_display_name)
                         return True
+                    G.log('引用回复未确认浮层/发送，回退普通发送：', chat_display_name)
                 except Exception as e:
                     G.log('引用回复失败，回退普通发送：', repr(e))
             uia_available = False

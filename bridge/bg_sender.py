@@ -117,6 +117,10 @@ ERROR_ACCESS_DENIED = 5
 CHAT_INPUT_AID = "chat_input_field"
 SEND_BUTTON_NAME = "发送"
 SESSION_LIST_AIDS = ("session_list",)
+#: 左侧导航栏：微信/通讯录/收藏/发现，顺序固定；点第一栏回聊天页。
+MAIN_TAB_BAR_CLS = "mmui::MainTabBar"
+TAB_ITEM_CLS = "mmui::XTabBarItem"
+CHAT_TAB_NAME = "微信"
 
 #: 树「够用」的节点数门限：默认 2 个节点 = 没物化；62~67 = TreeWalker 断在中间；
 #: 150+ = FindAll 拿到全部。20 是个宽松下限，能找到输入框就行。
@@ -933,7 +937,7 @@ def read_ui(hwnd):
     树没物化时 `nodes` 为空、其余为 None / 空列表。
     """
     info = {"ctrl": None, "nodes": [], "edit": None, "chat": None,
-            "value": None, "send_xy": None, "rows": []}
+            "value": None, "send_xy": None, "rows": [], "tabs": []}
     if not hwnd:
         return info
     try:
@@ -946,6 +950,20 @@ def read_ui(hwnd):
 
     nodes = _descendants(info["ctrl"])
     info["nodes"] = nodes
+
+    # 左侧导航栏：微信/通讯录/收藏/发现。页面窗口里会话列表可能整片不在，
+    # 但导航栏一直都在；用它判断并回到聊天页。
+    for c in nodes:
+        try:
+            if (getattr(c, "ClassName", "") or "") == MAIN_TAB_BAR_CLS:
+                info["tabs"] = [
+                    (norm_chat_name(getattr(k, "Name", "") or ""), k)
+                    for k in c.GetChildren()
+                    if (getattr(k, "ClassName", "") or "") == TAB_ITEM_CLS
+                ]
+                break
+        except Exception:
+            continue
 
     for c in nodes:
         try:
@@ -1055,6 +1073,50 @@ def _chat_is_target(current, aliases):
     return (best is not None and best <= 1), cur
 
 
+def _chat_tab_target(info):
+    """从 read_ui 的 tabs 里选「微信」栏；找不到名字时退回第一栏。"""
+    tabs = info.get("tabs") or []
+    for name, ctrl in tabs:
+        if (name or "").strip() == CHAT_TAB_NAME:
+            return ctrl
+    return tabs[0][1] if tabs else None
+
+
+def _ensure_chat_page(sender, info, log=None, timeout=2.5, force=False):
+    """微信停在通讯录 / 收藏 / 发现 / 朋友圈时，点左侧「微信」栏回聊天页。
+
+    只点导航栏，不碰搜索框；点完重新读控件树，等到会话列表或输入框出现。
+    窄窗口里开着会话时第一下只回到聊天页、会话还开着，需要再点一下才退出。
+    ``force=True`` 用于「已经开着别的会话，但要看会话列表」：必须点掉当前会话。
+    """
+    log = log or _noop
+    for _ in range(2):
+        if info.get("rows"):
+            return info
+        if info.get("edit") is not None and not force:
+            return info
+        force = True
+        tab = _chat_tab_target(info)
+        if tab is None:
+            return info
+        try:
+            r = tab.BoundingRectangle
+            if (r.right - r.left) < 20 or (r.bottom - r.top) < 20:
+                return info
+            sender.click_screen((r.left + r.right) // 2, (r.top + r.bottom) // 2)
+        except Exception as e:
+            log("后台通道：点「%s」栏失败 %r" % (CHAT_TAB_NAME, e))
+            return info
+        deadline = time.time() + max(0.5, float(timeout))
+        while time.time() < deadline:
+            time.sleep(TIMING["pollSwitch"])
+            info = read_ui(sender.hwnd)
+            if info.get("rows"):
+                log("后台通道：已从其它页面回到聊天页")
+                return info
+    return info
+
+
 def open_chat(sender, aliases, timeout=6.0, log=None):
     """在会话列表里点开目标会话。返回是否已切过去。
 
@@ -1075,6 +1137,13 @@ def open_chat(sender, aliases, timeout=6.0, log=None):
     cur = info["chat"]
     if cur and any(name_score(a, cur) == 0 for a in aliases):
         return True
+    if not info["rows"]:
+        # 通讯录 / 收藏 / 发现 / 朋友圈没有会话列表；先点「微信」栏回聊天页。
+        info = _ensure_chat_page(sender, info, log=log,
+                                 force=bool(info.get("edit") is not None))
+        cur = info["chat"]
+        if cur and any(name_score(a, cur) == 0 for a in aliases):
+            return True
     if not info["rows"]:
         return False
 

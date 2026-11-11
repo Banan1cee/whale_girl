@@ -47,25 +47,11 @@ if TYPE_CHECKING:
 def _find_descendant(control, predicate, max_depth: int = 12):
     """在 UIA 控件子树中递归查找第一个满足 ``predicate`` 的后代。
 
-    用树遍历（``GetChildren``）替代 ``uiautomation`` 的名称模式匹配，
+    用按 RuntimeId 去重的树遍历替代 ``uiautomation`` 的名称模式匹配，
     避免兼容层对 Name 的模糊匹配在“朋友圈”等中文按钮上失配。
     """
-    try:
-        if predicate(control):
-            return control
-    except Exception:
-        return None
-    if max_depth <= 0:
-        return None
-    try:
-        children = control.GetChildren()
-    except Exception:
-        return None
-    for child in children:
-        found = _find_descendant(child, predicate, max_depth - 1)
-        if found is not None:
-            return found
-    return None
+    from wechatauto.uia_driver import _find_by
+    return _find_by(control, predicate, max_depth, preorder=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1144,6 +1130,39 @@ class WeChat(Chat, Listener):
                         chunk=chunk or 9, verify=verify)
         return self._forward_response(r, dry_run, len(names))
 
+    @uilock
+    def ForwardFavorite(self, to, match: str = None, index: int = 0,
+                        scroll: int = 0, dry_run: bool = False,
+                        chunk: int = None, verify: bool = True) -> WxResponse:
+        """把**收藏**里的一条内容分别转发给 ``to``。
+
+        界面走法：左侧导航「收藏」→ 右键一条收藏 →「转发...」→ 之后与
+        :meth:`ForwardMessage` 完全同一个「微信发送给」窗口（选人 / 发送 /
+        回读校验整条后链复用）。
+
+        Args:
+            to: 收件人，单个名字或列表。
+            match: 按文字片段定位那条收藏（子串匹配条目名）。
+            index: 不给 ``match`` 时取可视区第 ``index`` 条完整露出的收藏
+                （默认 0 = 最上面一条；被页头压住的条目不算，右键点不进去）。
+            scroll: 先在收藏列表上滚几格再找（负数向上）。
+            dry_run: 只开窗、勾选、核对按钮上的人数，最后点取消，一条都不发。
+            chunk: 一个转发窗勾几个人（默认 9）；块与块之间过 rhythm。
+            verify: 发完回读每个人的会话，看有没有比发送时刻更新的一行消息。
+        """
+        from wechatauto.favorite_forward import FavoriteOps
+        eng = self._gui._get_uia()
+        if eng is None:
+            eng = self._gui._get_uia(refresh=True)
+        if eng is None:
+            return WxResponse.failure('UIA 驱动不可用，无法转发收藏')
+        ops = FavoriteOps(uia=eng, db=self._db)
+        names = [str(n).strip() for n in (([to] if isinstance(to, str) else list(to or []))
+                                          if to else []) if str(n).strip()]
+        r = ops.forward_favorite(names, match=match, index=index, scroll=scroll,
+                                 dry_run=dry_run, chunk=chunk or 9, verify=verify)
+        return self._forward_response(r, dry_run, len(names))
+
     @staticmethod
     def _forward_response(r, dry_run, total) -> WxResponse:
         if dry_run:
@@ -1289,7 +1308,7 @@ class WeChat(Chat, Listener):
             return None
         try:
             from wechatauto.ui.main import WeChatMainWnd
-            self._moment_api = WeChatMainWnd()
+            self._moment_api = WeChatMainWnd(hwnd=self._gui.main_hwnd)
         except Exception as e:
             _wxlog.debug('获取微信主窗口 UIA 封装失败：%s', e)
             self._moment_api = None
@@ -1369,7 +1388,7 @@ class WeChat(Chat, Listener):
         if root is not None and not _tree_ready(root):
             try:
                 from wechatauto.uia_driver import WeChatUIA
-                if WeChatUIA().ensure_materialized(timeout=6.0):
+                if WeChatUIA(hwnd=hwnd).ensure_materialized(timeout=6.0):
                     root = _uia.ControlFromHandle(hwnd) or root
                     wxlog.debug('进朋友圈前已唤醒 mmui 树')
             except Exception as exc:
