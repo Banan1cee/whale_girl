@@ -120,10 +120,10 @@ namespace WhaleLauncher.Views
                         var enabled = _market.Enabled(info.Id);
                         AddButton(buttons, enabled ? "停用" : "启用", () =>
                         {
-                            if (!enabled && info.IsMessage && MessageBox.Show(
+                            if (!enabled && info.IsMessage && !AppDialog.Confirm(Window.GetWindow(this),
                                 "此插件将自动读取收到的消息、发送者及上一条回复，并参与聊天处理。\n扩展点：" + string.Join("、", info.Hooks)
                                 + "\n附加权限：" + string.Join("、", info.Permissions)
-                                + "\n授权持续到停用插件。是否启用？", "启用消息插件", MessageBoxButton.YesNo) != MessageBoxResult.Yes)
+                                + "\n授权持续到停用插件。是否启用？", "启用消息插件", okText: "启用"))
                                 return Task.FromResult("已取消启用");
                             _market.SetEnabled(info.Id, !enabled);
                             return Task.FromResult(enabled ? "已停用" : info.IsPersona
