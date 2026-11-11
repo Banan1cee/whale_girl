@@ -100,7 +100,7 @@ async function handleChat(runtime, req, res) {
     return res.end();
   }
 
-  const clean = String(full || '').trim();
+  const clean = await bot.transformPluginReply(decision, String(full || '').trim());
   const bubbles = bot.finalize(decision, clean);
   sseSend(res, { type: 'done', text: clean, bubbles, reason: decision.reason, mock: Boolean(decision.mock) });
   res.end();

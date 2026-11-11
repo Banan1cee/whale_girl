@@ -110,7 +110,7 @@ namespace WhaleLauncher.Views
                     body.Children.Add(Small(info.Author + "  ·  v" + info.Version));
                     body.Children.Add(Small(info.Description));
                     body.Children.Add(Small(info.CompatibilityLabel));
-                    body.Children.Add(Small(info.IsPersona ? "类型：人设预设" :
+                    body.Children.Add(Small(info.IsMessage ? "消息插件：启用后自动参与聊天；权限见设置" : info.IsPersona ? "类型：人设预设" :
                         info.HostAction == PluginMarket.DigestAction ? "权限：按次确认后生成聊天汇总" : "权限：仅本页输入"));
                     var buttons = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
                     body.Children.Add(buttons);
@@ -120,6 +120,11 @@ namespace WhaleLauncher.Views
                         var enabled = _market.Enabled(info.Id);
                         AddButton(buttons, enabled ? "停用" : "启用", () =>
                         {
+                            if (!enabled && info.IsMessage && !AppDialog.Confirm(Window.GetWindow(this),
+                                "此插件将自动读取收到的消息、发送者及上一条回复，并参与聊天处理。\n扩展点：" + string.Join("、", info.Hooks)
+                                + "\n附加权限：" + string.Join("、", info.Permissions)
+                                + "\n授权持续到停用插件。是否启用？", "启用消息插件", okText: "启用"))
+                                return Task.FromResult("已取消启用");
                             _market.SetEnabled(info.Id, !enabled);
                             return Task.FromResult(enabled ? "已停用" : info.IsPersona
                                 ? "已启用，点击「设置」可预览和应用人设。"
@@ -134,7 +139,8 @@ namespace WhaleLauncher.Views
                             IsEnabled = enabled && PluginMarket.Compatible(info, _version) };
                         settings.Click += async (_, _) =>
                         {
-                            if (info.IsPersona) await ShowPersonaSettings(info);
+                            if (info.IsMessage) ShowMessageSettings(info);
+                            else if (info.IsPersona) await ShowPersonaSettings(info);
                             else ShowDetail(new PluginToolPage(_market, info, _sup));
                         };
                         buttons.Children.Add(settings);
@@ -244,8 +250,25 @@ namespace WhaleLauncher.Views
         }
 
         private void OnDownloadGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginDownloadGuide");
+
+        private void ShowMessageSettings(PluginInfo info)
+        {
+            var body = new StackPanel { Margin = new Thickness(12) };
+            body.Children.Add(Small(info.Name + " · 消息流程设置"));
+            body.Children.Add(Small("扩展点：" + string.Join("、", info.Hooks) + "\n附加权限：" + string.Join("、", info.Permissions)));
+            body.Children.Add(Small("由插件作者提供配置 JSON。保存后自动用于后续消息。停用可结束持续授权。"));
+            var editor = new TextBox { Text = _market.MessageSettings(info.Id), AcceptsReturn = true,
+                TextWrapping = TextWrapping.Wrap, MinHeight = 160, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            body.Children.Add(editor);
+            var buttons = new WrapPanel();
+            AddButton(buttons, "保存设置", () => { _market.SetMessageSettings(info.Id, editor.Text); return Task.FromResult("已保存"); });
+            AddButton(buttons, "返回插件市场", () => { OnBack(this, new RoutedEventArgs()); return Task.FromResult(""); }, false);
+            body.Children.Add(buttons);
+            ShowDetail(body);
+        }
         private void OnRulesGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginRulesGuide");
         private void OnAuthorGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginAuthorGuide");
+        private void OnMessageGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginMessageGuide");
 
         private void ShowGuide(string resource)
         {
