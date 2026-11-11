@@ -160,6 +160,11 @@ Only download installers from **GitHub Releases**: <https://github.com/Banan1cee
 
 Current release builds are **not signed yet**, so Windows may show "Unknown publisher". Verify `SHA256SUMS.txt` from the release before installing. The signing policy is in [`docs/CODE_SIGNING_POLICY.md`](docs/CODE_SIGNING_POLICY.md); the privacy policy is in [`docs/PRIVACY.md`](docs/PRIVACY.md).
 
+## Articles
+
+- **我在微信里养了个 AI 群友：零焦点 UIA 收发、本地数据、可换人设** — how the bridge talks to WeChat without stealing focus, the UIA/WM_CHAR version traps, and the personas system.
+  - Zhihu: <https://zhuanlan.zhihu.com/p/2103852627175986683>
+  - Copy in this repo: [`docs/articles/wechat-ai-companion.md`](docs/articles/wechat-ai-companion.md)
 ## Acknowledgements
 
 - **Character author 上善无形** — the Whale Girl icon is a derivative work based on their original character. See [`docs/NOTICE.md`](docs/NOTICE.md).
