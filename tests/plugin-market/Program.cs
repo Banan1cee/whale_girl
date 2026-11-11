@@ -166,7 +166,15 @@ try
     }
     Console.WriteLine("插件市场回归通过");
 }
-finally { Directory.Delete(dir, recursive: true); }
+finally
+{
+    for (var attempt = 0; ; attempt++)
+    {
+        try { Directory.Delete(dir, recursive: true); break; }
+        // Windows 映像文件的短暂占用可在进程退出后释放，持续占用仍然报错。
+        catch (IOException) when (attempt < 5) { await Task.Delay(100 * (attempt + 1)); }
+    }
+}
 
 namespace WhaleLauncher
 {
