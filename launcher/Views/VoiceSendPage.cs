@@ -335,7 +335,7 @@ public sealed class VoiceSendPage : UserControl
         {
             loading=true;experimental.IsChecked=saved.Enabled;loading=false;
             panel.Visibility=saved.Enabled?Visibility.Visible:Visibility.Collapsed;
-            MessageBox.Show("实验开关未保存："+ex.Message,"语音发送");
+            AppDialog.Show(Window.GetWindow(this), "实验开关未保存："+ex.Message, "语音发送", danger: true);
         }
     }
     void Write(AutoVoiceSettings settings)

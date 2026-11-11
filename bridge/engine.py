@@ -8,7 +8,7 @@
 
 前置：
   1. WeChat 4.x 已登录（建议用小号）
-  2. 已装依赖：pip install wechatauto-replica requests
+  2. 依赖按 bridge/requirements.txt 安装；wechatauto 用仓库 vendor/wechatauto（启动器运行时已内置）
   3. 鲸鲸服务已启动（启动器状态页显示「运行中」）
   4. config.json 里 gateway.wechat.enabled = true（脚本会读 token）
 

@@ -670,17 +670,14 @@ namespace WhaleLauncher.Views
                     var merged = NestedLong(plan, "merged");
                     var messages = NestedLong(plan, "messages");
                     var notes = NestedLong(plan, "notes");
-                    var answer = MessageBox.Show(
+                    if (!AppDialog.Confirm(
                         Window.GetWindow(this),
                         "发现旧版记忆：\n\n"
                         + "· 新增 " + imported + " 个聊天\n"
                         + "· 合并 " + merged + " 个已有聊天\n"
                         + "· 补进 " + messages + " 条消息 / " + notes + " 条偏好\n\n"
                         + "开始转换吗？原文件会保留，转换前也会自动备份当前记忆。",
-                        "转换旧版记忆",
-                        MessageBoxButton.OKCancel,
-                        MessageBoxImage.Question);
-                    if (answer != MessageBoxResult.OK)
+                        "转换旧版记忆", okText: "开始转换"))
                     {
                         result.Text = "已取消，什么都没改。";
                         return;
@@ -700,12 +697,10 @@ namespace WhaleLauncher.Views
                     }
                     result.Text = "完成：新增 " + res.Long("imported") + " 个聊天、合并 " + res.Long("merged")
                         + " 个，补进 " + res.Long("messages") + " 条消息 / " + res.Long("notes") + " 条偏好。";
-                    MessageBox.Show(
+                    AppDialog.Show(
                         Window.GetWindow(this),
                         "记忆已导入并转换格式。\n\n" + result.Text + "\n\n原文件保留在 data\\memory\\legacy\\。",
-                        "记忆已导入",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
+                        "记忆已导入");
                     await Api.Post(_sup.Url, "/api/memory/import/ack", "{}");
                 }
                 catch (Exception ex)
@@ -1220,10 +1215,11 @@ namespace WhaleLauncher.Views
                 .ToList();
             if (list.Count == 0) return;
 
-            var answer = MessageBox.Show(
+            if (!AppDialog.Confirm(
+                Window.GetWindow(this),
                 "把「" + title + "」改回默认值？\n\n只改这 " + list.Count + " 项；API Key 和聊天记忆不会被清掉。",
-                "恢复默认", MessageBoxButton.YesNo, MessageBoxImage.Question);
-            if (answer != MessageBoxResult.Yes) return;
+                "恢复默认", okText: "恢复默认"))
+                return;
 
             var res = await _sup.SaveConfigurationAsync("/api/config/reset", new { paths = list });
             if (!res.Ok)

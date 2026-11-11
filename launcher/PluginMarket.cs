@@ -124,15 +124,56 @@ namespace WhaleLauncher
             return output.ToArray();
         }
 
+        // GitHub raw / releases 在部分网络会被拦；按直达 → jsDelivr → 公共反代的顺序试。
+        // 只有原始地址通过 GitHub HTTPS 校验后才生成镜像，镜像本身也不允许带用户信息。
+        private static IEnumerable<string> DownloadCandidates(string url)
+        {
+            yield return url;
+            if (url.StartsWith("https://raw.githubusercontent.com/", StringComparison.Ordinal))
+            {
+                var rest = url.Substring("https://raw.githubusercontent.com/".Length);
+                var parts = rest.Split('/');
+                if (parts.Length >= 3)
+                    yield return $"https://cdn.jsdelivr.net/gh/{parts[0]}/{parts[1]}@{parts[2]}/{string.Join("/", parts.Skip(3))}";
+            }
+            if (url.StartsWith("https://raw.githubusercontent.com/", StringComparison.Ordinal)
+                || url.StartsWith("https://github.com/", StringComparison.Ordinal)
+                || url.StartsWith("https://release-assets.githubusercontent.com/", StringComparison.Ordinal)
+                || url.StartsWith("https://objects.githubusercontent.com/", StringComparison.Ordinal))
+            {
+                yield return "https://gh-proxy.com/" + url;
+                yield return "https://ghfast.top/" + url;
+            }
+        }
+
         private static async Task<byte[]> DownloadAsync(string url, int limit, bool feedback = false)
+        {
+            Exception last = null;
+            foreach (var candidate in DownloadCandidates(url))
+            {
+                try
+                {
+                    return await DownloadOnce(candidate, limit, feedback);
+                }
+                catch (Exception ex) when (ex is HttpRequestException or InvalidDataException
+                    or OperationCanceledException or IOException)
+                {
+                    last = ex;
+                }
+            }
+            throw last ?? new InvalidDataException("插件下载失败");
+        }
+
+        private static async Task<byte[]> DownloadOnce(string url, int limit, bool feedback = false)
         {
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) throw new InvalidDataException("下载地址无效");
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(feedback ? 5 : 20));
             for (var hop = 0; hop < 5; hop++)
             {
-                if (uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort || uri.UserInfo.Length != 0 ||
-                    (uri.Host is not ("raw.githubusercontent.com" or "github.com" or "release-assets.githubusercontent.com" or "objects.githubusercontent.com")
-                        && !(feedback && uri.Host == "api.github.com")))
+                var allowedHost = uri.Host is "raw.githubusercontent.com" or "github.com" or "release-assets.githubusercontent.com"
+                    or "objects.githubusercontent.com" or "cdn.jsdelivr.net" or "gh-proxy.com" or "ghfast.top"
+                    || (feedback && uri.Host == "api.github.com");
+                if (uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort || uri.UserInfo.Length != 0 || !allowedHost)
                     throw new InvalidDataException("插件下载地址须使用 GitHub HTTPS");
                 using var response = await Http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
                 if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308 && response.Headers.Location is { } location)

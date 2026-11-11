@@ -79,7 +79,8 @@ test('强制态更新失败后必须真的拦住（不许弹个框就让人继�
   assert.ok(start > 0, '找不到更新失败分支');
   const block = main.slice(start, main.indexOf('// 安装版：apply.ps1', start));
   assert.ok(/if \(!askFirst\)/.test(block), '强制态失败没有单独处理，会放行');
-  assert.ok(block.includes('MessageBox.Show'), '强制态失败没有提示原因');
+  assert.ok(block.includes('AppDialog.Show'), '强制态失败没有提示原因');
+  assert.ok(!block.includes('MessageBox.Show'), '启动器已统一走应用内 AppDialog');
   assert.ok(
     block.slice(block.indexOf('if (!askFirst)')).includes('Application.Current.Shutdown()'),
     '强制态更新失败后没有退出——等于没强制'

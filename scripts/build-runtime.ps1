@@ -244,7 +244,7 @@ foreach ($f in $actual) {
 Info "MANIFEST 校验通过（$($actual.Count) 个文件）"
 
 $destPkg = Join-Path $sitePackages 'wechatauto'
-$destDistInfo = Join-Path $sitePackages 'wechatauto_replica-1.2.9.dist-info'
+$destDistInfo = Join-Path $sitePackages 'wechatauto_replica-1.2.10.dist-info'
 if (Test-Path $destPkg) { Remove-Item $destPkg -Recurse -Force }
 if (Test-Path $destDistInfo) { Remove-Item $destDistInfo -Recurse -Force }
 Copy-Item $vendorPkg $destPkg -Recurse -Force
@@ -263,7 +263,7 @@ if (-not $vendorVer) {
   if ($metaLine) { $vendorVer = $metaLine.Matches[0].Groups[1].Value.Trim() }
 }
 if (-not $vendorVer) { Fail '拿不到 vendored wechatauto 的版本（__version__ 与 METADATA 都没有），拒绝继续构建' }
-if ($vendorVer -ne '1.2.9') { Fail ("vendored wechatauto 版本是 {0}，脚本按 1.2.9 校验；升级时请同步改这里与 bridge/requirements.txt" -f $vendorVer) }
+if ($vendorVer -ne '1.2.10') { Fail ("vendored wechatauto 版本是 {0}，脚本按 1.2.10 校验；升级时请同步改这里与 bridge/requirements.txt" -f $vendorVer) }
 Info "wechatauto $vendorVer（来自 vendor/，未走 PyPI）"
 
 # ---------------------------------------------------------------- 5. pywin32 postinstall

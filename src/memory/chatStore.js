@@ -481,12 +481,15 @@ class ChatStore {
   pruneRaw(chat, now = this.now()) {
     const covered = Number(chat.summary && chat.summary.coveredThroughSeq) || 0;
     const cutoff = now - LIMITS.rawRetentionDays * DAY_MS;
+    const recent = now - DAY_MS;
     const lastSeq = (chat.messages[chat.messages.length - 1] || {}).seq || 0;
     const hardBefore = lastSeq - LIMITS.maxMessagesPerChat;
     const keep = [];
     let dropped = 0;
     for (const m of chat.messages) {
-      const canDrop = m.seq <= covered && (m.ts < cutoff || m.seq <= hardBefore);
+      // 超过 maxMessagesPerChat 也不能删最近 24 小时的原文：日记是按天从
+      // messages 里取素材的，长上下文被压缩后如果连当天原文都清掉，日记就会缺段。
+      const canDrop = m.seq <= covered && (m.ts < cutoff || (m.seq <= hardBefore && m.ts < recent));
       if (canDrop) dropped += 1;
       else keep.push(m);
     }

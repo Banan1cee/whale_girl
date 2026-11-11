@@ -244,6 +244,12 @@ def main():
     if uia is not None and win is not None:
         section("3.5 会话列表诊断（能不能按名字直接点开会话）")
         try:
+            # 微信可能停在通讯录/收藏/发现/朋友圈；先点「微信」栏回聊天页，
+            # 否则下面按会话列表的检查会全部是 0 行，看起来像 UIA 坏了。
+            uia.ensure_chat_page()
+        except Exception:                        # noqa: BLE001
+            log.warning("页面归位失败：%s", traceback.format_exc())
+        try:
             lst = uia._session_list()
             log.info("session_list 控件 = %r",
                      getattr(lst, "ClassName", None) if lst is not None else None)

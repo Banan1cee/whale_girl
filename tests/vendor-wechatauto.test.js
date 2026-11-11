@@ -88,13 +88,28 @@ test('dist-info 齐全：METADATA 有 Version，licenses 非空', () => {
   assert.ok(fs.existsSync(metadata), '缺少 dist-info/METADATA');
   const text = fs.readFileSync(metadata, 'utf8');
   assert.match(text, /^Name: wechatauto-replica$/m, 'METADATA 的包名不对');
-  assert.match(text, /^Version: 1\.2\.9$/m, 'METADATA 的版本应是 1.2.9');
+  assert.match(text, /^Version: 1\.2\.10$/m, 'METADATA 的版本应是 1.2.10');
   for (const f of ['WHEEL', 'RECORD', 'entry_points.txt', 'top_level.txt']) {
     assert.ok(fs.existsSync(path.join(distInfo, f)), '缺少 dist-info/' + f);
   }
   const licenses = path.join(distInfo, 'licenses');
   assert.ok(fs.existsSync(licenses), '缺少 dist-info/licenses');
   assert.ok(fs.readdirSync(licenses).length > 0, 'dist-info/licenses 不该是空目录');
+});
+
+test('vendored moment.py 保持上游原样，朋友圈补丁只在 bridge/moment_compat.py', () => {
+  const vendorMoment = fs.readFileSync(path.join(pkg, 'moment.py'), 'utf8');
+  assert.doesNotMatch(vendorMoment, /if publisher and f\.get\('nickname'\) != publisher:/, 'vendor 里不该有发布者+关键词补丁');
+  assert.doesNotMatch(vendorMoment, /tid if tid is not None else fallback_user/, 'vendor 里不该有 tid 补丁');
+  assert.doesNotMatch(vendorMoment, /target_names = \[_lang\(MOMENTS, '取消'\)\] if cancel else/, 'vendor 里不该有取消赞补丁');
+
+  const compat = fs.readFileSync(path.join(root, 'bridge', 'moment_compat.py'), 'utf8');
+  assert.match(compat, /if publisher and f\.get\('nickname'\) != publisher:/, '兼容层要保留发布者+关键词匹配');
+  assert.match(compat, /if keyword and keyword not in \(f\.get\('text'\) or ''\):/, '兼容层要保留关键词匹配');
+  assert.match(compat, /_find_button\(\[_lang\(MOMENTS, '取消'\)\]\)/, '兼容层要保留取消赞不回退');
+  assert.match(compat, /parse_feed\(r\['content'\], r\['user_name'\], r\['tid'\]\)/, '兼容层要用数据库 tid');
+  assert.match(compat, /_invoke_action_menu/, '兼容层要接管右键兜底入口');
+  assert.match(compat, /_whale_no_right_click/, '兼容层要明确关闭右键单元格兜底');
 });
 
 test('requirements.txt 不再要求 wechatauto-replica（改由 vendor 提供）', () => {
