@@ -165,7 +165,7 @@ namespace WhaleLauncher
                 text += "\n原文件保留在 data\\memory\\legacy\\，不会删除。\n"
                       + "以后可以在「设置 → 高级 → 旧版记忆」里手动再识别。";
 
-                MessageBox.Show(this, text, "记忆已导入", MessageBoxButton.OK, MessageBoxImage.Information);
+                AppDialog.Show(this, text, "记忆已导入");
                 await Api.Post(_sup.Url, "/api/memory/import/ack", "{}");
             }
             catch
@@ -299,7 +299,7 @@ namespace WhaleLauncher
                     ? chk.Manifest.Message
                     : "这个版本存在已知的严重问题，请下载最新版。")
                 + "\n\n请到 GitHub Releases 下载最新安装包。";
-            MessageBox.Show(msg, "版本已停用", MessageBoxButton.OK, MessageBoxImage.Stop);
+            AppDialog.Show(this, msg, "版本已停用", danger: true);
             Application.Current.Shutdown();
         }
 
@@ -314,13 +314,12 @@ namespace WhaleLauncher
 
             if (askFirst)
             {
-                var answer = MessageBox.Show(
+                if (!AppDialog.Confirm(this,
                     "发现新版本 v" + latest + "（当前 v" + chk.Current + "）。\n\n"
                     + (chk.Manifest.Message.Length > 0 ? chk.Manifest.Message + "\n\n" : "")
                     + "更新会下载官方安装包，校验 SHA256 后覆盖安装；data\\ 和 config.json 不会被改动。\n"
                     + "更新期间启动器会退出，结束后自动重新打开。\n\n现在更新吗？",
-                    "检查更新", MessageBoxButton.YesNo, MessageBoxImage.Question);
-                if (answer != MessageBoxResult.Yes) return;
+                    "检查更新", okText: "现在更新", cancelText: "稍后")) return;
             }
 
             _updating = true;
@@ -338,14 +337,14 @@ namespace WhaleLauncher
                     // 强制态不能「失败也照常用」：提示完退出，下次启动还会再拦
                     if (!askFirst)
                     {
-                        MessageBox.Show(
+                        AppDialog.Show(this,
                             "必须更新到 v" + latest + " 才能继续使用，但自动更新失败了：\n\n" + outcome.Error,
-                            "必须更新", MessageBoxButton.OK, MessageBoxImage.Stop);
+                            "必须更新", danger: true);
                         Application.Current.Shutdown();
                         return;
                     }
-                    MessageBox.Show("更新失败：" + outcome.Error + "\n\n再点一次「检查更新」可以重试。",
-                        "检查更新", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    AppDialog.Show(this, "更新失败：" + outcome.Error + "\n\n再点一次「检查更新」可以重试。",
+                        "检查更新", danger: true);
                     return;
                 }
 
@@ -392,11 +391,10 @@ namespace WhaleLauncher
         private void OnClosingDuringUpdate(object sender, System.ComponentModel.CancelEventArgs e)
         {
             if (!_updating) return;
-            var ans = MessageBox.Show(
+            if (!AppDialog.Confirm(this,
                 "更新还在进行。\n\n" +
                 "关掉窗口不会中断更新：下载和安装会在后台继续，装完会自动把启动器重新打开。\n\n现在关吗？",
-                "更新进行中", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-            if (ans != MessageBoxResult.Yes) e.Cancel = true;
+                "更新进行中", danger: true, okText: "现在关闭", cancelText: "继续等待")) e.Cancel = true;
         }
 
         // ── 外观：主题 / 背景图 / 标题栏 ────────────────────────

@@ -1,12 +1,44 @@
 """Bounded OCR flow for the experimental Moments publisher."""
 import os
+import re
 import time
 
+try:
+    from wechatauto import wxlog as _wxlog
+except Exception:  # 纯函数测试环境没有 wechatauto
+    _wxlog = None
 
-def label(lines, wanted, *, top=None):
-    matches = [(x + w // 2, y + h // 2) for value, x, y, w, h in lines
-               if ''.join(value.split()) == wanted and (top is None or y <= top)]
-    return matches[0] if len(matches) == 1 else None
+
+def _note(message):
+    if _wxlog is not None:
+        try:
+            _wxlog.info(message)
+        except Exception:
+            pass
+
+
+def _norm(value):
+    # OCR 会把菜单文字识别成「发表文字(C)」「发表文字…」或带全角括号；
+    # 去掉空白和标点后再比，别因为一个括号整条菜单都认不出来。
+    return re.sub(r'[^0-9A-Za-z\u4e00-\u9fff]', '', str(value or ''))
+
+
+def label(lines, wanted, *, top=None, fuzzy=False):
+    want = _norm(wanted)
+    exact = []
+    near = []
+    for value, x, y, w, h in lines:
+        if top is not None and y > top:
+            continue
+        text = _norm(value)
+        if not text or not want:
+            continue
+        point = (x + w // 2, y + h // 2)
+        if text == want:
+            exact.append(point)
+        elif fuzzy and (want in text or (len(text) >= 3 and text in want)):
+            near.append(point)
+    return exact[0] if exact else (near[0] if near else None)
 
 
 def find_camera_icon(image, dpi):
@@ -22,19 +54,21 @@ def find_camera_icon(image, dpi):
     with Image.open(os.path.join(os.path.dirname(__file__), 'moments-camera.png')) as reference:
         template = np.asarray(reference.convert('L'))
     hits = []
-    for factor in (0.8, 1.0, 1.2):
-        tile = cv2.resize(template, None, fx=scale * factor, fy=scale * factor)
-        h, w = tile.shape
-        if h > strip.shape[0] or w > strip.shape[1]:
-            continue
-        # 亮色和暗色主题的图形对比度方向相反。
-        scores = np.abs(cv2.matchTemplate(strip, tile, cv2.TM_CCOEFF_NORMED))
-        _, score, _, (x, y) = cv2.minMaxLoc(scores)
-        hits.append((score, left + x + w // 2, y + h // 2))
+    # 亮色/暗色主题的图形对比度方向相反；模板和反相模板都试。
+    for source in (template, 255 - template):
+        for factor in (0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4):
+            tile = cv2.resize(source, None, fx=scale * factor, fy=scale * factor)
+            h, w = tile.shape
+            if h > strip.shape[0] or w > strip.shape[1]:
+                continue
+            scores = np.abs(cv2.matchTemplate(strip, tile, cv2.TM_CCOEFF_NORMED))
+            _, score, _, (x, y) = cv2.minMaxLoc(scores)
+            hits.append((score, left + x + w // 2, y + h // 2))
     if not hits:
         return None
     score, x, y = max(hits)
-    return (x, y) if score >= 0.85 else None
+    _note('朋友圈发表：相机模板最佳分=%.3f' % score)
+    return (x, y) if score >= 0.80 else None
 
 
 def publish_flow(screen, text, image='', *, pause=time.sleep):
@@ -54,9 +88,14 @@ def publish_flow(screen, text, image='', *, pause=time.sleep):
         pause(0.5)
         menu = screen.capture()
         actions = ('发表图片', '发表图片朋友圈', '发表图文') if image else ('发表文字', '发表文字朋友圈')
-        action = next((point for name in actions if (point := label(menu.lines, name))), None)
+        action = next((point for name in actions if (point := label(menu.lines, name, fuzzy=True))), None)
+        if not action and hasattr(screen, 'menu_point'):
+            action = screen.menu_point(menu, actions)
         if not action:
+            ocr = '|'.join(str(value) for value, *_ in menu.lines[:12])
+            _note('朋友圈发表：右键菜单未识别 OCR=' + (ocr or '（空）'))
             return 'failed', 'image_menu_not_recognized' if image else 'text_menu_not_recognized'
+        _note('朋友圈发表：右键菜单已识别')
         screen.click(menu, action)
         if image:
             pause(0.5)
@@ -95,16 +134,14 @@ def publish_flow(screen, text, image='', *, pause=time.sleep):
         if not screen.allowed():
             return 'failed', 'job_cancelled'
         clicked = True
+        _note('朋友圈发表：准备点击发表按钮')
         screen.click(ready, publish)
-        try:
-            for _ in range(3):
-                pause(0.25)
-                if screen.editor_closed(ready):
-                    screen.return_to_chat()
-                    break
-        except Exception:
-            # Submission verification still runs if the window disappears mid-scan.
-            pass
+        # 点完「发表」后不再碰 UIA：微信发布瞬间 UI 线程忙，
+        # editor_closed/return_to_chat 里的 GetChildren/IsOffscreen 可能无限期阻塞，
+        # 表现就是「卡在点击发表按钮，然后不动」。成败交给下面的数据库核验，
+        # 回聊天页也交给用户或下一次操作，不再自动导航。
+        _note('朋友圈发表：点击已发送，跳过点击后的 UIA 检查')
+        pause(0.6)
         return 'unconfirmed', ''
     except Exception:
         return ('unconfirmed' if clicked else 'failed'), 'ocr_transport_error'
@@ -157,6 +194,25 @@ class WeChatPostScreen:
         self.verify(frame, x, y)
         self.gui._input.send_input_click(x, y, right=right)
 
+    def menu_point(self, frame, names):
+        """右键菜单的 UIA 兜底：OCR 认不出文字时，按控件名找菜单项。"""
+        try:
+            root = self.uia.ControlFromHandle(frame.hwnd)
+            if root is None:
+                return None
+            wanted = [_norm(name) for name in names if _norm(name)]
+            for control in self._controls(root):
+                text = _norm(getattr(control, 'Name', ''))
+                if not text or getattr(control, 'IsOffscreen', False):
+                    continue
+                if any(w in text or (len(text) >= 3 and text in w) for w in wanted):
+                    point = self._point(frame, control)
+                    if point:
+                        return point
+        except Exception:
+            return None
+        return None
+
     def camera(self, frame):
         try:
             root = self.timeline.GetTopLevelControl()
@@ -177,18 +233,45 @@ class WeChatPostScreen:
             if not (left <= r.left < r.right <= right and top <= r.top < r.bottom <= bottom):
                 return None
             dpi = self.gui._input._user32.GetDpiForWindow(frame.hwnd) or 96
+            point = self.camera_uia(frame, header)
+            if point is not None:
+                return point
             # Header offsets come from UIA; capture only the bounded toolbar band.
-            toolbar_bottom = min(int(r.bottom), int(r.top) + round(75 * dpi / 96))
+            toolbar_bottom = min(int(r.bottom), int(r.top) + round(110 * dpi / 96))
             if toolbar_bottom <= int(r.top):
                 return None
             self.verify(frame)
             toolbar = self.grab(bbox=(int(r.left), int(r.top), int(r.right), toolbar_bottom), all_screens=True)
             point = find_camera_icon(toolbar, dpi)
             if point is None:
+                _note('朋友圈发表：相机图标未识别（header=%s）' % header.ClassName)
                 return None
             return int(r.left) - left + point[0], int(r.top) - top + point[1]
         except Exception:
             return None
+
+    def camera_uia(self, frame, header):
+        """UIA 兜底：相机按钮如果带「发表/相机/拍照」名字，直接点它。"""
+        names = []
+        try:
+            for control in self._controls(header):
+                if control.ControlTypeName != 'ButtonControl':
+                    continue
+                name = (control.Name or '').strip()
+                if name:
+                    names.append(name)
+                if getattr(control, 'IsOffscreen', False):
+                    continue
+                if any(key in name for key in ('发表', '相机', '拍照', '朋友圈')):
+                    point = self._point(frame, control)
+                    if point:
+                        _note('朋友圈发表：UIA 找到相机按钮 %s' % name[:20])
+                        return point
+            if names:
+                _note('朋友圈发表：header buttons=' + '|'.join(names[:10]))
+        except Exception:
+            pass
+        return None
 
     def select_image(self, dialog, open_button, image):
         import win32con

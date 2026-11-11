@@ -259,8 +259,8 @@ class MediaFailureLogTests(unittest.TestCase):
         env['on_message_inner'](self.message('文本', content='请分条发'), None)
         env['send_voice_reply'].assert_not_called()
         self.assertEqual(env['send_text'].call_args_list, [
-            call('先保存', '好友', 'peer', quote_text=None),
-            call('再重启', '好友', 'peer', quote_text=None),
+            call('先保存', '好友', 'peer', quote_latest=False),
+            call('再重启', '好友', 'peer', quote_latest=False),
         ])
 
     def test_emoji_failure_logs_error_and_sends_nothing(self):

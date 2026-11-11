@@ -287,6 +287,14 @@ class AccountMixin:
             hwnds = list(probe._wechat_hwnds() or ())
         except Exception:
             hwnds = []
+        # 朋友圈页面可能把主窗藏起来（或只剩 mmui::SNSWindow），
+        # _wechat_hwnds 只看可见主窗时会一个都扫不到。只有在一个候选都没有时
+        # 才补隐藏主窗，避免把另一个号的隐藏窗混进来造成“多候选无法确认”。
+        if not hwnds:
+            fallback = self.find_weixin_hwnd()
+            if fallback:
+                hwnds.append(fallback)
+                G.log('账号窗口：补入后台/隐藏主窗 hwnd=%s（朋友圈页面常见）' % fallback)
         pinned = int(self.ACCOUNT.get('hwnd') or 0) if self.ACCOUNT.get('verified') else 0
         if pinned:
             try:

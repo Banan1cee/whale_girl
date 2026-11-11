@@ -16,7 +16,7 @@ test('插件入口固定在市场，设置在卡片内打开工具或人设', ()
   assert.match(page, /Content = "设置"/);
   assert.match(page, /ShowDetail\(new PluginToolPage/);
   assert.match(page, /await ShowPersonaSettings\(info\)/);
-  assert.match(page, /MessageBox\.Show\("将这份人设应用到当前鲸鲸？"/);
+  assert.match(page, /AppDialog\.Confirm\(Window\.GetWindow\(this\), "将这份人设应用到当前鲸鲸？"/);
 });
 
 test('市场右侧可打开随启动器打包的规范', () => {
@@ -33,5 +33,14 @@ test('本地安装提示来源和替换版本，人设页应用市场预设须�
   assert.match(market, /InstallLocal\(picker.FileName,[\s\S]*ConfirmLocalInstall\(info, current\)/);
   assert.match(market, /本地 ZIP 未经鲸鲸插件市场审核/);
   assert.match(market, /将替换已安装/);
-  assert.match(persona, /StartsWith\("market-", StringComparison.Ordinal\)[\s\S]*MessageBoxResult.OK\) return;\s+var res/);
+  assert.match(persona, /StartsWith\("market-", StringComparison\.Ordinal\)[\s\S]*AppDialog\.Confirm\([\s\S]*\) return;\s+var res/);
+});
+
+test('插件市场下载带 GitHub 直连 / jsDelivr / 反代回退', () => {
+  const market = read('launcher/PluginMarket.cs');
+  assert.match(market, /DownloadCandidates/);
+  assert.match(market, /cdn\.jsdelivr\.net/);
+  assert.match(market, /gh-proxy\.com/);
+  assert.match(market, /ghfast\.top/);
+  assert.match(market, /DownloadOnce/);
 });

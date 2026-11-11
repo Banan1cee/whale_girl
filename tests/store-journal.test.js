@@ -75,6 +75,22 @@ test('未覆盖的原文永不删除；覆盖且超 90 天的才删', () => {
   cleanup(dir);
 });
 
+test('长上下文压缩后仍保留最近 24 小时原文（日记不缺口）', () => {
+  const { store, dir } = tempStore();
+  const key = 'a';
+  const now = Date.now();
+  const chat = store.chatStore.ensureChat(key);
+  chat.messages = Array.from({ length: 2001 }, (_, i) => ({
+    seq: i + 1, role: 'user', name: '甲', text: 'm' + i, ts: now - 1000,
+  }));
+  chat.summary.coveredThroughSeq = 2000;
+  const result = store.chatStore.pruneRaw(chat, now);
+  assert.equal(result.dropped, 0, '不能因为超过 maxMessagesPerChat 就删掉当天原文');
+  assert.equal(chat.messages.length, 2001);
+  store.close();
+  cleanup(dir);
+});
+
 test('reloadFromDisk：外部删掉 chat 目录后内存也跟着清空', () => {
   const { store, dataDir, dir } = tempStore();
   store.appendMessage('a', { role: 'user', name: '甲', text: 'hi' });

@@ -68,21 +68,13 @@ public sealed partial class MomentsPage : UserControl
             if (generation != viewGeneration) return;
             if (!response.Ok) { StatusText.Text = Api.Message(response); return; }
             var id = response.Str("id");
-            for (var i = 0; i < 48; i++)
-            {
-                await Task.Delay(2000);
-                if (generation != viewGeneration) return;
-                var result = await Api.Get(sup.Url, "/api/moments/result?id=" + Uri.EscapeDataString(id));
-                if (generation != viewGeneration) return;
-                if (!result.Ok || result.Str("status") == "failed") { StatusText.Text = result.Error; return; }
-                if (result.Str("status") != "done") continue;
-                var items = result.Prop("items");
-                var formatted = FormatItems(items);
-                TxtOutput.Text = formatted.Text;
-                StatusText.Text = formatted.Count == 0 ? "本地缓存中没有匹配的动态；这不代表微信服务器没有新动态。" : $"已读取 {formatted.Count} 条（已保存最近快照，主人问起时可直接回答）";
-                return;
-            }
-            StatusText.Text = "读取超时；请检查桥接是否正在运行。";
+            var result = await WaitForMomentsAsync(id, generation);
+            if (result == null) { if (generation == viewGeneration) StatusText.Text = "读取超时；请检查桥接是否正在运行。"; return; }
+            if (!result.Ok || result.Str("status") == "failed") { StatusText.Text = result.Error; return; }
+            var items = result.Prop("items");
+            var formatted = FormatItems(items);
+            TxtOutput.Text = formatted.Text;
+            StatusText.Text = formatted.Count == 0 ? "本地缓存中没有匹配的动态；这不代表微信服务器没有新动态。" : $"已读取 {formatted.Count} 条（已保存最近快照，主人问起时可直接回答）";
         }
         catch (Exception ex) { if (generation == viewGeneration) StatusText.Text = Api.FriendlyError(ex); }
         finally { reading = false; BtnRead.IsEnabled = true; }
@@ -107,18 +99,12 @@ public sealed partial class MomentsPage : UserControl
             });
             if (generation != viewGeneration) return;
             if (!result.Ok) { StatusText.Text = result.Error; return; }
-            for (var i = 0; i < 48; i++)
-            {
-                await Task.Delay(2000);
-                if (generation != viewGeneration) return;
-                var state = await Api.Get(sup.Url, "/api/moments/result?id=" + Uri.EscapeDataString(result.Str("id")));
-                if (!state.Ok || state.Str("status") == "failed" || state.Str("status") == "unconfirmed")
-                {
-                    StatusText.Text = state.Error; return;
-                }
-                StatusText.Text = "正在执行互动，请勿同时操作微信…";
-            }
-            StatusText.Text = "操作状态未知，请在微信中确认，不要重复发送。";
+            var state = await WaitForMomentsAsync(result.Str("id"), generation);
+            if (state == null) { if (generation == viewGeneration) StatusText.Text = "操作状态未知，请在微信中确认，不要重复发送。"; return; }
+            if (!state.Ok || state.Str("status") != "done")
+                StatusText.Text = state.Error;
+            else
+                StatusText.Text = "互动已执行；请在微信里确认结果，不要重复操作。";
         }
         finally { reading = false; BtnInteract.IsEnabled = true; }
     }
@@ -250,6 +236,22 @@ public sealed partial class MomentsPage : UserControl
         return (count, text.ToString());
     }
 
+    // 读取和互动共用一个轮询：等待 done / failed / unconfirmed，超时返回 null。
+    async Task<ApiResult> WaitForMomentsAsync(string id, int generation, int attempts = 48)
+    {
+        for (var i = 0; i < attempts; i++)
+        {
+            await Task.Delay(2000);
+            if (generation != viewGeneration) return null;
+            var result = await Api.Get(sup.Url, "/api/moments/result?id=" + Uri.EscapeDataString(id));
+            if (generation != viewGeneration) return null;
+            if (!result.Ok) return result;
+            var status = result.Str("status");
+            if (status == "done" || status == "failed" || status == "unconfirmed") return result;
+        }
+        return null;
+    }
+
     // 双开时把任务钉到当前桥接账号，避免另一个账号的桥接把任务领走。
     async Task LoadPublishAsync()
     {
@@ -344,19 +346,28 @@ public sealed partial class MomentsPage : UserControl
             "queued" => "已排队，等待微信",
             "sending" => "正在识别微信界面",
             "confirmed" => "已在自己的朋友圈缓存中确认",
-            "unconfirmed" => "已尝试发表，需在微信确认",
-            "no_material" => "没有足够的新素材，已跳过",
-            "filtered" => "文案重复或未通过检查，已跳过",
+            "unconfirmed" => "上次已尝试发表，需在微信确认",
+            "no_material" => "上次没有足够的新素材，已跳过",
+            "filtered" => "上次文案重复或未通过检查，已跳过",
             "state_error" => "发布状态文件无法读取，已暂停",
-            "failed" => reason switch {
-                "timeline_not_recognized" => "未识别到朋友圈页面",
+            "failed" => "上次未完成：" + (reason switch {
+                "camera_not_recognized" => "未识别到朋友圈相机图标",
                 "text_menu_not_recognized" => "未识别到发表文字菜单",
+                "image_menu_not_recognized" => "未识别到发表图片菜单",
                 "image_dialog_not_recognized" => "未识别到微信选图窗口",
                 "image_preview_not_recognized" => "无法确认图片预览，已停止",
+                "editor_not_recognized" => "未识别到朋友圈编辑框",
                 "editor_not_empty" => "无法确认空白编辑框，已停止",
                 "draft_not_verified" => "无法确认待发文案，已停止",
-                _ => "本次未完成，请查看桥接诊断",
-            },
+                "job_cancelled" => "账号或前台状态变化，任务已取消",
+                "wechat_not_foreground" => "微信没有切到前台",
+                "invalid_draft" => "文案不符合发表要求",
+                "invalid_image" => "配图无效",
+                "timeline_not_recognized" => "未识别到朋友圈页面",
+                "ocr_transport_error" => "OCR/界面操作异常",
+                "publish_exception" => "发表流程异常",
+                _ => "请查看桥接诊断",
+            }),
             _ => "等待下一次检查",
         };
         var preview = res.Str("preview");

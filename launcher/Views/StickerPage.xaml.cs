@@ -507,8 +507,7 @@ namespace WhaleLauncher.Views
             {
                 if (!CanManageOnline()) return;
                 var n = (string)((Button)s).Tag;
-                var confirm = MessageBox.Show($"删掉这张？\n\n{n}", "表情包", MessageBoxButton.OKCancel, MessageBoxImage.Question);
-                if (confirm != MessageBoxResult.OK) return;
+                if (!AppDialog.Confirm(Window.GetWindow(this), $"删掉这张？\n\n{n}", "表情包")) return;
                 var r = await Api.PostJson(_sup.Url, "/api/stickers/delete", new { emotion = _current, name = n });
                 StatusText.Text = r.Ok ? "已删除 " + n : "删除失败：" + Api.Message(r);
                 if (r.Ok)
@@ -596,10 +595,9 @@ namespace WhaleLauncher.Views
         {
             if (!_current.StartsWith("x:") || !CanManageOnline()) return;
             var label = _current.Substring(2);
-            var confirm = MessageBox.Show(
+            if (!AppDialog.Confirm(Window.GetWindow(this),
                 "从列表里移除分类「" + label + "」？\n\n文件夹和里面的图片都会保留，随时可以再加回来。",
-                "表情包分类", MessageBoxButton.OKCancel, MessageBoxImage.Question);
-            if (confirm != MessageBoxResult.OK) return;
+                "表情包分类")) return;
             var res = await Api.PostJson(_sup.Url, "/api/stickers/category", new { action = "remove", label });
             StatusText.Text = res.Ok ? "已移除分类：" + label : "移除失败：" + Api.Message(res);
             if (res.Ok)
@@ -712,8 +710,9 @@ namespace WhaleLauncher.Views
                 _importingPresets = false;
                 await RefreshAsync();
                 var copied = res.Long("copied");
-                MessageBox.Show(!res.Ok ? "导入失败：" + res.Error
-                    : copied > 0 ? $"已导入 {copied} 张预设表情包。" : "没有需要导入的新预设表情包。", "预设表情包");
+                AppDialog.Show(Window.GetWindow(this), !res.Ok ? "导入失败：" + res.Error
+                    : copied > 0 ? $"已导入 {copied} 张预设表情包。" : "没有需要导入的新预设表情包。", "预设表情包",
+                    danger: !res.Ok);
             }
             finally { _importingPresets = false; }
         }
@@ -799,11 +798,31 @@ namespace WhaleLauncher.Views
                 ? await Api.PostJson(_sup.Url, "/api/stickers/open-folder", folderBody)
                 : new ApiResult { Ok = false, Error = "内核未运行" };
 
-            string target = res.Ok ? res.Str("dir") : LocalPath(emotion, name);
+            string target = res.Ok ? res.Str("dir") : "";
+            if (string.IsNullOrEmpty(target)) target = LocalPath(emotion, name);
+            // 内核没启动、表情包开关关着、或本地库存脚本暂时不可用时，
+            // 「打开总目录」仍然应该能打开 data\stickers；目录不存在就建出来。
+            if (string.IsNullOrEmpty(target) && string.IsNullOrEmpty(emotion))
+                target = Path.Combine(_sup.DataDir, "stickers");
             if (string.IsNullOrEmpty(target))
             {
                 StatusText.Text = "打不开：" + Api.FriendlyError(res.Error.Length > 0 ? res.Error : "找不到这个文件夹");
                 return;
+            }
+            try
+            {
+                if (!string.IsNullOrEmpty(name) ? File.Exists(target) : Directory.Exists(target))
+                {
+                    // 已存在，直接打开。
+                }
+                else if (string.IsNullOrEmpty(name))
+                {
+                    Directory.CreateDirectory(target);
+                }
+            }
+            catch
+            {
+                // 目录建不出来时仍尝试打开，让系统给出更具体的错误。
             }
             // 三级兜底：ShellExecute → explorer.exe 命令行 → 至少把路径给用户手动开。
             // （有些环境——比如被沙箱/作业对象限制的父进程——会挡掉 ShellExecute，
@@ -816,46 +835,69 @@ namespace WhaleLauncher.Views
 
         private bool TryOpen(string target, bool select)
         {
+            // UseShellExecute=true 时不要用 ArgumentList（.NET 在部分版本会直接拒绝），
+            // 用 Arguments 字符串；路径统一加引号，空格/中文/括号都不会被拆开。
             try
             {
                 if (select && File.Exists(target))
                 {
-                    var psi = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
-                    psi.ArgumentList.Add("/select," + target);
+                    var psi = new ProcessStartInfo("explorer.exe")
+                    {
+                        UseShellExecute = true,
+                        Arguments = "/select,\"" + target + "\""
+                    };
                     using var p1 = Process.Start(psi);
                     return true;
                 }
-                // 首选：交给 shell 处理目录关联（不自己拼 explorer 命令行）
-                using var p2 = Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+                // 目录走 explorer 命令行，比让 shell 猜文件关联更稳。
+                if (Directory.Exists(target))
+                {
+                    var psi = new ProcessStartInfo("explorer.exe")
+                    {
+                        UseShellExecute = true,
+                        Arguments = "\"" + target + "\""
+                    };
+                    using var p2 = Process.Start(psi);
+                    return true;
+                }
+                // 目标不是目录（例如某些自定义路径）时再交给 shell。
+                using var p3 = Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
                 return true;
             }
             catch
             {
                 try
                 {
-                    var psi = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
-                    psi.ArgumentList.Add(target);
-                    using var p3 = Process.Start(psi);
+                    try { Clipboard.SetText(target); } catch { /* 剪贴板被占用就算了 */ }
+                    var psi = new ProcessStartInfo("explorer.exe")
+                    {
+                        UseShellExecute = false,
+                        Arguments = select && File.Exists(target) ? "/select,\"" + target + "\"" : "\"" + target + "\""
+                    };
+                    using var p4 = Process.Start(psi);
                     return true;
                 }
                 catch
                 {
-                    try { Clipboard.SetText(target); } catch { /* 剪贴板被占用就算了 */ }
                     return false;
                 }
             }
         }        private string LocalPath(string emotion, string name)
         {
-            if (string.IsNullOrEmpty(_libraryDir)) return null;
-            if (string.IsNullOrEmpty(emotion)) return _libraryDir;
+            // _libraryDir 只有在内核/本地库存成功返回后才会有值。
+            // 根目录不依赖它：默认库就是启动器数据目录下的 stickers，先给一个可打开的落点。
+            var root = string.IsNullOrEmpty(_libraryDir)
+                ? Path.Combine(_sup.DataDir, "stickers")
+                : _libraryDir;
+            if (string.IsNullOrEmpty(emotion)) return root;
             if (!string.IsNullOrEmpty(name))
             {
-                var full = Path.Combine(_libraryDir, name.Replace('/', Path.DirectorySeparatorChar));
+                var full = Path.Combine(root, name.Replace('/', Path.DirectorySeparatorChar));
                 return File.Exists(full) ? full : null;
             }
             var label = _emotions.FirstOrDefault((e) => e.Key == emotion)?.Label;
             if (string.IsNullOrEmpty(label)) return null;
-            var dir = Path.Combine(_libraryDir, label);
+            var dir = Path.Combine(root, label);
             return Directory.Exists(dir) ? dir : null;
         }
 
