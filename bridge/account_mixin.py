@@ -328,11 +328,12 @@ class AccountMixin:
         if matched:
             return probe, [], matched
         for h in unknown:
-            if not selected or h == pinned:
-                try:
-                    probe._hot_activate_accessibility(h)
-                except Exception:
-                    pass
+            # 文件句柄证据缺失时，先物化这个候选的控件树，再核对会话。
+            # 等账号先确认才物化会让两条识别路径互相等待；已知错号已在上面排除。
+            try:
+                probe._hot_activate_accessibility(h)
+            except Exception as exc:
+                G.log('账号窗口：候选 UIA 物化失败 type=%s hwnd=%s' % (type(exc).__name__, h))
             c = None
             rows = []
             for _try in range(2):
@@ -651,3 +652,4 @@ class AccountMixin:
         if not allowed:
             G.log_throttled('sticker-account-ambiguous', '表情包跳过：当前微信窗口和账号信息不一致，或多个窗口无法区分。只登录一个号且数据库匹配时无需手选；多开时请在设置中选账号。', ttl=300)
         return allowed
+
