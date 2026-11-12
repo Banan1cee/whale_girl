@@ -149,7 +149,13 @@ function clearSettingsShadow(runtime, paths) {
     }
   }
   if (cleared.length) {
-    try { fs.writeFileSync(file, JSON.stringify(cur, null, 2), 'utf8'); } catch { /* 写不了就算了 */ }
+    try {
+      fs.writeFileSync(file, JSON.stringify(cur, null, 2), 'utf8');
+    } catch (err) {
+      runtime.logger?.error?.('清理 settings.json 覆盖项失败：' + describeError(err));
+      // 没真正清掉就返回空，调用方不会假装“已清掉旧覆盖项”。
+      return [];
+    }
   }
   return cleared;
 }
@@ -389,13 +395,11 @@ function saveConfigPatch(config, patch) {
       );
     }
   }
-  for (const [dotted, next] of pending) {
-    setByPath(raw, dotted, next);
-    // 立刻改内存里的那份（bot / llm 拿的都是同一个 config 引用）
-    setByPath(config, dotted, next);
-  }
+  for (const [dotted, next] of pending) setByPath(raw, dotted, next);
   fs.mkdirSync(path.dirname(file), { recursive: true });
+  // 先落盘成功，再改进程内存；磁盘失败时不能留下“内存新值、磁盘旧值”。
   fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+  for (const [dotted, next] of pending) setByPath(config, dotted, next);
   return pending.map(([dotted]) => dotted);
 }
 

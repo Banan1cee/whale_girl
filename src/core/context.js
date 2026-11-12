@@ -104,17 +104,22 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '
     // 被挤掉的旧消息压成一句摘要，别让更早的话题凭空消失
     let summary = '';
     if (dropped.length) {
-      const texts = dropped
-        .map((line) => {
-          const obj = history.parseHistoryLine(line);
-          if (!obj) return '';
-          return `${obj.发言人 ? String(obj.发言人).replace(/（参与者[0-9a-f]+）/, '') : ''}：${String(obj.内容 || '').slice(0, 24)}`;
-        })
-        .filter(Boolean);
-      if (texts.length) summary = '【更早的对话（已压缩）】' + texts.slice(-12).join('；') + '\n';
-      // 摘要也是 prompt 的一部分：裁剪后拼上去必须重新算预算。
-      const summaryTokens = estimateBudgetTokens(summary);
-      while (size + summaryTokens > MAX_PROMPT_TOKENS && entries.length > 1) {
+      const buildSummary = () => {
+        const texts = dropped
+          .map((line) => {
+            const obj = history.parseHistoryLine(line);
+            if (!obj) return '';
+            return `${obj.发言人 ? String(obj.发言人).replace(/（参与者[0-9a-f]+）/, '') : ''}：${String(obj.内容 || '').slice(0, 24)}`;
+          })
+          .filter(Boolean);
+        return texts.length ? '【更早的对话（已压缩）】' + texts.slice(-12).join('；') + '\n' : '';
+      };
+      // 摘要也占预算。每多丢一条都要重新生成摘要，不能只把消息从 entries 删掉，
+      // 否则这批历史既不在原文里，也不在摘要里。
+      for (;;) {
+        summary = buildSummary();
+        const summaryTokens = estimateBudgetTokens(summary);
+        if (size + summaryTokens <= MAX_PROMPT_TOKENS || entries.length <= 1) break;
         const old = entries.shift();
         size -= lineTokens(old);
         dropped.push(old);
@@ -129,17 +134,11 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '
         + (tail ? '\n\n' + tail : ''),
     }];
   }
-  const push = (role, content, merge = !isGroup) => {
+  const push = (role, content) => {
     const limit = isGroup ? 900 : MAX_TURN_CHARS;
     const trimmed = String(content || '').slice(0, limit);
     if (!trimmed) return;
-    const last = turns[turns.length - 1];
-    // 群聊不能把多个群友合并成一条 user 消息，否则会丢掉说话人边界和代词指向。
-    if (merge && last && last.role === role) {
-      last.content += '\n' + trimmed;
-    } else {
-      turns.push({ role, content: trimmed });
-    }
+    turns.push({ role, content: trimmed });
   };
   let previousTs = 0;
   const stampOf = makeStamper(timeZone);

@@ -193,7 +193,7 @@ class DiaryService {
     catch (err) { this.logger?.warn('检查当天日记失败：' + describeError(err)); }
     if (existing) {
       this.doneKey = day;
-      this.logger?.debug?.(`[diary] skip day=${day} reason=exists file=${existing}`);
+      this.logger?.debug?.(`[diary] skip day=${day} reason=exists file=${path.basename(existing)}`);
       if (!(this.state.status === 'done' && this.state.file === existing)) {
         this.state = { status: 'done', message: `今天已有日记，已跳过：data/diary/${existing}`, file: existing };
       }

@@ -5,6 +5,8 @@
 
 | # | 现象 | 根因 | 修复 | 版本 | 回归测试 |
 | --- | --- | --- | --- | --- | --- |
+| 84 | 多开时消息偶尔从另一个号发出去；UIA 已选中窗口却一直“树是空壳”；网关有时重复发气泡 | 账号目录用前缀匹配、自动选号跳过 `windowHwnd` 归属校验、`pick_account_window` 无锁；UIA 读写用了两个不同的 kernel32 句柄；`sendBubbles` 第一条带完整 `bubbles` 后又逐条重发 | 账号只认全等或哈希后相等，`windowHwnd` 必须有数据库归属证据，择窗加 `account_lock`，未确认账号不再按标题兜底；UIA 统一 kernel32 + HANDLE 并记录读写失败；网关每条请求只带当前气泡，补 `accountWxid`；faulthandler 不重复 dump | 4.1.0 | `tests/bridge-adaptive-encoding.test.js`、`tests/wechat-account.test.js`、`tests/core-modules.test.js` |
+| 83 | 被静音后仍会续接话窗口；系统通知在磁盘里留下空会话；群聊长历史被二次裁剪后凭空消失；`maxMessages` 配置不生效 | 静音副作用写在闸门之前；`checkpoint` 对未知 key 也 `ensureChat`；context 二次裁剪只删 entries 不重建 summary；`pruneRaw` 固定用常量 | 静音消息在 trigger 直接返回，不写状态；`checkpoint` 只处理已存在会话；二次裁剪循环重算摘要；`maxMessages` 接入 `ChatStore.pruneRaw`，`archiveCount` 真统计 | 4.1.0 | `tests/core-modules.test.js`、`tests/memory-budget-plan.test.js`、`tests/context.test.js` |
 | 82 | 朋友圈卡在相机菜单、选图窗口或绿色发表按钮前 | 菜单小字漏识别，文件控件类型/层级与固定假设不符，自绘按钮 Invoke 可返回成功但无实际动作；原生 UIA 失败会影响整个桥接 | 独立子进程执行、内存 OCR、原生控件绑定 UIA、文案/预览核验后单次真实点击；未知结果不重发，保留额度和去重游标；补齐手动发表与三类配图 | 4.1.0 | `tests/test_moments_publish.py`、`tests/test_moments_worker.py`、`tests/test_moments_ocr.py`、`tests/moments.test.js` |
 | 81 | 表情包概率改完又回到 70%，关闭表情包时不能调概率 | 异步刷新覆盖待保存值，状态缓存返回旧概率，控件可用性绑定发送开关 | 按修改版本保护本地编辑和保存，缓存读取合并最新设置，停机/关闭时保留设置能力 | 4.1.0 | `tests/sticker-status-cache.test.js`、启动器构建 |
 | 80 | 消息汇总在工作台和插件中出现两个入口 | 宿主旧页面和插件工具入口同时保留，汇总消息读取未对齐会话存储 | 删除重复工作台页面，保留插件按次授权入口与宿主接口，使用统一消息存储读取 | 4.1.0 | `tests/digest.test.js`、启动器构建 |

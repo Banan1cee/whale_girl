@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import hashlib
 import os
 import sys
 import threading
@@ -56,6 +57,15 @@ for _h in (logging.StreamHandler(sys.stdout),
            logging.FileHandler(LOG_PATH, mode="w", encoding="utf-8")):
     _h.setFormatter(_fmt)
     log.addHandler(_h)
+
+
+def _log_name(value) -> str:
+    """会话名只留短哈希；这份日志会被诊断包带走。"""
+    text = str(value or "")
+    if not text:
+        return "-"
+    return "#" + hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:8]
+
 
 # wechatauto 自己的日志也跟着进这份文件，方便一眼看全
 _wx = logging.getLogger("wechatauto")
@@ -326,7 +336,7 @@ def main():
         try:
             t0 = time.time()
             state["opened"] = bool(uia.open_chat(target))
-            log.info("open_chat(%r) = %s（%.1fs）", target, state["opened"],
+            log.info("open_chat(%s) = %s（%.1fs）", _log_name(target), state["opened"],
                      time.time() - t0)
             if state["opened"]:
                 t0 = time.time()
@@ -385,7 +395,7 @@ def main():
             if _nicks:
                 aliases.append("、".join(_nicks))
             aliases = aliases or [room]
-            log.info("群 %s 的候选名：%s", room, " / ".join(aliases))
+            log.info("群 %s 的候选名：%s", _log_name(room), " / ".join(_log_name(x) for x in aliases))
             _t0 = time.time()
             ok_room = False
             try:
@@ -397,12 +407,12 @@ def main():
                 cur_room = uia.current_chat()
             except Exception:                    # noqa: BLE001
                 pass
-            log.info("打开群聊 = %s（%.1fs）current_chat=%r", ok_room,
-                     time.time() - _t0, cur_room)
+            log.info("打开群聊 = %s（%.1fs）current_chat=%s", ok_room,
+                     time.time() - _t0, _log_name(cur_room))
             if ok_room:
                 log.info("✓ 群聊能按「成员名」认出来，桥接发群消息应该也通了。")
             else:
-                warn("群聊打不开：把上面几行日志发给我（里面有会话列表的候选名）。")
+                warn("群聊打不开：把上面几行日志发给我（会话名已打码，只保留哈希）。")
     except Exception:                            # noqa: BLE001
         log.warning("群聊检查跳过：%s", traceback.format_exc())
 
@@ -415,7 +425,8 @@ def main():
             msgs = db.get_messages("filehelper", limit=5)
             contents = [(m.get("content") or "").strip() for m in msgs]
             for i, c in enumerate(contents):
-                log.info("  最近消息[%d] = %r", i, c[:60])
+                # 文件传输助手也可能存着用户自己发的东西，只记长度。
+                log.info("  最近消息[%d] 长度=%d", i, len(c))
             if any(text in c for c in contents):
                 log.info("✓ 数据库里能找到刚发的这条，发送通道真的通了。")
             else:

@@ -31,9 +31,23 @@ test('本地安装提示来源和替换版本，人设页应用市场预设须�
   const market = read('launcher/Views/PluginMarketPage.xaml.cs');
   const persona = read('launcher/Views/PersonaPage.xaml.cs');
   assert.match(market, /InstallLocal\(picker.FileName,[\s\S]*ConfirmLocalInstall\(info, current\)/);
-  assert.match(market, /本地 ZIP 未经鲸鲸插件市场审核/);
+  assert.match(market, /本地 ZIP 未经鲸鲸插件市场审核或签名/);
   assert.match(market, /将替换已安装/);
+  assert.match(market, /作者已变化/);
+  assert.match(market, /作者与已安装版本不一致，请先卸载旧版本再安装/);
+  assert.match(market, /消息插件（启用后自动参与聊天）/);
+  assert.match(market, /ShowMessageSettings\(info\)/);
   assert.match(persona, /StartsWith\("market-", StringComparison\.Ordinal\)[\s\S]*AppDialog\.Confirm\([\s\S]*\) return;\s+var res/);
+});
+
+test('市场目录和插件包都必须通过内置公钥验签', () => {
+  const market = read('launcher/PluginMarket.cs');
+  const trust = read('launcher/PluginTrust.cs');
+  assert.match(market, /ParseSignedCatalog/);
+  assert.match(market, /PluginTrust\.Verify\(bytes, listing\.Signature\)/);
+  assert.match(market, /url \+ "\.sig"/);
+  assert.match(trust, /ECDsa/);
+  assert.match(trust, /ImportSubjectPublicKeyInfo/);
 });
 
 test('插件市场下载带 GitHub 直连 / jsDelivr / 反代回退', () => {

@@ -5,6 +5,7 @@ const path = require('node:path');
 const stickers = require('../adapters/stickers');
 const { installPresets } = require('../adapters/stickerPresets');
 const { describeError } = require('../infra/errors');
+const { tagId, tagName } = require('../infra/privacy');
 const probe = require('../infra/probe');
 const ACTIVE = new Set(['queued', 'reserved', 'sending']);
 const TERMINAL = new Set(['confirmed', 'unconfirmed', 'failed', 'cancelled']);
@@ -190,7 +191,7 @@ class StickerService {
         job.error = '任务超时，未自动重试';
         // 不许再静默改状态：超时作废也要留一行，方便回查为什么那张图没发出去
         if (this.logger && enabled) {
-          this.logger.warn(`表情包任务超时作废：会话=${job.chat || job.key || '-'} 状态=${job.status}`);
+          this.logger.warn(`表情包任务超时作废：会话=${tagId(job.chat || job.key || '-')} 状态=${job.status}`);
         }
         this._note(job, job.status);
       }
@@ -236,7 +237,10 @@ class StickerService {
         && this.store.updateEvent(job.sessionKey, job.eventTs, { status })) return;
       const entry = this.store.appendEvent(job.sessionKey, { type: 'sticker', detail, status });
       if (entry) job.eventTs = entry.ts;
-    } catch { /* 记账失败不影响发送 */ }
+    } catch (err) {
+      // 记账失败不阻断发送，但要留原因；否则模型下一轮看不到自己发过什么。
+      this.logger?.warn?.('[sticker] 动作账写入失败：' + (err && (err.code || err.message) || err));
+    }
   }
   /** category 由模型在回复里用 [[sticker:分类]] 指定；没给就什么都不发 */
   plan(msg, category = '') {
@@ -260,12 +264,12 @@ class StickerService {
       recent: this.recent.get(key) || [], rng: this.rng });
     if (!hit) {
       this.logger?.info('[sticker] stage=plan result=skip reason=' + (category ? 'no_usable_image' : 'model_no_category'));
-      if (category && this.logger) this.logger.warn(`表情包分类「${category}」没有对应图片，这次没发`);
+      if (category && this.logger) this.logger.warn(`表情包分类「${tagName(category)}」没有对应图片，这次没发`);
       return null;
     }
     if (hit.fallbackFrom && this.logger) {
       const to = stickers.EMOTIONS[hit.emotion] || String(hit.emotion || '').replace(/^x:/, '');
-      this.logger.warn(`表情包分类「${hit.fallbackFrom}」不存在或无图，改发「${to}」`);
+      this.logger.warn(`表情包分类「${tagName(hit.fallbackFrom)}」不存在或无图，改发「${tagName(to)}」`);
     }
     const added = this.add(hit, chatName, msg.chatId, key, 'reserved');
     this.logger?.info('[sticker] stage=plan result=reserved job=' + added.id);

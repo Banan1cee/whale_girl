@@ -81,7 +81,7 @@ class ReminderService {
       } catch (err) {
         if (err.code !== 'ENOENT') {
           damaged = true;
-          if (this.logger) this.logger.warn('提醒读取失败：' + file + '：' + describeError(err));
+          if (this.logger) this.logger.warn('提醒读取失败：' + path.basename(file) + '：' + describeError(err));
         }
       }
     }

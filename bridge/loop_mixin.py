@@ -25,10 +25,12 @@ class LoopMixin:
         def save_state(st):
             try:
                 G.os.makedirs(G.os.path.dirname(state_file), exist_ok=True)
-                with open(state_file, 'w', encoding='utf-8') as f:
+                tmp = state_file + '.tmp'
+                with open(tmp, 'w', encoding='utf-8') as f:
                     G.json.dump(st, f, ensure_ascii=False)
-            except Exception:
-                pass
+                G.os.replace(tmp, state_file)
+            except Exception as e:
+                G.log_warn('主动搭话状态保存失败：', repr(e))
         while True:
             G.time.sleep(60)
             if not G.CARE_ENABLED:
@@ -49,7 +51,9 @@ class LoopMixin:
             try:
                 r = G.LOCAL_HTTP.get(base + '/api/care/due', params={'last': int(last_ts * 1000), 'sentToday': sent, 'active': ','.join(active)}, timeout=15)
                 due = r.json() or {}
-            except Exception:
+            except Exception as e:
+                G.log_throttled('care-due-fail', '主动搭话检查失败：type=%s detail=%s'
+                                % (type(e).__name__, repr(e)[:160]))
                 continue
             if not due.get('due'):
                 reason = str(due.get('reason') or 'unknown')
@@ -67,7 +71,7 @@ class LoopMixin:
             name = self.ui_chat_name(u, name)
             if not name:
                 # 读不到昵称就别去搜 —— 用 wxid 搜会话是纯粹的十几秒空转。
-                G.log_throttled('care-no-name-' + u[:18], '主动搭话没发：%s 在本地数据库里没有昵称/备注，微信搜不到这个会话（先给 TA 加个备注再试）' % u[:18], ttl=3600)
+                G.log_throttled('care-no-name-' + u[:18], '主动搭话没发：%s 在本地数据库里没有昵称/备注，微信搜不到这个会话（先给 TA 加个备注再试）' % G.safe_id(u), ttl=3600)
                 continue
             try:
                 r2 = G.LOCAL_HTTP.get(base + '/api/care', params={'chat': u}, timeout=40)
@@ -77,7 +81,7 @@ class LoopMixin:
                 continue
             if not text:
                 continue
-            G.log('主动搭话 →', name, text[:30])
+            G.log('主动搭话 →', G.safe_name(name), G.safe_text(text))
             try:
                 ok = self.send_text(text, name, u)
                 save_state({'lastTs': G.time.time(), 'day': today, 'count': sent + (0 if ok is False else 1)})
@@ -221,7 +225,7 @@ class LoopMixin:
                     wname = win.Name if win is not None else None
                 except Exception:
                     wcls, wname = (None, None)
-                G.log('发送通道预热完成（UIA 可用，主窗类名=%r 名称=%r）' % (wcls, wname))
+                G.log('发送通道预热完成（UIA 可用，主窗类名=%r 名称=%s）' % (wcls, G.safe_name(wname)))
                 try:
                     if self.pick_account_window(quiet=True):
                         if self.ACCOUNT.get('hwnd'):
@@ -355,8 +359,20 @@ class LoopMixin:
                     hb_misses = 0
             except Exception as e:
                 hb_misses += 1
+                status = getattr(e, 'response', None)
+                status = getattr(status, 'status_code', None)
+                if status in (401, 403):
+                    hint = '桥接 token 与内核不一致，请核对 gateway.wechat.inboundToken'
+                elif '10061' in repr(e) or 'refused' in repr(e).lower():
+                    hint = '连不上内核（127.0.0.1 没有程序监听），请先在启动器点「启动」'
+                else:
+                    hint = '内核可能未启动、超时或返回异常'
                 if hb_misses in (1, 3, 10) or hb_misses % 60 == 0:
-                    G.log_warn('心跳上报失败（连续 %d 次）：%r' % (hb_misses, e))
+                    G.log_warn(
+                        '心跳上报失败（连续 %d 次，HTTP %s）：%s | type=%s detail=%s'
+                        % (hb_misses, status if status is not None else '-', hint,
+                           type(e).__name__, repr(e)[:160])
+                    )
             G.time.sleep(20)
 
     def config_watch(self):
@@ -408,7 +424,7 @@ class LoopMixin:
             base = self.bot_url.rsplit('/webhook', 1)[0]
             r = G.LOCAL_HTTP.post(base + '/api/wechat/contacts/sync', json=data, headers=headers, timeout=15)
             code = getattr(r, 'status_code', 0)
-            G.log('联系人同步：%s（%d 条%s）' % ('成功' if code == 200 else '失败 HTTP %s' % code, len(data.get('items') or []), '，账号 ' + str(data.get('account') or '') if data.get('account') else ''))
+            G.log('联系人同步：%s（%d 条%s）' % ('成功' if code == 200 else '失败 HTTP %s' % code, len(data.get('items') or []), '，账号 ' + G.safe_id(data.get('account')) if data.get('account') else ''))
         except Exception as e:
             G.log('联系人同步失败（不影响收发消息）：', repr(e))
 

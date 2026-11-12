@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { Bot, extractCommand } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/chat');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 
@@ -103,71 +103,38 @@ test('重复消息 id 会被去重', async () => {
   cleanup();
 });
 
-test('主人群聊闭麦 / 开麦命令生效', async () => {
+test('聊天命令已全部下线：闭麦 / 开麦不再产生命令', async () => {
   const { bot, cleanup } = makeBot();
-  const mute = await bot.decide(groupMsg('@鲸鲸 闭麦 1', { atMe: true, senderId: 'wxid_test_master', senderName: 'Master' }));
-  assert.equal(mute.action, 'command');
-  assert.equal(mute.commandType, 'mute');
-  const during = await bot.decide(groupMsg('@鲸鲸 在吗', { atMe: true, senderId: 'wxid_test_master', senderName: 'Master' }));
-  assert.equal(during.action, 'ignore');
-  assert.equal(during.reason, 'muted');
-  const unmute = await bot.decide(groupMsg('@鲸鲸 开麦', { atMe: true, senderId: 'wxid_test_master', senderName: 'Master' }));
-  assert.equal(unmute.commandType, 'unmute');
-  const after = await bot.decide(groupMsg('@鲸鲸 在吗', { atMe: true, senderId: 'wxid_test_master', senderName: 'Master' }));
-  assert.equal(after.action, 'reply');
+  const master = (text) => groupMsg(text, { atMe: true, senderId: 'wxid_test_master', senderName: 'Master', platform: 'wechat' });
+  const mute = await bot.decide(master('@鲸鲸 闭麦 1'));
+  assert.notEqual(mute.action, 'command');
+  assert.equal(mute.commandType, undefined);
+  // 静音状态没有被改写：@ 她仍然正常回复
+  const during = await bot.decide(master('@鲸鲸 在吗'));
+  assert.equal(during.action, 'reply');
   cleanup();
 });
 
-test('记住 / 忘掉；记忆清单不再作为命令暴露', async () => {
-  const { bot, store, cleanup } = makeBot();
-  const remember = await bot.decide(privateMsg('记住：我怕黑'));
-  assert.equal(remember.action, 'command');
-  assert.equal(remember.commandType, 'remember');
-  const notes = store.listNotes(remember.key);
-  assert.equal(notes[0].notes[0], '我怕黑');
-
-  // 「你记得我什么」不再返回小本本清单，按普通聊天处理
-  const memory = await bot.decide(privateMsg('你记得我什么'));
-  assert.notEqual(memory.commandType, 'memory');
-  assert.equal(memory.action, 'reply');
-
-  const forget = await bot.decide(privateMsg('忘掉怕黑'));
-  assert.equal(forget.commandType, 'forget');
-  assert.equal(store.listNotes(forget.key).length, 0);
+test('记住 / 忘掉 / 昵称不再是聊天命令', async () => {
+  const { bot, cleanup } = makeBot();
+  for (const text of ['记住：我怕黑', '忘掉怕黑', '叫我小海豚']) {
+    const r = await bot.decide(privateMsg(text));
+    assert.notEqual(r.action, 'command', text);
+    assert.equal(r.commandType, undefined, text);
+  }
   cleanup();
 });
 
-test('可以改昵称，并写进提示词', async () => {
-  const { bot, store, cleanup } = makeBot();
-  const res = await bot.decide(privateMsg('叫我小海豚'));
-  assert.equal(res.commandType, 'name');
-  const decision = await bot.decide(privateMsg('你好呀'));
-  assert.match(promptOf(decision), /小海豚/);
-  assert.equal(store.profile(decision.key, 'u1').nickname, '小海豚');
-  assert.equal(store.displayName(decision.key, 'u1'), '小海豚');
-  cleanup();
-});
-
-test('群里 @ 她才回应「闭麦」这类自然语言命令；/ 命令随时可用', async () => {
+test('群里 @ 她也不会执行旧的斜杠命令', async () => {
   const { bot, cleanup } = makeBot();
   const natural = await bot.decide(groupMsg('安静'));
   assert.equal(natural.action, 'ignore'); // 没叫她，不理会
   const slash = await bot.decide(groupMsg('/help'));
-  assert.equal(slash.action, 'command');
-  assert.equal(slash.commandType, 'help');
+  assert.notEqual(slash.action, 'command');
+  assert.equal(slash.commandType, undefined);
+  const reset = await bot.decide(groupMsg('/reset'));
+  assert.notEqual(reset.action, 'command');
   cleanup();
-});
-
-test('命令识别覆盖常见写法', () => {
-  assert.equal(extractCommand('/memory'), null, '记忆清单命令已删除');
-  assert.equal(extractCommand('你记得我什么'), null, '不返回记忆清单，按普通聊天处理');
-  assert.equal(extractCommand('帮助').type, 'help');
-  assert.equal(extractCommand('我叫阿海').type, 'name');
-  assert.equal(extractCommand('我叫阿海').arg, '阿海');
-  assert.equal(extractCommand('记住：喜欢猫').arg, '喜欢猫');
-  assert.equal(extractCommand('闭麦').type, 'mute');
-  assert.equal(extractCommand('闭麦 10 分钟').arg, '10');
-  assert.equal(extractCommand('今天天气不错'), null);
 });
 
 test('只 @ 不说话会给一个可爱的回应', async () => {
@@ -324,10 +291,9 @@ test('管理员命令：状态 / 演示模式 / 主动接话 / 退出管理', as
   assert.match(st4.text, /已关闭/);
   assert.equal(bot.store.getState(st4.key).adminUntil, 0);
 
-  // 主人永远有管理员权限，退出管理只是清掉计时器
+  // 退出管理后必须重新发送魔咒，主人身份本身不再直接放行
   const normal = await bot.decide(master('状态'));
-  assert.equal(normal.commandType, 'admin');
-  assert.equal(bot.store.getState(normal.key).adminUntil, 0);
+  assert.equal(normal.commandType, 'admin_hint');
   const chat = await bot.decide(master('在干嘛呢'));
   assert.equal(chat.action, 'reply');
   cleanup();
@@ -342,16 +308,18 @@ test('管理员权限过期会失效，非主人不能用管理命令', async ()
   const other = await bot.decide(privateMsg('状态', { senderName: '路人甲', senderId: 'u999' }));
   assert.notEqual(other.commandType, 'admin');
 
-  // 主人不受计时器影响：过期了照样是管理员
+  // 计时器过期后，主人也要重新验证魔咒
   bot.store.getState(ok.key).adminUntil = Date.now() - 1000;
   const expired = await bot.decide(master('状态'));
-  assert.equal(expired.commandType, 'admin');
+  assert.equal(expired.commandType, 'admin_hint');
+  await bot.decide(master('test-spell'));
+  assert.equal((await bot.decide(master('状态'))).commandType, 'admin');
   cleanup();
 });
 
 test('管理员可以随时调语态 / 长度 / 能力，并写进提示词', async () => {
   const { bot, config, cleanup } = makeBot();
-  const master = (text) => privateMsg(text, { senderName: 'Master', senderId: 'wxid_test_master' });
+  const master = (text) => privateMsg(text, { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' });
   await bot.decide(master('test-spell'));
 
   const tone = await bot.decide(master('语气 高冷'));
@@ -388,14 +356,21 @@ test('管理员可以随时调语态 / 长度 / 能力，并写进提示词', as
   cleanup();
 });
 
-test('主人的语态命令直接生效（不用先开魔咒）', async () => {
+test('主人的语态命令也要先验证魔咒', async () => {
   const { bot, config, cleanup } = makeBot();
-  // 主人的话无条件执行：不需要魔咒
-  const r = await bot.decide(privateMsg('语态 说脏话', { senderName: 'Master', senderId: 'wxid_test_master' }));
+  const master = (text) => privateMsg(text, { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' });
+
+  // 只报主人身份、没发魔咒：不执行
+  const denied = await bot.decide(master('语态 说脏话'));
+  assert.equal(denied.commandType, 'admin_hint');
+  assert.equal(config.persona.styleText, undefined);
+
+  await bot.decide(master('test-spell'));
+  const r = await bot.decide(master('语态 说脏话'));
   assert.equal(r.action, 'command');
   assert.equal(config.persona.styleText, '说脏话');
 
-  // 但普通人发同样的命令不生效
+  // 普通人发同样的命令不生效
   const other = await bot.decide(privateMsg('语态 说脏话', { senderName: '路人甲', senderId: 'u999' }));
   assert.notEqual(other.commandType, 'admin');
   cleanup();
@@ -422,24 +397,24 @@ test('管理员可以按群名禁言，禁言后那个群完全不说话', async
   cleanup();
 });
 
-test('未配置魔咒时，主人可直接禁言', async () => {
+test('未配置魔咒时，主人也不能用管理命令', async () => {
   const { bot, config, cleanup } = makeBot();
   config.admin.spell = '';
-  const r = await bot.decide(privateMsg('别在鼠标群说话', { senderName: 'Master', senderId: 'wxid_test_master' }));
-  assert.equal(r.action, 'command');
-  assert.deepEqual(config.group.mutedGroups, ['鼠标']);
+  const r = await bot.decide(privateMsg('别在鼠标群说话', { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' }));
+  assert.equal(r.commandType, 'admin_hint');
+  assert.match(r.text, /还没有配置管理员魔咒/);
+  assert.deepEqual(config.group.mutedGroups, []);
 
-  // 普通人说同样的话：不执行，也不改配置
+  // 普通人说同样的话：同样不执行
   const other = await bot.decide(privateMsg('别在键盘群说话', { senderName: '路人甲', senderId: 'u999' }));
   assert.notEqual(other.commandType, 'admin');
-  assert.deepEqual(config.group.mutedGroups, ['鼠标']);
+  assert.deepEqual(config.group.mutedGroups, []);
   cleanup();
 });
 
 test('群禁言魔咒只给同一个微信私聊里的主人，并在 30 分钟后失效', async t => {
   const { bot, config, cleanup } = makeBot();
   t.after(cleanup);
-  config.admin.allowAll = true;
   let now = Date.now();
   bot.now = () => new Date(now);
   const owner = (text, extra = {}) => privateMsg(text, {
@@ -481,7 +456,7 @@ test('讨论类问题会标记为 discussion，普通闲聊不会', async () => 
 
 test('管理员能调上下文长度和人味（情绪/主动/观点）', async () => {
   const { bot, config, cleanup } = makeBot();
-  const master = (text) => privateMsg(text, { senderName: 'Master', senderId: 'wxid_test_master' });
+  const master = (text) => privateMsg(text, { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' });
   await bot.decide(master('test-spell'));
 
   const r1 = await bot.decide(master('上下文 20'));
@@ -505,9 +480,9 @@ test('管理员能调上下文长度和人味（情绪/主动/观点）', async 
 
 test('普通人把昵称改成主人名也不能提权', async () => {
   const { bot, cleanup } = makeBot();
-  const stranger = (text) => privateMsg(text, { senderName: '路人甲', senderId: 'u999' });
+  const stranger = (text) => privateMsg(text, { platform: 'wechat', senderName: '路人甲', senderId: 'u999' });
   const renamed = await bot.decide(stranger('叫我 Master'));
-  assert.equal(renamed.commandType, 'name');
+  assert.notEqual(renamed.action, 'command');
   const spell = await bot.decide(stranger('test-spell'));
   assert.equal(spell.action, 'ignore');
   assert.equal(spell.reason, 'not_owner');

@@ -29,6 +29,10 @@
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+try:
+    from bridge_log import safe_id
+except ImportError:  # 测试里按 `bridge.msg_pipeline` 导入时走包内相对路径
+    from .bridge_log import safe_id
 
 
 def split_runs(items, key="sender_username"):
@@ -90,7 +94,7 @@ class MessageBatches:
                 # 但要记账 —— 以前是静默丢，用户只知道「她漏回了」。
                 q.pop(0)
                 self.stats["dropped"] += 1
-                self.log("会话 %s 一轮攒了超过 %d 条，丢掉最早的一条" % (chat, self.limit))
+                self.log("会话 %s 一轮攒了超过 %d 条，丢掉最早的一条" % (safe_id(chat), self.limit))
             if chat not in self._flush_queued:
                 self._flush_queued.add(chat)
                 return True
@@ -167,7 +171,7 @@ class MessagePipeline:
                     self._drop_log_at[chat] = now
                     n = self._drop_count.pop(chat, 1)
                     self.log("会话积压超过 %d 条，%.0f 秒内丢掉 %d 条：%s"
-                             % (self.per_chat_limit, self.drop_log_interval, n, chat))
+                             % (self.per_chat_limit, self.drop_log_interval, n, safe_id(chat)))
             if len(q) > self.stats["peak_queue"]:
                 self.stats["peak_queue"] = len(q)
             if chat in self._running:
@@ -185,7 +189,7 @@ class MessagePipeline:
                 self._running.discard(chat)
                 self._queues.pop(chat, None)
                 self._closed = True
-            self.log("消息调度已关闭，这条没能排上：", chat)
+            self.log("消息调度已关闭，这条没能排上：", safe_id(chat))
             return False
         return True
 

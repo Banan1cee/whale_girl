@@ -9,15 +9,67 @@
 - warn/error 继续带「文件:行」调用点，拆模块后也不会丢。
 """
 
+import hashlib
 import os
 import json
 import re
 import sys
 import time
+from urllib.parse import urlsplit
 
 LOG_FILE = ""
 BOOT_LOG = ""
 LOG_LEVEL = "info"
+
+# 日志里只留结构证据：id/昵称用短哈希，正文用长度，路径只说有没有。
+# 调用点仍应主动调用这些函数；_emit_log 里的 scrub 只是最后一道兜底。
+def _short_hash(value):
+    return hashlib.sha1(str(value or "").encode("utf-8", "replace")).hexdigest()[:8]
+
+
+def safe_id(value):
+    text = str(value or "")
+    return "#" + _short_hash(text) if text else "-"
+
+
+def safe_name(value):
+    text = str(value or "")
+    return "#%s(%d字)" % (_short_hash(text), len(text)) if text else "-"
+
+
+def safe_text(value):
+    return "len=%d" % len(str(value or ""))
+
+
+def safe_path(value):
+    text = str(value or "")
+    return "path(len=%d)" % len(text) if text else "-"
+
+
+def safe_url(value):
+    try:
+        return urlsplit(str(value or "")).hostname or "-"
+    except Exception:                                  # noqa: BLE001
+        return "-"
+
+
+_SCRUB_RULES = (
+    (re.compile(r"\b(Bearer\s+)[A-Za-z0-9._-]{12,}"), r"\1***"),
+    (re.compile(r"\b(?:sk|oc_sk|ak|ghp|xox[baprs]|brz)[-_][A-Za-z0-9_-]{8,}"), "***"),
+    (re.compile(r"([?&](?:token|key|secret|signature|password|api_key)=)[^&\s]+", re.IGNORECASE), r"\1***"),
+    (re.compile(r"\bwxid_[A-Za-z0-9_-]+"), "wxid_***"),
+    (re.compile(r"\b\d{9,}@chatroom\b"), "***@chatroom"),
+    (re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"), "1**********"),
+    (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "***@***"),
+    (re.compile(r"([A-Za-z]:\\Users\\)[^\\\s\"']+", re.IGNORECASE), r"\1***"),
+)
+
+
+def scrub(text):
+    out = str(text or "")
+    for pattern, replacement in _SCRUB_RULES:
+        out = pattern.sub(replacement, out)
+    return out
 
 # 老的 log() 没有级别，只能按关键词猜「这句算不算报错」；显式级别优先。
 _LOG_ERROR_HINT = ("错误", "失败", "异常", "超时", "Traceback", "Exception", "Error", "error:", "?")
@@ -99,7 +151,7 @@ def boot(msg):
     try:
         os.makedirs(os.path.dirname(BOOT_LOG), exist_ok=True)
         with open(BOOT_LOG, "a", encoding="utf-8") as f:
-            f.write("%s [pid %s] %s\n" % (time.strftime("%H:%M:%S"), os.getpid(), redact_secrets(msg)))
+            f.write("%s [pid %s] %s\n" % (time.strftime("%H:%M:%S"), os.getpid(), scrub(redact_secrets(msg))))
     except Exception:
         pass
 
@@ -166,7 +218,7 @@ def _emit_log(level, args, where=""):
     for arg in args:
         if isinstance(arg, (dict, list, tuple)):
             _register_secrets(arg)
-    text = redact_secrets(" ".join(_fmt_log_arg(a) for a in args))
+    text = scrub(redact_secrets(" ".join(_fmt_log_arg(a) for a in args)))
     head = time.strftime("[%H:%M:%S] ") + level.upper()
     line = head + " " + (("[" + where + "] ") if where else "") + text
     # 文件：永远记全量；界面/启动器控制台按 LOG_LEVEL 过滤。

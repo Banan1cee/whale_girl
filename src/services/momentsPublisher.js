@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { EMOTIONS, listImages, invalidateScan } = require('../adapters/stickers');
 const time = require('../infra/time');
+const { describeError } = require('../infra/errors');
 const { installPresets } = require('../adapters/stickerPresets');
 
 const HOUR = 3600000;
@@ -260,9 +261,15 @@ class MomentsPublisher {
     this.generating = true;
     const revision = this.settingsRevision;
     this.generate(settings, account, revision, manual, withImage)
-      .catch(() => {
-        if (revision !== this.settingsRevision) return;
-        try { this.save({ status: 'failed', error: 'draft_failed' }); } catch {}
+      .catch((err) => {
+        this.logger?.warn?.('朋友圈草稿生成失败：' + describeError(err));
+        try {
+          this.save(revision === this.settingsRevision
+            ? { status: 'failed', error: 'draft_failed' }
+            : { status: 'idle' });
+        } catch (saveErr) {
+          this.logger?.warn?.('朋友圈草稿失败状态保存失败：' + describeError(saveErr));
+        }
       })
       .finally(() => { this.generating = false; });
     return null;

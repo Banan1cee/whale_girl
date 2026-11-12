@@ -102,7 +102,8 @@ def publish_flow(screen, text, image='', *, pause=time.sleep):
         menu = screen.capture_menu()
         action = screen.menu_action(menu, bool(image))
         if not action:
-            _note('朋友圈发表：右键菜单未识别 lines=%d' % len(menu.lines))
+            # OCR 可能把背景里的朋友圈正文一起读进来，只记行数，不记文字。
+            _note('朋友圈发表：右键菜单未识别（OCR 行数=%d）' % len(menu.lines))
             return 'failed', 'image_menu_not_recognized' if image else 'text_menu_not_recognized'
         _note('朋友圈发表：右键菜单已识别')
         screen.click(menu, action)

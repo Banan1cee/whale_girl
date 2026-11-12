@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { textMeta } = require('../infra/privacy');
 
 /* ---------------- 微信多账号：给启动器列账号 / 选账号 ---------------- */
 
@@ -174,7 +175,8 @@ function refreshWechatAccounts(runtime, timeoutMs = 30000) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (tail) logger.info('[accounts] ' + tail.replace(/\s+/g, ' ').slice(-300));
+      // 子进程输出里常有账号目录和昵称，只记长度；详细现场由桥接自己的脱敏日志负责。
+      if (tail) logger.debug?.('[accounts] 扫描输出 ' + textMeta(tail));
       resolve(result);
     };
     const timer = setTimeout(() => {

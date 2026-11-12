@@ -464,7 +464,14 @@ class WindowMixin:
 
     def _bg_hwnd(self):
         try:
-            return int(self.ACCOUNT.get('hwnd') or 0) or self.find_weixin_hwnd()
+            hwnd = int(self.ACCOUNT.get('hwnd') or 0)
+            if hwnd:
+                return hwnd
+            # 指定了账号但窗口还没确认时，绝不按标题兜底找第一个「微信」，
+            # 否则双开会把消息打进另一个号；返回 0 让后台通道失败即可。
+            if getattr(self, 'acct', ''):
+                return 0
+            return self.find_weixin_hwnd()
         except Exception:
             return 0
 
@@ -491,7 +498,7 @@ class WindowMixin:
             if lvl is not None:
                 break
             G.time.sleep(0.3)
-        G.log('[核对] %s 目标=%s 当前=%r → %s' % (where, who, cur, '通过' if lvl is not None else '不是目标，拒绝发送'))
+        G.log('[核对] %s 目标=%s 当前=%s → %s' % (where, G.safe_name(who), G.safe_name(cur), '通过' if lvl is not None else '不是目标，拒绝发送'))
         if lvl is None:
-            raise G.ChatIdentityError('当前会话 %r 不是目标 %r' % (cur, who))
+            raise G.ChatIdentityError('当前会话 %s 不是目标 %s' % (G.safe_name(cur), G.safe_name(who)))
         return cur
