@@ -4,9 +4,9 @@
 
 按 `docs/微信消息后台发送.md` 实现，三条腿全部走窗口消息：
 
-    物化  SPI_SETSCREENREADER（让 Qt 把 UIA 树长出来）
+    物化  节点 ≤ 1 先按 Ctrl+Alt+W 唤醒；再 SPI_SETSCREENREADER / gate 热激活
     读    UIA FindAll(Descendants)，认 AutomationId=chat_input_field / Name=发送
-    写    PostMessage WM_SETFOCUS → GBK 字节逐个 WM_CHAR → PostMessage 点发送
+    写    优先 UIA ValuePattern.SetValue()；失败才回退 WM_CHAR 逐字投递
 
 全程不调用 `SetForegroundWindow` / `SetWindowPos` / `SetFocus` / `SendInput` /
 `keybd_event`，所以是**结构上不碰前台**，不是「碰完再还原」。
@@ -110,6 +110,7 @@ WM_LBUTTONUP = 0x0202
 SPI_GETSCREENREADER = 0x0046
 SPI_SETSCREENREADER = 0x0047
 SPIF_UPDATEINIFILE = 0x01
+SPIF_SENDCHANGE = 0x02
 
 ERROR_ACCESS_DENIED = 5
 
@@ -260,11 +261,37 @@ class _ScreenReader:
     _on = False
     _prev = 0
 
+    _verified = False
+    _last_error = ""
+
+    @classmethod
+    def _set(cls, value):
+        try:
+            ok = user32.SystemParametersInfoW(
+                SPI_SETSCREENREADER, 0, ctypes.c_void_p(1 if value else 0),
+                SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
+            )
+            if not ok:
+                cls._last_error = "WinError %s" % ctypes.get_last_error()
+        except Exception as e:                  # noqa: BLE001
+            cls._last_error = repr(e)
+            ok = False
+        readback = ctypes.c_uint(0)
+        try:
+            user32.SystemParametersInfoW(SPI_GETSCREENREADER, 0,
+                                         ctypes.byref(readback), 0)
+        except Exception:
+            readback = ctypes.c_uint(0 if value else 1)
+        cls._verified = bool(ok and int(readback.value) == (1 if value else 0))
+        if not cls._verified and not cls._last_error:
+            cls._last_error = "读回值=%s" % int(readback.value)
+        return cls._verified
+
     @classmethod
     def enable(cls):
         with cls._lock:
             if cls._on:
-                return
+                return cls._verified
             prev = ctypes.c_uint(0)
             try:
                 user32.SystemParametersInfoW(SPI_GETSCREENREADER, 0,
@@ -272,26 +299,16 @@ class _ScreenReader:
             except Exception:
                 prev = ctypes.c_uint(0)
             cls._prev = int(prev.value)
-            try:
-                user32.SystemParametersInfoW(
-                    SPI_SETSCREENREADER, 0, ctypes.c_void_p(1), SPIF_UPDATEINIFILE
-                )
-            except Exception:
-                pass
+            cls._set(True)
             cls._on = True
+            return cls._verified
 
     @classmethod
     def restore(cls):
         with cls._lock:
             if not cls._on:
                 return
-            try:
-                user32.SystemParametersInfoW(
-                    SPI_SETSCREENREADER, 0, ctypes.c_void_p(cls._prev),
-                    SPIF_UPDATEINIFILE
-                )
-            except Exception:
-                pass
+            cls._set(bool(cls._prev))
             cls._on = False
 
     @classmethod
@@ -302,7 +319,9 @@ class _ScreenReader:
                                          ctypes.byref(v), 0)
         except Exception:
             return False
-        # 文档 §4.1：这个读回值不可信（树起来了它也可能是 0），只作调试参考
+        # 4.2 实测：树起来了标志也可能读回 0，所以这里只作调试参考；
+        # 真正是否生效以「设定后立刻读回」的 _verified 为准。
+
         return bool(v.value)
 
 
@@ -381,11 +400,27 @@ def _tree_ok(info, want_edit=False):
     return True
 
 
-def _ensure_tree(hwnd, log=None, unhide=True, want_edit=False):
+def _wake_with_hotkey(hwnd, log=None):
+    """调用 uia_boot 的 Ctrl+Alt+W 唤醒；导入失败不影响后续 SPI/gate 兜底。"""
+    log = log or _noop
+    try:
+        try:
+            from . import uia_boot as boot
+        except ImportError:
+            import uia_boot as boot
+        return bool(boot.wake_by_hotkey(hwnd, log=log))
+    except Exception as e:                  # noqa: BLE001
+        log("后台通道：唤醒微信失败 %r" % (e,))
+        return False
+
+
+def _ensure_tree(hwnd, log=None, unhide=True, want_edit=False, wake=True):
     """保证控件树是物化的，返回一次 `read_ui()` 结果。
 
-    顺序（每一步都不碰前台）：
-      1. 窗口被隐藏（缩在托盘）→ `SW_SHOWNOACTIVATE` 显示出来；
+    顺序：
+      0. 节点 ≤ 1 说明是托盘/冻结空壳 —— 直接按微信自己的 Ctrl+Alt+W，
+         不再先走一遍 SPI/gate/激活（实测空壳自愈 14.7 秒 → 5.4 秒）；
+      1. 窗口被隐藏（缩在托盘）→ `SW_SHOWNOACTIVATE` 兜底显示；
       2. 开 `SPI_SETSCREENREADER`（Qt 靠它决定要不要暴露控件树）；
       3. 还不行就写 wechatauto 的 accessibility gate 字节（0→1 重新触发）。
 
@@ -393,6 +428,18 @@ def _ensure_tree(hwnd, log=None, unhide=True, want_edit=False):
     时就是这样），会继续尝试物化；实在没有就返回现状，由调用方决定点会话还是放弃。
     """
     log = log or _noop
+
+    info = read_ui(hwnd)
+    if _tree_ok(info, want_edit):
+        return info
+    if wake and len(info["nodes"]) <= 1:
+        log("后台通道：控件树只有 %d 个节点，直接唤醒微信（跳过 SPI/gate 空转）"
+            % len(info["nodes"]))
+        if _wake_with_hotkey(hwnd, log=log):
+            info = read_ui(hwnd)
+            if _tree_ok(info, want_edit):
+                log("后台通道：控件树已物化（Ctrl+Alt+W 唤醒），%d 个节点" % len(info["nodes"]))
+                return info
 
     if unhide:
         try:
@@ -413,7 +460,10 @@ def _ensure_tree(hwnd, log=None, unhide=True, want_edit=False):
         # 树是活的，只是没停在聊天页 —— 物化也变不出输入框，交给调用方点会话
         return info
 
-    _ScreenReader.enable()
+    spi_ok = _ScreenReader.enable()
+    if not spi_ok:
+        log("后台通道：SPI_SETSCREENREADER 未生效（%s），继续尝试 gate 热激活"
+            % (_ScreenReader._last_error or "未知原因"))
     time.sleep(TIMING["spiSettle"])        # 文档 §4.1：实测 1~1.5 秒（可用 bgSend.timing 覆盖）
     info = read_ui(hwnd)
     if _tree_ok(info, want_edit):
@@ -861,6 +911,49 @@ def encode_gbk(text, strip_unencodable=True):
     return bytes(buf), skipped
 
 
+_UIA_WRITE_LOGGED = set()
+
+
+def _uia_write(edit, text):
+    """用 UIA ValuePattern 直接写正文，不经过键盘。
+
+    后台补发第二个气泡时，``WM_CHAR`` 常因为焦点/时序问题丢字（回读 0 字，
+    触发 input_dirty）。SetValue 直接落到控件模型里，不怕抢焦点，也没有
+    逐字投递的时序问题；只有它失败时才回退 WM_CHAR。
+    """
+    if edit is None:
+        return False
+    try:
+        edit.GetValuePattern().SetValue(str(text or ""))
+        return True
+    except Exception:
+        return False
+
+
+def _type_text(sender, edit, text, *, mode, char_gap=0.04,
+               strip_unencodable=True, log=None):
+    """写正文：优先 UIA SetValue，失败才回退 WM_CHAR。返回 (ok, skipped)。"""
+    log = log or _noop
+    expected = _expected_text(text, mode, strip_unencodable)
+    if expected is None:
+        return False, []
+    skipped = []
+    if mode != "utf16":
+        _payload, skipped = encode_gbk(text, strip_unencodable)
+    if _uia_write(edit, expected):
+        try:
+            hwnd = int(getattr(sender, "hwnd", 0) or 0)
+        except Exception:
+            hwnd = 0
+        if hwnd not in _UIA_WRITE_LOGGED:
+            _UIA_WRITE_LOGGED.add(hwnd)
+            log("后台通道：打字通道 = UIA SetValue")
+        return True, skipped
+    log("后台通道：UIA SetValue 不可用，回退 WM_CHAR")
+    return sender.type_text(text, char_gap=char_gap,
+                            strip_unencodable=strip_unencodable, mode=mode)
+
+
 # ---------------------------------------------------------------- 读取端（文档 §5.2）
 def _uia():
     import uiautomation as auto
@@ -1123,6 +1216,10 @@ def open_chat(sender, aliases, timeout=6.0, log=None):
     只点列表行、不碰搜索框：4.1.15+ 搜索入口是收起的，展开要额外点一次；
     而机器人回消息时，那个会话本来就在列表最上面。
 
+    **只接受完全相同的行名**。以前会按「包含/成员名集合」挑最像的一行，
+    「群A」和「群A2」互相包含时就会点错，把发给 A 的消息发到 B。找不到
+    精确行就返回 False，交给会搜索的前台通道。
+
     会话列表只有最近 9~12 个会话，更早的找不到 —— 这时返回 False，
     调用方退回前台通道（那边会自己搜索）。
     """
@@ -1149,17 +1246,20 @@ def open_chat(sender, aliases, timeout=6.0, log=None):
 
     scored = []
     for nm, ctrl in info["rows"]:
+        # 模糊匹配（score 1/2）不再用于点击：宁可让前台通道去搜索，也不点错人。
+        if not any(name_score(a, nm) == 0 for a in aliases):
+            continue
         best = None
         for a in aliases:
-            sc = name_score(a, nm)
-            if sc is None:
+            if name_score(a, nm) != 0:
                 continue
-            cand = (sc, abs(len(nm) - len(a)), nm, ctrl)
+            cand = (0, abs(len(nm) - len(a)), nm, ctrl)
             if best is None or cand[:2] < best[:2]:
                 best = cand
         if best is not None:
             scored.append(best)
     if not scored:
+        log("后台通道：会话列表里没有目标 %r 的精确行，交给前台通道搜索" % (aliases,))
         return False
     scored.sort(key=lambda x: (x[0], x[1]))
     _sc, _d, nm, ctrl = scored[0]
@@ -1357,7 +1457,7 @@ def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                 mode = confirmed
             if mode not in _MODE_LOGGED:
                 _MODE_LOGGED.add(mode)
-                log("后台通道：打字编码 = %s（WM_CHAR）" % mode)
+                log("后台通道：打字编码 = %s（UIA SetValue 优先，失败回退 WM_CHAR）" % mode)
             # 校验失败本身无法区分丢字、格式差异和乱码。只有短探测读回正确，才重写正文。
             for attempt in range(2):
                 current = read_ui(hwnd)
@@ -1368,8 +1468,9 @@ def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                     return False, "content_mismatch" if attempt else "gbk_unsupported"
                 input_before = _input_snapshot()
                 draft_dirty = True
-                ok, skipped = sender.type_text(text, char_gap=char_gap,
-                                               strip_unencodable=strip_unencodable, mode=mode)
+                ok, skipped = _type_text(sender, current.get("edit"), text,
+                                         mode=mode, char_gap=char_gap,
+                                         strip_unencodable=strip_unencodable, log=log)
                 if not ok:
                     sender.end_input()
                     return False, "input_dirty"

@@ -123,7 +123,10 @@ function costOf(price, inputTokens, cachedTokens, outputTokens) {
  *   dialogueBudget 传了就用它（启动器滑块实时预览用，不必先保存）
  * @returns {object} 给启动器状态面板看的估算结果
  */
-function estimate(config, { outputTokens = LIMITS.maxOutputNormal, dialogueBudget: override } = {}) {
+function estimate(config, {
+  outputTokens = LIMITS.maxOutputNormal, dialogueBudget: override,
+  provider = '', model = '', now = new Date(), timeZone = 'Asia/Shanghai',
+} = {}) {
   const overrideNum = Number(override);
   const budget = Number.isFinite(overrideNum) && overrideNum > 0
     ? Math.round(overrideNum)
@@ -158,8 +161,12 @@ function estimate(config, { outputTokens = LIMITS.maxOutputNormal, dialogueBudge
     hitRate: promptTokens > 0 ? hitTokens / promptTokens : 0,
     tailRefresh: TAIL_REFRESH,
   };
-  const firstCost = costOf(PRICING.idle, promptTokens, 0, out);
-  const cachedCost = costOf(PRICING.idle, promptTokens, hitTokens, out);
+  const asksPricing = Boolean(provider || model);
+  const priced = asksPricing ? pricingFor(provider, model, now, timeZone) : { model: PRICING.model };
+  // 只对公开价目模型算钱；别的服务商返回 null，和 pipeline 的 lastUsage.cost 一致，
+  // 不要拿 DeepSeek 的价格冒充智谱 / OpenCode。
+  const firstCost = priced ? costOf(PRICING.idle, promptTokens, 0, out) : null;
+  const cachedCost = priced ? costOf(PRICING.idle, promptTokens, hitTokens, out) : null;
 
   return {
     ok: true,
@@ -190,8 +197,12 @@ function estimate(config, { outputTokens = LIMITS.maxOutputNormal, dialogueBudge
         recentShare: Number((p.recent / p.dialogueBudget).toFixed(3)),
       };
     }),
-    pricing: { model: PRICING.model, idle: PRICING.idle, peak: PRICING.peak },
-    cost: {
+    pricing: {
+      model: priced ? priced.model : null,
+      idle: priced ? PRICING.idle : null,
+      peak: priced ? PRICING.peak : null,
+    },
+    cost: priced ? {
       // 谷时（空闲时段）
       idle: { first: firstCost, cached: cachedCost },
       // 高峰时段，只为参照
@@ -199,7 +210,7 @@ function estimate(config, { outputTokens = LIMITS.maxOutputNormal, dialogueBudge
         first: costOf(PRICING.peak, promptTokens, 0, out),
         cached: costOf(PRICING.peak, promptTokens, hitTokens, out),
       },
-    },
+    } : null,
   };
 }
 

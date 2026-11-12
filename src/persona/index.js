@@ -794,11 +794,12 @@ const VOICE_SUFFIX = '用户希望下一条以语音形式回复。直接生成�
 /** 这条回复的字数上限：普通 100 字、认真讨论 400 字；配置只能往小调 */
 function maxCharsFor(config, msg = {}) {
   const chat = config.chat || {};
+  const hard = LIMITS.maxOutputHard || 4000;
   if (msg.discussion) {
-    return Math.min(Number(chat.discussionMaxChars) || LIMITS.maxOutputDiscussion, LIMITS.maxOutputDiscussion);
+    return Math.max(20, Math.min(Number(chat.discussionMaxChars) || LIMITS.maxOutputDiscussion, hard));
   }
   const want = msg.chatType === 'group' ? chat.groupMaxChars : chat.privateMaxChars;
-  return Math.min(Number(want) || LIMITS.maxOutputNormal, LIMITS.maxOutputNormal);
+  return Math.max(20, Math.min(Number(want) || LIMITS.maxOutputNormal, hard));
 }
 
 /**
@@ -1335,19 +1336,21 @@ function mockReply({ text, userName = '你', chatType = 'private', notes = [], r
 /* 文本处理                                                            */
 /* ------------------------------------------------------------------ */
 
-function aliasList(config) {
+function aliasList(config, extraNames = []) {
   const aliases = (config.persona && config.persona.aliases) || [];
   const name = config.persona && config.persona.name;
-  return [...new Set([name, ...aliases].filter(Boolean))].sort((a, b) => b.length - a.length);
+  const extra = Array.isArray(extraNames) ? extraNames : [];
+  return [...new Set([name, ...aliases, ...extra].map((x) => String(x || '').trim()).filter(Boolean))]
+    .sort((a, b) => b.length - a.length);
 }
 
 /**
  * 清洗收到的消息：去掉 @提及 和她自己的名字前缀，判断是否点名。
  * @returns {{text: string, atMe: boolean, hadAlias: boolean}}
  */
-function cleanIncomingForPersona(text, config) {
+function cleanIncomingForPersona(text, config, extraNames = []) {
   let s = String(text || '').replace(/\u2005/g, ' ').replace(/\u200b/g, '');
-  const aliases = aliasList(config);
+  const aliases = aliasList(config, extraNames);
   let hadAlias = false;
   // 图片/表情包的描述是系统生成的说明文字，里面的名字不是人在叫它
   if (/^（对方/.test(s)) {

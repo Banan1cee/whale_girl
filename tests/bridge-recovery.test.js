@@ -138,11 +138,11 @@ test('UIA 连续拿不到会重建窗口驱动（微信在托盘里启动也能�
   assert.match(body, /gui = new_window_driver\(\)/, '要能按已选窗口重建并写回 gui');
   assert.match(body, /misses/, '要有连续失败计数');
   assert.match(body, /重建窗口驱动/, '要给出日志，别静默');
-  // 4.2 起：先让 uia_boot 把托盘里的微信窗口叫醒（ensure_uia_ready），
-  // 叫醒成功就立刻重建；叫不醒再走「连续 3 次」的老兜底。
-  assert.match(body, /ensure_uia_ready\(force=True\)/, '要先尝试叫醒微信窗口');
-  assert.ok(body.indexOf('ensure_uia_ready(force=True)') < body.indexOf('misses >= 3'),
-    '先叫醒，再攒失败次数兜底');
+  // 心跳只检查能力，不替用户把微信弹出来：wake=False 安静待命。
+  // 真发送时 _ensure_tree 才会按 Ctrl+Alt+W 唤醒；叫不醒再走「连续 3 次」兜底。
+  assert.match(body, /ensure_uia_ready\(force=True, wake=False\)/, '心跳不能弹微信窗口');
+  assert.ok(body.indexOf('ensure_uia_ready(force=True, wake=False)') < body.indexOf('misses >= 3'),
+    '先检查，再攒失败次数兜底');
   assert.match(body, /misses >= 3/, '老兜底不能丢');
 });
 /**

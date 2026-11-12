@@ -445,6 +445,17 @@ class AccountMixin:
                 pass
         probe, cands, matched = self._probe_wechat_windows()
         if matched:
+            # 微信 4.2 会在同一个进程里再挂一个明显更小的隐藏 Qt 窗；先按面积
+            # 去掉辅助窗，避免把「一大一小」误判成两个账号候选。跨进程不合并。
+            try:
+                prefer = getattr(G.uia_boot, 'prefer_main_windows', None)
+                if callable(prefer):
+                    narrowed = prefer(matched)
+                    if narrowed and narrowed != matched:
+                        G.log('账号窗口：同进程辅助窗已过滤 %d → %d' % (len(matched), len(narrowed)))
+                        matched = narrowed
+            except Exception as e:
+                G.log('账号窗口：辅助窗过滤失败：', repr(e))
             h, pid = matched[0]
             if len(matched) > 1:
                 resolved, evidence = G.uia_boot.resolve_account_windows(matched)

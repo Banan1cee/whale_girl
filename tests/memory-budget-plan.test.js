@@ -200,6 +200,17 @@ test('Store：调大对话预算后 recent 真的变多（旧代码这里是死�
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 });
 });
 
+test('Store 热更新预算后 replan 真的改变 recent 窗口', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-plan-'));
+  const store = makeStore(dir);
+  const before = store.plan.recent;
+  store.replan({ memory: { dialogueBudget: 12000 }, features: { relations: false } });
+  assert.equal(store.plan.dialogueBudget, 12000);
+  assert.ok(store.plan.recent > before);
+  store.close();
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 });
+});
+
 test('Store：默认预算仍是旧的 3,200 行为', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-plan-'));
   const store = makeStore(dir);

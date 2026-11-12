@@ -110,8 +110,8 @@ const REGISTRY = [
     key: 'proactiveCare',
     path: 'care.enabled',
     label: '主动找话题（群聊里绝不主动）',
-    desc: '没聊的时候她自己来一句「在干啥」。默认关：群里突然说早安很容易社死。开着也只私聊，不会进群。',
-    default: false,
+    desc: '没聊的时候她自己来一句「在干啥」。默认开但只私聊，不会进群；群里突然说早安很容易社死。',
+    default: true,
   },
   {
     key: 'quoteReply',

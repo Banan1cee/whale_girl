@@ -211,6 +211,64 @@ class BridgeUserFlows(unittest.TestCase):
         self.assertTrue(all(call['mime']=='image/jpeg' for call in calls))
 
 
+class GroupMentionFlows(unittest.TestCase):
+    def _env(self):
+        env, clock, sent, stickers, logs = BridgeUserFlows().env()
+        payloads = []
+        env.update({
+            'aliases': ['鲸鲸', '糯糯'],
+            'cfg': {'persona': {'name': '鲸鲸', 'aliases': ['糯糯']}},
+            '_self_nick': '许愿',
+            'self_wxid': 'wxid_self',
+            '_GROUP_SENDER_PREFIX_RE': re.compile(r'^wxid_x:\s*'),
+        })
+        env['db'] = types.SimpleNamespace(
+            wxid='wxid_self', account='wxid_self_c248', get_nickname=lambda s: '好友',
+            get_self_info=lambda: {'username': 'wxid_self', 'nick_name': '许愿', 'remark': ''},
+            get_group_members=lambda chat: [
+                {'username': 'wxid_self', 'nick_name': '许愿', 'remark': ''}],
+            get_messages=lambda chat, limit=12: [],
+        )
+        env['LOCAL_HTTP'] = types.SimpleNamespace(
+            post=lambda *a, **k: payloads.append(k.get('json')) or Response(
+                {'ok': True, 'action': 'ignore', 'reply': '', 'reason': 'not_addressed'}))
+        function('self_identity_ids', env)
+        function('self_mention_names', env)
+        return env, payloads
+
+    def _at_me(self, content):
+        env, payloads = self._env()
+        msg = dict(username='room@chatroom', sender_username='friend', type='文本',
+                   content=content, create_time=200., local_id=1)
+        function('on_message_inner', env)(msg, None)
+        self.assertEqual(len(payloads), 1)
+        return payloads[0]
+
+    def test_account_nickname_at_is_addressed(self):
+        payload = self._at_me('wxid_x:\n@许愿\u2005你为什么总跳过我们说话')
+        self.assertTrue(payload['at_me'])
+        self.assertIn('许愿', payload['self_names'])
+
+    def test_persona_alias_at_is_still_addressed(self):
+        self.assertTrue(self._at_me('wxid_x:\n@糯糯\u2005在吗')['at_me'])
+
+    def test_group_name_and_at_all_are_not_addressed(self):
+        self.assertFalse(self._at_me('wxid_x:\n@许愿Ai-1号实验室 在吗')['at_me'])
+        all_payload = self._at_me('wxid_x:\n@所有人\u2005开会了')
+        self.assertFalse(all_payload['at_me'])
+        self.assertEqual(all_payload['mentioned_names'], [])
+
+    def test_bare_at_self_recovers_previous_question(self):
+        env, payloads = self._env()
+        env['db'].get_messages = lambda chat, limit=12: [
+            {'type': '文本', 'sender_username': 'friend', 'content': '你怎么看'}]
+        msg = dict(username='room@chatroom', sender_username='friend', type='文本',
+                   content='wxid_x:\n@许愿\u2005', create_time=200., local_id=1)
+        function('on_message_inner', env)(msg, None)
+        self.assertEqual(payloads[0]['text'], '你怎么看')
+        self.assertTrue(payloads[0]['at_me'])
+
+
 class VoiceKeyIsolation(unittest.TestCase):
     def resolve(self, cfg, settings):
         import json

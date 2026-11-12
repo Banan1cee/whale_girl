@@ -351,6 +351,7 @@ class Store {
   buildContext({
     key, uid = '', name = '', query = '', now = null, isGroup = false, currentSeq = 0,
     mentionedNames = [], relationsEnabled = undefined, tokenScale = 1,
+    historyTurns = 0, groupHistoryTurns = 0,
   } = {}) {
     const chat = this.chatStore.ensureChat(key);
     const at = Number(now) || this._now();
@@ -375,10 +376,15 @@ class Store {
       this.chatStore.saveSummary(chat);
       this.chatStore.saveMeta(chat);
     }
+    // 用户配置的「上下文条数」是真正的条数上限；token 预算仍由 plan.recent 兜底。
+    // 以前这里只读 plan.recentCount，配置项只在记忆读取失败的兜底里生效。
+    const configuredCount = Number(isGroup ? groupHistoryTurns : historyTurns);
     const recent = compression.recentForPrompt(chat, {
       currentSeq: protectSeq,
       maxTokens: plan.recent,
-      maxCount: isGroup ? plan.groupRecentCount : plan.recentCount,
+      maxCount: configuredCount > 0
+        ? configuredCount
+        : (isGroup ? plan.groupRecentCount : plan.recentCount),
     });
     const recentUser = chat.messages
       .filter((m) => m.role === 'user' && m.seq !== protectSeq && m.text)
@@ -597,6 +603,24 @@ class Store {
   }
 
   /* ------------------------------ 摘要 / 兼容 ------------------------------ */
+
+  /** 配置热更新后重算预算分片；否则界面/硬上限用新值、检索窗口用启动时旧值。 */
+  replan(config = null) {
+    const cfg = config || null;
+    if (cfg && cfg.memory && Number(cfg.memory.dialogueBudget) > 0) {
+      this.limits.dialogueBudget = Number(cfg.memory.dialogueBudget);
+    }
+    if (cfg) {
+      try {
+        const features = require('../infra/features');
+        this.limits.relationsEnabled = features.isOn(cfg, 'relations');
+      } catch { /* 读不到就保持原值 */ }
+    }
+    this.plan = budgetPlan.planBudget(this.limits.dialogueBudget, {
+      relations: this.limits.relationsEnabled,
+    });
+    return this.plan;
+  }
 
   setSummary(key, textValue, meta = {}) {
     const chat = this.chatStore.ensureChat(key);

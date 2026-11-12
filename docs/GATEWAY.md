@@ -40,6 +40,8 @@ Token 不对返回 `403`。没配 token 时不校验（只建议本机调试这�
 | `user_id` | `sender_id` `from` `wxid` | 发送者 id |
 | `nickname` | `sender_name` `user_name` `name` | 发送者昵称（记忆里用这个） |
 | `at_me` | `atMe` `is_at` `mentioned` | 是否 @ 了她（也可以直接让文本里带「鲸鲸」） |
+| `self_names` | `selfNames` `bot_names` | 她当前可能被叫到的名字（人设名、别名、账号昵称/备注等），用于没 @ 时识别「许愿你觉得呢」 |
+| `mentioned_names` | `mentionedNames` `mentions` | 这条消息 @ 到的其他人，用来避免抢别人的话 |
 | `reply_to_bot` | `quote_from_bot` | 是否回复了她的消息 |
 | `msg_id` | `message_id` `id` | 消息唯一 id，用来去重，重试也只会回一次 |
 | `chat_title` | `room_name` `group_name` | 群名（写进提示词，让她知道在哪个群） |

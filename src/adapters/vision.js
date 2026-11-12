@@ -98,10 +98,31 @@ function resolveKey(config) {
     }
   }
   const env = (config && config.env) || process.env || {};
-  const fromEnv = String(env.ARK_API_KEY || env.DOUBAO_API_KEY
-    || env.ZHIPU_API_KEY || env.VISION_API_KEY || '').trim();
-  if (fromEnv) return fromEnv;
-  return st.zhipu || '';
+  // 环境变量兜底必须跟当前视觉服务商匹配：手动选智谱却拿 ARK Key
+  // 去请求 open.bigmodel.cn，只会得到 401/403，诊断页还显示“已配置”。
+  const wanted = String(vc.provider || st.visionProvider || '').trim().toLowerCase();
+  const envKeys = wanted === 'zhipu'
+    ? ['ZHIPU_API_KEY', 'VISION_API_KEY']
+    : wanted === 'doubao'
+      ? ['ARK_API_KEY', 'DOUBAO_API_KEY']
+      : wanted === 'deepseek'
+        ? ['DEEPSEEK_API_KEY']
+        : wanted === 'dashscope'
+          ? ['DASHSCOPE_API_KEY']
+          : wanted === 'siliconflow'
+            ? ['SILICONFLOW_API_KEY']
+            : ['VISION_API_KEY'];
+  for (const name of envKeys) {
+    const value = String(env[name] || '').trim();
+    if (value) return value;
+  }
+  // 没指定服务商时才按旧顺序兜底；指定了就绝不跨服务商借 Key。
+  if (!wanted) {
+    const fromEnv = String(env.ARK_API_KEY || env.DOUBAO_API_KEY
+      || env.ZHIPU_API_KEY || env.VISION_API_KEY || '').trim();
+    if (fromEnv) return fromEnv;
+  }
+  return (!wanted || wanted === 'zhipu') ? (st.zhipu || '') : '';
 }
 
 /** 给状态接口看的摘要（绝不返回明文 Key） */
