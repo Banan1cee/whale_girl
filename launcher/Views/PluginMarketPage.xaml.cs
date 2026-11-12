@@ -268,6 +268,7 @@ namespace WhaleLauncher.Views
             ShowDetail(body);
         }
         private void OnRulesGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginRulesGuide");
+        private void OnSecurityGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginSecurityGuide");
         private void OnAuthorGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginAuthorGuide");
         private void OnMessageGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginMessageGuide");
 

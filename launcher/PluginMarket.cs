@@ -33,6 +33,7 @@ namespace WhaleLauncher
         internal const string DigestAction = "chat.summary";
         private const string CatalogV2Url = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-v2.json";
         private const string CatalogV3Url = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-v3.json";
+        private const string PersonaCatalogUrl = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-personas.json";
         private const int PackageLimit = 1024 * 1024;
         private static readonly HttpClient Http = CreateClient();
 
@@ -199,29 +200,33 @@ namespace WhaleLauncher
 
         internal static async Task<PluginInfo[]> CatalogAsync()
         {
-            var items = ParseCatalog(await DownloadAsync(CatalogUrl, 256 * 1024));
+            var items = ParseCatalog(await DownloadAsync(CatalogUrl, 256 * 1024), 1, "tool");
             try
             {
-                items = items.Concat(ParseCatalog(await DownloadAsync(CatalogV2Url, 256 * 1024))).ToArray();
+                items = items.Concat(ParseCatalog(await DownloadAsync(CatalogV2Url, 256 * 1024), 2, "tool")).ToArray();
             }
             catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidDataException
                 or OperationCanceledException or InvalidOperationException)
             { /* 旧目录仍可使用，独立的 Api 2 目录可能尚未发布。 */ }
-            try { items = items.Concat(ParseCatalog(await DownloadAsync(CatalogV3Url, 256 * 1024))).ToArray(); }
+            try { items = items.Concat(ParseCatalog(await DownloadAsync(CatalogV3Url, 256 * 1024), 3, "message")).ToArray(); }
+            catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidDataException
+                or OperationCanceledException or InvalidOperationException) { }
+            try { items = items.Concat(ParseCatalog(await DownloadAsync(PersonaCatalogUrl, 256 * 1024), 1, "persona")).ToArray(); }
             catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidDataException
                 or OperationCanceledException or InvalidOperationException) { }
             return items.GroupBy(i => i.Id).SelectMany(group => group
                 .GroupBy(i => i.Version).Select(version => version.First())).ToArray();
         }
 
-        internal static PluginInfo[] ParseCatalog(byte[] bytes)
+        internal static PluginInfo[] ParseCatalog(byte[] bytes, int? expectedApi = null, string expectedKind = null)
         {
             using var json = JsonDocument.Parse(bytes);
             return json.RootElement.EnumerateArray().Select(item =>
             {
                 try { return item.Deserialize<PluginInfo>(); }
                 catch (JsonException) { return null; }
-            }).Where(i => Valid(i) && !string.IsNullOrWhiteSpace(i.Download) &&
+            }).Where(i => Valid(i) && (!expectedApi.HasValue || i.Api == expectedApi.Value)
+                && (expectedKind == null || i.Kind == expectedKind) && !string.IsNullOrWhiteSpace(i.Download) &&
                 Regex.IsMatch(i.Sha256 ?? "", @"\A[0-9a-fA-F]{64}\z")).ToArray();
         }
 

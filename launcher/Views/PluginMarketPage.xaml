@@ -46,6 +46,7 @@
                 <Button Content="插件作者入门" Style="{StaticResource Ghost}" Click="OnAuthorGuide" Margin="0,6,0,0" />
                 <Button Content="消息插件 API" Style="{StaticResource Ghost}" Click="OnMessageGuide" Margin="0,6,0,0" />
                 <Button Content="插件市场规范" Style="{StaticResource Ghost}" Click="OnRulesGuide" Margin="0,6,0,0" />
+                <Button Content="安全检测与溯源" Style="{StaticResource Ghost}" Click="OnSecurityGuide" Margin="0,6,0,0" />
             </StackPanel>
         </Border>
     </Grid>
