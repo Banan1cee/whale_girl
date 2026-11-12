@@ -124,11 +124,44 @@ def iter_drive_roots():
     return roots
 
 
-def resolve_db_dir(config_path=None, drives="CDEFGHIJK", default_config_path=""):
+def _db_root_in(base):
+    """base 下面有没有 <DB_ROOT_NAMES>/<账号>/db_storage；有就返回归一后的数据根。"""
+    if not base or not os.path.isdir(base):
+        return ""
+    for name in DB_ROOT_NAMES:
+        cand = os.path.join(base, name)
+        if looks_like_db_root(cand):
+            return normalize_db_root(cand)
+    return ""
+
+
+def _first_level_dirs(base):
+    """列出 base 下的一级子目录（不含文件）。
+
+    只扫一层：用户把「微信文件保存位置」改成自定义文件夹（D:\\微信聊天）时，
+    数据根在盘根下面一层，只看盘根永远找不到。
+    """
+    out = []
+    try:
+        with os.scandir(base) as it:
+            for entry in it:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        out.append(entry.path)
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return out
+
+
+def resolve_db_dir(config_path=None, drives="CDEFGHIJK", default_config_path="", roots=None):
     """找微信 4.x 的数据库目录，比 wechatauto 自带的 auto_detect 更狠。
 
-    顺序：config.json 的 wechat.dbDir → 正在运行的微信进程打开的文件 → 各盘根目录。
+    顺序：config.json 的 wechat.dbDir → 正在运行的微信进程打开的文件 →
+    各盘根目录及其一级子目录。
     `default_config_path` 由 engine.py 传入（ROOT/config.json），模块本身不猜路径。
+    `roots` 只给测试用：传了就按它扫，不再枚举本机磁盘。
     """
     # 1) 配置里手填的
     manual = ""
@@ -167,12 +200,18 @@ def resolve_db_dir(config_path=None, drives="CDEFGHIJK", default_config_path="")
     except Exception:
         pass
 
-    # 3) 所有真实磁盘根（以前写死 C..K，L: 盘和网络盘永远找不到）
-    for root in iter_drive_roots():
-        for name in DB_ROOT_NAMES:
-            cand = os.path.join(root, name)
-            if looks_like_db_root(cand):
-                return normalize_db_root(cand)
+    # 3) 所有真实磁盘根（以前写死 C..K，L: 盘和网络盘永远找不到）；
+    #    盘根没命中再看一级子目录，覆盖「保存位置改成 D:\微信聊天」这类自定义目录。
+    #    drives 为空串 = 调用方明确不要扫盘（测试用），避免读到开发机真实账号。
+    scan_roots = roots if roots is not None else (iter_drive_roots() if drives else [])
+    for root in scan_roots:
+        hit = _db_root_in(root)
+        if hit:
+            return hit
+        for sub in _first_level_dirs(root):
+            hit = _db_root_in(sub)
+            if hit:
+                return hit
     return ""
 
 

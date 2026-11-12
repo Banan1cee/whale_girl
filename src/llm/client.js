@@ -29,12 +29,12 @@ const FRIENDLY = {
 
 class LlmError extends Error {
   constructor(userMessage, { code = 'unknown', status = 0, retryable = false, detail = '' } = {}) {
-    super(detail || userMessage);
+    super(require('../infra/redact').redactSecrets(detail || userMessage));
     this.name = 'LlmError';
-    this.userMessage = userMessage || FRIENDLY.default;
+    this.userMessage = require('../infra/redact').redactSecrets(userMessage || FRIENDLY.default);
     // detail 是给日志/诊断用的结构证据（HTTP 状态、finish、usage…），不发给用户。
     // 以前只放进 message，err.detail 一直是 undefined，extractor / probe 都读不到。
-    this.detail = detail || '';
+    this.detail = require('../infra/redact').redactSecrets(detail);
     this.code = code;
     this.status = status;
     this.retryable = retryable;
@@ -285,6 +285,7 @@ class DeepSeekClient {
     this.provider = rt.provider;
     this.providerLabel = rt.providerLabel;
     this.apiKey = rt.apiKey;
+    require('../infra/redact').registerSecrets({ apiKey: this.apiKey });
     this.model = rt.model;
     this.baseUrl = rt.baseUrl;
     this.temperature = rt.temperature;
@@ -724,7 +725,7 @@ class DeepSeekClient {
     return new LlmError(friendlyForStatus(res.statusCode, detail), {
       code: 'http_' + res.statusCode,
       status: res.statusCode,
-      detail: `HTTP ${res.statusCode}: ${String(detail).slice(0, 300)}`,
+      detail: `HTTP ${res.statusCode}: ${require('../infra/redact').redactSecrets(detail).slice(0, 300)}`,
       retryable: res.statusCode === 429 || res.statusCode >= 500,
     });
   }
@@ -782,7 +783,7 @@ class DeepSeekClient {
         try {
           json = JSON.parse(raw);
         } catch {
-          throw new LlmError(FRIENDLY.empty, { code: 'bad_json', detail: 'invalid json: ' + raw.slice(0, 200) });
+          throw new LlmError(FRIENDLY.empty, { code: 'bad_json', detail: 'invalid json: ' + require('../infra/redact').redactSecrets(raw).slice(0, 200) });
         }
         this._recordUsage(json, purpose);
         // HTTP 200 也可能带错误体（网关 / 反向代理 / 部分兼容服务会这么干）。

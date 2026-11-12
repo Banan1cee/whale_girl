@@ -410,13 +410,13 @@ namespace WhaleLauncher.Views
             if (string.IsNullOrEmpty(text)) return text;
             try
             {
-                var s = SkKey.Replace(text, "***key***");
+                var s = SkKey.Replace(SecretRedactor.Redact(text), "***key***");
                 s = Wxid.Replace(s, "wxid_***");
                 s = BearerToken.Replace(s, "$1***");
                 s = PhoneNumber.Replace(s, "1**********");
                 return s;
             }
-            catch { return text; }
+            catch { return "（日志脱敏失败，已省略）"; }
         }
 
         /// <summary>按 UTF-8 读出来一堆替换符 = 不是文本（GBK 老日志/二进制），那就原样拷贝。</summary>
@@ -476,6 +476,7 @@ namespace WhaleLauncher.Views
         /// <summary>在后台线程组装 zip。返回 zip 的绝对路径。</summary>
         private string WritePackage(Snapshot probe, ApiResult status, ApiResult settings, string doctor)
         {
+            SecretRedactor.Refresh(_sup.BaseDir, force: true);
             var name = "logs-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip";
             var path = Path.Combine(_sup.DataDir, name);
             Directory.CreateDirectory(_sup.DataDir);
@@ -515,7 +516,7 @@ namespace WhaleLauncher.Views
                         if (!string.IsNullOrEmpty(text) && !LooksBinary(text))
                             AddText(zip, "wechatauto_logs/" + Path.GetFileName(f), MaskSecrets(text));
                         else
-                            zip.CreateEntryFromFile(f, "wechatauto_logs/" + Path.GetFileName(f), CompressionLevel.Optimal);
+                            skipped.Add(Path.GetFileName(f) + "（无法安全脱敏，已跳过）");
                     }
                     catch (Exception ex) { skipped.Add(Path.GetFileName(f) + "：" + ex.Message); }
                 }
@@ -557,6 +558,7 @@ namespace WhaleLauncher.Views
             if (!File.Exists(file)) return;
             var text = ReadShared(file, skipped);
             if (string.IsNullOrEmpty(text)) return;
+            text = MaskSecrets(text);
             if (text.Length > tailBytes)
             {
                 var cut = text.Length - tailBytes;
@@ -682,9 +684,19 @@ namespace WhaleLauncher.Views
         // ── zip 内容 ────────────────────────────────────────────
         private static void AddText(ZipArchive zip, string entry, string content)
         {
+            if (entry.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var node = JsonNode.Parse(content ?? "null");
+                    RedactNode(node);
+                    content = node?.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) ?? "null";
+                }
+                catch { content = "{\"error\":\"无法安全脱敏，已省略\"}"; }
+            }
             var item = zip.CreateEntry(entry, CompressionLevel.Optimal);
             using var w = new StreamWriter(item.Open(), new UTF8Encoding(false));   // UTF-8 无 BOM
-            w.Write(content ?? "");
+            w.Write(MaskSecrets(content ?? ""));
         }
 
         private static string BuildReadme()
@@ -1054,8 +1066,7 @@ namespace WhaleLauncher.Views
                     }
                     else if (SecretKey.IsMatch(kv.Key))
                     {
-                        if (kv.Value is JsonObject || kv.Value is JsonArray) RedactNode(kv.Value);
-                        else obj[kv.Key] = "***";
+                        obj[kv.Key] = "***";
                     }
                     else if (PrivacyKey.IsMatch(kv.Key))
                     {

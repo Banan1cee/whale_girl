@@ -197,7 +197,8 @@ namespace WhaleLauncher
 
         private void Emit(string src, string raw, char? forced = null)
         {
-            var text = raw ?? "";
+            SecretRedactor.Refresh(BaseDir);
+            var text = SecretRedactor.Redact(raw);
             var at = DateTime.Now;
             var m = TimePrefix.Match(text);
             if (m.Success)
