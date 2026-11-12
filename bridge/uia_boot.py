@@ -78,7 +78,7 @@ def is_wechat_account_window(win32gui, hwnd: int) -> bool:
         return False
 
 
-def prefer_main_windows(candidates, *, ratio: float = AUX_WINDOW_RATIO):
+def prefer_main_windows(candidates, *, ratio: float = AUX_WINDOW_RATIO, win32gui=None):
     """同一进程内按面积去掉辅助窗；跨进程绝不合并。
 
     微信 4.2 会在同一个进程里再挂一个 262x296 的隐藏 Qt 顶层窗，类名和标题
@@ -97,15 +97,20 @@ def prefer_main_windows(candidates, *, ratio: float = AUX_WINDOW_RATIO):
     if len(rows) <= 1:
         return rows
 
-    try:
-        import win32gui
-    except Exception:
-        return rows
+    if win32gui is None:
+        try:
+            import win32gui
+        except Exception:
+            return rows
 
     areas = {}
+    minimized_windows = set()
     for hwnd, pid in rows:
         try:
             minimized = bool(win32gui.IsIconic(hwnd))
+            if minimized:
+                # 最小化的窗口矩形会退化，不能拿它和主窗比面积；保留给会话树证据判断。
+                minimized_windows.add((hwnd, pid))
             width, height = _account_window_size(win32gui, hwnd, minimized)
             areas[(hwnd, pid)] = max(0, width) * max(0, height)
         except Exception:
@@ -120,6 +125,9 @@ def prefer_main_windows(candidates, *, ratio: float = AUX_WINDOW_RATIO):
     for hwnd, pid in rows:
         area = areas.get((hwnd, pid), 0)
         top = largest.get(pid, 0)
+        if (hwnd, pid) in minimized_windows:
+            kept.append((hwnd, pid))
+            continue
         # 读不到面积的窗口不能误杀，保留下来交给会话树证据判断。
         if top and area and area < top * ratio:
             continue
@@ -146,7 +154,10 @@ def account_window_candidates(win32gui, win32process, hwnds):
             candidates[hwnd] = (pid, None, 0)
 
     # 独立进程和双开仍全部保留；只有同一 PID 内的面积辅助窗会被去掉。
-    return prefer_main_windows([(hwnd, pid) for hwnd, (pid, _v, _a) in candidates.items()])
+    return prefer_main_windows(
+        [(hwnd, pid) for hwnd, (pid, _v, _a) in candidates.items()],
+        win32gui=win32gui,
+    )
 
 
 def _iter_windows() -> List[dict]:
