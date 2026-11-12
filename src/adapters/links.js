@@ -36,23 +36,24 @@ function extractUrls(text) {
 }
 
 function decodeEntities(s) {
+  // 数字实体先解，&amp; 最后解，否则 &amp;#60; 会被二次反转义成 '<'。
   return String(s || '')
     .replace(/&nbsp;/g, ' ')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&')
     .replace(/&#(\d+);/g, (_, n) => {
       try { return String.fromCodePoint(Number(n)); } catch { return ''; }
-    });
+    })
+    .replace(/&amp;/g, '&');
 }
 
 function stripTags(html) {
   return decodeEntities(
     String(html || '')
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script\s*>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style\s*>/gi, ' ')
       .replace(/<[^>]+>/g, ' ')
   )
     .replace(/\s+/g, ' ')

@@ -51,7 +51,10 @@ const next = level === 'major' ? `${maj + 1}.0.0`
       : (threePart ? `${maj}.${min}.${pat + 1}` : `${maj}.${min}.1`);
 
 let cl = fs.readFileSync(clPath, 'utf8');
-const dupRe = new RegExp('^##\\s*' + next.replace(/\./g, '\\.') + '\\b', 'm');
+// 版本号要放进正则：不只转义点，反斜杠和所有正则元字符都要转义，
+// 否则特殊字符会被当成语法而不是字面量。
+const escaped = String(next).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const dupRe = new RegExp('^##\\s*' + escaped + '\\b', 'm');
 if (dupRe.test(cl)) {
   console.error(`CHANGELOG 里已经有 ${next} 了：一个版本号只能对应一次改动，先确认再改。`);
   process.exit(1);

@@ -80,7 +80,9 @@ class Router {
           + '\n' + (err && err.stack ? err.stack : ''));
       }
       if (status === 500) return json(res, 500, { ok: false, error: '服务器打了个结，请看控制台日志' });
-      return json(res, status, { ok: false, error: err.message });
+      // 只回第一行、限长：万一 err.message 被拼进了多行堆栈，也不会整段发给客户端。
+      const message = String((err && err.message) || '请求失败').split('\n')[0].slice(0, 200) || '请求失败';
+      return json(res, status, { ok: false, error: message });
     }
   }
 }

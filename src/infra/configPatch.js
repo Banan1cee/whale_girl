@@ -169,6 +169,8 @@ function clearSettingsShadow(runtime, paths) {
 function mergeConfigInPlace(target, src) {
   for (const [key, value] of Object.entries(src || {})) {
     if (key === 'paths' || key === 'root' || key === 'configExists') continue;
+    // 配置来自可编辑的 config.json / 接口 patch：__proto__ 这类键会把原型链改掉。
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
     // env 比较特殊：它是「进程环境变量（原型）+ config.json 的 env 段（自有键）」。
     // 不能整段跳过，否则启动器把 env.timezone 存进 config.json 后运行时读不到；
     // 也不能整段替换，否则会丢掉 process.env 的原型视图。只同步自有键。
@@ -177,7 +179,10 @@ function mergeConfigInPlace(target, src) {
       for (const envKey of Object.keys(target.env)) {
         if (!Object.prototype.hasOwnProperty.call(value || {}, envKey)) delete target.env[envKey];
       }
-      for (const [envKey, envValue] of Object.entries(value || {})) target.env[envKey] = envValue;
+      for (const [envKey, envValue] of Object.entries(value || {})) {
+        if (envKey === '__proto__' || envKey === 'constructor' || envKey === 'prototype') continue;
+        target.env[envKey] = envValue;
+      }
       continue;
     }
     const cur = target[key];

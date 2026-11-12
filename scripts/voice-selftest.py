@@ -23,10 +23,11 @@ import wechatauto_bridge as bridge  # noqa: E402
 
 
 def key_status():
+    # 只报有没有配、配了几位，不打 Key 的任何片段：自检日志也会被用户贴出来。
     print("语音识别：model=%s  enabled=%s  key=%s" % (
         bridge.VOICE_MODEL,
         bridge.VOICE_ENABLED,
-        ("有（%s…）" % bridge.VOICE_API_KEY[:6]) if bridge.VOICE_API_KEY else "没有",
+        ("已配置（%d 位）" % len(bridge.VOICE_API_KEY)) if bridge.VOICE_API_KEY else "没有",
     ))
 
 
