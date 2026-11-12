@@ -24,6 +24,7 @@ LOG_LEVEL = "info"
 # 日志里只留结构证据：id/昵称用短哈希，正文用长度，路径只说有没有。
 # 调用点仍应主动调用这些函数；_emit_log 里的 scrub 只是最后一道兜底。
 def _short_hash(value):
+    # 摘要的是 wxid/昵称等敏感值，短哈希也够定位，但弱算法会被 CodeQL 拦下。
     return hashlib.sha256(str(value or "").encode("utf-8", "replace")).hexdigest()[:8]
 
 

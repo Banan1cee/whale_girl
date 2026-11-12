@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -35,6 +36,9 @@ test('隐私工具：wxid / 群号 / 手机号 / 邮箱 / 本机用户路径都�
 test('隐私工具：id/昵称只给稳定短哈希，正文只给长度', () => {
   assert.match(privacy.tagId('wxid_secret'), /^#[0-9a-f]{8}$/);
   assert.equal(privacy.tagId('wxid_secret'), privacy.tagId('wxid_secret'));
+  // 敏感值不能用弱摘要：短哈希必须是 SHA-256 的前 8 位（CodeQL 会拦 SHA-1）。
+  const expected = crypto.createHash('sha256').update('wxid_secret').digest('hex').slice(0, 8);
+  assert.equal(privacy.shortHash('wxid_secret'), expected);
   assert.match(privacy.tagName('张三'), /^#[0-9a-f]{8}\(2字\)$/);
   assert.equal(privacy.textMeta('银行卡密码'), 'len=5');
   assert.equal(privacy.urlHost('https://example.com/secret?token=abc'), 'example.com');

@@ -10,6 +10,7 @@
 const crypto = require('node:crypto');
 
 function shortHash(value, len = 8) {
+  // 摘要的是 id/昵称等敏感值，短哈希只用于对 trace，但算法仍要用 SHA-256。
   return crypto.createHash('sha256')
     .update(String(value == null ? '' : value))
     .digest('hex')
