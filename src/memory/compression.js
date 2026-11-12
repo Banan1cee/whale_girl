@@ -131,9 +131,19 @@ function trimSummary(chat, { now = Date.now(), summaryTokens = LIMITS.summaryTok
     });
   }
   if (segments.length === 1 && estimateTokens(segments[0].text) > limit) {
-    const textValue = segments[0].text.slice(0, limit);
-    segments[0].text = textValue;
-    segments[0].tokens = estimateTokens(textValue);
+    // limit 是 token，不是字符数。以前直接 slice(0, limit) 会把中文摘要
+    // 多砍掉三分之一；这里按 token 二分找一个能放下的字符边界。
+    const body = String(segments[0].text || '');
+    let lo = 0;
+    let hi = body.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (estimateTokens(body.slice(0, mid)) <= limit) lo = mid;
+      else hi = mid - 1;
+    }
+    const textValue = body.slice(0, Math.max(1, lo)).trim();
+    segments[0].text = textValue || body.slice(0, 1);
+    segments[0].tokens = estimateTokens(segments[0].text);
   }
   chat.summary.segments = segments;
   recomputeSummary(chat);
@@ -188,6 +198,9 @@ function compressSync(chat, { currentSeq = 0, now = Date.now(), hardTrigger, rec
       textValue = pending.text;
       chat.pendingSummary = null;
     } else {
+      // 边界对不上时旧的 pending 已经不可能再匹配，必须清掉，
+      // 否则 prepareSoft 永远被它挡住，后台摘要从此不再预热。
+      chat.pendingSummary = null;
       textValue = extractor.extractiveSummary(chunk, 220);
     }
     if (!textValue) break;

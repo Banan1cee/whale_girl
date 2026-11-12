@@ -109,23 +109,27 @@ class LoopMixin:
                 except Exception as e:
                     G.log('发晚安失败：', repr(e))
 
-    def ensure_uia_ready(self, force=False):
+    def ensure_uia_ready(self, force=False, wake=True):
         """挑「PID 里真有 Weixin.dll」的窗口并按真判据物化 UIA。
 
         修的是这三件事：过期 hwnd 被当成微信主窗（日志里那个不存在的 PID）、
         第三方库只看根窗口类名就判成功、以及版本表没有 4.2.0.9 时候选 RVA 试错。
         结果缓存 30 秒，避免每次发送都扫一遍。
+
+        注意：指定了账号但窗口还没确认时**不能直接返回**。以前这里返回
+        「等待确认」，而确认窗口又依赖 UIA 会话树，最后两边互相等，控件树
+        永远是空壳。现在先让 UIA 物化，窗口归属仍由 pick_account_window 决定，
+        没确认前绝不把挑中的窗口写进 ACCOUNT。`wake=False` 供心跳安静待命。
         """
         if G.uia_boot is None:
             return self._UIA_READY
         prefer = int(self.ACCOUNT.get('hwnd') or 0) if self.ACCOUNT.get('verified') else 0
-        if getattr(self, 'acct', '') and not prefer:
-            return {'ok': False, 'msg': '等待确认已选微信账号的窗口'}
         now = G.time.time()
         if not force and now - self._UIA_READY['ts'] < 30:
             return self._UIA_READY
         try:
-            res = G.uia_boot.ensure(prefer_hwnd=prefer, log=G.log, strict=bool(prefer))
+            res = G.uia_boot.ensure(prefer_hwnd=prefer, log=G.log,
+                                    strict=bool(prefer), wake=wake)
         except Exception as e:
             res = {'ok': False, 'reason': 'exception: %r' % (e,)}
         try:
@@ -315,7 +319,8 @@ class LoopMixin:
                             with self.gui_lock:
                                 _u = self.gui._get_uia() if self.gui is not None else None
                             if _u is None:
-                                _ready = self.ensure_uia_ready(force=True)
+                                # 心跳只检查能力，不替用户把微信窗口弹出来。
+                                _ready = self.ensure_uia_ready(force=True, wake=False)
                                 if _ready.get('ok'):
                                     with self.gui_lock:
                                         self.gui = self.new_window_driver()
@@ -376,6 +381,12 @@ class LoopMixin:
                 G.log('桥接连接设置变了，重新连接微信与内核…')
                 G.os._exit(7)
             if G.reload_config():
+                # 人设名/别名也可能刚被改过；同步给群聊 @ 判定，并清掉 60 秒缓存，
+                # 否则用户改完称呼还要等下一轮刷新才生效。
+                self.cfg = current
+                persona = (current.get('persona') or {})
+                self.aliases = list(persona.get('aliases') or []) + [persona.get('name') or '鲸鲸']
+                self._mention_cache = None
                 G.log('配置已热更新（启动器改完即时生效，不用重启桥接）')
 
     def contacts_sync_once(self):

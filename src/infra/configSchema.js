@@ -86,6 +86,8 @@ const FIELDS = {
   // ---- 联网 / 链接 ----
   'links.enabled': { type: 'bool' },
   'links.timeoutMs': { type: 'int', min: 1000, max: 60000 },
+  'links.cacheMinutes': { type: 'int', min: 0, max: 1440 },
+  'links.allowPrivate': { type: 'bool' },
   'websearch.enabled': { type: 'bool' },
   // 语义路由（每句话先问一次模型「要不要联网」）：不配时只在像问句/命中事实词时才问；
   // true 则每句都问（更准，每句多 ~2 秒）；false 则完全按关键词。

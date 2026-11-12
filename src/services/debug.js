@@ -136,7 +136,11 @@ async function debugPrompt(runtime, body) {
     const urls = links.extractUrls(text);
     if (urls.length) {
       try {
-        linkText = links.formatForPrompt(await links.describeLink(urls[0]));
+        linkText = links.formatForPrompt(await links.describeLink(urls[0], {
+          timeoutMs: (runtime.config.links && runtime.config.links.timeoutMs) || 6000,
+          cacheMinutes: (runtime.config.links && runtime.config.links.cacheMinutes) || 60,
+          allowPrivate: Boolean(runtime.config.links && runtime.config.links.allowPrivate),
+        }));
       } catch {
         linkText = `对方发了一个链接（${urls[0]}），但读取失败。`;
       }

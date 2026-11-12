@@ -45,6 +45,7 @@ function normalizeInbound(payload, platform) {
   const replyToName = firstDefined(body, ['reply_to_name', 'replyToName', 'quote_sender_name', 'quoted_sender_name']);
   const replyToUserId = firstDefined(body, ['reply_to_user_id', 'replyToUserId', 'quote_sender_id', 'quoted_sender_id']);
   const mentions = firstDefined(body, ['mentioned_names', 'mentionedNames', 'mention_names', 'mentions']);
+  const selfNames = firstDefined(body, ['self_names', 'selfNames', 'bot_names', 'botNames']);
   const noReply = toBool(firstDefined(body, ['no_reply', 'noReply']));
 
   return {
@@ -59,6 +60,7 @@ function normalizeInbound(payload, platform) {
     replyToName: String(replyToName || ''),
     replyToUserId: String(replyToUserId || ''),
     mentionedNames: Array.isArray(mentions) ? mentions : [],
+    selfNames: Array.isArray(selfNames) ? selfNames.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 20) : [],
     msgId: String(firstDefined(body, ['msg_id', 'msgId', 'message_id', 'messageId', 'id']) ?? ''),
     chatTitle: String(firstDefined(body, ['chat_title', 'chatTitle', 'room_name', 'roomName', 'group_name', 'groupName', 'title']) ?? ''),
     noReply,
@@ -324,7 +326,15 @@ class Gateway {
       }
       if (lines.length > 1 && i < lines.length - 1) await sleep(400);
     }
-    return { ok: results.some((r) => r.ok), results };
+    // 部分成功不能算整体成功：否则上层不会补发缺的气泡，模型也以为已经送达。
+    const ok = results.length === lines.length && results.every((r) => r && r.ok);
+    return {
+      ok,
+      partial: !ok && results.some((r) => r && r.ok),
+      sent: results.filter((r) => r && r.ok).length,
+      failed: lines.length - results.filter((r) => r && r.ok).length,
+      results,
+    };
   }
 
   status() {

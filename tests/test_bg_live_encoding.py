@@ -1,4 +1,5 @@
 """模拟同一微信窗口运行时切换编码；绝不接触真实微信或输入设备。"""
+import ctypes
 import os
 import sys
 import unittest
@@ -278,6 +279,79 @@ class DirtyDraftPipelineTests(unittest.TestCase):
                 fallback.assert_not_called()
                 self.assertEqual(env['dead_chats'], set())
                 self.assertEqual(env['fail_streak'], {})
+
+
+class InputChannelTests(unittest.TestCase):
+    def test_uia_value_pattern_is_preferred_over_wm_char(self):
+        edit = Mock()
+        sender = SimpleNamespace(hwnd=4242, type_text=Mock())
+        bg._UIA_WRITE_LOGGED.clear()
+        ok, skipped = bg._type_text(sender, edit, '鲸鲸测试', mode='utf16', log=Mock())
+        self.assertTrue(ok)
+        self.assertEqual(skipped, [])
+        edit.GetValuePattern.return_value.SetValue.assert_called_once_with('鲸鲸测试')
+        sender.type_text.assert_not_called()
+
+    def test_wm_char_is_used_when_value_pattern_fails(self):
+        edit = Mock()
+        edit.GetValuePattern.side_effect = RuntimeError('no ValuePattern')
+        sender = SimpleNamespace(hwnd=4242, type_text=Mock(return_value=(True, [])))
+        bg._UIA_WRITE_LOGGED.clear()
+        ok, _skipped = bg._type_text(sender, edit, '鲸鲸测试', mode='utf16',
+                                     log=Mock())
+        self.assertTrue(ok)
+        sender.type_text.assert_called_once()
+
+    def test_open_chat_refuses_fuzzy_row_and_lets_search_channel_handle_it(self):
+        clicked = []
+        sender = SimpleNamespace(hwnd=4242, click_screen=lambda *xy: clicked.append(xy))
+        ctrl = SimpleNamespace(BoundingRectangle=SimpleNamespace(left=0, top=0, right=200, bottom=40))
+        info = dict(nodes=[1] * 200, edit=object(), value='', send_xy=(1, 2),
+                    chat='另一个群', rows=[('群A2', ctrl)], tabs=[])
+        with patch.object(bg, 'read_ui', return_value=info):
+            self.assertFalse(bg.open_chat(sender, ['群A'], log=Mock()))
+        self.assertEqual(clicked, [])
+
+    def test_tree_shell_wakes_before_running_spi_or_gate(self):
+        shell = dict(nodes=[1], edit=None, value=None, send_xy=None, chat=None, rows=[], tabs=[])
+        healthy = dict(nodes=[1] * 200, edit=object(), value='', send_xy=(1, 2),
+                       chat='测试群', rows=[], tabs=[])
+        with patch.object(bg, 'read_ui', side_effect=[shell, healthy]), \
+                patch.object(bg, '_wake_with_hotkey', return_value=True) as wake, \
+                patch.object(bg._ScreenReader, 'enable') as enable:
+            info = bg._ensure_tree(4242, wake=True)
+        self.assertEqual(len(info['nodes']), 200)
+        wake.assert_called_once()
+        enable.assert_not_called()
+
+    def test_tree_shell_stays_quiet_when_wake_is_disabled(self):
+        shell = dict(nodes=[1], edit=None, value=None, send_xy=None, chat=None, rows=[], tabs=[])
+        with patch.object(bg, 'read_ui', return_value=shell), \
+                patch.object(bg, '_wake_with_hotkey') as wake, \
+                patch.object(bg.user32, 'IsWindowVisible', return_value=True), \
+                patch.object(bg.user32, 'IsIconic', return_value=False), \
+                patch.object(bg._ScreenReader, 'enable', return_value=True), \
+                patch.object(bg, '_gate_pulse', return_value=False), \
+                patch.object(bg.time, 'sleep', lambda _s: None):
+            bg._ensure_tree(4242, wake=False)
+        wake.assert_not_called()
+
+    def test_screen_reader_write_checks_flags_and_readback(self):
+        calls = []
+
+        def spi(action, _ui, param, flags):
+            calls.append((action, param.value if hasattr(param, 'value') else param, flags))
+            if action == bg.SPI_GETSCREENREADER:
+                ctypes.cast(param, ctypes.POINTER(ctypes.c_uint))[0] = 1
+            return True
+
+        with patch.object(bg.user32, 'SystemParametersInfoW', side_effect=spi), \
+                patch.object(bg._ScreenReader, '_on', False), \
+                patch.object(bg._ScreenReader, '_verified', False):
+            self.assertTrue(bg._ScreenReader._set(True))
+        set_call = [c for c in calls if c[0] == bg.SPI_SETSCREENREADER][0]
+        self.assertEqual(set_call[2], bg.SPIF_UPDATEINIFILE | bg.SPIF_SENDCHANGE)
+        self.assertEqual(set_call[1], 1)
 
 
 if __name__ == '__main__':

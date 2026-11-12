@@ -208,11 +208,8 @@ async function closeEpisode({ chat, chatStore, llm = null, logger = null, now = 
     // 幂等标记 + 清空 L3
     chat.meta.closedEpisodes = [...(chat.meta.closedEpisodes || []), ep.id].slice(-LIMITS.closedEpisodeMemory);
     chat.meta.lastClosedEpisodeId = ep.id;
-    compression.resetSummary(chat, {
-      episodeId: ep.id,
-      coveredThroughSeq: ep.messageSeqTo,
-      now,
-    });
+    // 只追加本段摘要，不能 resetSummary：那会把之前 episode 的 segments 一起清空。
+    // coverage 由 applySegment 在摘要真正写入后推进，失败时 recent 仍能看到原文。
     // 关闭不等于失忆：这一段的最终摘要留在 summary 里（后续事件段继续合并，上限 900 token），
     // 原文仍在 messages.jsonl；只是不再占 prompt 的 recent 缓冲。
     if (summaryText) {
@@ -222,6 +219,7 @@ async function closeEpisode({ chat, chatStore, llm = null, logger = null, now = 
         toSeq: ep.messageSeqTo,
         now,
       });
+      chat.summary.episodeId = ep.id;
     }
     if (chat.meta.episode && chat.meta.episode.id === ep.id) chat.meta.episode = null;
     chatStore.saveSummary(chat);
@@ -251,12 +249,8 @@ function rotateIfNeeded({ chat, text = '', now = Date.now(), chatStore, llm = nu
   const snapshot = { ...ep };
   // 关闭动作是异步的，但 L3 缓冲要立刻推进水位：否则这一轮会把刚关闭的旧原文
   // 当成「刚发生」又塞回 prompt。最终摘要稍后由后台补进 summary。
-  compression.resetSummary(chat, {
-    episodeId: snapshot.id,
-    coveredThroughSeq: snapshot.messageSeqTo,
-    now,
-  });
-  chatStore.saveSummary(chat);
+  // 不在这里 reset/推进 coverage：异步摘要还没生成。等 closeEpisode 成功
+  // applySegment 后再推进，否则进程中断会丢一整段对话。
   const promise = enqueue(chat, () => closeEpisode({ chat, chatStore, llm, logger, now, reason, episode: snapshot }))
     .catch((err) => {
       if (logger) logger.warn('episode 关闭失败（不影响聊天）：' + describeError(err));

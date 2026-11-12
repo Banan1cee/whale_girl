@@ -71,6 +71,8 @@ const LIMITS = Object.freeze({
   // 输出
   maxOutputNormal: 100,
   maxOutputDiscussion: 400,
+  // 配置允许到 4000；这是真正的硬上限，不再用 100 把用户设置静默压掉。
+  maxOutputHard: 4000,
   thinking: false,
 
   // 其它

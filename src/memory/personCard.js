@@ -456,6 +456,8 @@ function closeThread(card, needle, now = Date.now()) {
 function forget(card, needle, now = Date.now()) {
   const at = nowOf(now);
   const target = norm(needle);
+  // 空 needle 不是「匹配全部」：命令层漏传参数时绝不能清空整张人物卡。
+  if (!target) return 0;
   let removed = 0;
   const match = (s) => {
     const n = norm(s);

@@ -424,8 +424,8 @@ test('人设调教接口：读、改、恢复默认', async () => {
     const reset = await (await post({ reset: true })).json();
     assert.equal(reset.ok, true);
     assert.equal(reset.persona.name, '鲸鲸');
-    assert.equal(reset.persona.historyTurns, 200);
-    assert.equal(reset.persona.groupHistoryTurns, 150);
+    assert.equal(reset.persona.historyTurns, 120);
+    assert.equal(reset.persona.groupHistoryTurns, 100);
   } finally {
     await app.close();
   }

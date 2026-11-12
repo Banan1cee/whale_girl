@@ -288,11 +288,11 @@ async function applySettings(runtime, body) {
       try {
         applyConfigPatch(runtime, groupPatch);
       } catch (err) {
-        runtime.logger.warn('群聊规则写入 config.json 失败，仅本次生效：' + describeError(err));
-        for (const [dotted, value] of Object.entries(groupPatch)) {
-          const key = dotted.slice('group.'.length);
-          config.group[key] = value;
-        }
+        runtime.logger.error('群聊规则写入 config.json 失败：' + describeError(err));
+        // 不能假装保存成功：调用方必须知道重启后会回退。
+        throw Object.assign(new Error('群聊设置未保存：' + describeError(err)), {
+          statusCode: 500, cause: err,
+        });
       }
     }
   }

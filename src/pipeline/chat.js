@@ -31,7 +31,9 @@ const personaStore = require('../persona/store');
 const { sanitizeForModel, nameMatches, clampInt } = require('../core/text');
 const { sendDenial } = require('../core/wechatSendPolicy');
 const trigger = require('../core/trigger');
-const { INSULT_RE, INSULT_LOOSE_RE, namedHerIn } = require('../core/trigger');
+const { INSULT_RE, INSULT_LOOSE_RE } = require('../core/trigger');
+const addressing = require('../core/addressing');
+const sessionState = require('../core/sessionState');
 const context = require('../core/context');
 const { isEcho } = require('../core/echo');
 const { extractMentionNames } = require('../core/mentions');
@@ -144,7 +146,11 @@ class Bot {
     this.now = now;
     this.rng = rng;
     this.mockChunkDelayMs = mockChunkDelayMs;
-    this.linkReader = linkReader || ((url) => links.describeLink(url, { timeoutMs: (config.links && config.links.timeoutMs) || 6000 }));
+    this.linkReader = linkReader || ((url) => links.describeLink(url, {
+      timeoutMs: (config.links && config.links.timeoutMs) || 6000,
+      cacheMinutes: (config.links && config.links.cacheMinutes) || 60,
+      allowPrivate: Boolean(config.links && config.links.allowPrivate),
+    }));
     this.calibration = calibration || null;
     // 朋友圈快照：只在主人私聊问到朋友圈时读取，不参与普通记忆。
     this.moments = moments || null;
@@ -324,6 +330,8 @@ class Bot {
       replyToUserId: String(msg.replyToUserId || msg.reply_to_user_id || '').slice(0, 100),
       mentionedNames: (Array.isArray(msg.mentionedNames) ? msg.mentionedNames : Array.isArray(msg.mention_names) ? msg.mention_names : [])
         .map((x) => String(x && typeof x === 'object' ? (x.name || x.nickname || '') : x).trim()).filter(Boolean).slice(0, 4),
+      selfNames: (Array.isArray(msg.selfNames) ? msg.selfNames : Array.isArray(msg.self_names) ? msg.self_names : [])
+        .map((x) => String(x || '').trim()).filter(Boolean).slice(0, 20),
     };
   }
 
@@ -347,7 +355,7 @@ class Bot {
   recentOnlyContext(key, { isGroup = false } = {}) {
     const chat = (this.config && this.config.chat) || {};
     const configured = Number(isGroup ? chat.groupHistoryTurns : chat.historyTurns) || 20;
-    const cap = Math.max(4, Math.min(200, configured));
+    const cap = Math.max(4, Math.min(800, configured));
     let recent = [];
     try {
       recent = (this.store.messages(key, cap) || []).filter((m) => m && m.text && !m.error);
@@ -429,20 +437,28 @@ class Bot {
     const spell = String(this.config.admin?.spell || '').trim();
     const isAdminSpell = Boolean(spell && rawText.trim() === spell);
     if (isAdminSpell) msg.text = '（已隐藏：管理员魔咒）';
-    const clean = persona.cleanIncomingForPersona(isAdminSpell ? msg.text : rawText, this.config);
+    const selfNames = addressing.herNames(this, msg);
+    const clean = persona.cleanIncomingForPersona(isAdminSpell ? msg.text : rawText, this.config, selfNames);
     msg.cleanText = isAdminSpell ? msg.text : clean.text;
     let atMe = msg.atMe || clean.atMe;
     const isGroup = msg.chatType === 'group';
     // 群里：@ 名单 + 文本里出现的别名；私聊：只认桥接明确给的提及名单（不做别名猜测）。
     // 关系块两种会话都用同一套逻辑（当前说话人 → 提到的第三人）。
     const mentionedNames = isGroup
-      ? [...new Set([...(msg.mentionedNames || []), ...extractMentionNames(isAdminSpell ? msg.text : rawText, persona.aliasList(this.config))])].slice(0, 4)
-      : [...new Set(msg.mentionedNames || [])].slice(0, 4);
+      ? addressing.filterSelfMentions([
+        ...(Array.isArray(msg.mentionedNames) ? msg.mentionedNames : []),
+        ...extractMentionNames(isAdminSpell ? msg.text : rawText, persona.aliasList(this.config, selfNames)),
+      ], selfNames).slice(0, 4)
+      : addressing.filterSelfMentions(msg.mentionedNames, selfNames).slice(0, 4);
     msg.mentionedNames = mentionedNames;
     const voiceRequested = msg.platform === 'wechat' && voiceReply.enabled(this.config, isGroup) && voiceReply.requested(clean.text);
-    if (voiceRequested && !mentionedNames.length) atMe = true;
+    if (voiceRequested && !mentionedNames.length) {
+      atMe = true;
+      msg.atMe = true;                 // 插件和 trace 也读 msg.atMe，不能只改局部变量
+    }
+    msg.voiceRequested = Boolean(voiceRequested);
     msg.externalMentionNames = mentionedNames;
-    msg.addressedToBot = Boolean(atMe || msg.replyToBot);
+    msg.addressedToBot = addressing.isAddressed(atMe, msg);
 
     // 系统号 / 通知类消息（比如「微信团队」的自动推送）一律不接话
     const sysNames = new Set([
@@ -481,7 +497,7 @@ class Bot {
       for (const [uid, value] of Object.entries(targets)) {
         if (nowMs - Number(value.ts || 0) > 60000) delete targets[uid];
       }
-      if (atMe || msg.replyToBot) {
+      if (addressing.isAddressed(atMe, msg)) {
         delete targets[msg.senderId];
       } else if (mentionedNames.length) {
         targets[msg.senderId] = { names: mentionedNames, ts: nowMs };
@@ -496,7 +512,9 @@ class Bot {
     // 只 @ 不说话时：看看这个人刚才是不是问过什么，直接接着回答上一个问题。
     // 回填的是旧问题：标成 msg.recycled（M27），只拿它组装回复 —— 以前它会被当成新消息
     // 再落一次库、再抽一遍事实、再登记一遍提醒、再执行一遍命令（副作用全部重放）。
-    if (isGroup && atMe && (!clean.text || /^[?？!！.。…~～\s]+$/.test(clean.text))) {
+    // 纯「？」不要回填上一条问题：它有自己的 question_mark 规则，
+    // 先回填会把原始问号吃掉，用户 @ 她只发一个「？」却收到旧问题的答案。
+    if (isGroup && addressing.isAddressed(atMe, msg) && !String(clean.text || '').trim()) {
       try {
         const recent = this.store
           .messages(key, 8)
@@ -598,13 +616,41 @@ class Bot {
     }
 
     // 对别人的话仍然旁听存档，但不触发命令、回怼或接话。
-    if (isGroup && msg.directedElsewhere) {
+    // 显式 @/回复她、主人说话、正叫她的名字、明确骂她时不能被 60 秒前的
+    // 旧 @ 记录一票否决，否则主人刚 @ 过同事下一句就被无视。
+    const _earlyNames = addressing.herNames(this, msg);
+    const _earlyForHer = addressing.isAddressed(atMe, msg)
+      || isMaster
+      || addressing.namedHerIn(clean.text || '', _earlyNames)
+      || INSULT_RE.test(clean.text || '');
+    if (isGroup && msg.directedElsewhere && !_earlyForHer) {
       return { action: 'ignore', key, msg, reason: 'addressed_to_other' };
     }
 
 
     // 固定话术 · 退场分支：「让她滚 / 走吧 / 闭嘴」这类要先应一声再进静默，
     // 必须排在静音/禁言闸门之前（被赶走也得有交代）；实现见 pipeline/stages/canned.js。
+    // 显式命令先于退场：/mute、带分钟的「闭麦 5 分钟」、reset 等不能被
+    // 「闭嘴/安静」的退场词抢走；模糊的「闭嘴/安静」仍然走下面的退场分支。
+    const _preCommand = hasText && !msg.recycled ? extractCommand(clean.text) : null;
+    const _preSlash = Boolean(_preCommand && /^[\/／!！]/.test(_preCommand.raw));
+    const _preAddressed = addressing.isAddressed(atMe, msg);
+    const _preUsable = Boolean(_preCommand
+      && (!isGroup || _preAddressed || _preSlash || isMaster)
+      && (!isGroup || !muted || _preCommand.type === 'unmute'));
+    // status/help 要走管理员/帮助分支，不能被这里提前抢走。
+    const _commandFirst = Boolean(_preUsable
+      && !['status', 'help'].includes(_preCommand.type)
+      && (_preSlash
+        || _preCommand.type !== 'mute'
+        || _preCommand.arg
+        || !/(闭嘴|安静|别说话|少说话)/.test(_preCommand.raw || '')));
+    if (_commandFirst) {
+      return this.runCommand({
+        command: _preCommand, msg, key, profile, state, now, nowMs, atMe,
+      });
+    }
+
     const dismiss = dismissReply(this, {
       msg,
       text: clean.text,
@@ -625,7 +671,7 @@ class Bot {
     // 回填的旧问题（recycled）不再重复执行命令，那句话只用来组装回复（M27）
     let command = hasText && !msg.recycled ? extractCommand(clean.text) : null;
     const slashCommand = Boolean(command && /^[/／!！]/.test(command.raw));
-    const addressed = atMe || msg.replyToBot;
+    const addressed = addressing.isAddressed(atMe, msg);
     if (command && isGroup && !addressed && !slashCommand && !isMaster) command = null;
     if (command && isGroup && muted && command.type !== 'unmute') command = null;
     if (command) {
@@ -652,11 +698,12 @@ class Bot {
       const guard = features.isOn(this.config, 'groupAddressGuard');
       // 只说「机器人」不再等于叫她：得带指代（这个/你/破/臭/傻/烂…），
       // 否则群里讨论「这破机器人又卡了」都会被当成骂她。
-      const bareRobot = /(鲸鲸|小鲸|肥鱼)/i.test(said);
+      const selfNames = addressing.herNames(this, msg);
+      const bareRobot = selfNames.some((name) => name && said.includes(name));
       const pointedRobot = guard
         ? /(这个|那个|你|破|臭|傻|烂|死)?\s*机器人/.test(said) && /(这个|那个|你|破|臭|傻|烂|死)/.test(said)
         : /机器人|人机|bot/i.test(said);
-      const namedHer = guard ? bareRobot || pointedRobot : /(鲸鲸|小鲸|肥鱼|机器人|人机|bot)/i.test(said);
+      const namedHer = guard ? bareRobot || pointedRobot : bareRobot || /机器人|人机|bot/i.test(said);
       const talkingToHer =
         Boolean(msg.replyToBot) ||
         (String(state.engagedBy || '') === String(msg.senderId || '') && Number(state.engagedUntil) > nowMs);
@@ -685,11 +732,13 @@ class Bot {
     }
     // 只有明确叫她、定向叫她或同一个人接着聊，才延长接话窗口。
     // 不能让旁人的闲聊把窗口续下去。
-    if (isGroup && ['addressed', 'directed', 'engaged', 'insulted'].includes(triggerResult.reason)) {
-      state.engagedUntil = nowMs + Math.max(1, Number(this.config.group.engagedMinutes) || 6) * 60000;
-    }
     if (muted) {
       return { action: 'ignore', reason: 'muted', key, msg, atMe };
+    }
+    // 被静音丢掉的消息不能产生「等静音结束再插话」的副作用。
+    if (isGroup && ['addressed', 'directed', 'engaged', 'insulted'].includes(triggerResult.reason)) {
+      sessionState.touchEngagement(
+        state, msg.senderId, nowMs, this.config.group.engagedMinutes);
     }
     // 同一个会话一分钟内已经回了太多条 → 先停一下，别越聊越乱。
     // 阈值跟「每分钟最多回几条」共用（原来这里硬编码 10，跟配置里的每分钟上限打架）。
@@ -769,12 +818,10 @@ class Bot {
     // 群里被叫到一次后，接下来继续聊就接着回；换话题/沉默超时就不接了
     const engagedMinutes = Math.max(1, Number(this.config.group.engagedMinutes) || 6);
     if (isGroup) {
-      if (atMe || msg.replyToBot) {
-        state.engagedUntil = nowMs + engagedMinutes * 60000;
-        state.engagedBy = String(msg.senderId || '');
+      if (addressing.isAddressed(atMe, msg)) {
+        sessionState.touchEngagement(state, msg.senderId, nowMs, engagedMinutes);
       } else if (/(换个话题|不说这个|不聊这个|算了不聊|聊点别的|跳过这个话题|别聊了|没你事|跟你没关系|不关你事|没问你|别接话|不用接)/.test(clean.text || '')) {
-        state.engagedUntil = 0;
-        state.engagedBy = '';
+        sessionState.clearEngagement(state);
       }
     }
 
@@ -835,6 +882,8 @@ class Bot {
         mentionedNames,
         relationsEnabled: relationsOn,
         tokenScale: trimScale,
+        historyTurns: this.config.chat.historyTurns,
+        groupHistoryTurns: this.config.chat.groupHistoryTurns,
       });
       this._memoryErrorLogged = false;
     } catch (err) {
@@ -895,7 +944,8 @@ class Bot {
       Boolean(atMe || msg.replyToBot) ||
       (isGroup && String(state.engagedBy || '') === String(msg.senderId || '') && Number(state.engagedUntil) > nowMs);
     // 直接点名她/叫机器人，无论谁说的都算
-    const namedHer = /(鲸鲸|小鲸|肥鱼|机器人|人机|bot)/i.test(heardText);
+    const namedHer = addressing.herNames(this, msg).some((name) => name && heardText.includes(name))
+      || /机器人|人机|bot/i.test(heardText);
     // 正在跟她对话的人，哪怕只说「傻逼」两个字、不带「你」不带名字，也是在骂她；
     // 但「张三你个傻逼」里的「你」指的是张三，不在对话中就不算。
     const aimedAtHer = namedHer || inConversationWithSender;
@@ -1450,6 +1500,9 @@ class Bot {
         return finish(`记住啦：${command.arg}。`);
       }
       case 'forget': {
+        if (!String(command.arg || '').trim()) {
+          return finish('要忘掉哪一条？比如「/forget 怕黑」，我不会一次清空整张人物卡。');
+        }
         const { removed } = this.store.removeNote(key, msg.senderId, command.arg);
         return finish(removed ? `好，忘掉「${command.arg}」了。…刚刚是不是有人说话？` : '人家本来就没记这个呀，是不是记错鲸了？');
       }
@@ -1461,7 +1514,7 @@ class Bot {
       case 'mute': {
         const minutes = clampInt(command.arg || g.muteDefaultMinutes, 1, 1440, g.muteDefaultMinutes);
         this.store.setMuted(key, minutes * 60000);
-        return finish(`好…人家闭嘴 ${minutes} 分钟，有急事就 @ 我，我会偷偷看一眼的（尾巴缩起来）`);
+        return finish(`好…人家闭嘴 ${minutes} 分钟，这段时间不回复；急事等静音结束再叫我（尾巴缩起来）`);
       }
       case 'unmute': {
         this.store.setMuted(key, 0);
@@ -1765,7 +1818,8 @@ class Bot {
     // @她/点名的对喷不需要证明，别再把她嘴堵上。
     const autoFight = Boolean(msg.fight) && !msg.isMaster && String(msg.fightReason || '') === 'insulted';
     // 只在「连她名字都没提」的自动开火时校验；点名了就是在说她，别把人嘴堵上
-    if (autoFight && !namedHerIn(msg.cleanText || msg.text || '') && features.isOn(this.config, 'fightQuoteCheck')) {
+    if (autoFight && !addressing.namedHerIn(msg.cleanText || msg.text || '', addressing.herNames(this, msg))
+        && features.isOn(this.config, 'fightQuoteCheck')) {
       const rawHeard = String(msg.cleanText || msg.text || '');
       const norm = (x) => String(x || '').replace(/[\s\p{P}\p{S}]/gu, '');
       const heardCore = norm(rawHeard);
@@ -1860,9 +1914,10 @@ class Bot {
     // 命令路径以前在这里直接 return [text]，刚剥出来的 foundEmoji（🫧 这种）直接丢了（M28）
     if (decision.action === 'command') return foundEmoji ? [text, foundEmoji] : [text];
     const maxBubbles = Math.max(1, Number(this.config.chat.maxBubbles) || 2);
+    const hard = LIMITS.maxOutputHard || 4000;
     const maxChars = msg.discussion
-      ? Math.min(Number(this.config.chat.discussionMaxChars) || LIMITS.maxOutputDiscussion, LIMITS.maxOutputDiscussion)
-      : Math.min(Number(isGroup ? this.config.chat.groupMaxChars : this.config.chat.privateMaxChars) || LIMITS.maxOutputNormal, LIMITS.maxOutputNormal);
+      ? Math.max(20, Math.min(Number(this.config.chat.discussionMaxChars) || LIMITS.maxOutputDiscussion, hard))
+      : Math.max(20, Math.min(Number(isGroup ? this.config.chat.groupMaxChars : this.config.chat.privateMaxChars) || LIMITS.maxOutputNormal, hard));
     const preferSeparate = Boolean(msg.separateRequested);
     let bubbles;
     if (decision.diaryExpanded) {
@@ -1989,7 +2044,7 @@ class Bot {
       } else if (decision.mock) {
         text = decision.text;
       } else {
-        text = await this.llm.complete({ system: decision.system, turns: decision.turns, signal });
+        text = await this.llm.complete({ system: decision.system, turns: decision.turns, signal, purpose: 'chat' });
         // 模型有时候只会把别人说过的话复读一遍，或者重复自己上一句，这种重写一次
         const heardList = this.recentHeard(decision);
         const ownList = this.recentOwn(decision);
@@ -2005,6 +2060,7 @@ class Bot {
               system: decision.system + '\n\n【重写要求】你刚才的回答' + why + '，不合格。现在重写：换一个说法，给出新的信息或明确态度；不能出现对方原句，也不能重复你上面说过的话。',
               turns: decision.turns,
               signal,
+              purpose: 'chat',
             });
             // 只有重写合格才采用（M18）：以前不合格时 `else text = retry || text` 照样把
             // 还在复读的 retry 发出去，这道校验形同虚设；不合格就保留原文，finalize 里
@@ -2025,7 +2081,7 @@ class Bot {
       // 上下文超长：砍掉一半 turns 只重试一次，保留当前消息；不要退化成只发当前一句。
       if (isContextLengthError(err) && this.shrinkTurnsForContext(decision)) {
         try {
-          retried = await this.llm.complete({ system: decision.system, turns: decision.turns, signal });
+          retried = await this.llm.complete({ system: decision.system, turns: decision.turns, signal, purpose: 'chat' });
           this.logger && this.logger.warn('上下文超长，半窗重试成功');
         } catch (err2) {
           this.logger && this.logger.error('半窗重试仍失败：' + describeError(err2));
@@ -2041,7 +2097,7 @@ class Bot {
         const switched = this.llm.switchFallback();
         if (switched) {
           try {
-            retried = await this.llm.complete({ system: decision.system, turns: decision.turns, signal });
+            retried = await this.llm.complete({ system: decision.system, turns: decision.turns, signal, purpose: 'chat' });
             this.logger && this.logger.warn(`已切到备用服务商 ${switched.label} 并重试成功`);
           } catch (err2) {
             this.logger && this.logger.error('备用服务商也失败了：' + describeError(err2));
@@ -2052,7 +2108,7 @@ class Bot {
         try {
           const sys = sanitizeForModel(decision.system || '');
           const cur = sanitizeForModel((decision.msg && (decision.msg.cleanText || decision.msg.text)) || '');
-          retried = await this.llm.complete({ system: sys, turns: cur ? [{ role: 'user', content: cur }] : [], signal });
+          retried = await this.llm.complete({ system: sys, turns: cur ? [{ role: 'user', content: cur }] : [], signal, purpose: 'chat' });
           this.logger && this.logger.warn('内容审核拦截，已丢掉历史用精简上下文重试成功');
         } catch (err2) {
           this.logger && this.logger.error('精简重试仍失败：' + describeError(err2));
@@ -2118,10 +2174,15 @@ class Bot {
       ) || 0;
       scale = calibration.apply(raw, modelInfo).scale;
     }
+    // 一轮回复里如果后台摘要/另一个会话也调了模型，acc.calls > 1；
+    // 这时不能把总和和「本轮单次估算」比较，否则一定误报超支。
+    // 估算值始终要算出来给状态页/日志用；但只有「本轮恰好一次模型调用」时才拿
+    // 它和真实 usage 比较、告警和喂校准。后台摘要/并发会话不会污染单次样本。
+    const comparable = acc.calls === 1;
     const cmp = budget ? memoryBudget.compareUsage(budget, { promptTokens }, { scale }) : null;
     // 先按旧 scale 比较，再把真实样本喂进去，下一轮用新 scale；顺序反过来会拿刚更新的值自证。
     // 一轮调了多次模型时，总和和单轮估算对不上，喂给校准会学歪，只喂单次调用的轮次。
-    const observed = cmp && acc.calls === 1
+    const observed = cmp && comparable
       ? calibration.observe({ rawEstimate: cmp.rawEstimatedPromptTokens, actual: cmp.actualPromptTokens, ...modelInfo })
       : null;
     const estimatedPromptTokens = cmp ? cmp.estimatedPromptTokens : 0;
@@ -2154,7 +2215,7 @@ class Bot {
       cost,
       at,
     };
-    if (cmp && cmp.warn && this.logger) {
+    if (cmp && cmp.warn && comparable && this.logger) {
       this.logger.warn(
         `实际用量超出估算 ${(cmp.errorRatio * 100).toFixed(1)}%`
         + `（实际 ${cmp.actualPromptTokens} / 估算 ${cmp.estimatedPromptTokens}，scale ${cmp.calibrationScale.toFixed(2)}）`
@@ -2202,12 +2263,15 @@ class Bot {
   }
 
   /** 从 seq 水位之后的所有模型调用累加出这一轮的 usage */
-  usageSince(mark) {
+  usageSince(mark, purpose = 'chat') {
     const acc = this._newUsage();
     const events = this.llm && Array.isArray(this.llm.usageEvents) ? this.llm.usageEvents : [];
     const floor = Number(mark) || 0;
     for (const usage of events) {
-      if (Number(usage.seq) > floor) this._addUsage(acc, usage);
+      if (Number(usage.seq) <= floor) continue;
+      // 只统计本轮主回复；后台摘要 / episode / 另一个会话不能算进用户这一轮。
+      if (purpose && usage.purpose && usage.purpose !== purpose) continue;
+      this._addUsage(acc, usage);
     }
     return acc;
   }

@@ -45,6 +45,12 @@ _BAD_CLASS = (
     "default ime", "notifyicon",
 )
 
+#: 同一进程内小于最大窗 40% 的顶层窗视为辅助窗（微信 4.2 的隐藏 Qt 窗）。
+AUX_WINDOW_RATIO = 0.4
+#: 同进程只有「最大窗 ≥ 4 倍次大窗、面积 ≥ 50 万」时才允许直接选最大窗。
+LARGEST_PICK_RATIO = 4
+LARGEST_PICK_MIN_AREA = 500000
+
 
 # ── 挑窗口 ─────────────────────────────────────────────────────────
 def is_wechat_main_title(title: str) -> bool:
@@ -72,6 +78,63 @@ def is_wechat_account_window(win32gui, hwnd: int) -> bool:
         return False
 
 
+def prefer_main_windows(candidates, *, ratio: float = AUX_WINDOW_RATIO, win32gui=None):
+    """同一进程内按面积去掉辅助窗；跨进程绝不合并。
+
+    微信 4.2 会在同一个进程里再挂一个 262x296 的隐藏 Qt 顶层窗，类名和标题
+    都和主窗一样。只按「可见/最小化」过滤时，这个辅助窗仍可能混进候选，
+    最后变成「两个候选无法确认」。这里按面积统一处理：不到同进程最大窗
+    40% 的一律当辅助窗。分属不同进程的窗口互不影响，多账号安全底线不变。
+    """
+    rows = []
+    for item in (candidates or []):
+        try:
+            key = (int(item[0]), int(item[1]))
+        except (TypeError, ValueError, IndexError):
+            continue
+        if key not in rows:
+            rows.append(key)
+    if len(rows) <= 1:
+        return rows
+
+    if win32gui is None:
+        try:
+            import win32gui
+        except Exception:
+            return rows
+
+    areas = {}
+    minimized_windows = set()
+    for hwnd, pid in rows:
+        try:
+            minimized = bool(win32gui.IsIconic(hwnd))
+            if minimized:
+                # 最小化的窗口矩形会退化，不能拿它和主窗比面积；保留给会话树证据判断。
+                minimized_windows.add((hwnd, pid))
+            width, height = _account_window_size(win32gui, hwnd, minimized)
+            areas[(hwnd, pid)] = max(0, width) * max(0, height)
+        except Exception:
+            areas[(hwnd, pid)] = 0
+
+    largest = {}
+    for (hwnd, pid), area in areas.items():
+        if pid:
+            largest[pid] = max(largest.get(pid, 0), area)
+
+    kept = []
+    for hwnd, pid in rows:
+        area = areas.get((hwnd, pid), 0)
+        top = largest.get(pid, 0)
+        if (hwnd, pid) in minimized_windows:
+            kept.append((hwnd, pid))
+            continue
+        # 读不到面积的窗口不能误杀，保留下来交给会话树证据判断。
+        if top and area and area < top * ratio:
+            continue
+        kept.append((hwnd, pid))
+    return kept or rows
+
+
 def account_window_candidates(win32gui, win32process, hwnds):
     """微信 4.2 的小型隐藏 Qt 窗也可能使用主窗标题和类名。"""
     candidates = {}
@@ -90,13 +153,11 @@ def account_window_candidates(win32gui, win32process, hwnds):
         except Exception:
             candidates[hwnd] = (pid, None, 0)
 
-    main_areas = {}
-    for pid, visible, area in candidates.values():
-        if pid and visible and area >= 500000:
-            main_areas[pid] = max(main_areas.get(pid, 0), area)
-    # 只排除同 PID、未最小化且明显更小的隐藏窗。独立进程和双开仍保留。
-    return [(hwnd, pid) for hwnd, (pid, visible, area) in candidates.items()
-            if not (visible is False and 0 < area * 4 <= main_areas.get(pid, 0))]
+    # 独立进程和双开仍全部保留；只有同一 PID 内的面积辅助窗会被去掉。
+    return prefer_main_windows(
+        [(hwnd, pid) for hwnd, (pid, _v, _a) in candidates.items()],
+        win32gui=win32gui,
+    )
 
 
 def _iter_windows() -> List[dict]:
@@ -340,6 +401,27 @@ def resolve_account_windows(candidates):
                     break
             else:
                 return (main["hwnd"], main["pid"]), evidence
+
+    # 兜底：同进程里只有一个「正常大小」的主窗，另一个是明显的小辅助窗。
+    # 判据必须同时满足「同 PID + 最大窗 ≥ 4 倍次大窗 + 面积 ≥ 50 万」，
+    # 跨进程（多账号）绝不走这条，避免把另一个号吞掉。
+    sized = [row for row in evidence if row.get("size")]
+    if len(evidence) >= 2 and len(sized) == len(evidence):
+        pids = {row.get("pid") for row in evidence}
+        blocked = any(row.get("tree") in ("login", "changed") for row in evidence)
+        if len(pids) == 1 and not blocked:
+            ranked = sorted(
+                sized,
+                key=lambda row: max(0, row["size"][0]) * max(0, row["size"][1]),
+                reverse=True,
+            )
+            main = ranked[0]
+            main_area = max(0, main["size"][0]) * max(0, main["size"][1])
+            second_area = max(0, ranked[1]["size"][0]) * max(0, ranked[1]["size"][1])
+            if (main_area >= LARGEST_PICK_MIN_AREA
+                    and main_area >= LARGEST_PICK_RATIO * max(second_area, 1)):
+                main["picked"] = "largest_in_single_pid"
+                return (main["hwnd"], main["pid"]), evidence
     return None, evidence
 
 
@@ -355,10 +437,170 @@ def _release_restore_slot() -> None:
         _LAST_RESTORE[0] = 0.0
 
 
-def restore_wechat(win: dict, log=None, wait: float = 15.0) -> bool:
-    """只显示已存在的隐藏窗口，不另启微信实例，也不切换前台焦点。
+def _send_hotkey(log=None) -> bool:
+    """按一次微信自己的「打开微信」热键 Ctrl+Alt+W。
 
-    显示后树仍未恢复时交给 ensure 的 gate 校验；不能用反复运行 exe 来修 UIA。
+    为什么不用 ShowWindow：微信缩托盘时只恢复窗口框，Qt 的渲染面和无障碍树
+    不会重建，日志里就是「窗口可见但只有 1 个节点」。热键走的是微信自己的
+    恢复逻辑，实测能同时把界面和控件树拉回来。
+    """
+    def say(msg):
+        if callable(log):
+            try:
+                log(msg)
+            except Exception:
+                pass
+
+    try:
+        u32 = ctypes.windll.user32
+        keys = (0x11, 0x12, 0x57)          # Ctrl / Alt / W
+        for vk in keys:
+            u32.keybd_event(vk, 0, 0, 0)
+            time.sleep(0.03)
+        for vk in reversed(keys):
+            u32.keybd_event(vk, 0, 2, 0)   # KEYEVENTF_KEYUP
+            time.sleep(0.03)
+        return True
+    except Exception as e:                  # noqa: BLE001
+        say("UIA 自检：按 Ctrl+Alt+W 失败：%r" % (e,))
+        return False
+
+
+def wake_by_hotkey(hwnd: int, log=None, wait: float = 3.0) -> bool:
+    """用 Ctrl+Alt+W 唤醒微信并等控件树重建。
+
+    热键是**开关式**的：窗口正常时按一下会把微信缩回托盘。所以只在树坏掉时
+    调用，并且按两次再判断——第一次可能恰好把它切回托盘，第二次才真正打开。
+    """
+    def say(msg):
+        if callable(log):
+            try:
+                log(msg)
+            except Exception:
+                pass
+
+    if not hwnd:
+        return False
+    if tree_state(hwnd, timeout=0.6) == "ok":
+        return True
+
+    for attempt in range(2):
+        if not _send_hotkey(log=log):
+            return False
+        deadline = time.monotonic() + max(0.8, float(wait))
+        while time.monotonic() < deadline:
+            if tree_state(hwnd, timeout=0.5) == "ok":
+                say("UIA 自检：Ctrl+Alt+W 已唤醒微信，控件树恢复")
+                return True
+            time.sleep(0.25)
+        if attempt == 0:
+            say("UIA 自检：第一次热键后控件树仍是空壳，再按一次（热键是开关式）")
+    return False
+
+
+class _NotifyIconIdentifier(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD),
+                ("hWnd", wintypes.HWND),
+                ("uID", wintypes.UINT),
+                ("guidItem", ctypes.c_byte * 16)]
+
+
+class _TrayRect(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+def click_tray_icon(hwnd: int = 0, log=None) -> bool:
+    """真实点击同一个微信进程的托盘图标，返回是否点中。
+
+    优先用 ``Shell_NotifyIconGetRect`` 找图标位置，再移动鼠标点击。只尝试
+    目标窗口所在进程，避免多开时点到另一个账号的托盘图标。
+    """
+    def say(msg):
+        if callable(log):
+            try:
+                log(msg)
+            except Exception:
+                pass
+
+    try:
+        import win32process
+        import win32gui
+    except Exception:
+        return False
+
+    target_pid = 0
+    if hwnd:
+        try:
+            target_pid = int(win32process.GetWindowThreadProcessId(hwnd)[1] or 0)
+        except Exception:
+            target_pid = 0
+
+    handles = []
+    for win in _iter_windows():
+        if target_pid and int(win.get("pid") or 0) != target_pid:
+            continue
+        if int(win.get("hwnd") or 0) not in handles:
+            handles.append(int(win["hwnd"]))
+    if not handles:
+        return False
+
+    try:
+        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+        shell32.Shell_NotifyIconGetRect.argtypes = [
+            ctypes.POINTER(_NotifyIconIdentifier), ctypes.POINTER(_TrayRect)]
+        shell32.Shell_NotifyIconGetRect.restype = ctypes.c_long
+    except Exception:
+        return False
+
+    for handle in handles:
+        for uid in (0, 1, 2):
+            ident = _NotifyIconIdentifier()
+            ident.cbSize = ctypes.sizeof(_NotifyIconIdentifier)
+            ident.hWnd = handle
+            ident.uID = uid
+            rect = _TrayRect()
+            try:
+                hr = shell32.Shell_NotifyIconGetRect(ctypes.byref(ident), ctypes.byref(rect))
+            except Exception:
+                continue
+            if hr != 0:
+                continue
+            x = (rect.left + rect.right) // 2
+            y = (rect.top + rect.bottom) // 2
+            if rect.right <= rect.left or rect.bottom <= rect.top:
+                continue
+            try:
+                u32 = ctypes.windll.user32
+                old = wintypes.POINT()
+                u32.GetCursorPos(ctypes.byref(old))
+                u32.SetCursorPos(int(x), int(y))
+                u32.mouse_event(0x0002, 0, 0, 0, 0)    # LEFTDOWN
+                time.sleep(0.05)
+                u32.mouse_event(0x0004, 0, 0, 0, 0)    # LEFTUP
+                u32.SetCursorPos(int(old.x), int(old.y))
+                say("UIA 自检：已点击微信托盘图标（hwnd=%s uid=%s）" % (handle, uid))
+                return True
+            except Exception as e:              # noqa: BLE001
+                say("UIA 自检：点击托盘图标失败：%r" % (e,))
+                return False
+    return False
+
+
+def _wechat_hidden(hwnd: int) -> bool:
+    try:
+        import win32gui
+        return (not win32gui.IsWindowVisible(hwnd)) or bool(win32gui.IsIconic(hwnd))
+    except Exception:
+        return False
+
+
+def restore_wechat(win: dict, log=None, wait: float = 15.0) -> bool:
+    """唤醒已存在的微信窗口，不另启实例，也不抢前台。
+
+    关键区别：``ShowWindow`` 只能恢复窗口框，微信缩托盘时 Qt 的渲染面和
+    无障碍树不会重建（现象是窗口发暗、只有 1 个节点）。所以优先点托盘图标 /
+    按微信自己的 Ctrl+Alt+W；两步都失败才退回 ShowWindow 兜底。
     """
     def say(msg):
         if callable(log):
@@ -386,37 +628,57 @@ def restore_wechat(win: dict, log=None, wait: float = 15.0) -> bool:
             time.sleep(0.3)
         return False
 
-    try:
-        import win32gui
-        import win32con
-        if win32gui.IsWindowVisible(hwnd) and not win32gui.IsIconic(hwnd):
-            return False
-        # 再运行 Weixin.exe 可能另开登录实例；只恢复已有窗口且不抢前台。
-        win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
-        say("UIA 自检：显示已有微信窗口并等待控件树，不启动新进程")
-    except Exception as e:                      # noqa: BLE001
-        say("UIA 自检：唤起微信失败：%r" % (e,))
+    if tree_state(hwnd, timeout=0.5) == "ok":
+        return True
+
+    hidden = _wechat_hidden(hwnd)
+    acted = False
+    # 1) 托盘图标：真实点击微信自己的托盘按钮，比 ShowWindow 更能触发重建。
+    if hidden and click_tray_icon(hwnd, log=log):
+        acted = True
+        deadline = time.time() + max(1.0, wait)
+        while time.time() < deadline:
+            if tree_state(hwnd, timeout=0.5) == "ok":
+                return _restore_result(win, hwnd, log)
+            time.sleep(0.3)
+        say("UIA 自检：托盘图标点过了，控件树还没恢复，改用热键")
+
+    # 2) 全局热键：微信自己的「打开微信」，对隐藏和冻结空壳都有效。
+    if wake_by_hotkey(hwnd, log=log):
+        return _restore_result(win, hwnd, log)
+
+    # 3) 最后的兜底：只显示已有窗口，绝不运行 Weixin.exe（多实例会另开登录窗）。
+    if hidden:
+        acted = True
+        try:
+            import win32gui
+            import win32con
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
+            say("UIA 自检：热键没恢复，仅显示已有微信窗口并等待控件树（不启动新进程）")
+        except Exception as e:                  # noqa: BLE001
+            say("UIA 自检：显示微信窗口失败：%r" % (e,))
+
+    if not acted:
+        # 窗口本来就可见，热键也没恢复，再等也等不出界面，直接把问题交给 gate 分支。
         _release_restore_slot()
         return False
 
     deadline = time.time() + max(1.0, wait)
-    ok = False
     while time.time() < deadline:
-        # 唤起之后微信可能换了新窗口（旧句柄留着但没树），所以每轮重新挑一次
-        w2 = pick_window(prefer_hwnd=hwnd, strict=True)
-        if w2 and w2["pid"] == win["pid"] and tree_state(hwnd, timeout=0.5) == "ok":
-            win.update(w2)
-            hwnd = w2["hwnd"]
-            ok = True
-            break
+        if tree_state(hwnd, timeout=0.5) == "ok":
+            return _restore_result(win, hwnd, log)
         time.sleep(0.4)
-    if not ok:
-        if callable(log):
-            log("UIA 自检：唤起了微信，但 %.0f 秒内控件树没出来" % wait)
-        _release_restore_slot()
-        return False
 
-    # 需求：微信在托盘时要让它显示出来，而且建完树之后**不能再缩回托盘**
+    say("UIA 自检：唤起了微信，但 %.0f 秒内控件树没出来" % wait)
+    _release_restore_slot()
+    return False
+
+
+def _restore_result(win: dict, hwnd: int, log=None) -> bool:
+    """恢复成功后确认窗口句柄仍是同一个进程，必要时更新调用方字典。"""
+    w2 = pick_window(prefer_hwnd=hwnd, strict=True)
+    if w2 and int(w2.get("pid") or 0) == int(win.get("pid") or 0):
+        win.update(w2)
     return True
 
 
@@ -442,8 +704,25 @@ def _weixin_exe() -> str:
     return ""
 
 
+def _weixin_running() -> bool:
+    try:
+        import psutil
+    except Exception:
+        return False
+    for p in psutil.process_iter(["name"]):
+        try:
+            if (p.info.get("name") or "").lower() == "weixin.exe":
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def launch_wechat(log=None, wait: float = 15.0):
     """微信没有主窗（彻底缩在托盘/窗口被销毁）时，把它拉起来。
+
+    只在微信进程根本没运行时才运行 exe。进程还在时反复运行会另开登录实例
+    （多开环境下用户当场就能看到第二个登录窗），所以改成唤醒已有窗口。
 
     返回 (win, already_ok)。win 是拉起后 pick_window() 的结果，可能为 None。
     """
@@ -453,6 +732,13 @@ def launch_wechat(log=None, wait: float = 15.0):
                 log(msg)
             except Exception:
                 pass
+
+    if _weixin_running():
+        win = pick_window()
+        if win and wake_by_hotkey(win["hwnd"], log=log):
+            return win, True
+        say("UIA 自检：微信进程还在，不另开实例；已尝试唤醒现有窗口")
+        return win, bool(win and tree_state(win["hwnd"], 0.6) == "ok")
 
     exe = _weixin_exe()
     if not exe:
@@ -552,8 +838,8 @@ def close_stray_login_windows(keep_hwnd: int) -> None:
     """关掉「多拉起来的那一个」登录小窗。
 
     拉起 Weixin.exe 偶尔会另开一个实例（主实例正在退出/重建时会这样），
-    留下一个 300x400 的登录窗。判据三条同时满足才关，避免误杀第二个真账号：
-    标题是「微信」、控件树是空壳、窗口尺寸小于 480x520。
+    留下一个 442x581 的登录窗。只要宽 ≥ 900 或高 ≥ 620 就当成正经主窗放过，
+    其余「标题是微信 + 树是空壳」的小窗才关，避免误杀第二个真账号。
     """
     try:
         import win32gui
@@ -563,7 +849,7 @@ def close_stray_login_windows(keep_hwnd: int) -> None:
                 continue
             rect = win32gui.GetWindowRect(w["hwnd"])
             bw, bh = rect[2] - rect[0], rect[3] - rect[1]
-            if bw >= 480 and bh >= 520:
+            if bw >= 900 or bh >= 620:
                 continue          # 像正经主窗，不碰
             if tree_state(w["hwnd"], 0.4) == "ok":
                 continue          # 已经有树，是正在用的号
@@ -606,11 +892,12 @@ def _keep_visible(win: dict, log=None) -> None:
 
 
 def ensure(prefer_hwnd: int = 0, log=None, max_candidates: int = 6,
-           settle: float = 1.2, *, strict: bool = False) -> dict:
+           settle: float = 1.2, *, strict: bool = False, wake: bool = True) -> dict:
     """确保 UIA 树可用。返回 {ok, reason, hwnd, pid, version, rva, tree}。
 
     reason 取值：
       already          本来就好
+      asleep           树没出来，但调用方要求安静待命（wake=False）
       activated        本次写 gate 成功，树出来了
       no_window        没找到「PID 里带 Weixin.dll」的微信主窗
       denied           OpenProcess 被拒（微信是管理员，桥接不是）
@@ -633,6 +920,11 @@ def ensure(prefer_hwnd: int = 0, log=None, max_candidates: int = 6,
     state = tree_state(hwnd, timeout=0.8)
     if state == "ok":
         return {"ok": True, "reason": "already", "hwnd": hwnd, "pid": pid,
+                "version": version, "tree": state}
+
+    if not wake:
+        # 心跳/巡检只读状态，不能把微信窗口弹出来吓用户；真正发送时再唤醒。
+        return {"ok": False, "reason": "asleep", "hwnd": hwnd, "pid": pid,
                 "version": version, "tree": state}
 
     # 4.2 上最常见的情形：窗口缩在托盘里，UI 子树被销毁 → 先让它正常打开一次
@@ -723,6 +1015,8 @@ def describe(res: dict) -> str:
             return f"UIA 可用（微信窗口原本在托盘里，已自动唤起并重建控件树，{res.get('version')}）"
         return f"UIA 可用（已物化，微信 {res.get('version')}，RVA {hex(res.get('rva') or 0)}）"
     reason = res.get("reason")
+    if reason == "asleep":
+        return "UIA 待命（微信窗口未唤醒，真正发送时再打开）"
     if reason == "no_window":
         return "UIA 不可用：没找到微信主窗（微信没开？或用的是别的账号窗口）"
     if reason == "denied":

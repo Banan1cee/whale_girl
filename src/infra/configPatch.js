@@ -14,12 +14,14 @@ const { describeError } = require('./errors');
 
 // 这些路径设置接口会写进 data/settings.json，而它的优先级高于 config.json
 const SETTINGS_SHADOW = {
-  provider: ['provider'],
-  'deepseek.provider': ['provider'],
+  // 切服务商时旧 Key/地址/模型不能继续盖住新 provider，否则会拿 A 的 Key 打 B。
+  provider: ['provider', 'apiKey', 'baseUrl', 'model', 'thinking'],
+  'deepseek.provider': ['provider', 'apiKey', 'baseUrl', 'model', 'thinking'],
   'deepseek.apiKey': ['apiKey'],
   'deepseek.baseUrl': ['baseUrl'],
   'deepseek.model': ['model'],
   'deepseek.temperature': ['temperature'],
+  'deepseek.thinking': ['thinking'],
   'deepseek.mock': ['mock'],
   'persona.ownerName': ['userName'],
 };
@@ -186,6 +188,14 @@ function reloadRuntimeConfig(runtime) {
   const personaStore = require('../persona/store');
   personaStore.apply(next, personaStore.load(next));
   const result = mergeConfigInPlace(runtime.config, next);
+  // 预算/关系开关是记忆裁剪的输入，热更新后必须让 Store 重算 plan。
+  try { runtime.store?.replan?.(runtime.config); } catch { /* 预算重算失败不阻断配置保存 */ }
+  // envContext 从关到开时，启动时跳过的地点探测要重新启动。
+  try {
+    if (runtime.stopLocationProbe) runtime.stopLocationProbe();
+    const locationProbe = require('../services/location');
+    runtime.stopLocationProbe = locationProbe.startAutoProbe(runtime.config, { logger: runtime.logger });
+  } catch { /* 探测失败不影响对话 */ }
   runtime.momentsPublisher?.reconcile();
   return result;
 }
