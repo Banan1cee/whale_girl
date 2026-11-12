@@ -80,6 +80,14 @@ try
     Check(market.Installed().Length == 0 && !market.Enabled(info.Id));
     var persona = new PluginInfo("gentle-chat", "温和聊天", "测试", "1.0.0", "4.1.0", "示例", null, 1,
         Kind: "persona", MaxAppVersion: "4.1.9");
+    var personaListing = persona with { Download = "https://github.com/example/plugin.zip", Sha256 = new string('a', 64) };
+    var personaCatalog = JsonSerializer.SerializeToUtf8Bytes(new[] { personaListing });
+    Check(PluginMarket.ParseCatalog(personaCatalog, 1, "persona").Length == 1);
+    Check(PluginMarket.ParseCatalog(personaCatalog, 1, "tool").Length == 0);
+    Check(PluginMarket.ParseCatalog(personaCatalog, 3, "message").Length == 0);
+    var codeCatalog = JsonSerializer.SerializeToUtf8Bytes(new[] { info with {
+        Download = "https://github.com/example/plugin.zip", Sha256 = new string('a', 64) } });
+    Check(PluginMarket.ParseCatalog(codeCatalog, 1, "persona").Length == 0);
     Check(PluginMarket.Compatible(persona, "4.1.0"));
     Check(PluginMarket.Compatible(persona, "4.1.9"));
     Check(!PluginMarket.Compatible(persona, "4.2.0"));
