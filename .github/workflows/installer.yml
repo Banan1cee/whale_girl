@@ -101,7 +101,7 @@ jobs:
     needs: version-gate
     # tag / 手动触发 / test/** 仍由 version-gate 输出 true；PR 只在次版本增加时构建。
     if: needs.version-gate.outputs.build == 'true'
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 90
 
     steps:

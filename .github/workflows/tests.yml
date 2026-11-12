@@ -31,7 +31,7 @@ jobs:
     name: 单元与启动器回归
     # 必须是 Windows：Node 回归会启动 Python 并按 Windows 语义探测路径，
     # 启动器还是 WPF net10.0-windows。
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -124,8 +124,8 @@ jobs:
         if: always()
         run: node scripts/check-layers.js
 
-      # 启动器编译在 launcher job 里，这个工作树不会出现 launcher/obj，
-      # 自检不会把本机路径当成「泄露个人信息」误报。
+      # 必须在启动器编译前检查发布树，避免混入本次编译的中间产物。
+      # 隐私检查仍独立执行。
       - name: 发布自检
         if: always()
         shell: pwsh
