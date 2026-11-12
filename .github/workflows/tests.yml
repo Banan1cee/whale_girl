@@ -3,11 +3,10 @@ name: tests
 # 只跑测试与编译，不需要任何密钥、微信或网络：
 # 所有联网、发消息、看图、API Key 相关用例在 tests/ 里都是 mock 的。
 #
-# 拆成三个 job 是为了并行缩短 PR 等待时间：
-#   unit    —— Node / Python / 静态自检，不需要 .NET
-#   launcher —— 启动器编译和 WPF 相关回归，需要 .NET SDK
-#   gate    —— 只做汇总，名字仍是「测试 / 分层 / 编译」，main 的必需检查引用的是它
-# 以前所有步骤串行约 4 分钟，现在墙钟取决于较慢的一边，约 2 分钟。
+# 只留一个 Windows job：GitHub 的 windows-latest 并发槽很紧，每个 PR 开两个
+# Windows 任务时经常排队 15 分钟被取消。Node/Python 自检和启动器回归合成一个
+# job 顺序跑（约 4 分钟），换取「能真正排上队」。gate 仍只做汇总，名字还是
+# 「测试 / 分层 / 编译」，main 的必需检查引用的是它。
 on:
   push:
     branches: [main, feature4]
@@ -28,11 +27,12 @@ env:
   PYTHONDONTWRITEBYTECODE: '1'
 
 jobs:
-  unit:
-    name: 单元测试
-    # 必须是 Windows：Node 回归会启动 Python，并按 Windows 语义探测路径。
+  checks:
+    name: 单元与启动器回归
+    # 必须是 Windows：Node 回归会启动 Python 并按 Windows 语义探测路径，
+    # 启动器还是 WPF net10.0-windows。
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +51,23 @@ jobs:
         run: |
           node -v
           python -c "import sys, locale; print(sys.version); print('stdout=', sys.stdout.encoding, 'preferred=', locale.getpreferredencoding())"
+
+      # 镜像一般自带 .NET 10；每次无条件下载 SDK 要 300MB、约 37 秒，
+      # 所以先看本机有没有，缺了才装。版本线仍是 10.0.x。
+      - name: 检查 .NET 10 SDK
+        id: sdk
+        shell: pwsh
+        run: |
+          $found = @()
+          try { $found = @(dotnet --list-sdks 2>$null | Where-Object { $_ -match '^10\.0\.' }) } catch {}
+          $has = ($found.Count -gt 0).ToString().ToLower()
+          Write-Output "has10=$has"
+          "has10=$has" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/setup-dotnet@v4
+        if: steps.sdk.outputs.has10 != 'true'
+        with:
+          dotnet-version: '10.0.x'
 
       # workflow 文件本身也要过一遍静态检查：input 名写错、表达式语法错、引用不存在的
       # action 输入，GitHub 大多只给一条黄警告，甚至静默忽略（upload-artifact v4 的
@@ -206,41 +223,6 @@ jobs:
         if: always()
         run: node server.js --doctor
 
-  launcher:
-    name: 启动器回归
-    # 启动器是 WPF net10.0-windows，只能跑在 Windows 上。
-    runs-on: windows-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      # 镜像一般自带 .NET 10；每次无条件下载 SDK 要 300MB、约 37 秒，
-      # 所以先看本机有没有，缺了才装。版本线仍是 10.0.x。
-      - name: 检查 .NET 10 SDK
-        id: sdk
-        shell: pwsh
-        run: |
-          $found = @()
-          try { $found = @(dotnet --list-sdks 2>$null | Where-Object { $_ -match '^10\.0\.' }) } catch {}
-          $has = ($found.Count -gt 0).ToString().ToLower()
-          Write-Output "has10=$has"
-          "has10=$has" >> $env:GITHUB_OUTPUT
-
-      - uses: actions/setup-dotnet@v4
-        if: steps.sdk.outputs.has10 != 'true'
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: 环境版本
-        shell: pwsh
-        run: |
-          node -v
-          dotnet --version
-
       - name: 启动器编译
         if: always()
         run: dotnet build launcher/WhaleLauncher.csproj -c Release --nologo
@@ -270,16 +252,15 @@ jobs:
   # 所以用这个只做汇总的 job 收口，子 job 的名字可以随便改。
   gate:
     name: 测试 / 分层 / 编译
-    needs: [unit, launcher]
+    needs: [checks]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: 汇总子任务结果
         run: |
-          echo "单元测试: ${{ needs.unit.result }}"
-          echo "启动器回归: ${{ needs.launcher.result }}"
-          if [ "${{ needs.unit.result }}" != "success" ] || [ "${{ needs.launcher.result }}" != "success" ]; then
-            echo "::error title=测试 / 分层 / 编译::有子任务未通过，见上面的单元测试 / 启动器回归 job"
+          echo "单元与启动器回归: ${{ needs.checks.result }}"
+          if [ "${{ needs.checks.result }}" != "success" ]; then
+            echo "::error title=测试 / 分层 / 编译::单元与启动器回归未通过，见上面的 checks job"
             exit 1
           fi
