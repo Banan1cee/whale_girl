@@ -21,6 +21,7 @@
         "force-now": "node scripts/manifest-policy.js --force true",
         "withdraw": "node scripts/manifest-policy.js --withdraw",
         "unwithdraw": "node scripts/manifest-policy.js --withdraw null",
+        "policy:publish": "node scripts/manifest-policy.js --publish",
         "ci": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci-local.ps1"
     },
     "engines": {

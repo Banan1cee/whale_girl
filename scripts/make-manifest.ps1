@@ -84,10 +84,16 @@ if ($isHotfix) {
     $policy.force_from = $null
 }
 
+# 下架名单原样带过去，不做任何自动清理：一条名单的语义是「这一版永远不许再跑」，
+# 这个判断不会因为又发了新版而失效。补丁发出来之后，名单反而是唯一还能把那批人
+# 从坏版本上赶走的东西——force=false 时他们只会看到「有新版本」，可以一直点「以后再说」。
+# 想放行就手动 `npm run unwithdraw`。
+
 # message 优先级：命令行 -Message > 手写文案 > 自动跟随版本。
 # 判据：上一版 message 是不是当初自动生成的（「更新到 v<上一版」），是就当作自动值刷新掉。
 $autoMessage = ($oldMessage -eq "更新到 v$oldLatest")
 $policy.message = if ($Message) { $Message }
+    elseif ($withdrawnCleared) { "更新到 v$v" }
     elseif ($oldMessage -and -not $autoMessage) { $oldMessage }
     else { "更新到 v$v" }
 

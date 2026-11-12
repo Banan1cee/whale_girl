@@ -128,6 +128,23 @@ test('版本下架：判定排在最前，且策略脚本能改', () => {
   assert.ok(withdrawnAt < latestAt, '下架判定必须排在「已是最新」之前，否则对最新版无效');
 });
 
+/**
+ * 清单只认 Release 资产。仓库根那份是「合并即上线」的活文件，
+ * 一旦被当成源，任何能合 PR 的人都能改全量客户端的行为。
+ */
+test('清单只认 Release 资产，不读仓库根目录的副本', () => {
+  const src = manifestCode.slice(manifestCode.indexOf('Sources'), manifestCode.indexOf('Timeout'));
+  assert.ok(src.includes('/releases/latest/download/release-manifest.json'), '没有走 Release 资产');
+  for (const host of ['gh-proxy.com', 'ghfast.top', 'ghproxy.net']) {
+    assert.ok(src.includes(host), `缺少反代兜底：${host}`);
+  }
+  assert.ok(!/raw\.githubusercontent/.test(src), '又把仓库根当成源了：合并即上线，等于交出发布权');
+  assert.ok(!/cdn\.jsdelivr\.net/.test(src), 'jsDelivr 读的是仓库文件，不是 Release 资产');
+  const policy = read('scripts/manifest-policy.js');
+  assert.ok(policy.includes("'--publish'"), '策略脚本没有 --publish，改完传不上去');
+  assert.ok(JSON.parse(read('package.json')).scripts['policy:publish'], '缺少 npm run policy:publish');
+});
+
 test('版本下架：清单默认是空名单，发版不会误停', () => {
   assert.ok(Array.isArray(manifest.withdrawn), 'release-manifest.json 的 withdrawn 必须是数组');
   assert.equal(manifest.withdrawn.length, 0, '默认不能有下架版本');

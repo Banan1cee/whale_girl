@@ -52,10 +52,13 @@ namespace WhaleLauncher
     /// 读 release-manifest.json 并判定要不要更新。
     ///
     /// 为什么不用 GitHub API：未认证 60 次/小时/IP，国内还经常不通；而且 API 只回答
-    /// 「有没有新版」，回答不了「这一步还让不让用」。清单放在仓库和 Release 资产里，
-    /// 你改一行就能刹车，不需要发版。
+    /// 「有没有新版」，回答不了「这一步还让不让用」。
     ///
-    /// 多源同时拉、取 manifest_version 最大的那个：jsDelivr 会给旧缓存，只要别的源给了
+    /// 只认 **Release 资产**里那份清单（直连 + 三个反代指向同一个资产），不读仓库根目录的副本：
+    /// 仓库根是「合并即上线」的活文件，谁都能通过一个 PR 改全量客户端的行为；
+    /// 走资产就必须显式上传（`npm run policy:publish`），刹车仍然是分钟级，只是多一步人为确认。
+    ///
+    /// 多源同时拉、取 manifest_version 最大的那个：反代会给旧缓存，只要别的源给了
     /// 新序号就以新的为准；所有源都给旧的，说明确实还没发新的。
     /// </summary>
     public static class UpdateManifestService
@@ -95,13 +98,18 @@ namespace WhaleLauncher
         /// <summary>下架后的去处：全部版本的列表页，用户自己挑能装的那个，不用我们猜。</summary>
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
 
-        // 顺序不重要（并行拉），但源要覆盖三种网络：GitHub 直连 / 墙内镜像 / CDN 兜底。
+        // 四个源指向同一份 **Release 资产**，只是网络路径不同（直连 + 三个反代）。
+        //
+        // 刻意不读仓库根目录那份：它是「合并即上线」的活文件，谁在 PR 里动一下，
+        // 全员客户端 1~5 分钟就跟着变，等于把发布权交给任何能合 PR 的人。
+        // 只认 Release 资产后，改策略必须显式上传资产（`npm run policy:publish`），
+        // 多一道人为动作，也不会再出现「改了仓库根但忘了抬序号，其实没生效」。
         private static readonly string[] Sources =
         {
             "https://github.com/" + Repo + "/releases/latest/download/release-manifest.json",
-            "https://raw.githubusercontent.com/" + Repo + "/main/release-manifest.json",
-            "https://gh-proxy.com/https://raw.githubusercontent.com/" + Repo + "/main/release-manifest.json",
-            "https://cdn.jsdelivr.net/gh/" + Repo + "@main/release-manifest.json",
+            "https://gh-proxy.com/https://github.com/" + Repo + "/releases/latest/download/release-manifest.json",
+            "https://ghfast.top/https://github.com/" + Repo + "/releases/latest/download/release-manifest.json",
+            "https://ghproxy.net/https://github.com/" + Repo + "/releases/latest/download/release-manifest.json",
         };
 
         private static readonly HttpClient Http = new HttpClient(new HttpClientHandler { UseProxy = false })

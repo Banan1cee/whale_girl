@@ -281,7 +281,7 @@ namespace WhaleLauncher
                         // 运行中不打断：只提示，下次启动才真的停
                         _lastManifest = chk;
                         SetUpdateButton(false);
-                        ShowToast("当前版本已下架，请更换版本");
+                        ShowToast("当前版本已停用，请更换版本");
                         StatusLine.Text = "当前版本已被下架，下次启动需要换回旧版";
                         return;
                     }
@@ -341,23 +341,19 @@ namespace WhaleLauncher
         }
 
         /// <summary>
-        /// 版本被下架：停下，说清原因，然后把人送到版本列表页，自己去挑能装的版本。
+        /// 版本被下架：停下，说清情况，然后把人送到版本列表页，自己去挑能装的版本。
         ///
-        /// 不自动装、也不指定「装回哪一版」：这是救火，我们只负责别让坏版本继续跑，
-        /// 「装哪个」交给用户和 Releases 页——那里有版本说明，比我们猜得准。
+        /// 刻意不读 message：message 是「当前最新版」的说明，下架只是清单里的一个临时状态。
+        /// 让它兼写下架原因，等下一个版本发出来，那句「4.1 已停用」会跟着更新提示一起推给所有人。
+        /// 具体原因写在置顶 issue 和 Release 说明里，那里有上下文。
         /// </summary>
         private void ShowWithdrawn(ManifestCheck chk)
         {
-            var m = chk.Manifest;
-            var reason = m != null && !string.IsNullOrWhiteSpace(m.Message)
-                ? m.Message
-                : "这个版本存在已知的严重问题。";
+            var msg = "当前版本 v" + chk.Current + " 已被停用。\n\n"
+                + "这个版本存在已知的严重问题。请打开下载页，选择一个能用的版本覆盖安装"
+                + "（安装前建议先备份 data 目录）。";
 
-            var msg = "当前版本 v" + chk.Current + " 已被下架。\n\n"
-                + reason + "\n\n"
-                + "请打开下载页，选一个能用的版本覆盖安装（安装前建议先备份 data 目录）。";
-
-            var picked = AppDialog.ShowActions(this, msg, "版本已下架", true,
+            var picked = AppDialog.ShowActions(this, msg, "版本已停用", true,
                 ("exit", "退出", false),
                 ("download", "打开下载页", true));
 
