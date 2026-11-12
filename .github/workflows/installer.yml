@@ -63,7 +63,10 @@ env:
 jobs:
   version-gate:
     name: 判断是否需要构建安装包
-    runs-on: windows-latest
+    # 只读 package.json 判断版本，不需要 Windows；放 ubuntu 能少占一个
+    # windows-latest 并发槽，避免多个 PR 同时排队被 15 分钟取消。
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       build: ${{ steps.gate.outputs.build }}
     steps:
@@ -71,22 +74,27 @@ jobs:
         with:
           fetch-depth: 0
       - id: gate
-        shell: pwsh
+        shell: bash
         run: |
-          $build = $true
-          if ("${{ github.event_name }}" -eq 'pull_request') {
-            $baseRef = "${{ github.base_ref }}"
-            git fetch --no-tags --depth=1 origin $baseRef
-            $baseVer = (git show FETCH_HEAD:package.json | ConvertFrom-Json).version
-            $headVer = (Get-Content package.json -Raw | ConvertFrom-Json).version
-            $bp = $baseVer.Split('.')
-            $hp = $headVer.Split('.')
+          build=true
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            base_ver=$(git show FETCH_HEAD:package.json | jq -r .version)
+            head_ver=$(jq -r .version package.json)
+            base_major=${base_ver%%.*}
+            base_minor=${base_ver#*.}; base_minor=${base_minor%%.*}
+            head_major=${head_ver%%.*}
+            head_minor=${head_ver#*.}; head_minor=${head_minor%%.*}
             # 只有第二位版本号增加（新增功能）才构建安装包；
             # 补丁和四位热修只跑测试，不重新出包。
-            $build = ([int]$hp[0] -gt [int]$bp[0]) -or ([int]$hp[1] -gt [int]$bp[1])
-            Write-Host "base=$baseVer head=$headVer build=$build"
-          }
-          "build=$($build.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+            if [ "$head_major" -gt "$base_major" ] || [ "$head_minor" -gt "$base_minor" ]; then
+              build=true
+            else
+              build=false
+            fi
+            echo "base=$base_ver head=$head_ver build=$build"
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
 
   installer:
     name: 构建安装包

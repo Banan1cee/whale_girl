@@ -12,6 +12,7 @@ const http = require('node:http');
 const https = require('node:https');
 const dns = require('node:dns');
 const { URL } = require('node:url');
+const { decodeEntities } = require('./search/html');
 
 const URL_RE = /https?:\/\/[^\s<>"'（）()【】\[\]\u4e00-\u9fa5]+/g;
 const TRAILING = /[.,;:!?，。；：！？、）)】\]》>]*$/;
@@ -35,19 +36,6 @@ function extractUrls(text) {
   return out.slice(0, 2);
 }
 
-function decodeEntities(s) {
-  // 数字实体先解，&amp; 最后解，否则 &amp;#60; 会被二次反转义成 '<'。
-  return String(s || '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => {
-      try { return String.fromCodePoint(Number(n)); } catch { return ''; }
-    })
-    .replace(/&amp;/g, '&');
-}
 
 function stripTags(html) {
   return decodeEntities(

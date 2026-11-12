@@ -168,8 +168,16 @@ test('安装包只在第二位版本号增加（新增功能）时构建', () =>
   const wf = fs.readFileSync(path.join(root, '.github/workflows/installer.yml'), 'utf8');
   assert.match(wf, /version-gate/, 'installer.yml 缺少版本判断 job');
   assert.match(wf, /needs:\s*version-gate/, 'installer job 没有依赖版本判断');
-  assert.match(wf, /\[int\]\$hp\[1\] -gt \[int\]\$bp\[1\]/, 'PR 只有次版本增加时才应构建安装包');
+  assert.match(wf, /"\$head_minor"\s+-gt\s+"\$base_minor"/, 'PR 只有次版本增加时才应构建安装包');
   assert.match(wf, /github\.event_name.*pull_request/, '只在 PR 上做次版本判断');
+
+  // 版本判断只读 package.json，不该占 Windows 并发槽（PR 排队 15 分钟会被直接取消）。
+  const gateStart = wf.indexOf('version-gate:');
+  const gateEnd = wf.indexOf('installer:', gateStart);
+  assert.ok(gateStart > 0 && gateEnd > gateStart, 'installer.yml 里找不到 version-gate job');
+  const gate = wf.slice(gateStart, gateEnd);
+  assert.match(gate, /runs-on:\s*ubuntu-latest/, 'version-gate 要跑在 ubuntu-latest');
+  assert.doesNotMatch(gate, /shell:\s*pwsh/, 'version-gate 不能再用 PowerShell');
 });
 
 test('引用回复默认关闭（开着的话每条要多走一遍 UI，回复明显变慢）', () => {
