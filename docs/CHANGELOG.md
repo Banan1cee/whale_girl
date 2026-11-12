@@ -14,6 +14,11 @@
 
 - 插件市场顶部展示第三方插件风险提示，右侧文档提供离线可读的完整免责声明；同步中英文 README、安装指南和市场规范，明确市场收录不等于安全保证。
 
+### 修复 · 桥接找不到微信主窗
+
+- 择窗函数 `pick_account_window` 的账号锁包装在类体里执行，把实例写成了 `None`，包装器闭包捕获空对象；每次调用都在 `with self.account_lock` 抛 `AttributeError('NoneType' object has no attribute 'account_lock')`，桥接因此永远锁不到微信主窗，日志反复刷「等待微信主窗可用」，收不到也发不出。
+- 包装器改为从调用现场取实例加锁；补 `tests/test_account_lock.py`（修复前 FAILED，修复后 OK）。
+
 ### 修复 · 日志隐私
 
 - 内核和桥接日志不再写聊天正文、昵称、wxid、群号和账号目录：只保留稳定短哈希、长度、原因码和计数；消息哈希仍能和判定链对上。
