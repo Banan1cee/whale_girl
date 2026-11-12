@@ -841,11 +841,11 @@ def close_stray_login_windows(keep_hwnd: int) -> None:
 
     拉起 Weixin.exe 偶尔会另开一个实例（主实例正在退出/重建时会这样），
     留下一个 442x581 的登录窗。只要宽 ≥ 900 或高 ≥ 620 就当成正经主窗放过，
-    其余「标题是微信 + 树是空壳」的小窗才关，避免误杀第二个真账号。
+    其余「同进程 + 标题是微信 + 树是空壳」的小窗才关；进程无法确认时不清理，
+    避免误杀第二个真账号。
     """
     try:
         import win32gui
-        import os
         try:
             import win32process
         except Exception:
@@ -856,11 +856,13 @@ def close_stray_login_windows(keep_hwnd: int) -> None:
                 target_pid = int(win32process.GetWindowThreadProcessId(int(keep_hwnd))[1] or 0)
             except Exception:
                 target_pid = 0
+        if not target_pid:
+            return
         for w in _iter_windows():
             if int(w["hwnd"]) == int(keep_hwnd) or w["title"] != "微信":
                 continue
             # 只清理刚拉起的同一进程里的杂窗；别的账号窗口即使很小也不能碰。
-            if target_pid and int(w.get("pid") or 0) != target_pid:
+            if int(w.get("pid") or 0) != target_pid:
                 continue
             rect = win32gui.GetWindowRect(w["hwnd"])
             bw, bh = rect[2] - rect[0], rect[3] - rect[1]
