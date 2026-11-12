@@ -32,6 +32,10 @@ import re
 import threading
 import time
 from ctypes import wintypes
+try:
+    from bridge_log import safe_name, safe_text
+except ImportError:  # 测试里按 `bridge.bg_sender` 导入时走包内相对路径
+    from .bridge_log import safe_name, safe_text
 
 # 后台通道里的「固定等待」（秒）。这些都是防丢字/等控件就绪的保险，默认值来自线上实测；
 # 想快一点不用改代码：在 config.json 的 wechat.bgSend.timing 里覆盖同名键即可
@@ -1259,7 +1263,7 @@ def open_chat(sender, aliases, timeout=6.0, log=None):
         if best is not None:
             scored.append(best)
     if not scored:
-        log("后台通道：会话列表里没有目标 %r 的精确行，交给前台通道搜索" % (aliases,))
+        log("后台通道：会话列表里没有目标 %r 的精确行，交给前台通道搜索" % ([safe_name(x) for x in aliases],))
         return False
     scored.sort(key=lambda x: (x[0], x[1]))
     _sc, _d, nm, ctrl = scored[0]
@@ -1279,14 +1283,14 @@ def open_chat(sender, aliases, timeout=6.0, log=None):
         info = read_ui(sender.hwnd)
         cur = info["chat"]
         if cur and name_score(nm, cur) == 0:
-            log("后台通道：已切到会话 %r" % (nm,))
+            log("后台通道：已切到会话 %r" % (safe_name(nm),))
             return True
         # 点完之后控件树可能被微信重建（实测会从 150 掉到 81、输入框暂时消失），
         # 这时再补一次物化，别急着判失败。
         if not rematerialized and len(info["nodes"]) < MIN_NODES:
             rematerialized = True
             _ensure_tree(sender.hwnd, log=log)
-    log("后台通道：切会话超时（目标 %r，当前 %r）" % (nm, cur))
+    log("后台通道：切会话超时（目标 %r，当前 %r）" % (safe_name(nm), safe_name(cur)))
     return False
 
 
@@ -1422,7 +1426,7 @@ def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
             if chat:
                 ok_same, cur_chat = _chat_is_target(info.get("chat"), chat)
                 log("后台通道：核对 目标=%r 当前=%r → %s"
-                    % (chat, cur_chat, "通过" if ok_same else "不是目标，拒绝发送"))
+                    % (safe_name(chat), safe_name(cur_chat), "通过" if ok_same else "不是目标，拒绝发送"))
                 if not ok_same:
                     return False, "chat_mismatch"
             # 空框 UIA 读出来是 '\n'，按真值判会误报 input_not_empty（M1）；
@@ -1591,10 +1595,10 @@ def probe(hwnd=0, log=print, with_send=None, unhide=True):
         result["rows"] = [n for n, _c in info["rows"]][:8]
 
         log("① 物化：节点数 = %d（160+ 说明成功；2 说明没物化）" % result["nodes"])
-        log("② 读：输入框 = %s | 当前会话 = %r | 输入框内容 = %r"
-            % (result["edit"], result["chat"], result["value"]))
+        log("② 读：输入框 = %s | 当前会话 = %s | 输入框内容 = %s"
+            % (result["edit"], safe_name(result["chat"]), safe_text(result["value"])))
         log("   发送按钮中心 = %s" % (result["send_xy"],))
-        log("   会话列表 = %s" % (result["rows"],))
+        log("   会话列表 = %s" % ([safe_name(x) for x in result["rows"]],))
         hint = tree_hint(result["nodes"])
         if hint:
             log("   ！" + hint)

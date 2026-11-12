@@ -8,7 +8,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { MessagePlugins, execute } = require('../src/services/messagePlugins');
 
-function fixture(t, executePlugin) {
+function fixture(t, executePlugin, options = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-message-plugin-'));
   t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
   const root = path.join(dataDir, 'plugins');
@@ -18,7 +18,7 @@ function fixture(t, executePlugin) {
   const hash = crypto.createHash('sha256').update(JSON.stringify(flow)).digest('hex');
   const grant = path.join(root, 'test-flow.flow-grant.json');
   fs.writeFileSync(grant, JSON.stringify({ enabled: true, hash, settings: {} }));
-  return { plugins: new MessagePlugins({ dataDir, executePlugin }), root, grant };
+  return { plugins: new MessagePlugins({ dataDir, executePlugin, ...options }), root, grant };
 }
 
 test('plugin state survives runtime restart and is isolated per conversation', async t => {
@@ -61,6 +61,33 @@ test('disable during execution discards action and state', async t => {
   finish();
   assert.equal((await pending).action, 'pass');
   assert.equal(fs.readdirSync(root).some(f => f.endsWith('.state.json')), false);
+});
+
+test('control and bidi characters in plugin text are rejected without committing', async t => {
+  const { plugins, root } = fixture(t, async () => ({ text: '正常\u0000伪造\u202E', state: { changed: true } }));
+  const result = await plugins.run('chat.reply', { key: 'one', text: '原文' });
+  assert.equal(result.text, '原文');
+  assert.equal(fs.readdirSync(root).some(f => f.endsWith('.state.json')), false);
+});
+
+test('plugins cannot use the host to mention everyone', async t => {
+  const { plugins } = fixture(t, async () => ({ text: '@所有人 快来' }));
+  const result = await plugins.run('chat.reply', { key: 'one', text: '原文' });
+  assert.equal(result.text, '原文');
+});
+
+test('concurrent sessions share the global execution cap', async t => {
+  let active = 0;
+  let peak = 0;
+  const { plugins } = fixture(t, async () => {
+    active += 1;
+    peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 40));
+    active -= 1;
+    return {};
+  }, { maxConcurrent: 2 });
+  await Promise.all(['a', 'b', 'c', 'd'].map(key => plugins.run('chat.pre_reply', { key })));
+  assert.equal(peak, 2);
 });
 
 test('real Wasm runner terminates a looping module', async () => {

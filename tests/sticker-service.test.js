@@ -11,6 +11,7 @@ const { StickerService } = require('../src/services/stickerService');
 const { startServer } = require('../server');
 const { loadConfig } = require('../src/infra/config');
 const { Gateway: GatewayAdapter } = require('../src/adapters/gateway');
+const { tagName } = require('../src/infra/privacy');
 const GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64');
 function fixture(t, on = true) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-sticker-fix-'));
@@ -337,7 +338,8 @@ test('分类认不出：照发一张，记 fallbackFrom 并 warn 说明改发了
   assert.ok(job, '认不出也要发得出去');
   assert.equal(job.emotion, 'happy');
   assert.equal(job.fallbackFrom, '猫猫头');
-  assert.ok(log.lines.some((line) => line.startsWith('warn') && line.includes('猫猫头') && line.includes('改发')), '要说明改发了哪一类');
+  assert.ok(log.lines.some((line) => line.startsWith('warn') && line.includes(tagName('猫猫头')) && line.includes('改发')), '要说明改发了哪一类（分类名只留哈希）');
+  assert.ok(!log.lines.some((line) => line.includes('猫猫头')), '分类名不能原样进日志');
 });
 
 test('有自定义分类时，兜底优先发用户自己建的分类里的图', (t) => {

@@ -88,7 +88,7 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   // 每次启动留一份记忆快照：换目录/重装/误点重置都能捞回来
   try {
     const snap = features.isOn(config, 'memorySnapshot') ? memoryBackup.writeSnapshot(root, 'startup') : null;
-    if (snap) logger.info('记忆快照：' + snap);
+    if (snap) logger.info('记忆快照：' + path.basename(String(snap)));
   } catch (err) {
     logger.warn('记忆快照失败（不影响使用）：' + describeError(err));
   }
@@ -117,7 +117,7 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
     runtime.scheduler.every('memory.snapshot', 30 * 60 * 1000, () => {
       if (!features.isOn(runtime.config, 'memorySnapshot')) return;
       const file = memoryBackup.writeSnapshot(root, 'cron');
-      if (file) logger.info('记忆快照（定时）：' + file);
+      if (file) logger.info('记忆快照（定时）：' + path.basename(String(file)));
     });
   } catch { /* 定时器起不来不影响主流程 */ }
 
@@ -174,7 +174,9 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   });
   runtime.bot.moments = runtime.moments;
   runtime.moments.startAutoRead();
-  runtime.momentsPublisher = new MomentsPublisher({ config, store, llm: runtime.llm });
+  runtime.momentsPublisher = new MomentsPublisher({
+    config, store, llm: runtime.llm, logger: child('moments'),
+  });
   // 提醒：到点由桥接来取（/api/reminders/due），这里只管存和状态
   runtime.reminders = new ReminderService(config, {
     logger: child('reminder'),

@@ -22,20 +22,27 @@ const INSULT_LOOSE_RE = /臭|破|烂|没用|闭嘴|烦人|装什么|什么玩意
  * @param {object} bot  需要 bot.config / bot.store / bot.rng
  * @param {{msg:object, atMe:boolean, clean:{text:string}, isGroup:boolean, state:object, nowMs:number, isMaster:boolean, key:string}} args
  */
-function computeTrigger(bot, { msg, atMe, clean, isGroup, state, nowMs, isMaster, key }) {
+function computeTrigger(bot, { msg, atMe, clean, isGroup, state, nowMs, isMaster, key, muted = false }) {
   if (!isGroup) return { wake: true, reason: 'private' };
+  // 静音优先：静音期间的消息不能清静默、不能开接话窗口，也不能产生任何状态副作用。
+  if (muted) return { wake: false, reason: 'muted' };
   const names = herNames(bot, msg);
   const addressed = isAddressed(atMe, msg);
   const guardOn = features.isOn(bot.config, 'groupAddressGuard');
-  // 只要有人 @ 她（或回复她），一律回复，静默期也解除
+  // 只要有人 @ 她（或回复她），一律回复。
+  // 例外：被赶走后的静默期内，只有主人 @ / 回复她才能解除；群友再 @ 也不回来。
   if (addressed) {
+    // 静默期内只有主人 @ / 回复她能解除；群友再 @ 也不回来（需求：被赶走后主人叫才回来）。
+    if (!isMaster && sessionState.isSilent(state, nowMs)) {
+      return { wake: false, reason: 'silent' };
+    }
     sessionState.clearSilent(state);
     // 被叫到之后开一个接话窗口，同一人接着问不用再 @
     sessionState.touchEngagement(
       state, msg.senderId, nowMs, bot.config.group.engagedMinutes);
     return { wake: true, reason: 'addressed' };
   }
-  // 被赶走后的静默期：只有显式 @ / 回复她能解除。
+  // 被赶走后的静默期：只有主人显式 @ / 回复她能解除。
   // 问号、「开麦」这类模糊指令不能破静默，否则「让她滚」等于没用。
   if (sessionState.isSilent(state, nowMs)) {
     return { wake: false, reason: 'silent' };
@@ -55,7 +62,7 @@ function computeTrigger(bot, { msg, atMe, clean, isGroup, state, nowMs, isMaster
   const txt = String(clean.text || '');
   const talking = talkingToOthers({ msg, text: txt, guardOn, names });
   if (Number(state.engagedUntil) > nowMs) {
-    const sameSender = String(msg.senderId || '') === String(state.engagedBy || '');
+    const sameSender = sessionState.engagedWith(state, msg.senderId, nowMs);
     const question = /[?？]|吗|呢|怎么|为什么|啥|多少|几点|谁|哪|是不是|能不能|要不要/.test(txt);
     // 接话窗口也要看「有没有在跟别人说」：@ 了小明、第三人称讲别人，
     // 都不能因为同一个 sender 就抢答。

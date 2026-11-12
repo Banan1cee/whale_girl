@@ -52,6 +52,7 @@ os._exit(2) 重启，循环往复。
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -59,6 +60,14 @@ import threading
 import time
 
 log = logging.getLogger("wechatauto.uia_compat")
+
+
+def _log_name(value) -> str:
+    """会话名只留短哈希；这层日志会被启动器收进 bridge.log。"""
+    text = str(value or "")
+    if not text:
+        return "-"
+    return "#" + hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:8]
 
 _APPLIED = False
 _seen_logged = set()
@@ -654,8 +663,8 @@ def apply(verbose: bool = True) -> bool:
         searchable = [a for a in aliases if _searchable_name(a)]
         if not searchable:
             # 只剩内部 id：微信的会话列表和搜索框都搜不到，别再空转十几秒。
-            log.warning("uia_compat: 关键词只有内部 id（%r），微信搜不到，跳过打开会话",
-                        aliases[0] if aliases else "")
+            log.warning("uia_compat: 关键词只有内部 id（%s），微信搜不到，跳过打开会话",
+                        _log_name(aliases[0] if aliases else ""))
             return False
         aliases = searchable
         target = aliases[0]
@@ -678,7 +687,7 @@ def apply(verbose: bool = True) -> bool:
         rows = _session_rows(self)
         if rows:
             log.info("uia_compat: 会话列表 %d 项：%s", len(rows),
-                     " | ".join(n[:16] for n, _c in rows[:8]))
+                     " | ".join(_log_name(n) for n, _c in rows[:8]))
         scored = []
         for nm, ctrl in rows:
             sc = _row_score(nm, aliases)
@@ -691,12 +700,12 @@ def apply(verbose: bool = True) -> bool:
             # 宽松匹配只允许唯一一名候选，否则宁可放弃（避免点错人）
             same = [x for x in scored if x[0] == best[0] and x[2] != best[2]]
             if same:
-                log.warning("uia_compat: 会话列表里有多个像 %r 的行（%s），不猜，回退搜索框",
-                            target, " / ".join(x[2][:16] for x in scored[:4]))
+                log.warning("uia_compat: 会话列表里有多个像 %s 的行（%s），不猜，回退搜索框",
+                            _log_name(target), " / ".join(_log_name(x[2]) for x in scored[:4]))
                 best = None
         if best is not None:
             rank, _dl, nm, ctrl = best
-            log.info("uia_compat: 在会话列表里点开 %r（匹配级 %d）", nm, rank)
+            log.info("uia_compat: 在会话列表里点开 %s（匹配级 %d）", _log_name(nm), rank)
             try:
                 self._click_ctrl(ctrl)
             except Exception as e:               # noqa: BLE001
@@ -708,11 +717,11 @@ def apply(verbose: bool = True) -> bool:
             except Exception:                    # noqa: BLE001
                 cur = None
             if cur and (cur == nm or _row_score(cur, [nm]) == 0):
-                log.info("uia_compat: 会话已打开（current_chat=%r）", cur)
+                log.info("uia_compat: 会话已打开（current_chat=%s）", _log_name(cur))
                 return True
-            log.warning("uia_compat: 点了 %r 但 current_chat=%r，回退搜索框", nm, cur)
+            log.warning("uia_compat: 点了 %s 但 current_chat=%s，回退搜索框", _log_name(nm), _log_name(cur))
         else:
-            log.info("uia_compat: 会话列表里没有 %r，回退搜索框", target)
+            log.info("uia_compat: 会话列表里没有 %s，回退搜索框", _log_name(target))
         return _fallback_open(self, target, index, section, retries)
 
     cls.open_chat = open_chat

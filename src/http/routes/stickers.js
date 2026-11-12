@@ -126,11 +126,11 @@ module.exports = function register(router) {
             const child = spawn(file, args, { shell: false, detached: true, stdio: 'ignore' });
             child.once('spawn', () => {
               try { child.unref(); } catch { /* ignore */ }
-              logger.info(`[probe] open-folder spawn ${path.basename(file)} pid=${child.pid} mode=${target.mode} dir=${target.dir}`);
+              logger.info(`[probe] open-folder spawn ${path.basename(file)} pid=${child.pid} mode=${target.mode} dir=set`);
               resolve();
             });
             child.once('error', (err) => {
-              logger.warn(`[probe] open-folder spawn 失败 ${file}：${err.message}`);
+              logger.warn(`[probe] open-folder spawn 失败 ${path.basename(file)}：${err.message}`);
               reject(err);
             });
           });

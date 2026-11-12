@@ -25,10 +25,11 @@ const links = require('../adapters/links');
 const searchService = require('../services/search');
 const { LlmError } = require('../llm/client');
 const { describeError } = require('../infra/errors');
+const { tagId, tagName, textMeta, urlHost } = require('../infra/privacy');
 const { saveSettings } = require('../infra/config');
 const time = require('../infra/time');
 const personaStore = require('../persona/store');
-const { sanitizeForModel, nameMatches, clampInt } = require('../core/text');
+const { sanitizeForModel, nameMatches } = require('../core/text');
 const { sendDenial } = require('../core/wechatSendPolicy');
 const trigger = require('../core/trigger');
 const { INSULT_RE, INSULT_LOOSE_RE } = require('../core/trigger');
@@ -37,7 +38,6 @@ const sessionState = require('../core/sessionState');
 const context = require('../core/context');
 const { isEcho } = require('../core/echo');
 const { extractMentionNames } = require('../core/mentions');
-const { COMMAND_HELP, extractCommand } = require('../core/commands');
 const { cannedReply, dismissReply } = require('./stages/canned');
 const reminderCore = require('../core/reminder');
 const stickers = require('../adapters/stickers');
@@ -51,6 +51,44 @@ const SEPARATE_REPLY_RE = /(?:^|[，。！？\s])(?:请|麻烦|能不能|可以|
 
 // 主人私聊问起朋友圈时才注入快照；普通聊天和群聊都不带，避免第三方内容乱入。
 const MOMENTS_INTENT_RE = /朋友圈|动态|谁发了|发了(?:什么|啥)|最近发了|看看.*(?:朋友圈|动态)|点赞/;
+
+/**
+ * 把模型写的 ((silence:分钟)) 标记抠出来，返回 { text, minutes }。
+ * 标记只用于「群里被赶走」：宿主校验会话和时长后才落盘，正文里绝不外泄。
+ *
+ * 用圆括号而不是方括号：表情包的 [[sticker:分类]] 也用 [[]]，两套语法必须分开。
+ * 只认 ((silence))，不保留旧的 [[silence:]] 写法 —— 4.1.0 还没发布，没有历史用户，
+ * 同时认两种只会让弱模型更爱写错。
+ * 不用一条大正则：模型常见的写法（少一边括号、写「10分钟」、没有冒号）都要能认，
+ * 没闭合时只删到这一行末尾，不吞后面的段落。
+ */
+function stripSilenceMark(input) {
+  let text = String(input == null ? '' : input);
+  let minutes = 0;
+  let from = 0;
+  while (from <= text.length) {
+    const lower = text.toLowerCase();
+    const open = lower.indexOf('((', from);
+    if (open < 0) break;
+    let i = open + 2;
+    while (i < lower.length && (lower[i] === ' ' || lower[i] === '\t')) i++;
+    if (lower.slice(i, i + 7) !== 'silence') { from = open + 2; continue; }
+    const bodyStart = i + 7;
+    const close = text.indexOf('))', bodyStart);
+    const lineEnd = text.indexOf('\n', bodyStart);
+    const hasClose = close >= 0 && (lineEnd < 0 || close < lineEnd);
+    const stop = hasClose ? close + 2 : (lineEnd < 0 ? text.length : lineEnd);
+    const body = text.slice(bodyStart, hasClose ? close : (lineEnd < 0 ? text.length : lineEnd));
+    const m = body.match(/(\d{1,3})/);
+    if (!minutes && m) {
+      const v = Number(m[1]);
+      if (Number.isFinite(v) && v > 0) minutes = v;
+    }
+    text = text.slice(0, open) + text.slice(stop);
+    from = open;
+  }
+  return { text: text.trim(), minutes };
+}
 
 function momentsIntent(text) {
   return MOMENTS_INTENT_RE.test(String(text == null ? '' : text));
@@ -233,7 +271,7 @@ class Bot {
         at: parsed.at,
         atName: msg.senderName || '',
       });
-      this.logger && this.logger.info(`提醒已登记：${item.text} @ ${reminderCore.describeWhen(new Date(item.dueAt), now, tz)}`);
+      this.logger && this.logger.info(`提醒已登记：id=${item.id} ${textMeta(item.text)} @ ${reminderCore.describeWhen(new Date(item.dueAt), now, tz)}`);
       return {
         action: 'reply',
         key,
@@ -425,7 +463,14 @@ class Bot {
       msg.bridgeStatus = rawMsg.bridgeStatus;
     }
     // 管理员动态改窗口后，存储限额也要跟上；不会恢复之前已被丢弃的记录。
-    if (this.store.limits) this.store.limits.maxMessages = Math.min(800, Math.max(this.store.limits.maxMessages, Number(this.config.chat.historyTurns || 200) + 2, Number(this.config.chat.groupHistoryTurns || 150) + 2));
+    if (this.store.limits) {
+      this.store.limits.maxMessages = Math.min(800, Math.max(
+        this.store.limits.maxMessages,
+        Number(this.config.chat.historyTurns || 200) + 2,
+        Number(this.config.chat.groupHistoryTurns || 150) + 2,
+      ));
+      if (this.store.chatStore) this.store.chatStore.maxMessages = this.store.limits.maxMessages;
+    }
     const key = this.sessionKey(msg);
     const now = this.now();
     const nowMs = now.getTime();
@@ -575,7 +620,7 @@ class Bot {
     // 只写「当前 chat + 当前说话人」的卡，跨 chat 写入会直接抛错。
     // 回填的旧问题（recycled）在上面的 appendMessage 处整体跳过，不会重复抽事实。
     const state = session.state;
-    const muted = state.mutedUntil > nowMs;
+    const muted = sessionState.isMuted(state, nowMs);
 
     // 识别「唯一的主人」（配置里 master.names / master.wxids）
     // 规则只写在 src/core/master.js，启动器的提示词预览用的是同一个函数，不会出现
@@ -586,7 +631,7 @@ class Bot {
     // 每条微信私聊都留一行判定，出问题直接看日志，不用猜
     if (msg.platform === 'wechat' && msg.chatType === 'private' && this.logger) {
       this.logger.info(
-        `[master] 私聊 ${msg.senderName || '(无名)'}（${msg.senderId || '没有 id'}）→ ` +
+        `[master] 私聊 sender=${tagId(msg.senderId)} name=${tagName(msg.senderName)} → ` +
         `${isMaster ? '主人' : '非主人'}${masterHit.reason ? '（' + masterHit.reason + '）' : ''}`
       );
     }
@@ -598,9 +643,9 @@ class Bot {
       if (!this._masterWarned.has(sid) && this.logger) {
         this._masterWarned.add(sid);
         this.logger.warn(
-          `[master] 昵称「${msg.senderName}」在主人名单里，但 senderId「${sid}」和 persona.master.wxids 里的` +
-          `「${masterHit.wxids.join('、') || '空'}」都对不上；微信里只认 senderId。` +
-          `如果这是主人，把 ${sid} 填进 config.json 的 persona.master.wxids`
+          `[master] name=${tagName(msg.senderName)} 命中主人名单，但 sender=${tagId(sid)} 和` +
+          ` persona.master.wxids 里的 ${masterHit.wxids.length} 个 id 都对不上；微信里只认 senderId。` +
+          '如果这是主人，在启动器「人设 · 主人」里重新选一次；具体 id 看诊断页最近发言者，不写日志。'
         );
       }
     }
@@ -630,27 +675,6 @@ class Bot {
 
     // 固定话术 · 退场分支：「让她滚 / 走吧 / 闭嘴」这类要先应一声再进静默，
     // 必须排在静音/禁言闸门之前（被赶走也得有交代）；实现见 pipeline/stages/canned.js。
-    // 显式命令先于退场：/mute、带分钟的「闭麦 5 分钟」、reset 等不能被
-    // 「闭嘴/安静」的退场词抢走；模糊的「闭嘴/安静」仍然走下面的退场分支。
-    const _preCommand = hasText && !msg.recycled ? extractCommand(clean.text) : null;
-    const _preSlash = Boolean(_preCommand && /^[\/／!！]/.test(_preCommand.raw));
-    const _preAddressed = addressing.isAddressed(atMe, msg);
-    const _preUsable = Boolean(_preCommand
-      && (!isGroup || _preAddressed || _preSlash || isMaster)
-      && (!isGroup || !muted || _preCommand.type === 'unmute'));
-    // status/help 要走管理员/帮助分支，不能被这里提前抢走。
-    const _commandFirst = Boolean(_preUsable
-      && !['status', 'help'].includes(_preCommand.type)
-      && (_preSlash
-        || _preCommand.type !== 'mute'
-        || _preCommand.arg
-        || !/(闭嘴|安静|别说话|少说话)/.test(_preCommand.raw || '')));
-    if (_commandFirst) {
-      return this.runCommand({
-        command: _preCommand, msg, key, profile, state, now, nowMs, atMe,
-      });
-    }
-
     const dismiss = dismissReply(this, {
       msg,
       text: clean.text,
@@ -663,20 +687,9 @@ class Bot {
     });
     if (dismiss) return dismiss;
 
-    // 魔咒 / 管理员权限（只有主人能用）
+    // 魔咒 / 管理员权限（只有绑定 ID 的主人在验证魔咒后可用）
     const adminReply = this.handleAdmin({ msg, clean, key, state, isMaster, nowMs });
     if (adminReply) return adminReply;
-
-    // 3) 命令（群里说「安静」这类自然语言命令，要先叫到鲸鲸才算；主人说话直接算）
-    // 回填的旧问题（recycled）不再重复执行命令，那句话只用来组装回复（M27）
-    let command = hasText && !msg.recycled ? extractCommand(clean.text) : null;
-    const slashCommand = Boolean(command && /^[/／!！]/.test(command.raw));
-    const addressed = addressing.isAddressed(atMe, msg);
-    if (command && isGroup && !addressed && !slashCommand && !isMaster) command = null;
-    if (command && isGroup && muted && command.type !== 'unmute') command = null;
-    if (command) {
-      return this.runCommand({ command, msg, key, profile, state, now, nowMs, atMe });
-    }
 
     // 4) 群聊里没被叫到就先不说话
     // （triggerResult 以前叫 trigger，把模块导入 trigger 遮蔽了（L12），改个名）
@@ -684,7 +697,7 @@ class Bot {
     await this.messagePlugins.run('chat.received', pluginInput);
     const pluginTrigger = await this.messagePlugins.run('chat.pre_reply', pluginInput);
     if (pluginTrigger.action === 'skip') return { action: 'ignore', reason: 'plugin_skip', key, msg, atMe };
-    const triggerResult = this.computeTrigger({ msg, atMe, clean, isGroup, state, nowMs, isMaster });
+    const triggerResult = this.computeTrigger({ msg, atMe, clean, isGroup, state, nowMs, isMaster, muted });
     if (pluginTrigger.action === 'wake' && !['silent', 'minute_cap', 'no_text'].includes(triggerResult.reason)) {
       triggerResult.wake = true;
       triggerResult.reason = 'plugin';
@@ -706,16 +719,11 @@ class Bot {
       const namedHer = guard ? bareRobot || pointedRobot : bareRobot || /机器人|人机|bot/i.test(said);
       const talkingToHer =
         Boolean(msg.replyToBot) ||
-        (String(state.engagedBy || '') === String(msg.senderId || '') && Number(state.engagedUntil) > nowMs);
+        sessionState.engagedWith(state, msg.senderId, nowMs);
       // L1：这条明明在跟别人说话（@了别人 / 出现其他成员名字 / 第三人称指代）→ 不算骂她
-      let talkingToOthers = false;
-      if (guard) {
-        const others = Array.isArray(msg.mentionedNames) ? msg.mentionedNames.filter(Boolean) : [];
-        const otherMentioned = others.length > 0;
-        const thirdPerson = /(他|她|楼上|楼下|那谁|某人|刚才那个)/.test(said) && !/(你|你们)/.test(said);
-        const otherNames = (msg.otherMemberNames || []).some((n) => n && n !== msg.senderName && said.includes(n));
-        talkingToOthers = otherMentioned || thirdPerson || otherNames;
-      }
+      const talkingToOthers = addressing.talkingToOthers({
+        msg, text: said, guardOn: guard, names: selfNames,
+      });
       const aimedAtHer = (namedHer || talkingToHer) && !talkingToOthers;
       const silent = Number(state.silentUntil) > nowMs;
       // 静默期内（被赶走了）不反击：除非 @ 她（上面 addressed 已解除静默）
@@ -724,7 +732,7 @@ class Bot {
         triggerResult.reason = 'insulted';
       }
       if (guard && talkingToOthers && this.logger) {
-        this.logger.info(`[group] 判定在跟别人说话，不接：${said.slice(0, 24)}`);
+        this.logger.info(`[group] 判定在跟别人说话，不接：${textMeta(said)}`);
       }
     }
     if (!triggerResult.wake) {
@@ -942,7 +950,7 @@ class Bot {
     // 只有在正跟她对话（@她 / 回复她 / 同一个人的接话窗口）时，「你」才指向她。
     const inConversationWithSender =
       Boolean(atMe || msg.replyToBot) ||
-      (isGroup && String(state.engagedBy || '') === String(msg.senderId || '') && Number(state.engagedUntil) > nowMs);
+      (isGroup && sessionState.engagedWith(state, msg.senderId, nowMs));
     // 直接点名她/叫机器人，无论谁说的都算
     const namedHer = addressing.herNames(this, msg).some((name) => name && heardText.includes(name))
       || /机器人|人机|bot/i.test(heardText);
@@ -1167,11 +1175,25 @@ class Bot {
     state.adminUser = msg.senderId;
     // 只认本次运行中真正验证过的口令，旧存档里的计时器不能恢复权限。
     this._adminSpellGrants.set(state, spell);
-    this.store.markDirty();
+    this.store.markDirty(key);
     return {
       action: 'command', commandType: 'admin_spell', key, msg, atMe: true, reason: 'admin',
       text: `管理员魔咒已生效，${minutes} 分钟内可在本私聊发送「禁言 群名」「解除禁言 群名」或「禁言列表」。发送「退出管理」可提前结束。`,
     };
+  }
+
+  /**
+   * 管理权限的唯一入口：绑定 ID 的主人在本微信私聊发送过口令，
+   * 且本次运行里该会话确实验证成功（不看存档里的旧计时器）。
+   * 没配置口令时任何管理命令都不执行 —— 「必须有管理员魔咒才可以」。
+   */
+  adminSpellActive(msg, state, nowMs) {
+    const spell = String((this.config.admin && this.config.admin.spell) || '').trim();
+    if (!spell) return false;
+    if (msg.platform !== 'wechat' || msg.chatType !== 'private') return false;
+    return state.adminUser === msg.senderId
+      && Number(state.adminUntil) > nowMs
+      && this._adminSpellGrants.get(state) === spell;
   }
 
   /** 管理员命令。返回 decision，或 null 表示继续走普通聊天流程。 */
@@ -1180,22 +1202,25 @@ class Bot {
     isMaster = isVerifiedOwner(this.config, msg);
     const adminCfg = this.config.admin || {};
     const spell = String(adminCfg.spell || '').trim();
-    const allowAll = adminCfg.allowAll === true;
     const text = String((clean && clean.text) || '').trim();
     const say = (msgText, commandType = 'admin') => ({
       action: 'command', commandType, key, msg, atMe: true, reason: 'admin', text: msgText,
     });
 
-    // 管理权限每次按当前配置复核；旧会话中的魔咒时限不是独立凭据。
-    // 移除主人 ID 或关闭 allowAll 后应立即撤销旧权限，避免历史冒名授权继续生效。
-    const adminOk = isMaster || allowAll;
+    // 主人身份只是必要条件，真正的凭据是本次运行里验证过的魔咒。
+    // 以前的 allowAll 能让任何人在群里改人设/模型，和「必须有魔咒」冲突，已不再参与授权。
+    const adminOk = isMaster && this.adminSpellActive(msg, state, nowMs);
     if (!adminOk) {
       const looksControl =
         /(禁言|解禁|静音)/.test(text) ||
         /^(?:别|不要|停止)(?:再)?(?:在)?\s*.+?群/.test(text) ||
-        /^让\s*.+?群\s*(?:闭嘴|安静)/.test(text);
+        /^让\s*.+?群\s*(?:闭嘴|安静)/.test(text) ||
+        /^(?:管理帮助|管理状态|查看状态|状态|重置记忆|清空所有记忆|恢复默认|重置语态|恢复人设|清空设定|退出管理|结束管理|关闭管理|收起魔咒)$/.test(text) ||
+        /^(?:语态|说话方式|风格|人设|语气|口吻|上下文|记忆长度|记忆条数|人味|情绪|心情|主动|主动关心|主动找话题|观点|立场|主见|互怼|骂主人|顶嘴|允许顶嘴|长度|字数|颜文字|能力|主动接话|群聊主动接话|演示模式|改模型|换模型|禁言列表|群聊禁言|禁言名单|黑名单)(?:\s|$|[:：])/.test(text);
       if (looksControl) {
-        return say('群禁言只能由已绑定微信 ID 的主人操作。', 'admin_hint');
+        return say(spell
+          ? '管理命令需要先在本微信私聊发送管理员魔咒。'
+          : '还没有配置管理员魔咒，请先在启动器「设置」里设置后再用管理命令。', 'admin_hint');
       }
       return null;
     }
@@ -1229,7 +1254,7 @@ class Bot {
         const list = Array.isArray(this.config.group.mutedGroups) ? this.config.group.mutedGroups.slice() : [];
         if (!list.some((x) => nameMatches(x, g))) list.push(g);
         personaStore.save(this.config, { mutedGroups: list });
-        this.logger && this.logger.info('[admin] 群禁言：' + g);
+        this.logger && this.logger.info('[admin] 群禁言：' + tagName(g));
         return say(`好，以后不在「${g}」群里说话了。（想恢复就发：解除禁言 ${g}）`);
       }
     }
@@ -1317,7 +1342,7 @@ class Bot {
     if ((mm = text.match(/^(?:语态|说话方式|风格|人设)\s*[:：]?\s*([\s\S]{1,120})$/))) {
       const v = mm[1].trim();
       personaStore.save(this.config, { text: v });
-      this.logger && this.logger.info('[admin] 语态调整：' + v);
+      this.logger && this.logger.info('[admin] 语态调整：' + textMeta(v));
       return say(`好，说话方式记下了：${v}（一直生效，重启也保留）`);
     }
     if ((mm = text.match(/^(?:语气|口吻)\s*(温柔|活泼|可爱|高冷|毒舌|正经|抽象)$/))) {
@@ -1444,7 +1469,11 @@ class Bot {
     }
     if (/^重置记忆$/.test(text)) {
       if (!isMaster) return say('只有已绑定发送者 ID 的主人才能清空记忆。', 'permission_denied');
-      this.store.resetSession(key);
+      const ok = this.store.resetSession(key);
+      if (!ok) {
+        this.logger && this.logger.warn('[memory] 清空会话失败：文件被占用或权限不足');
+        return say('删除失败：记忆文件可能正被占用，请稍后再试。', 'reset_failed');
+      }
       return say('这个聊天的记忆已清空。');
     }
     if (/^清空所有记忆$/.test(text)) {
@@ -1459,70 +1488,11 @@ class Bot {
       this._adminSpellGrants.delete(state);
       state.adminUntil = 0;
       state.adminUser = '';
-      this.store.markDirty();
+      this.store.markDirty(key);
       this.logger && this.logger.info('[admin] 管理员权限已关闭');
       return say('管理员权限已关闭。');
     }
     return null;
-  }
-
-  runCommand({ command, msg, key, profile, state, nowMs, atMe }) {
-    const g = this.config.group;
-    const finish = (text, extra = {}) => ({ action: 'command', commandType: command.type, key, msg, atMe, text, reason: 'command', ...extra });
-    const owner = isVerifiedOwner(this.config, msg);
-    if ((command.type === 'reset' || (msg.chatType === 'group' && ['mute', 'unmute'].includes(command.type))) && !owner) {
-      return finish('这个操作仅限已绑定发送者 ID 的主人。', { commandType: 'permission_denied', reason: 'not_owner' });
-    }
-    switch (command.type) {
-      case 'help':
-        return finish(COMMAND_HELP);
-      case 'status': {
-        if (!owner) return finish('人家在线，详细运行状态仅主人可查看。');
-        const summary = this.store.summary();
-        const mood = persona.moodFor(new Date(nowMs));
-        const mode = this.llm.isMock ? '演示模式（未配置 API Key）' : `DeepSeek ${this.llm.model}`;
-        return finish(
-          `咕噜~ 人家现在心情${mood.name}，脑子用${mode}，记得 ${summary.sessions} 个聊天、${summary.notes} 条关于大家的小事。尾巴状态：良好。`
-        );
-      }
-      case 'reset': {
-        this.store.resetSession(key);
-        return finish('呜…刚才的聊天人家忘掉啦（只清掉这个聊天框的记忆哦）🫧');
-      }
-      // 「记忆」命令已随记忆入口隐藏整体移除（远端 memory v2）；M29 的
-      // 「群聊只回自己的笔记」防护不再适用该分支。
-      case 'remember': {
-        if (!command.arg) return finish('记住什么呀？说「记住：你爱吃辣」这样，人家才记得住 (｡•̀ᴗ-)✧');
-        const kind = /答应|明天|后天|下周|要记着|别忘|提醒/.test(command.arg)
-          ? 'promise'
-          : (/不喜欢|讨厌|别|怕|雷/.test(command.arg) ? 'taboo' : 'fact');
-        const notes = this.store.addNote(key, msg.senderId, command.arg, { kind, confidence: 1, explicit: true });
-        return finish(`记住啦：${command.arg}。`);
-      }
-      case 'forget': {
-        if (!String(command.arg || '').trim()) {
-          return finish('要忘掉哪一条？比如「/forget 怕黑」，我不会一次清空整张人物卡。');
-        }
-        const { removed } = this.store.removeNote(key, msg.senderId, command.arg);
-        return finish(removed ? `好，忘掉「${command.arg}」了。…刚刚是不是有人说话？` : '人家本来就没记这个呀，是不是记错鲸了？');
-      }
-      case 'name': {
-        if (!command.arg) return finish('那你想让人家叫你什么？说「叫我小海」这样就行。');
-        this.store.setNickname(key, msg.senderId, command.arg);
-        return finish(`好呀，以后就叫你「${command.arg}」啦，写进小本本了 (｡•̀ᴗ-)✧`);
-      }
-      case 'mute': {
-        const minutes = clampInt(command.arg || g.muteDefaultMinutes, 1, 1440, g.muteDefaultMinutes);
-        this.store.setMuted(key, minutes * 60000);
-        return finish(`好…人家闭嘴 ${minutes} 分钟，这段时间不回复；急事等静音结束再叫我（尾巴缩起来）`);
-      }
-      case 'unmute': {
-        this.store.setMuted(key, 0);
-        return finish('咕噜！人家回来了~ 想我了吗？');
-      }
-      default:
-        return finish(COMMAND_HELP);
-    }
   }
 
   /**
@@ -1757,8 +1727,32 @@ class Bot {
     }).trim();
   }
 
+  /**
+   * 模型主动退场：只有群聊、且这条消息确实冲她说的（@ / 回复她 / 主人）才生效。
+   * 时长夹在 1–60 分钟；写的是「延长」而不是覆盖，避免短请求把已有的长静默改短。
+   */
+  applyModelSilence(decision, minutes) {
+    const msg = (decision && decision.msg) || {};
+    if (!decision || decision.error || msg.chatType !== 'group') return false;
+    if (!(msg.atMe || msg.replyToBot || msg.isMaster)) return false;
+    const state = this.store.getState(decision.key);
+    if (!state) return false;
+    const mins = Math.max(1, Math.min(60, Math.round(Number(minutes) || 10)));
+    const nowMs = this.now().getTime();
+    state.silentUntil = Math.max(Number(state.silentUntil) || 0, nowMs + mins * 60000);
+    state.dismissedAt = nowMs;
+    sessionState.clearEngagement(state);
+    this.store.markDirty();
+    if (this.logger) this.logger.info(`[silence] 模型请求退场 ${mins} 分钟（来源=reply）`);
+    return true;
+  }
+
   finalize(decision, text, { error = false } = {}) {
     text = String(text == null ? '' : text).trim();
+    // 模型主动退场标记 [[silence:分钟]]：先解析并从正文剥掉，再走后面的格式清理。
+    const silenceMark = stripSilenceMark(text);
+    text = silenceMark.text;
+    if (silenceMark.minutes) this.applyModelSilence(decision, silenceMark.minutes);
     // 表情包标记 [[sticker:分类]]：发哪一类由模型决定。标记必须从正文里剥干净，
     // 没闭合的半截也要清掉，绝不能漏给用户看到（也不能因此吞掉正文）。
     const stickerMark = stripStickerMarks(text);
@@ -1829,7 +1823,7 @@ class Bot {
         if (replyCore.includes(heardCore.slice(i, i + 3))) { hit = true; break; }
       }
       if (!hit) {
-        this.logger && this.logger.warn('开怼缺少原话依据，降级为「？」：' + String(text).slice(0, 30));
+        this.logger && this.logger.warn('开怼缺少原话依据，降级为「？」：' + textMeta(text));
         text = '？';
         decision.finalText = text;
       }
@@ -1860,17 +1854,17 @@ class Bot {
       // 模型偶尔还会顺着旧语气说「不是」「冒充」「就一个名字罢了」，直接改成认下来
       const denyMaster = /(不是你的?主人|不是你就对|冒充|自封|没你这号|认主系统|系统.{0,6}不认|不认你|就一个名字|光说没用|凭什么信你)/;
       if (denyMaster.test(text)) {
-        this.logger && this.logger.warn('对主人说了否认身份的话，改掉：' + String(text).slice(0, 30));
+        this.logger && this.logger.warn('对主人说了否认身份的话，改掉：' + textMeta(text));
         text = '是我主人啊，这还用问。';
         decision.finalText = text;
       }
       if (rude.test(text)) {
-        this.logger && this.logger.warn('对主人回嘴越线，改掉：' + String(text).slice(0, 30));
+        this.logger && this.logger.warn('对主人回嘴越线，改掉：' + textMeta(text));
         text = roastOn && scolded ? pickRoast() : '主人你骂我我也得听着，这次是我没做好';
         decision.finalText = text;
       } else if (roastOn && scolded && (apology.test(String(text)) || tooHostile.test(String(text)))) {
         // 主人在数落她，她却在道歉、或者骂得像仇人，换成撒泼式回嘴
-        this.logger && this.logger.warn('主人让互怼，但语气不对，换掉：' + String(text).slice(0, 30));
+        this.logger && this.logger.warn('主人让互怼，但语气不对，换掉：' + textMeta(text));
         text = pickRoast();
         decision.finalText = text;
       }
@@ -1989,7 +1983,7 @@ class Bot {
     try {
       const info = await this.linkReader(url);
       const text = links.formatForPrompt(info);
-      this.logger && this.logger.info(`读取链接：${url} → ${info && info.ok ? 'ok' : (info && info.error) || 'failed'}`);
+      this.logger && this.logger.info(`读取链接：host=${urlHost(url)} → ${info && info.ok ? 'ok' : (info && info.error) || 'failed'}`);
       const title = String((info && (info.title || info.site)) || '').slice(0, 60);
       this.store.appendEvent(key, {
         type: 'link',
@@ -2054,7 +2048,7 @@ class Bot {
         const repeatsSelf = ownList.some((h) => isEcho(text, h));
         if (repeatsSomeone || repeatsSelf) {
           const why = repeatsSelf ? '在重复你自己刚才说过的话' : '在复读别人的话';
-          this.logger && this.logger.warn('回复' + why + '，重写一次：' + String(text).slice(0, 30));
+          this.logger && this.logger.warn('回复' + why + '，重写一次：' + textMeta(text));
           try {
             const retry = await this.llm.complete({
               system: decision.system + '\n\n【重写要求】你刚才的回答' + why + '，不合格。现在重写：换一个说法，给出新的信息或明确态度；不能出现对方原句，也不能重复你上面说过的话。',
@@ -2291,4 +2285,4 @@ class Bot {
   }
 }
 
-module.exports = { Bot, extractCommand, COMMAND_HELP, isContextLengthError, momentsIntent };
+module.exports = { Bot, isContextLengthError, momentsIntent };

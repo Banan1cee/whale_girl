@@ -13,6 +13,7 @@ const path = require('node:path');
 const { URL } = require('node:url');
 const { resolveRuntime, maskKey } = require('../infra/config');
 const { describeError } = require('../infra/errors');
+const { textMeta } = require('../infra/privacy');
 
 const FRIENDLY = {
   nokey: '呜…人家还没拿到深海的钥匙（API Key），去右上角「设置」里填一下吧 (｡•́︿•̀｡)',
@@ -783,7 +784,7 @@ class DeepSeekClient {
         try {
           json = JSON.parse(raw);
         } catch {
-          throw new LlmError(FRIENDLY.empty, { code: 'bad_json', detail: 'invalid json: ' + require('../infra/redact').redactSecrets(raw).slice(0, 200) });
+          throw new LlmError(FRIENDLY.empty, { code: 'bad_json', detail: 'invalid json: ' + textMeta(raw) });
         }
         this._recordUsage(json, purpose);
         // HTTP 200 也可能带错误体（网关 / 反向代理 / 部分兼容服务会这么干）。

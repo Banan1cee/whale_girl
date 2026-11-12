@@ -2,6 +2,7 @@
 
 const { sendDenial } = require('../core/wechatSendPolicy');
 const { describeError } = require('../infra/errors');
+const { tagName, textMeta } = require('../infra/privacy');
 
 /**
  * 通用 HTTP 网关适配器：把微信中转服务发来的 JSON 变成统一消息，
@@ -125,7 +126,7 @@ class Gateway {
     this.bridge = {
       lastSeen: 0, uia: null, rest: false, listener: null, ffmpeg: null,
       // 多账号：桥接当前用的是哪个号、窗口认没认出来
-      account: '', accountNick: '', accountOk: null, accountWhy: '', accountGuard: true,
+      account: '', accountWxid: '', accountNick: '', accountOk: null, accountWhy: '', accountGuard: true,
       // 微信主窗现场（可见 / 最小化 / 托盘 / 句柄失效）：诊断包和自检都要它
       window: '',
     };
@@ -141,6 +142,7 @@ class Gateway {
       listener: typeof info.listener === 'boolean' ? info.listener : this.bridge.listener,
       ffmpeg: typeof info.ffmpeg === 'boolean' ? info.ffmpeg : this.bridge.ffmpeg,
       account: String(info.account || this.bridge.account || ''),
+      accountWxid: String(info.account_wxid || this.bridge.accountWxid || ''),
       accountNick: String(info.account_nick || this.bridge.accountNick || ''),
       accountOk: typeof info.account_ok === 'boolean' ? info.account_ok : this.bridge.accountOk,
       accountWhy: String(info.account_why || this.bridge.accountWhy || ''),
@@ -194,7 +196,7 @@ class Gateway {
     if (msg.noReply) return { ok: true, skipped: 'no_reply_flag' };
     this.logger &&
       this.logger.info(
-        `[${this.platform}] 收到 ${msg.chatType === 'group' ? '群' : '私聊'}消息 ${msg.senderName}（${String(msg.text).length} 字）`
+        `[${this.platform}] 收到 ${msg.chatType === 'group' ? '群' : '私聊'}消息 sender=${tagName(msg.senderName)} ${textMeta(msg.text)}`
       );
     const localWechat = local && this.platform === 'wechat';
     const result = await this.bot.handle(msg, { localWechat });
@@ -291,19 +293,24 @@ class Gateway {
         this.logger &&
           this.logger.warn(
             `[${this.platform}] 这条回复不会到微信：既没有 gateway.outboundUrl，也不是本地桥接请求。` +
-            `本地用法请在启动器里点「启动」拉起桥接；自建中转才需要 outboundUrl。内容：${String(text).slice(0, 40)}`
+            `本地用法请在启动器里点「启动」拉起桥接；自建中转才需要 outboundUrl。回复${textMeta(text)}`
           );
       }
       return { ok: true, dryRun: true, local };
     }
     const results = [];
     for (let i = 0; i < lines.length; i++) {
+      // sendBubbles=true 时每条请求只带当前气泡；第一条也带完整 bubbles 会让
+      // 接收端把全部气泡发一遍，随后循环再逐条发，消息重复。
+      const body = lines.length > 1
+        ? { ...payload, text: lines[i], bubbles: [lines[i]] }
+        : payload;
       let lastErr = null;
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const r = await postJson(
             this.options.outboundUrl,
-            i === 0 ? payload : { ...payload, text: lines[i], bubbles: [lines[i]] },
+            body,
             this.options.outboundHeaders || {}
           );
           results.push(r);
@@ -355,10 +362,12 @@ class Gateway {
         listener: online ? this.bridge.listener : null,
         ffmpeg: online ? this.bridge.ffmpeg : null,
         account: this.bridge.account,
+        accountWxid: this.bridge.accountWxid,
         accountNick: this.bridge.accountNick,
         accountOk: this.bridge.accountOk,
         accountWhy: this.bridge.accountWhy,
         accountGuard: this.bridge.accountGuard,
+        accountStale: !online,
         window: online ? this.bridge.window : '',
       },
       ...this.stats,

@@ -239,7 +239,8 @@ class MediaFailureLogTests(unittest.TestCase):
         env['describe_image'].assert_called_once_with(msg)
         env['describe_emoji'].assert_not_called()
         line = self.error_line(env)
-        for piece in ('会话=好友', '发送者=张三', '类型=图片', '消息id=peer:shard1:7', '空描述'):
+        # 日志已脱敏：会话/发送者只留稳定 hash，不再写真实昵称。
+        for piece in ('会话=#', '发送者=#', '类型=图片', '消息id=peer:shard1:7', '空描述'):
             self.assertIn(piece, line)
         env['LOCAL_HTTP'].post.assert_not_called()
 

@@ -6,11 +6,11 @@ const {Bot}=require('../src/pipeline/chat');
 const {Store}=require('../src/memory/store');
 const {DEFAULT_CONFIG}=require('../src/infra/config');
 const {checkRequest}=require('../src/http/security');
-function fixture(t,{masterIds=['wxid_test_owner'],allowAll=false}={}){
+function fixture(t,{masterIds=['wxid_test_owner']}={}){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'whale-command-attack-'));
  const config=JSON.parse(JSON.stringify(DEFAULT_CONFIG));
  config.persona.master={names:['Owner'],wxids:masterIds};
- config.admin={spell:'fake-unit-test-spell',minutes:30,allowAll};
+ config.admin={spell:'fake-unit-test-spell',minutes:30};
  config.links.enabled=false;config.websearch.enabled=false;
  const store=new Store({file:path.join(dir,'store.json'),limits:config.memory});
  const bot=new Bot({config,store,llm:{isMock:true,model:'mock',reload(){},describe(){return {}}},logger:null,mockChunkDelayMs:0});
@@ -31,11 +31,14 @@ for(const chatType of ['group','private'])for(const text of resets){
   assert.ok(f.store.messages(seed.key,100).some(m=>m.text.includes('原有聊天记录')));
  });
 }
-for(const allowAll of [false,true,'false'])test(`管理入口：allowAll=${String(allowAll)} 不能让路人清空所有记忆`,async t=>{
- const f=fixture(t,{allowAll});const seed=await f.bot.decide(f.msg('在吗'));f.store.addNote(seed.key,'wxid_test_owner','保留测试笔记',{explicit:true});
- const before=JSON.stringify(f.store.listNotes(seed.key));
+test('管理入口：路人和未验证魔咒的主人身份都不能清空所有记忆',async t=>{
+ const f=fixture(t);const seed=await f.bot.decide(f.msg('在吗'));f.store.addNote(seed.key,'wxid_test_owner','保留测试笔记',{explicit:true});
+ const notes=()=>JSON.stringify(f.store.listNotes(seed.key).map(p=>[p.uid,p.notes]));
+ const before=notes();
  await f.bot.decide(f.msg('清空所有记忆'));
- assert.equal(JSON.stringify(f.store.listNotes(seed.key)),before);
+ // 主人身份也只在魔咒验证后生效；这里没发魔咒
+ await f.bot.decide(f.msg('清空所有记忆',{senderId:'wxid_test_owner'}));
+ assert.equal(notes(),before);
 });
 for(const text of ['/reset','重置记忆','清空所有记忆','改模型 fake-model','fake-unit-test-spell'])test(`昵称冒充：未绑定 ID 的同名用户不能执行 ${text}`,async t=>{
  const f=fixture(t,{masterIds:[]});const seed=await f.bot.decide(f.msg('在吗'));f.store.addNote(seed.key,'wxid_test_owner','保留测试笔记',{explicit:true});
@@ -57,11 +60,13 @@ test('攻击者 /forget 只能影响自己的笔记，不得删除别人的',asy
  await f.bot.decide(f.msg('/forget 测试偏好'));
  assert.ok(f.store.listNotes(seed.key).some(p=>p.uid==='wxid_test_owner'));
 });
-test('真实主人 /reset 仍可重置指定聊天，其他聊天不受影响',async t=>{
+test('聊天命令全部下线：主人发 /reset 也不会清记忆，其他聊天不受影响',async t=>{
  const f=fixture(t);const a=await f.bot.decide(f.msg('在吗'));const b=await f.bot.decide(f.msg('在吗',{chatId:'other_room'}));
  for(const key of [a.key,b.key])f.store.addNote(key,'wxid_test_owner','隔离测试偏好',{explicit:true});
  await f.bot.decide(f.msg('/reset',{senderId:'wxid_test_owner',senderName:'Renamed'}));
- assert.equal(f.store.listNotes(a.key).length,0);assert.equal(f.store.listNotes(b.key).length,1);
+ await f.bot.decide(f.msg('重置记忆',{senderId:'wxid_test_owner',senderName:'Renamed'}));
+ assert.equal(f.store.listNotes(a.key).length,1);
+ assert.equal(f.store.listNotes(b.key).length,1);
 });
 test('普通用户 /status 不得泄露模型名、记忆数量',async t=>{
  const f=fixture(t);const d=await f.bot.decide(f.msg('/status'));assert.doesNotMatch(d.text,/DeepSeek|deepseek|个聊天|条关于/);
@@ -85,7 +90,7 @@ test('HTTP 攻击：远端不能靠字符串 false 打开远程访问',()=>{
  const req={socket:{remoteAddress:'192.168.1.5'},headers:{'x-bot-token':'fake-unit-test-token'}};
  assert.equal(checkRequest(runtime,req,{pathname:'/api/reset',method:'POST'}).status,403);
 });
-test('真实 HTTP 网关攻击：有桥接 token 的普通成员仍不能 /reset；无 token 不能伪造主人',async t=>{
+test('真实 HTTP 网关攻击：/reset 已下线，任何人都不能通过聊天清记忆',async t=>{
  const {startServer}=require('../server');const dir=fs.mkdtempSync(path.join(os.tmpdir(),'whale-http-attack-'));
  fs.writeFileSync(path.join(dir,'config.json'),JSON.stringify({server:{port:0,openBrowser:false},watchConfig:false,log:{level:'error'},persona:{master:{names:['Owner'],wxids:['wxid_test_owner']}},gateway:{wechat:{enabled:true,inboundToken:'fake-unit-test-token'}},websearch:{enabled:false},links:{enabled:false}}));
  const inst=await startServer({root:dir,env:{WHALE_LOG_FILE:''},port:0,openBrowser:false});inst.runtime.bot.mockChunkDelayMs=0;
@@ -96,7 +101,7 @@ test('真实 HTTP 网关攻击：有桥接 token 的普通成员仍不能 /reset
  inst.runtime.store.addNote(key,'wxid_test_owner','HTTP 测试保留记忆',{explicit:true});
  let res=await send({...payload,text:'/reset'});assert.equal(res.status,200);await res.text();assert.equal(inst.runtime.store.listNotes(key).length,1);
  res=await send({...payload,text:'/reset',sender_id:'wxid_test_owner'},'wrong-token');assert.equal(res.status,403);await res.text();assert.equal(inst.runtime.store.listNotes(key).length,1);
- res=await send({...payload,text:'/reset',sender_id:'wxid_test_owner'});assert.equal(res.status,200);await res.text();assert.equal(inst.runtime.store.listNotes(key).length,0);
+ res=await send({...payload,text:'/reset',sender_id:'wxid_test_owner'});assert.equal(res.status,200);await res.text();assert.equal(inst.runtime.store.listNotes(key).length,1);
 });
 test('撤权测试：旧版留下的临时管理员记录不得延续越权',async t=>{
  const f=fixture(t);const seed=await f.bot.decide(f.msg('在吗'));const state=f.store.getState(seed.key);

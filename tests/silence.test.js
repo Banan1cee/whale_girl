@@ -10,7 +10,7 @@
  *      「没人 @ 她，她还在说话」。
  *   3. 静默期的优先级低于 masterAlwaysReply，主人说完「让她滚」，下一句又把她叫起来。
  *
- * 另外要保住一条底线：静默期内 @ 她仍然能唤醒，不能变成永久失联。
+ * 另外要保住一条底线：静默期内只有主人 @ / 回复她能唤醒，群友喊不回来。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -67,6 +67,28 @@ test('「让她滚」这种第三人称也算赶她走，进静默', async () =>
       assert.equal(x.action, 'ignore', '被赶走后不该再说话：' + line);
       assert.equal(x.reason, 'silent', '原因应该是静默，实际：' + x.reason);
     }
+  } finally {
+    cleanup();
+  }
+});
+
+test('群里 @她 闭嘴 / 滚：人设名、别名、桥接 self_names 都按项目识别', async () => {
+  const { bot, cleanup } = makeBot();
+  try {
+    // 1) 人设别名：项目里就是配在 persona.aliases
+    bot.config.persona.aliases = ['大肥鱼'];
+    let r = await bot.handle(groupMsg('@大肥鱼 闭嘴', { atMe: true, chatId: 'g-alias', msgId: 'a1' }));
+    assert.equal(r.reason, 'dismissed', '别名 + @ 要静默');
+    r = await bot.handle(groupMsg('大肥鱼 滚', { chatId: 'g-alias-2', msgId: 'a2' }));
+    assert.equal(r.reason, 'dismissed', '别名 + 没 @ 也要认出是在赶她');
+
+    // 2) 桥接上报的 self_names（账号昵称/备注走这里）
+    r = await bot.handle(groupMsg('@新昵称 闭嘴', { atMe: true, selfNames: ['新昵称'], chatId: 'g-self', msgId: 'b1' }));
+    assert.equal(r.reason, 'dismissed', 'self_names 是项目识别的一部分');
+
+    // 3) 刚改名、配置和桥接都还没刷新，但桥接确认 @ 的是她：兜底剥掉 @ 前缀
+    r = await bot.handle(groupMsg('@刚改的名 闭嘴', { atMe: true, chatId: 'g-new', msgId: 'c1' }));
+    assert.equal(r.reason, 'dismissed', 'atMe 时名字不该挡住退场');
   } finally {
     cleanup();
   }
@@ -133,7 +155,7 @@ test('没有 @、也没点名，光一句「你是不是傻逼」不接（可能
   }
 });
 
-test('静默期内 @ 她仍然能唤醒（不能永久失联）', async () => {
+test('静默期内只有主人 @ 能唤醒，群友 @ 不回来', async () => {
   const { bot, cleanup } = makeBot();
   try {
     await bot.handle(groupMsg('@鲸鲸 在吗', { atMe: true }));
@@ -143,14 +165,93 @@ test('静默期内 @ 她仍然能唤醒（不能永久失联）', async () => {
     const quiet = await bot.handle(groupMsg('随便聊聊'));
     assert.equal(quiet.action, 'ignore');
 
-    // @ 一下就得回来
-    const back = await bot.handle(groupMsg('@鲸鲸 在吗', { atMe: true }));
-    assert.equal(back.action, 'reply', '@ 她必须能唤醒，否则就是永久失联');
+    // 群友 @ 她也不回来（改了：以前任何人都能 @ 醒）
+    const stranger = await bot.handle(groupMsg('@鲸鲸 在吗', { atMe: true }));
+    assert.equal(stranger.action, 'ignore', '静默期内群友 @ 不该唤醒');
+    assert.equal(stranger.reason, 'silent');
+
+    // 主人 @ 才回来
+    const back = await bot.handle(groupMsg('@鲸鲸 在吗', {
+      atMe: true, platform: 'wechat', senderId: 'wxid_master', senderName: '主人',
+    }));
+    assert.equal(back.action, 'reply', '主人 @ 必须能唤醒');
     assert.equal(back.reason, 'addressed');
 
-    // 唤醒之后闲聊又能接（窗口重新打开）
-    const after = await bot.handle(groupMsg('今天吃啥'));
+    // 唤醒之后，主人接着说（不用再 @）又能接
+    const after = await bot.handle(groupMsg('今天吃啥', {
+      msgId: 'after', platform: 'wechat', senderId: 'wxid_master', senderName: '主人',
+    }));
     assert.equal(after.action, 'reply', '被唤醒后接话窗口要重新打开');
+  } finally {
+    cleanup();
+  }
+});
+
+test('静默标记 ((silence)) 和表情包 [[sticker]] 彻底分开，不冲突', async () => {
+  const { bot, cleanup } = makeBot();
+  try {
+    const decide = (id, chatId) => bot.decide(groupMsg('@鲸鲸 在吗', { atMe: true, msgId: id, chatId }));
+
+    // 两个标记相邻：各自剥掉、各自生效
+    const a = await decide('a', 'g-both-1');
+    const bubbles = bot.finalize(a, '行[[sticker:开心]]((silence:7))');
+    assert.doesNotMatch(bubbles.join('|'), /sticker|silence/i, '两个标记都不能漏给用户');
+    assert.equal(a.stickerCategory, '开心', '表情包分类要正常拿到');
+    const m1 = (Number(bot.store.getState(a.key).silentUntil) - Date.now()) / 60000;
+    assert.ok(m1 > 5 && m1 <= 7.5, '静默也要正常生效，实际 ' + m1.toFixed(2));
+
+    // 顺序反过来
+    const b = await decide('b', 'g-both-2');
+    bot.finalize(b, '((silence:3))[[sticker:炸毛]]好');
+    assert.equal(b.stickerCategory, '炸毛');
+    const m2 = (Number(bot.store.getState(b.key).silentUntil) - Date.now()) / 60000;
+    assert.ok(m2 > 1 && m2 <= 3.5);
+
+    // 没闭合、写「10分钟」也要能认
+    const c = await decide('c', 'g-both-3');
+    const cb = bot.finalize(c, '行((silence:10');
+    assert.doesNotMatch(cb.join('|'), /silence/i, '半截标记不能外泄');
+    const m3 = (Number(bot.store.getState(c.key).silentUntil) - Date.now()) / 60000;
+    assert.ok(m3 > 8 && m3 <= 10.5);
+
+    const d = await decide('d', 'g-both-4');
+    bot.finalize(d, '行((silence 10分钟))');
+    const m4 = (Number(bot.store.getState(d.key).silentUntil) - Date.now()) / 60000;
+    assert.ok(m4 > 8 && m4 <= 10.5, '带「分钟」也要认，实际 ' + m4.toFixed(2));
+
+    // 旧的方括号写法不再生效；[[sticker:silence]] 也只当表情包分类
+    const e = await decide('e', 'g-both-5');
+    bot.finalize(e, '行[[silence:4]]');
+    assert.equal(Number(bot.store.getState(e.key).silentUntil) || 0, 0, '旧的 [[silence:]] 不再兼容');
+    const f = await decide('f', 'g-both-6');
+    bot.finalize(f, '行[[sticker:silence]]');
+    assert.equal(Number(bot.store.getState(f.key).silentUntil) || 0, 0, '表情包分类叫 silence 不能触发静默');
+  } finally {
+    cleanup();
+  }
+});
+
+test('模型被赶时写 ((silence:分钟))：宿主执行静默并把标记剥干净', async () => {
+  const { bot, cleanup } = makeBot();
+  try {
+    const d = await bot.decide(groupMsg('@鲸鲸 在吗', { atMe: true }));
+    const bubbles = bot.finalize(d, '好，那我闭嘴 ((silence:5))');
+    const joined = bubbles.join('|');
+    assert.doesNotMatch(joined, /silence/i, '标记不能漏给用户');
+    const until = Number(bot.store.getState(d.key).silentUntil);
+    const mins = (until - Date.now()) / 60000;
+    assert.ok(mins > 3 && mins <= 5.5, '应静默约 5 分钟，实际 ' + mins.toFixed(2));
+
+    // 没被 @ / 不是主人：标记不生效，但也不会外泄（换一个群，避免读到上一条的静默）
+    const idle = await bot.decide(groupMsg('今天天气不错', { msgId: 'idle', chatId: 'g-idle' }));
+    bot.finalize(idle, '嗯 ((silence:5))');
+    assert.equal(Number(bot.store.getState(idle.key).silentUntil) || 0, 0, '没冲她说的消息不能自我静默');
+
+    // 时长夹到 1–60 分钟
+    const d3 = await bot.decide(groupMsg('@鲸鲸 在吗', { atMe: true, chatId: 'g-clamp' }));
+    bot.finalize(d3, '行 ((silence:999))');
+    const clampMins = (Number(bot.store.getState(d3.key).silentUntil) - Date.now()) / 60000;
+    assert.ok(clampMins > 58 && clampMins <= 60.5, '超长时长要夹到 60 分钟，实际 ' + clampMins.toFixed(2));
   } finally {
     cleanup();
   }

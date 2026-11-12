@@ -36,7 +36,7 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
         except Exception:
             pass
         if any((ord(ch) > 127 for ch in G.ROOT)):
-            G.log_warn('[!] 路径里有中文/非英文字符：', G.ROOT)
+            G.log_warn('[!] 路径里有中文/非英文字符：', G.safe_path(G.ROOT))
             G.log('    微信 UI 自动化在这种路径下会失败（发送一直报「拒绝访问」）。')
             G.log('    请把整个文件夹移到纯英文路径再启动，例如 D:\\whale-girl-3.0')
         _lock_sock = None
@@ -55,13 +55,15 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
             except Exception:
                 pass
             return 0
-        except Exception:
+        except Exception as e:
             _lock_sock = None
+            G.log_warn('单实例锁获取失败，继续启动（可能重复收消息）：', repr(e))
         try:
             import faulthandler
             try:
                 _hang_file = open(G.os.path.join(G.ROOT, 'data', 'bridge-hang.log'), 'a', encoding='utf-8')
-                faulthandler.dump_traceback_later(40, repeat=True, file=_hang_file)
+                # 健康运行时不能无限写栈：只 dump 一次，不 repeat。
+                faulthandler.dump_traceback_later(40, repeat=False, file=_hang_file)
                 G.boot('已开启卡死堆栈转储（40s）')
             except Exception:
                 pass
@@ -81,6 +83,26 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
             self.MediaDownloader = MediaDownloader
             self.WeChatDB = WeChatDB
             self.WeChatGUI = WeChatGUI
+            # 第三方库默认把每条发送正文写进 wechatauto_logs/app_*.log。
+            # 那是完整聊天内容，不能跟着诊断包扩散；关掉它的文件日志，
+            # 需要排查时由桥接自己的脱敏日志给出结构证据。
+            try:
+                from wechatauto.param import WxParam as _WxParam
+                _WxParam.ENABLE_FILE_LOGGER = False
+                # 如果它在 import 阶段已经建过 handler，这里也一并摘掉，避免继续写正文。
+                from wechatauto.logger import wxlog as _wxlog
+                _old_handler = getattr(_wxlog, 'file_handler', None)
+                if _old_handler is not None:
+                    try:
+                        import logging as _logging
+                        _logging.getLogger().removeHandler(_old_handler)
+                        _old_handler.close()
+                    except Exception:
+                        pass
+                    _wxlog.file_handler = None
+                G.log('wechatauto 文件日志已关闭（避免把发送正文写进 wechatauto_logs）')
+            except Exception as _wxlog_err:
+                G.log_warn('关闭 wechatauto 文件日志失败 type=%s' % type(_wxlog_err).__name__)
             _here = G.os.path.dirname(G.os.path.abspath(__file__))
             if _here not in G.sys.path:
                 G.sys.path.insert(0, _here)
@@ -143,25 +165,25 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
             G.log('⚠️ webhook token 是空的！检查 config.json 的 gateway.wechat.inboundToken（文件要能正常解析）')
         self.db_dir = G.resolve_db_dir()
         if self.db_dir:
-            G.log('数据库目录：', self.db_dir)
+            G.log('数据库目录：', G.safe_path(self.db_dir))
         self.acct_dirs = G.find_account_dirs(self.db_dir) if self.db_dir else []
         self.acct = G.ACCOUNT_WANTED
         if self.acct:
             hit = G.resolve_account_dir(self.db_dir, self.acct) if self.db_dir else ''
             if not hit:
                 G.log('')
-                G.log('✗ 找不到微信账号 %r。' % self.acct)
-                G.log('  这台机器上现有账号：%s' % ('、'.join(self.acct_dirs) or '（一个都没有）'))
+                G.log('✗ 找不到微信账号 %s。' % G.safe_id(self.acct))
+                G.log('  这台机器上现有账号：%s' % ('、'.join(G.safe_id(x) for x in self.acct_dirs) or '（一个都没有）'))
                 G.log('  去启动器「微信桥接」页点一下账号卡，或把 config.json 的')
                 G.log('  wechat.account 改成上面某个名字（目录名 / wxid / 昵称都行，留空=自动选）。')
                 G.log('  这里直接停下，不会偷偷换成别的号。')
                 return 2
             if hit != self.acct:
-                G.log('配置账号 %r → 账号目录 %s' % (self.acct, hit))
+                G.log('配置账号 %s → 账号目录 %s' % (G.safe_id(self.acct), G.safe_id(hit)))
             self.acct = hit
-            G.log('指定账号：', self.acct, '（启动器设置 / config.json → wechat.account）')
+            G.log('指定账号：', G.safe_id(self.acct), '（启动器设置 / config.json → wechat.account）')
         elif len(self.acct_dirs) > 1:
-            G.log('⚠️ 这台机器有 %d 个微信账号：%s' % (len(self.acct_dirs), '、'.join(self.acct_dirs)))
+            G.log('⚠️ 这台机器有 %d 个微信账号：%s' % (len(self.acct_dirs), '、'.join(G.safe_id(x) for x in self.acct_dirs)))
             G.log('   没指定账号 → 按「最近活跃」自动选，可能选到大号。')
             G.log('   去启动器「微信桥接」页点一下账号卡（推荐：只选小号）。')
         G.log('打开微信数据库（这一步偶尔会卡，最多等 90 秒）…')
@@ -197,10 +219,10 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
             return 2
         if self.acct and self.db.account != self.acct:
             G.log('')
-            G.log('✗ 账号被库自己换掉了：要的是 %s，实际打开的是 %s。' % (self.acct, self.db.account))
-            G.log('  多半是微信当前登录的是另一个号，取到的密钥解不开 %s 的库。' % self.acct)
+            G.log('✗ 账号被库自己换掉了：要的是 %s，实际打开的是 %s。' % (G.safe_id(self.acct), G.safe_id(self.db.account)))
+            G.log('  多半是微信当前登录的是另一个号，取到的密钥解不开 %s 的库。' % G.safe_id(self.acct))
             G.log('  请确认微信现在登录的就是小号，再在启动器里点「重启桥接」。')
-            G.log('  （这里直接停下，绝不会用 %s 继续跑。）' % self.db.account)
+            G.log('  （这里直接停下，绝不会用 %s 继续跑。）' % G.safe_id(self.db.account))
             return 2
         self._media_box = {'downloader': None}
         self._media_lock = G.threading.Lock()
@@ -209,13 +231,13 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
         try:
             info = self.db.get_self_info() or {}
             self._self_nick = str(info.get('nick_name') or info.get('remark') or '').strip()
-            G.log('当前登录账号：', self._self_nick or self.me)
+            G.log('当前登录账号：', G.safe_name(self._self_nick) if self._self_nick else G.safe_id(self.me))
         except Exception:
-            G.log('当前登录账号 wxid：', self.me)
-        G.log('账号目录：', self.db.account, '（启动器/config 指定）' if self.acct else '（自动选：最近活跃）')
+            G.log('当前登录账号 wxid：', G.safe_id(self.me))
+        G.log('账号目录：', G.safe_id(self.db.account), '（启动器/config 指定）' if self.acct else '（自动选：最近活跃）')
         if len(self.acct_dirs) > 1:
-            G.log('（这台机器有 %d 个账号目录：%s）' % (len(self.acct_dirs), '、'.join(self.acct_dirs)))
-        G.log('数据库目录：', self.db.db_dir)
+            G.log('（这台机器有 %d 个账号目录：%s）' % (len(self.acct_dirs), '、'.join(G.safe_id(x) for x in self.acct_dirs)))
+        G.log('数据库目录：', G.safe_path(self.db.db_dir))
         G.threading.Thread(target=self._heal_accounts_cache, daemon=True, name='accounts-cache').start()
         self.sessions = {}
         try:

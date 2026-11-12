@@ -19,6 +19,8 @@
                         ToolTip="检查微信的 UIA 控件树能不能用（发送走不走快通道）" />
                 <Button Content="数据目录" Style="{StaticResource Ghost}" Margin="8,0,0,0" Click="OnOpenDataDir"
                         ToolTip="打开 data 目录（日志、配置、记忆都在这里）" />
+                <CheckBox x:Name="ChkIncludeRaw" Content="包含原文" Margin="8,0,0,0" VerticalAlignment="Center"
+                          ToolTip="默认不导出消息原文。勾选后会把最近 30 分钟的消息正文、昵称和第三方库日志一起打包；只在自己排查、且确认不会外传时使用" />
                 <Button x:Name="BtnExport" Content="导出日志" Style="{StaticResource Ghost}" Margin="8,0,0,0" Click="OnExport"
                         ToolTip="一键打包：当次启动 + 最近两次启动的日志、崩溃栈、判定链、脱敏配置、doctor。存到 data/ 里并打开所在文件夹" />
             </StackPanel>

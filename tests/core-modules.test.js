@@ -6,7 +6,11 @@
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
+const { Store } = require('../src/memory/store');
 const addressing = require('../src/core/addressing');
 const sessionState = require('../src/core/sessionState');
 const history = require('../src/core/history');
@@ -82,7 +86,34 @@ test('退场静默不会被问号或「开麦」绕过', () => {
   };
   assert.equal(computeTrigger(bot, { ...base, atMe: false, clean: { text: '？' } }).reason, 'silent');
   assert.equal(computeTrigger(bot, { ...base, atMe: false, clean: { text: '开麦聊两句' } }).reason, 'silent');
-  assert.equal(computeTrigger(bot, { ...base, atMe: true, clean: { text: '你说呢' } }).reason, 'addressed');
+  assert.equal(computeTrigger(bot, { ...base, atMe: true, clean: { text: '你说呢' } }).reason, 'silent');
+  assert.equal(computeTrigger(bot, { ...base, isMaster: true, atMe: true, clean: { text: '你说呢' } }).reason, 'addressed');
+});
+
+test('静音消息不会写静默或接话窗口', () => {
+  const bot = { config: JSON.parse(JSON.stringify(DEFAULT_CONFIG)), rng: () => 1 };
+  const state = { mutedUntil: 9000, silentUntil: 9000, engagedUntil: 0, engagedBy: '' };
+  const out = computeTrigger(bot, {
+    msg: { senderId: 'u-a', selfNames: [] }, atMe: true, muted: true,
+    clean: { text: '在吗' }, isGroup: true, state, nowMs: 1000,
+    isMaster: false, key: 'g',
+  });
+  assert.equal(out.reason, 'muted');
+  assert.equal(state.silentUntil, 9000);
+  assert.equal(state.engagedUntil, 0);
+  assert.equal(state.engagedBy, '');
+});
+
+test('checkpoint 不会给未知会话建幽灵目录', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-ghost-'));
+  const store = new Store({ file: path.join(dir, 'data', 'store.json'), logger: null });
+  try {
+    assert.equal(store.checkpoint('wechat:u:nobody'), false);
+    assert.equal(store.chatStore.chats.has('wechat:u:nobody'), false);
+  } finally {
+    store.close();
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 });
+  }
 });
 
 test('空 /forget 不清空整张人物卡', () => {

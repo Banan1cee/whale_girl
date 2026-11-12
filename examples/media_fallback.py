@@ -157,7 +157,7 @@ def install_media_fallback(dl, db, log=None, root_names=DEFAULT_ROOT_NAMES,
                             except OSError:
                                 continue
                 if files:
-                    _log("[!] 图片不在当前微信目录，已从旧位置取到：", base)
+                    _log("[!] 图片不在当前微信目录，已从旧位置取到")
                     break
             return files
 
@@ -173,7 +173,7 @@ def install_media_fallback(dl, db, log=None, root_names=DEFAULT_ROOT_NAMES,
             for root in dirs():
                 hits = glob.glob(os.path.join(root, "*", "*", "Img", "*.dat"))
                 if hits:
-                    _log("[!] 当前目录没有图片样本，改用旧位置的样本来校验密钥：", root)
+                    _log("[!] 当前目录没有图片样本，改用旧位置的样本来校验密钥")
                     return orig_probe(hits[0])
             return got
 

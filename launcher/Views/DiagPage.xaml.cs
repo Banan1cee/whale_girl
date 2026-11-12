@@ -395,14 +395,19 @@ namespace WhaleLauncher.Views
         // 这些不是「密钥」，但一样是隐私：主人的名字、她认的别名、忽略名单、
         // 主动搭话白名单、测试用的会话名。排查 bug 用不到这些字面值，但用户很在意。
         private static readonly Regex PrivacyKey =
-            new Regex("^(ownerName|aliases|names|wxids|ignoreSenders|whitelist|mutedGroups|testChat|chatTitle)$",
+            new Regex("^(ownerName|userName|aliases|names|wxids|ignoreSenders|whitelist|mutedGroups|testChat|chatTitle|account|accountNick|accountWhy|dbDir|location|city|dataDir|configFile)$",
                 RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         // 日志正文兜底：日志里没有做结构化脱敏（正文本来就可能带 Key 片段/微信号/手机号）
-        private static readonly Regex SkKey = new Regex(@"\b(?:sk|oc_sk|ak|ghp|xox[baprs])[-_][A-Za-z0-9_\-]{8,}", RegexOptions.Compiled);
+        private static readonly Regex SkKey = new Regex(@"\b(?:sk|oc_sk|ak|ghp|xox[baprs]|brz)[-_][A-Za-z0-9_\-]{8,}", RegexOptions.Compiled);
         private static readonly Regex Wxid = new Regex(@"\bwxid_[A-Za-z0-9_\-]{4,}", RegexOptions.Compiled);
         private static readonly Regex BearerToken = new Regex(@"(Bearer\s+)[A-Za-z0-9._\-]{12,}", RegexOptions.Compiled);
         private static readonly Regex PhoneNumber = new Regex(@"\b1[3-9]\d{9}\b", RegexOptions.Compiled);
+        private static readonly Regex GroupId = new Regex(@"\b\d{9,}@chatroom\b", RegexOptions.Compiled);
+        private static readonly Regex Email = new Regex(@"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", RegexOptions.Compiled);
+        private static readonly Regex UserPath = new Regex(@"([A-Za-z]:\\Users\\)[^\\\s""']+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex UrlSecret = new Regex(@"([?&](?:token|key|secret|signature|password|api_key)=)[^&\s]+",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         /// <summary>日志正文里能把人/Key 认出来的部分打码；其余原样保留，别破坏可读性。</summary>
         private static string MaskSecrets(string text)
@@ -410,10 +415,17 @@ namespace WhaleLauncher.Views
             if (string.IsNullOrEmpty(text)) return text;
             try
             {
-                var s = SkKey.Replace(SecretRedactor.Redact(text), "***key***");
+                // 先按当前配置/环境变量里的真实密钥打码，再用通用格式兜底；
+                // 只靠格式匹配会漏掉自定义服务那种不带 sk- 前缀的 Key。
+                var s = SecretRedactor.Redact(text);
+                s = SkKey.Replace(s, "***key***");
                 s = Wxid.Replace(s, "wxid_***");
                 s = BearerToken.Replace(s, "$1***");
                 s = PhoneNumber.Replace(s, "1**********");
+                s = GroupId.Replace(s, "***@chatroom");
+                s = Email.Replace(s, "***@***");
+                s = UserPath.Replace(s, "$1***");
+                s = UrlSecret.Replace(s, "$1***");
                 return s;
             }
             catch { return "（日志脱敏失败，已省略）"; }
@@ -458,7 +470,8 @@ namespace WhaleLauncher.Views
                 var settings = await Api.Get(_sup.Url, "/api/settings");
                 var doctor = await RunDoctorAsync();             // 15 秒超时，失败只写原因
 
-                var path = await Task.Run(() => WritePackage(probe, status, settings, doctor));
+                var includeRaw = ChkIncludeRaw.IsChecked == true;
+                var path = await Task.Run(() => WritePackage(probe, status, settings, doctor, includeRaw));
                 Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
             }
             catch (Exception ex)
@@ -474,12 +487,13 @@ namespace WhaleLauncher.Views
         }
 
         /// <summary>在后台线程组装 zip。返回 zip 的绝对路径。</summary>
-        private string WritePackage(Snapshot probe, ApiResult status, ApiResult settings, string doctor)
+        private string WritePackage(Snapshot probe, ApiResult status, ApiResult settings, string doctor, bool includeRaw)
         {
-            SecretRedactor.Refresh(_sup.BaseDir, force: true);
             var name = "logs-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip";
             var path = Path.Combine(_sup.DataDir, name);
             Directory.CreateDirectory(_sup.DataDir);
+            // 导出前强制重读配置，避免缓存里还没有用户刚填的 Key。
+            SecretRedactor.Refresh(_sup.BaseDir, force: true);
 
             var skipped = new List<string>();
 
@@ -487,15 +501,16 @@ namespace WhaleLauncher.Views
             var logs = CollectLogs(skipped);
             var config = RedactedJson(Path.Combine(_sup.BaseDir, "config.json"), skipped);
             var settingsRedacted = RedactedJson(Path.Combine(_sup.DataDir, "settings.json"), skipped);
-            var waFiles = WechatAutoLogs();
-            var trace = CollectTrace(skipped);
+            // 原文和第三方库日志可能含聊天正文，只有用户明确勾选才打包。
+            var waFiles = includeRaw ? WechatAutoLogs() : new List<string>();
+            var trace = CollectTrace(skipped, includeRaw);
 
             using (var zip = ZipFile.Open(path, ZipArchiveMode.Create))
             {
-                AddText(zip, "README.txt", BuildReadme());
-                AddText(zip, "info.txt", BuildInfo(probe, skipped));
+                AddText(zip, "README.txt", BuildReadme(includeRaw));
+                AddText(zip, "info.txt", MaskSecrets(BuildInfo(probe, skipped, includeRaw)));
                 AddText(zip, "status.json", BuildStatus(status, settings));
-                AddText(zip, "doctor.txt", doctor);
+                AddText(zip, "doctor.txt", MaskSecrets(doctor));
                 if (config != null) AddText(zip, "config.redacted.json", config);
                 if (settingsRedacted != null) AddText(zip, "settings.redacted.json", settingsRedacted);
 
@@ -516,7 +531,7 @@ namespace WhaleLauncher.Views
                         if (!string.IsNullOrEmpty(text) && !LooksBinary(text))
                             AddText(zip, "wechatauto_logs/" + Path.GetFileName(f), MaskSecrets(text));
                         else
-                            skipped.Add(Path.GetFileName(f) + "（无法安全脱敏，已跳过）");
+                            zip.CreateEntryFromFile(f, "wechatauto_logs/" + Path.GetFileName(f), CompressionLevel.Optimal);
                     }
                     catch (Exception ex) { skipped.Add(Path.GetFileName(f) + "：" + ex.Message); }
                 }
@@ -558,7 +573,6 @@ namespace WhaleLauncher.Views
             if (!File.Exists(file)) return;
             var text = ReadShared(file, skipped);
             if (string.IsNullOrEmpty(text)) return;
-            text = MaskSecrets(text);
             if (text.Length > tailBytes)
             {
                 var cut = text.Length - tailBytes;
@@ -633,7 +647,7 @@ namespace WhaleLauncher.Views
         /// 判定链全带（按天分的文件，一共也就几十 KB）；
         /// 原文只带最近 30 分钟、最多 60 条 —— 够复现「为什么回/不回」，又不把一堆聊天内容带出去。
         /// </summary>
-        private List<(string Entry, string Text)> CollectTrace(List<string> skipped)
+        private List<(string Entry, string Text)> CollectTrace(List<string> skipped, bool includeRaw)
         {
             var result = new List<(string, string)>();
             var dir = Path.Combine(_sup.DataDir, "trace");
@@ -645,6 +659,8 @@ namespace WhaleLauncher.Views
                 if (!string.IsNullOrEmpty(text)) result.Add(("trace/" + Path.GetFileName(f), text));
             }
 
+            // 原文副本默认不导出；只有用户勾选「包含原文」才带，且不经过 MaskSecrets（用户已明确同意）。
+            if (!includeRaw) return result;
             var rawDir = Path.Combine(dir, "raw");
             if (!Directory.Exists(rawDir)) return result;
             var since = DateTime.Now.AddMinutes(-30);
@@ -684,22 +700,12 @@ namespace WhaleLauncher.Views
         // ── zip 内容 ────────────────────────────────────────────
         private static void AddText(ZipArchive zip, string entry, string content)
         {
-            if (entry.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    var node = JsonNode.Parse(content ?? "null");
-                    RedactNode(node);
-                    content = node?.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) ?? "null";
-                }
-                catch { content = "{\"error\":\"无法安全脱敏，已省略\"}"; }
-            }
             var item = zip.CreateEntry(entry, CompressionLevel.Optimal);
             using var w = new StreamWriter(item.Open(), new UTF8Encoding(false));   // UTF-8 无 BOM
-            w.Write(MaskSecrets(content ?? ""));
+            w.Write(content ?? "");
         }
 
-        private static string BuildReadme()
+        private static string BuildReadme(bool includeRaw)
         {
             var sb = new StringBuilder();
             sb.AppendLine("鲸鲸 · debug 日志包");
@@ -717,24 +723,31 @@ namespace WhaleLauncher.Views
             sb.AppendLine("  logs/                 各日志文件（logs/current/ 是这一次，logs/run-*/ 是历史启动）");
             sb.AppendLine("                        含 crash.log / bridge-crash.log / bridge-hang.log /");
             sb.AppendLine("                        bridge-boot.log / uia-*.log / wechat-bridge-4x.log");
-            sb.AppendLine("  wechatauto_logs/      微信自动化库最近两天的日志");
-            sb.AppendLine("  trace/                触发判定链 + 最近 30 分钟的消息原文（最多 60 条），见下面说明");
+            sb.AppendLine("  trace/                触发判定链（不含聊天正文）");
+            if (includeRaw)
+            {
+                sb.AppendLine("  trace/raw/            最近 30 分钟的消息原文（最多 60 条）—— 你勾选了「包含原文」");
+                sb.AppendLine("  wechatauto_logs/      微信自动化库最近的日志 —— 你勾选了「包含原文」");
+            }
             sb.AppendLine();
             sb.AppendLine("关于脱敏：");
             sb.AppendLine("  ① 密钥类：键名匹配 apiKey / key / token / secret / password / cookie / session 的值换成 \"***\"；");
-            sb.AppendLine("  ② 隐私类：主人的名字、别名、忽略名单、搭话白名单、测试会话名也换成 \"***\"；");
-            sb.AppendLine("  ③ 日志正文：sk-xxx / wxid_xxx / Bearer token / 手机号会打码，其余原样保留。");
+            sb.AppendLine("  ② 隐私类：主人名字、别名、忽略名单、搭话白名单、账号、路径、地点、测试会话名换成 \"***\"；");
+            sb.AppendLine("  ③ 日志正文：sk-xxx / wxid_xxx / 群号 / Bearer token / 手机号 / 邮箱 / 本机用户路径会打码。");
             sb.AppendLine("  配置结构、非敏感字段和模型名都原样保留，方便对齐配置。");
             sb.AppendLine();
-            sb.AppendLine("关于 trace/：");
-            sb.AppendLine("  判定链（为什么回 / 为什么不回）每行只写原因和规则名，不含聊天正文。");
-            sb.AppendLine("  原文只带最近 30 分钟、最多 60 条：复现「为什么回/不回」够用，更早的聊天内容不进包。");
+            sb.AppendLine("关于原文：");
+            sb.AppendLine(includeRaw
+                ? "  你勾选了「包含原文」：trace/raw 和 wechatauto_logs 会带聊天正文、昵称和账号现场。"
+                : "  默认不包含消息原文、昵称或第三方库日志；判定链足以回答大多数「为什么回 / 为什么不回」。");
+            sb.AppendLine("  升级前产生的旧日志/历史归档可能仍含旧版消息片段；分享前请抽查，必要时先删除 data/*.log。");
+            sb.AppendLine("  分享前请确认接收方可信；不要把带原文的包发到公开 Issue。");
             sb.AppendLine();
-            sb.AppendLine("遇到问题时，把整个 zip 原样发给对方即可，不用自己挑文件。");
+            sb.AppendLine("遇到问题时，优先把不含原文的 zip 发给对方。");
             return sb.ToString();
         }
 
-        private string BuildInfo(Snapshot probe, List<string> skipped)
+        private string BuildInfo(Snapshot probe, List<string> skipped, bool includeRaw)
         {
             var (level, fileLevel) = ReadLogLevels();
             var (provider, model, vision) = ReadModelInfo();
@@ -761,8 +774,8 @@ namespace WhaleLauncher.Views
             sb.AppendLine("看图模型名      : " + (vision.Length > 0 ? vision : "未知"));
             sb.AppendLine("Node            : " + VersionOrUnknown(_nodeVersion));
             sb.AppendLine("Python          : " + VersionOrUnknown(_pythonVersion));
-            sb.AppendLine("安装目录        : " + _sup.BaseDir);
-            sb.AppendLine("数据目录        : " + _sup.DataDir);
+            sb.AppendLine("安装目录        : " + DriveOnly(_sup.BaseDir));
+            sb.AppendLine("数据目录        : " + DriveOnly(_sup.DataDir));
             sb.AppendLine();
             sb.AppendLine("微信现场：");
             sb.AppendLine("  微信进程      : " + WechatProcessText());
@@ -777,10 +790,10 @@ namespace WhaleLauncher.Views
                           + " · 发送 " + (probe?.StSent ?? 0) + " · 失败 " + (probe?.StFailed ?? 0));
             sb.AppendLine("  最后一条消息  : " + (probe != null && probe.StLastMessageAt > 0
                 ? DateTimeOffset.FromUnixTimeMilliseconds(probe.StLastMessageAt).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss") : "还没有"));
-            sb.AppendLine("  最近一次失败  : " + (string.IsNullOrEmpty(probe?.StLastError) ? "无" : probe.StLastError));
+            sb.AppendLine("  最近一次失败  : " + (string.IsNullOrEmpty(probe?.StLastError) ? "无" : MaskSecrets(probe.StLastError)));
             var (traceLines, traceRaw) = TraceStats();
-            sb.AppendLine("  判定链        : " + traceLines + " 条（data/trace），原文副本 " + traceRaw + " 条"
-                          + "（另含最近 30 分钟的原文，最多 60 条）");
+            sb.AppendLine("  判定链        : " + traceLines + " 条（data/trace），本地原文副本 " + traceRaw + " 条"
+                          + (includeRaw ? "（已按勾选打包最近 30 分钟、最多 60 条）" : "（未打包）"));
             sb.AppendLine();
             sb.AppendLine("运行时：");
             sb.AppendLine("  runtime 清单  : " + ManifestText());
@@ -808,17 +821,22 @@ namespace WhaleLauncher.Views
 
         private string BuildStatus(ApiResult status, ApiResult settings)
         {
+            // 状态和设置里也有账号、主人称呼、本机路径；和 config 一样递归脱敏后再写包。
+            var statusNode = ToJsonNode(status);
+            var settingsNode = ToJsonNode(settings);
+            if (statusNode != null) RedactNode(statusNode);
+            if (settingsNode != null) RedactNode(settingsNode);
             var root = new JsonObject
             {
                 ["exportedAt"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-                ["status"] = ToJsonNode(status),
-                ["settings"] = ToJsonNode(settings)
+                ["status"] = statusNode,
+                ["settings"] = settingsNode
             };
-            return root.ToJsonString(new JsonSerializerOptions
+            return MaskSecrets(root.ToJsonString(new JsonSerializerOptions
             {
                 WriteIndented = true,
                 Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-            }) + Environment.NewLine;
+            })) + Environment.NewLine;
         }
 
         private static JsonNode ToJsonNode(ApiResult r)
@@ -835,13 +853,20 @@ namespace WhaleLauncher.Views
         // ── info.txt 的现场信息（都能单独回答一个「为什么她不回」）─────
         private static string BoolText(bool? v) => v == null ? "未知" : (v == true ? "是" : "否");
 
+        /// <summary>诊断包里只留盘符，别把用户名和完整安装路径带出去。</summary>
+        private static string DriveOnly(string path)
+        {
+            try { return Path.GetPathRoot(Path.GetFullPath(path)) ?? "（未知）"; }
+            catch { return "（未知）"; }
+        }
+
         private static string AccountText(Snapshot s)
         {
             if (s == null) return "未知";
-            var nick = string.IsNullOrEmpty(s.BrAccountNick) ? "（没上报昵称）" : s.BrAccountNick;
+            var nick = string.IsNullOrEmpty(s.BrAccountNick) ? "没上报昵称" : "昵称已上报（" + s.BrAccountNick.Length + " 字）";
             var ok = s.BrAccountOk ? "窗口已确认" : "窗口未确认";
             var why = string.IsNullOrEmpty(s.BrAccountWhy) ? "" : "：" + s.BrAccountWhy;
-            return nick + "（" + ok + why + "）";
+            return nick + " · " + ok + why;
         }
 
         private static string WechatProcessText()
@@ -1037,11 +1062,11 @@ namespace WhaleLauncher.Views
                 var node = JsonNode.Parse(text);
                 if (node == null) return null;
                 RedactNode(node);
-                return node.ToJsonString(new JsonSerializerOptions
+                return MaskSecrets(node.ToJsonString(new JsonSerializerOptions
                 {
                     WriteIndented = true,
                     Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-                }) + Environment.NewLine;
+                })) + Environment.NewLine;
             }
             catch (Exception ex)
             {
@@ -1066,7 +1091,8 @@ namespace WhaleLauncher.Views
                     }
                     else if (SecretKey.IsMatch(kv.Key))
                     {
-                        obj[kv.Key] = "***";
+                        if (kv.Value is JsonObject || kv.Value is JsonArray) RedactNode(kv.Value);
+                        else obj[kv.Key] = "***";
                     }
                     else if (PrivacyKey.IsMatch(kv.Key))
                     {

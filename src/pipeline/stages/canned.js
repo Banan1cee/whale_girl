@@ -19,6 +19,7 @@
 
 const persona = require('../../persona');
 const sessionState = require('../../core/sessionState');
+const addressing = require('../../core/addressing');
 
 /** 授权条目的到期时间：兼容旧版「纯数字」存法和新版 { expires, name } 对象 */
 function consentExpires(entry) {
@@ -45,10 +46,19 @@ function pruneConsent(consent, nowMs) {
  * @returns {object|null} decision
  */
 function dismissReply(bot, { msg, text, isGroup, isMaster, atMe, state, nowMs, key }) {
-  const ask = String(text || '').trim();
-  const selfNames = persona.aliasList(bot.config, msg && msg.selfNames ? msg.selfNames : [])
+  const askRaw = String(text || '').trim();
+  // 桥接已经确认「这条 @ 的是她」时，文本里那个 @ 名字是什么都不影响判断。
+  // 以前直接拿原文本做 ^闭嘴$ 匹配：桥接刚换了昵称、配置还没刷新时，
+  // `@新昵称 闭嘴` 会残留 @ 前缀，被当成普通搭话，怎么喊都不闭嘴。
+  const ask = (atMe || (msg && msg.replyToBot))
+    ? askRaw.replace(/^(?:[@＠][^\s\u2005]+[\s\u2005]*)+/, '').trim()
+    : askRaw;
+  // 叫她什么名字只认项目里的统一入口：人设名 / 别名 / 桥接上报的账号昵称、备注。
+  // 不在这里另起一套名字来源，否则退场、@ 判定、提示词三处会各认各的。
+  const selfNames = addressing.herNames(bot, msg)
     .map((name) => String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
   const nameAlt = selfNames.join('|') || '鲸鲸|小鲸|肥鱼';
 
   // 「没你事儿了，走吧」→ 回一句就退场，之后不再接

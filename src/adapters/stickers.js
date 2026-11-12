@@ -268,7 +268,7 @@ function listImagesCached(folder, root) {
     // Map 保持插入顺序：命中后挪到末尾，简单的 LRU。
     scanCache.delete(key);
     scanCache.set(key, hit);
-    probe.emit(probeLogger, 'debug', `扫描缓存命中 ${key} 张数=${hit.files.length} 耗时=${probe.ms(probe.now() - t0)}ms`);
+    probe.emit(probeLogger, 'debug', `扫描缓存命中 ${path.basename(key)} 张数=${hit.files.length} 耗时=${probe.ms(probe.now() - t0)}ms`);
     return hit.files.slice();
   }
   const files = listImages(folder, { root, recursive: false });
@@ -278,7 +278,7 @@ function listImagesCached(folder, root) {
   const cost = probe.now() - t0;
   const perFile = files.length ? cost / files.length : 0;
   probe.emit(probeLogger, cost > 50 ? 'warn' : 'debug',
-    `扫描 ${key} 张数=${files.length} 耗时=${probe.ms(cost)}ms 单张=${probe.ms(perFile)}ms`);
+    `扫描 ${path.basename(key)} 张数=${files.length} 耗时=${probe.ms(cost)}ms 单张=${probe.ms(perFile)}ms`);
   return files.slice();
 }
 // Every public entry has a relative ID, not just a basename: legacy folders can
@@ -305,7 +305,7 @@ function categoryImages(dir, emotion) {
   })();
   const cost = probe.now() - t0;
   probe.emit(probeLogger, cost > 50 ? 'warn' : 'debug',
-    `分类 ${key} 目录=${dir} 张数=${out.length} 耗时=${probe.ms(cost)}ms`);
+    `分类 ${key} 目录=${path.basename(dir)} 张数=${out.length} 耗时=${probe.ms(cost)}ms`);
   return out;
 }
 function imagesFor(dir, emotion) { return categoryImages(dir, emotion); }
@@ -332,7 +332,7 @@ async function categoryImagesAsync(dir, emotion) {
   }
   const cost = probe.now() - t0;
   probe.emit(probeLogger, cost > 50 ? 'warn' : 'debug',
-    `分类(异步) ${key} 目录=${dir} 张数=${out.length} 耗时=${probe.ms(cost)}ms`);
+    `分类(异步) ${key} 目录=${path.basename(dir)} 张数=${out.length} 耗时=${probe.ms(cost)}ms`);
   return out;
 }
 

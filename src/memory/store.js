@@ -87,7 +87,10 @@ class Store {
     this.digest = [];
     this.stats = { messages: 0, replies: 0 };
     this._background = new Set();
-    this.chatStore = new ChatStore({ dir: this.memoryDir, logger, now: () => this._now() });
+    this.chatStore = new ChatStore({
+      dir: this.memoryDir, logger, now: () => this._now(),
+      maxMessages: this.limits.maxMessages,
+    });
     try {
       const result = migrate.migrateIfNeeded({ memoryDir: this.memoryDir, chatStore: this.chatStore, logger });
       if (result.migrated) this.chatStore.load();
@@ -484,7 +487,10 @@ class Store {
   }
 
   checkpoint(key) {
-    const chat = this.chatStore.ensureChat(key);
+    // 只给已经存在的会话落 checkpoint：系统通知等早退消息没有 session，
+    // 不能因为一次 ignore 就在磁盘上建出空会话目录。
+    const chat = this.chatStore.chats.get(String(key));
+    if (!chat) return false;
     const stats = compression.recentTokens(chat, { currentSeq: 0 });
     return this.chatStore.checkpoint(chat, { recentTokens: stats });
   }
@@ -616,6 +622,15 @@ class Store {
         this.limits.relationsEnabled = features.isOn(cfg, 'relations');
       } catch { /* 读不到就保持原值 */ }
     }
+    if (cfg && cfg.chat) {
+      const wanted = Math.max(
+        Number(cfg.memory?.maxMessages) || Number(this.limits.maxMessages) || LIMITS.maxMessagesPerChat,
+        Number(cfg.chat.historyTurns || 0) + 2,
+        Number(cfg.chat.groupHistoryTurns || 0) + 2,
+      );
+      this.limits.maxMessages = Math.min(800, wanted);
+    }
+    if (this.chatStore) this.chatStore.maxMessages = this.limits.maxMessages;
     this.plan = budgetPlan.planBudget(this.limits.dialogueBudget, {
       relations: this.limits.relationsEnabled,
     });
@@ -703,7 +718,12 @@ class Store {
   }
 
   archiveCount() {
-    return 0;
+    try {
+      return fs.readdirSync(path.join(this.memoryDir, 'archive'), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory()).length;
+    } catch {
+      return 0;
+    }
   }
 
   /* ------------------------------ 动作账本 ------------------------------ */

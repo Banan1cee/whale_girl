@@ -67,7 +67,8 @@ except OSError:
 LOG_FILE = os.path.join(ROOT, 'data', 'wechat-bridge-4x.log')
 LOG_LEVEL = 'info'
 import bridge_log
-from bridge_log import log, log_debug, log_warn, log_error, boot, log_window_problem
+from bridge_log import (log, log_debug, log_warn, log_error, boot, log_window_problem,
+                        safe_id, safe_name, safe_text, safe_path, safe_url)
 from guards import is_system_notice, duplicate_guard, rate_guard, set_system_senders
 import config as bridge_config
 from config import read_config, build_bot_url, wait_for_server as _wait_for_server, ensure_ffmpeg_env as _ensure_ffmpeg_env
@@ -269,7 +270,7 @@ def reload_config(path=None):
         WINDOW_HWND = 0
     wanted_now = str(w.get('account') or '').strip()
     if wanted_now != ACCOUNT_WANTED:
-        log('账号设置变了（%r → %r），3 秒后自动重启桥接…' % (ACCOUNT_WANTED, wanted_now))
+        log('账号设置变了（%s → %s），3 秒后自动重启桥接…' % (safe_id(ACCOUNT_WANTED), safe_id(wanted_now)))
         time.sleep(3)
         _restart_deadline = time.time() + 15
         while SEND_STATE.get('active') and time.time() < _restart_deadline:
@@ -378,9 +379,9 @@ def list_accounts_cli():
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
-        log('列账号完成：%d 个（%s）' % (len(rows), '、'.join((r['account'] for r in rows)) or '无'))
+        log('列账号完成：%d 个（%s）' % (len(rows), '、'.join((safe_id(r['account']) for r in rows)) or '无'))
     except Exception as e:
-        log('列账号：写 %s 失败：%r' % (path, e))
+        log('列账号：写 %s 失败：%r' % (safe_path(path), e))
     print(json.dumps(payload, ensure_ascii=False))
     return 0
 
@@ -435,7 +436,7 @@ def write_accounts_cache(db_dir, account='', nick='', probe_others=True, deadlin
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
-        log('账号缓存已补写：%d 个号（%s）' % (len(rows), '、'.join((r['nick'] or r['account'] for r in rows))))
+        log('账号缓存已补写：%d 个号（%s）' % (len(rows), '、'.join((safe_name(r['nick']) if r['nick'] else safe_id(r['account']) for r in rows))))
         return True
     except Exception as e:
         log('账号缓存补写失败（不影响收发）：', repr(e))

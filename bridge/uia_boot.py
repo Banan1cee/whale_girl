@@ -782,23 +782,25 @@ def _open_process(pid: int):
 
 
 def _read_byte(h, addr: int) -> Optional[int]:
-    k32 = ctypes.windll.kernel32
+    # 必须用设置过 argtypes 的模块级 kernel32；ctypes.windll.kernel32 是另一个
+    # 对象，64 位 HANDLE 会按默认 int 传参，读失败后会被误判成「候选 RVA 不对」。
     buf = (ctypes.c_ubyte * 1)()
     n = ctypes.c_size_t()
-    ok = k32.ReadProcessMemory(h, ctypes.c_void_p(addr), buf, 1, ctypes.byref(n))
+    ok = kernel32.ReadProcessMemory(
+        wintypes.HANDLE(h), ctypes.c_void_p(addr), buf, 1, ctypes.byref(n))
     return int(buf[0]) if ok else None
 
 
 def _write_byte(h, addr: int, value: int) -> bool:
-    k32 = ctypes.windll.kernel32
     buf = (ctypes.c_ubyte * 1)(value)
     n = ctypes.c_size_t()
-    return bool(k32.WriteProcessMemory(h, ctypes.c_void_p(addr), buf, 1, ctypes.byref(n)))
+    return bool(kernel32.WriteProcessMemory(
+        wintypes.HANDLE(h), ctypes.c_void_p(addr), buf, 1, ctypes.byref(n)))
 
 
 def _close(h) -> None:
     try:
-        ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(h))
+        kernel32.CloseHandle(wintypes.HANDLE(h))
     except Exception:
         pass
 
@@ -844,8 +846,21 @@ def close_stray_login_windows(keep_hwnd: int) -> None:
     try:
         import win32gui
         import os
+        try:
+            import win32process
+        except Exception:
+            win32process = None
+        target_pid = 0
+        if win32process is not None:
+            try:
+                target_pid = int(win32process.GetWindowThreadProcessId(int(keep_hwnd))[1] or 0)
+            except Exception:
+                target_pid = 0
         for w in _iter_windows():
             if int(w["hwnd"]) == int(keep_hwnd) or w["title"] != "微信":
+                continue
+            # 只清理刚拉起的同一进程里的杂窗；别的账号窗口即使很小也不能碰。
+            if target_pid and int(w.get("pid") or 0) != target_pid:
                 continue
             rect = win32gui.GetWindowRect(w["hwnd"])
             bw, bh = rect[2] - rect[0], rect[3] - rect[1]
@@ -953,15 +968,19 @@ def ensure(prefer_hwnd: int = 0, log=None, max_candidates: int = 6,
                 "version": version, "tree": state}
 
     base = win["base"]
+    read_failed = []
+    write_failed = []
     try:
         for rva in rvas[:max_candidates]:
             addr = base + rva
             current = _read_byte(handle, addr)
             if current is None:
+                read_failed.append(rva)
                 continue
             wrote = False
             if current != 1:
                 if not _write_byte(handle, addr, 1):
+                    write_failed.append(rva)
                     continue
                 wrote = True
             # 等树长出来（有的机器要 0.5~1 秒）
@@ -987,6 +1006,10 @@ def ensure(prefer_hwnd: int = 0, log=None, max_candidates: int = 6,
             say(f"UIA 自检：延迟生效，微信 {version} 控件树已就绪")
             return {"ok": True, "reason": "restored", "hwnd": w2["hwnd"], "pid": w2["pid"],
                     "version": version, "tree": "ok"}
+        if read_failed or write_failed:
+            say("UIA 自检：gate 字节读写失败（候选读失败 %d / 写失败 %d），"
+                "多半是权限或进程句柄问题；不是候选 RVA 不对"
+                % (len(read_failed), len(write_failed)))
         say(f"UIA 自检：微信 {version} 试了 {len(rvas[:max_candidates])} 个候选 RVA，"
             f"树仍是空壳（候选：{[hex(x) for x in rvas[:max_candidates]]}）")
         return {"ok": False, "reason": "not_materialized", "hwnd": hwnd, "pid": pid,
