@@ -146,6 +146,14 @@ The kernel uses CommonJS and has zero npm runtime dependencies. Tests run with `
 
 ## Security and privacy
 
+### Third-party plugin disclaimer
+
+Community plugins are developed and maintained by their respective authors. Marketplace listing, checksums, scans or reviews do not guarantee that a plugin is free of malware or vulnerabilities, and do not constitute a security endorsement. Local ZIP packages have not gone through marketplace submission checks.
+
+Plugins may cause privacy leaks, data loss, crashes, unintended messages, account restrictions or third-party service charges. Check the source, version and permissions, back up important data and test carefully before enabling a plugin. Stop or uninstall suspicious plugins and report the plugin ID and version. Uninstalling cannot undo messages already sent or data already disclosed.
+
+To the extent permitted by applicable law, third-party plugins are provided as-is without additional warranties from the Whale Girl project or marketplace maintainers; liability remains subject to applicable law and any express agreement. This notice does not waive users' statutory rights or exclude liabilities that cannot legally be excluded, and does not replace security controls or review. Read the [full plugin disclaimer](docs/插件免责声明.md), also available inside the marketplace.
+
 - The API binds to `127.0.0.1:8787` by default. **Never expose it to the internet**; there is no login layer.
 - `data/` and `config.json` are git-ignored. Never commit API keys, WeChat IDs, group IDs, or chat history.
 - The bridge uses UI automation and reads the local WeChat database. It does not patch WeChat or inject code, but it may still violate WeChat's terms of service. Use it at your own risk.

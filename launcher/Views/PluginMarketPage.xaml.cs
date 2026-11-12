@@ -250,6 +250,7 @@ namespace WhaleLauncher.Views
         }
 
         private void OnDownloadGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginDownloadGuide");
+        private void OnDisclaimer(object sender, RoutedEventArgs e) => ShowGuide("PluginDisclaimer");
 
         private void ShowMessageSettings(PluginInfo info)
         {
