@@ -39,6 +39,7 @@ namespace WhaleLauncher.Views
     {
         private readonly RuntimeSupervisor _sup;
         private readonly ConfigSaver _saver;
+        private Snapshot _status = new Snapshot();
 
         private const int ViewCap = 3000;
         // 后台通道打字的编码（写进 config.json 的 wechat.bgSend.charMode）。
@@ -176,8 +177,9 @@ namespace WhaleLauncher.Views
         private void UpdateStat()
         {
             string conn;
-            if (_sup.BridgeRunning) conn = "已连接";
-            else if (_sup.NodeRunning) conn = "桥接已断开";
+            if (_status.BrOnline) conn = "已连接";
+            else if (_status.BridgeUp) conn = "桥接连接中";
+            else if (_status.NodeUp) conn = "桥接已断开";
             else conn = "内核未启动";
 
             var errs = _all.Count(r => r.LevelChar == "e");
@@ -242,7 +244,9 @@ namespace WhaleLauncher.Views
             _lastRefresh = DateTime.Now;
 
             var s = await _sup.ProbeAsync();
+            _status = s;
             UpdatePerm(s);
+            UpdateStat();
             if (!_configLoaded) await LoadConfigAsync();
             if ((DateTime.Now - _lastAccounts).TotalSeconds < 15) return;
             _lastAccounts = DateTime.Now;
@@ -273,7 +277,6 @@ namespace WhaleLauncher.Views
                 sb.Append("   ·   ").Append(s.BrAccountWhy.Replace("\r", " ").Replace("\n", " "));
             PermLine.Text = sb.ToString();
             PermLine.ToolTip = sb.ToString();
-            UpdateStat();
         }
 
         private async Task LoadAccountsAsync(Snapshot s)

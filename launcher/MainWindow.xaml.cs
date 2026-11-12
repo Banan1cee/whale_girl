@@ -561,25 +561,23 @@ namespace WhaleLauncher
         {
             if (_busy) return;
             _busy = true;
+            BtnToggle.IsEnabled = BtnRestart.IsEnabled = false;
             try
             {
                 if (AnythingRunning)
                 {
-                    BtnToggle.IsEnabled = false;
                     _sup.Say("— 停止中 —");
                     await Task.Run(() => _sup.StopAll());
                     await Task.Delay(200);
                 }
                 else
                 {
-                    BtnToggle.IsEnabled = false;
                     _sup.Say("— 启动中 —");
                     await _sup.StartAllAsync(clearRestartHistory: false);
                 }
             }
             finally
             {
-                BtnToggle.IsEnabled = true;
                 _busy = false;
                 await RefreshAsync();
             }
@@ -589,9 +587,9 @@ namespace WhaleLauncher
         {
             if (_busy) return;
             _busy = true;
+            BtnToggle.IsEnabled = BtnRestart.IsEnabled = false;
             try
             {
-                BtnRestart.IsEnabled = false;
                 _sup.Say("— 重启中 —");
                 await Task.Run(() => _sup.StopAll());
                 await Task.Delay(600);
@@ -599,7 +597,6 @@ namespace WhaleLauncher
             }
             finally
             {
-                BtnRestart.IsEnabled = true;
                 _busy = false;
                 await RefreshAsync();
             }
@@ -628,7 +625,7 @@ namespace WhaleLauncher
                 var s = await _sup.ProbeAsync();
 
                 // 内核每次就绪后查一次：启动时自动迁移了旧记忆就弹一次提示（ack 后不再弹）
-                if (!s.NodeReady) _memoryNoticeChecked = false;
+                if (!s.NodeReady || s.ExternalNode) _memoryNoticeChecked = false;
                 else if (!_memoryNoticeChecked)
                 {
                     _memoryNoticeChecked = true;
@@ -642,15 +639,22 @@ namespace WhaleLauncher
                     : (s.BrOnline ? (Brush)FindResource("Warn") : (Brush)FindResource("Idle"));
 
                 NodeStateText.Text = s.NodeUp ? "端口 " + s.Port : "内核未启动";
-                BridgeStateText.Text = s.BrOnline ? "在线" : (s.NodeUp ? "连接中" : "未启动");
+                BridgeStateText.Text = s.BrOnline ? "在线" : (s.BridgeUp ? "连接中" : s.NodeUp ? "离线" : "未启动");
 
-                var who = string.IsNullOrEmpty(s.BrAccountNick) ? s.BrAccount : s.BrAccountNick;
-                WechatStateText.Text = s.BrAccountOk ? "已登录" : (s.BrOnline ? "待确认" : "未登录");
+                var who = s.BrOnline ? (string.IsNullOrEmpty(s.BrAccountNick) ? s.BrAccount : s.BrAccountNick) : "";
+                WechatStateText.Text = s.BrOnline ? (s.BrAccountOk ? "已登录" : "待确认") : "未登录";
                 WechatLabel.ToolTip = string.IsNullOrEmpty(who) ? "微信" : "微信 · " + who;
-                BtnToggleText.Text = AnythingRunning ? "停止" : "启动";
+                var ownsProcesses = AnythingRunning;
+                const string externalTip = "内核已在后台运行，请用原来的方式管理它";
+                BtnToggleText.Text = ownsProcesses ? "停止" : s.ExternalNode ? "后台运行中" : "启动";
+                BtnToggle.IsEnabled = !_busy && (ownsProcesses || !s.ExternalNode);
+                BtnToggle.ToolTip = s.ExternalNode && !ownsProcesses ? externalTip : null;
+                BtnRestart.IsEnabled = !_busy && !s.ExternalNode;
+                BtnRestart.ToolTip = s.ExternalNode ? externalTip : "先停内核与桥接，再按固定顺序重启";
 
                 // 内核与端口已经并进顶栏的内核胶囊；这里只说桥接和需要处理的状态
                 var parts = new List<string>();
+                if (s.ExternalNode) parts.Add("内核由后台启动");
                 if (s.NodeUp)
                 {
                     if (s.BrOnline) parts.Add(s.BrLastSeenSec >= 0 ? $"桥接 {s.BrLastSeenSec} 秒前心跳" : "桥接在线");

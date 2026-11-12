@@ -25,6 +25,7 @@ namespace WhaleLauncher
     public sealed class Snapshot
     {
         public bool NodeUp;
+        public bool ExternalNode;
         public bool NodeReady;
         public bool NeedsKey;
         public bool BridgeUp;
@@ -116,7 +117,7 @@ namespace WhaleLauncher
         // 启动器无论怎么退出都要带走内核和桥接：正常关窗靠 StopAll，进程被强杀
         // 只能靠 Job 句柄关闭时由系统结束整棵进程树。
         private readonly ProcessJob _job = new ProcessJob();
-        private readonly HttpClient _http = new HttpClient(new HttpClientHandler { UseProxy = false })
+        private readonly HttpClient _http = new HttpClient(new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false })
         {
             Timeout = TimeSpan.FromSeconds(2)
         };
@@ -285,6 +286,21 @@ namespace WhaleLauncher
 
         public string Url => $"http://127.0.0.1:{Port}";
 
+        private async Task<int> ReadHealthyNodePidAsync(int port)
+        {
+            try
+            {
+                using var response = await _http.GetAsync($"http://127.0.0.1:{port}/healthz");
+                if (!response.IsSuccessStatusCode) return 0;
+                using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                var health = body.RootElement;
+                var pid = Long(health, "pid");
+                return Str(health, "service") == "whale-girl" && Bool(health, "up") && pid > 0 && pid <= int.MaxValue
+                    ? (int)pid : 0;
+            }
+            catch { return 0; }
+        }
+
         public void StartNode()
         {
             if (NodeRunning) return;
@@ -300,10 +316,9 @@ namespace WhaleLauncher
                 if (!NodeRunning) return false;
                 try
                 {
-                    using var response = await _http.GetAsync(Url + "/healthz");
-                    using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-                    if (response.IsSuccessStatusCode && Str(body.RootElement, "service") == "whale-girl"
-                        && Bool(body.RootElement, "up") && Long(body.RootElement, "pid") == _node.Id) return true;
+                    var node = _node;
+                    var pid = await ReadHealthyNodePidAsync(Port);
+                    if (pid > 0 && node != null && node == _node && node.Id == pid && !node.HasExited) return true;
                 }
                 catch { }
                 await Task.Delay(250);
@@ -369,6 +384,11 @@ namespace WhaleLauncher
             await _configurationWrites.WaitAsync();
             try
             {
+                if (!NodeRunning && await ReadHealthyNodePidAsync(Port) > 0)
+                {
+                    Say("内核已在后台运行，请用原来的方式管理它");
+                    return;
+                }
                 StartNode();
                 if (await WaitForNodeAsync()) StartBridge();
             }
@@ -520,12 +540,18 @@ namespace WhaleLauncher
         public async Task<Snapshot> ProbeAsync()
         {
             var s = new Snapshot { NodeUp = NodeRunning, BridgeUp = BridgeRunning, Port = Port };
+            if (!s.NodeUp && await ReadHealthyNodePidAsync(s.Port) > 0)
+            {
+                // 手动启动的内核也能提供状态，但不加入启动器的进程树。
+                s.NodeUp = true;
+                s.ExternalNode = true;
+            }
 
             if (s.NodeUp)
             {
                 try
                 {
-                    var json = await _http.GetStringAsync(Url + "/api/status");
+                    var json = await _http.GetStringAsync($"http://127.0.0.1:{s.Port}/api/status");
                     using var doc = JsonDocument.Parse(json);
                     var root = doc.RootElement;
                     s.NodeReady = Bool(root, "ok");

@@ -5,6 +5,8 @@
 
 | # | 现象 | 根因 | 修复 | 版本 | 回归测试 |
 | --- | --- | --- | --- | --- | --- |
+| 86 | 内核和桥接已在后台运行，启动器仍显示未启动，点击启动时端口冲突 | 状态探测只识别本启动器创建的子进程 | 通过本地健康接口识别现有内核并读取微信状态，启动前检查端口上的实例 | 4.1.1 | `tests/launcher/Checks` |
+| 85 | 桥接意外退出，崩溃栈位于 Python 线程转储逻辑 | `faulthandler` 定时转储并发遍历其他线程，遇到已释放的帧会触发原生异常 | 移除定时转储，故障只记录当前线程，实际超时时由 Python 线程同步记录诊断 | 4.1.1 | `tests/bridge-crash.test.js` |
 | 84 | 多开时消息偶尔从另一个号发出去；UIA 已选中窗口却一直“树是空壳”；网关有时重复发气泡 | 账号目录用前缀匹配、自动选号跳过 `windowHwnd` 归属校验、`pick_account_window` 无锁；UIA 读写用了两个不同的 kernel32 句柄；`sendBubbles` 第一条带完整 `bubbles` 后又逐条重发 | 账号只认全等或哈希后相等，`windowHwnd` 必须有数据库归属证据，择窗加 `account_lock`，未确认账号不再按标题兜底；UIA 统一 kernel32 + HANDLE 并记录读写失败；网关每条请求只带当前气泡，补 `accountWxid`；faulthandler 不重复 dump | 4.1.0 | `tests/bridge-adaptive-encoding.test.js`、`tests/wechat-account.test.js`、`tests/core-modules.test.js` |
 | 83 | 被静音后仍会续接话窗口；系统通知在磁盘里留下空会话；群聊长历史被二次裁剪后凭空消失；`maxMessages` 配置不生效 | 静音副作用写在闸门之前；`checkpoint` 对未知 key 也 `ensureChat`；context 二次裁剪只删 entries 不重建 summary；`pruneRaw` 固定用常量 | 静音消息在 trigger 直接返回，不写状态；`checkpoint` 只处理已存在会话；二次裁剪循环重算摘要；`maxMessages` 接入 `ChatStore.pruneRaw`，`archiveCount` 真统计 | 4.1.0 | `tests/core-modules.test.js`、`tests/memory-budget-plan.test.js`、`tests/context.test.js` |
 | 82 | 朋友圈卡在相机菜单、选图窗口或绿色发表按钮前 | 菜单小字漏识别，文件控件类型/层级与固定假设不符，自绘按钮 Invoke 可返回成功但无实际动作；原生 UIA 失败会影响整个桥接 | 独立子进程执行、内存 OCR、原生控件绑定 UIA、文案/预览核验后单次真实点击；未知结果不重发，保留额度和去重游标；补齐手动发表与三类配图 | 4.1.0 | `tests/test_moments_publish.py`、`tests/test_moments_worker.py`、`tests/test_moments_ocr.py`、`tests/moments.test.js` |
