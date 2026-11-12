@@ -82,7 +82,12 @@ function resolveKey(config) {
     if (String(vc.provider || '').trim() === 'custom') {
       try {
         const rt = resolveRuntime(config);
-        const norm = (u) => String(u || '').trim().replace(/\/+$/, '').toLowerCase();
+        // 去掉结尾的斜杠：用循环而不是正则，baseUrl 来自配置/插件，避免 ReDoS 告警。
+        const norm = (u) => {
+          let s = String(u || '').trim().toLowerCase();
+          while (s.endsWith('/')) s = s.slice(0, -1);
+          return s;
+        };
         if (rt.apiKey && norm(rt.baseUrl) === norm(vc.baseUrl)) return rt.apiKey;
       } catch { /* 取不到运行时配置就继续按下面的一般查找链走 */ }
     }

@@ -11,7 +11,9 @@
 const http = require('node:http');
 const https = require('node:https');
 const dns = require('node:dns');
+const net = require('node:net');
 const { URL } = require('node:url');
+const { decodeEntities } = require('./search/html');
 
 const URL_RE = /https?:\/\/[^\s<>"'（）()【】\[\]\u4e00-\u9fa5]+/g;
 const TRAILING = /[.,;:!?，。；：！？、）)】\]》>]*$/;
@@ -35,24 +37,12 @@ function extractUrls(text) {
   return out.slice(0, 2);
 }
 
-function decodeEntities(s) {
-  return String(s || '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&')
-    .replace(/&#(\d+);/g, (_, n) => {
-      try { return String.fromCodePoint(Number(n)); } catch { return ''; }
-    });
-}
 
 function stripTags(html) {
   return decodeEntities(
     String(html || '')
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script\b[^>]*>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style\b[^>]*>/gi, ' ')
       .replace(/<[^>]+>/g, ' ')
   )
     .replace(/\s+/g, ' ')
@@ -95,11 +85,19 @@ function kindOf(urlString) {
  * 想放开：config.links.allowPrivate = true（自己机器上调试用）。
  */
 function isPrivateHost(hostname) {
-  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  let host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
   if (!host) return true;
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
-  // IPv6 回环 / 链路本地 / 唯一本地地址
-  if (host === '::1' || host === '::' || host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) return true;
+  // 规范化 IPv6，展开写法和映射到 IPv4 的写法也必须经过同一私网检查。
+  if (net.isIP(host) === 6) {
+    host = new URL(`http://[${host}]/`).hostname.slice(1, -1);
+    const mapped = host.match(/^::ffff:([0-9a-f]+):([0-9a-f]+)$/);
+    if (mapped) {
+      const high = parseInt(mapped[1], 16), low = parseInt(mapped[2], 16);
+      return isPrivateHost([high >> 8, high & 255, low >> 8, low & 255].join('.'));
+    }
+    return host === '::1' || host === '::' || /^fe[89ab]/.test(host) || /^(fc|fd|ff)/.test(host);
+  }
   const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (!m) return false; // 普通域名，交给系统解析
   const [a, b] = [Number(m[1]), Number(m[2])];
@@ -114,28 +112,47 @@ function isPrivateHost(hostname) {
 function fetchUrl(urlString, { timeoutMs = 6000, maxBytes = 700 * 1024, redirects = 4, allowPrivate = false, deadline = 0 } = {}) {
   return new Promise((resolve) => {
     let settled = false;
-    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    let timer = null;
+    let activeRequest = null;
+    const done = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
     // 整条重定向链共用一个总预算：以前每跳都重新计时，4 跳最坏 6×4=24 秒
     const budget = Number(deadline) > 0 ? Number(deadline) : Date.now() + Math.max(1, Number(timeoutMs) || 6000);
     const remaining = () => Math.max(1, budget - Date.now());
     if (Date.now() >= budget) return done({ ok: false, error: 'timeout' });
+    // socket 的空闲超时覆盖不了慢速持续响应和 DNS 等待，整条链另设硬截止时间。
+    timer = setTimeout(() => {
+      done({ ok: false, error: 'timeout' });
+      activeRequest?.destroy();
+    }, remaining());
     let parsed;
     try {
       parsed = new URL(urlString);
     } catch {
       return done({ ok: false, error: 'bad_url' });
     }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return done({ ok: false, error: 'bad_protocol' });
+    }
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
     // 链接是别人发的：默认只读公网，别替人抓本机/内网（SSRF）
     if (!allowPrivate && isPrivateHost(parsed.hostname)) {
       return done({ ok: false, error: 'private_host' });
     }
 
-    const start = () => {
+    const start = (address, family) => {
+      if (settled) return;
       const mod = parsed.protocol === 'http:' ? http : https;
       const req = mod.request(
         {
           protocol: parsed.protocol,
-          hostname: parsed.hostname,
+          hostname,
+          // 必须连接检查过的地址：再次交给系统解析会留下 DNS 重绑定窗口。
+          lookup: address ? (_host, options, callback) => {
+            if (typeof options === 'function') { callback = options; options = {}; }
+            const resolved = { address, family: family || net.isIP(address) };
+            if (options && options.all) callback(null, [resolved]);
+            else callback(null, resolved.address, resolved.family);
+          } : undefined,
           port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
           path: parsed.pathname + parsed.search,
           method: 'GET',
@@ -150,7 +167,9 @@ function fetchUrl(urlString, { timeoutMs = 6000, maxBytes = 700 * 1024, redirect
           const status = res.statusCode || 0;
           if (status >= 300 && status < 400 && res.headers.location && redirects > 0) {
             res.resume();
-            const next = new URL(res.headers.location, parsed).toString();
+            let next;
+            try { next = new URL(res.headers.location, parsed).toString(); }
+            catch { return done({ ok: false, error: 'bad_url', status }); }
             fetchUrl(next, { timeoutMs, maxBytes, redirects: redirects - 1, allowPrivate, deadline: budget }).then(done);
             return;
           }
@@ -177,6 +196,7 @@ function fetchUrl(urlString, { timeoutMs = 6000, maxBytes = 700 * 1024, redirect
           res.on('error', () => done({ ok: false, error: 'read_error', status }));
         }
       );
+      activeRequest = req;
       req.setTimeout(remaining(), () => { req.destroy(); done({ ok: false, error: 'timeout' }); });
       req.on('error', (e) => done({ ok: false, error: (e && e.code) || 'network' }));
       req.end();
@@ -184,11 +204,11 @@ function fetchUrl(urlString, { timeoutMs = 6000, maxBytes = 700 * 1024, redirect
 
     if (allowPrivate) return start();
     // 普通域名也要解析一次：防止 DNS 指向 127.0.0.1 / 内网网段绕过上面的字面量检查
-    dns.lookup(parsed.hostname, (err, address) => {
+    dns.lookup(hostname, (err, address, family) => {
       if (err) return done({ ok: false, error: (err && err.code) || 'network' });
       if (isPrivateHost(address)) return done({ ok: false, error: 'private_host' });
       if (Date.now() >= budget) return done({ ok: false, error: 'timeout' });
-      start();
+      start(address, family);
     });
   });
 }

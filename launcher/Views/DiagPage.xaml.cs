@@ -390,7 +390,7 @@ namespace WhaleLauncher.Views
 
         // 脱敏用：键名命中这些词的，值一律换成 "***"（结构保留）
         private static readonly Regex SecretKey =
-            new Regex("apiKey|apikey|key|token|secret|password|cookie|session|^spell$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            new Regex("apiKey|apikey|key|token|secret|password|authorization|cookie|session|^spell$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         // 这些不是「密钥」，但一样是隐私：主人的名字、她认的别名、忽略名单、
         // 主动搭话白名单、测试用的会话名。排查 bug 用不到这些字面值，但用户很在意。
@@ -1091,8 +1091,8 @@ namespace WhaleLauncher.Views
                     }
                     else if (SecretKey.IsMatch(kv.Key))
                     {
-                        if (kv.Value is JsonObject || kv.Value is JsonArray) RedactNode(kv.Value);
-                        else obj[kv.Key] = "***";
+                        // 敏感字段的子键可能只是服务商名称，递归按键名检查会漏掉内部值。
+                        obj[kv.Key] = "***";
                     }
                     else if (PrivacyKey.IsMatch(kv.Key))
                     {

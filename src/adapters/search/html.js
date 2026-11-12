@@ -1,16 +1,27 @@
 'use strict';
 
 function decodeEntities(s) {
-  return String(s || '').replace(/&(?:nbsp|ensp);/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/&#(x[0-9a-f]+|\d+);/gi, (_, n) => {
-      try { return String.fromCodePoint(n[0].toLowerCase() === 'x' ? parseInt(n.slice(1), 16) : Number(n)); } catch { return ''; }
-    });
+  // 单次扫描解码：先解 &amp; 会造出新的 &#60;，第二遍再解就等于把用户输入
+  // 双重反转义（CodeQL double-escaping 的成因）。这里一遍过，不回头。
+  return String(s || '').replace(/&(?:(#x[0-9a-f]+|#\d+)|(nbsp|ensp|amp|lt|gt|quot|#39));/gi, (all, num, name) => {
+    const key = String(name || '').toLowerCase();
+    if (key === 'nbsp' || key === 'ensp') return ' ';
+    if (key === 'amp') return '&';
+    if (key === 'lt') return '<';
+    if (key === 'gt') return '>';
+    if (key === 'quot') return '"';
+    if (key === '#39') return "'";
+    if (!num) return all;
+    try {
+      return String.fromCodePoint(num[1].toLowerCase() === 'x' ? parseInt(num.slice(2), 16) : Number(num.slice(1)));
+    } catch { return all; }
+  });
 }
 
 function stripTags(s) {
-  return decodeEntities(String(s || '').replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+  // 结束标签可能带空白或属性（</script >、</script\n bar>），按标签整体匹配。
+  return decodeEntities(String(s || '').replace(/<script[\s\S]*?<\/script\b[^>]*>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style\b[^>]*>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
 }
 
 function sourceUrl(raw, base) {

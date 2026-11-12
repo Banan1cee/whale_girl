@@ -26,6 +26,9 @@ function notesFrom(body) {
       .replace(/^\s*(?:[-*+]|\d+\.)\s+/, '')
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
       .replace(/<[^>]*>|[`*_]/g, '')
+      // 上面只去掉成对的标签；残缺的 "<script" 片段会把尖括号留在文本里，
+      // 后续如果拼进 HTML 就可能被当成元素。剩下的尖括号一律去掉。
+      .replace(/[<>]/g, '')
       .trim())
     .filter(Boolean)
     .slice(0, 5);

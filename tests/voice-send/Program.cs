@@ -11,6 +11,7 @@ class Program {
  static int count;static void Assert(bool v){if(!v)throw new Exception("assert failed");count++;}static void Reject(Action f){try{f();}catch{count++;return;}throw new Exception("expected rejection");}
  static byte[] Wav(double s){using var m=new MemoryStream();using(var w=new WaveFileWriter(new NAudio.Utils.IgnoreDisposeStream(m),new WaveFormat(16000,16,1))){var b=new byte[(int)(s*32000)];w.Write(b,0,b.Length);}return m.ToArray();}
  static async Task Main(){var dir=Path.Combine(Path.GetTempPath(),"voice-check-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(dir);try{
+ PrivacyExportChecks.Run();
  await BreezeChecks.Run(dir);
  VbCableChecks.Run(dir);
  await StreamingWaveChecks.Run(dir);
