@@ -43,6 +43,9 @@ namespace WhaleLauncher.Views
         private string _current = "";
         private bool _loading;
         private bool _savingCollect;
+        private bool _demandDirty;
+        private bool _savingDemand;
+        private int _demandRevision;
         private bool _importingPresets;
         private bool _loaded;
         private readonly SemaphoreSlim _refreshLock = new(1);
@@ -107,6 +110,7 @@ namespace WhaleLauncher.Views
 
         private async Task LoadCoreAsync()
         {
+            var demandRevision = _demandRevision;
             var tLoad = Stopwatch.StartNew();
             var online = _sup.NodeRunning;
             ChkEnabled.IsEnabled = TxtDir.IsEnabled = online;
@@ -172,11 +176,17 @@ namespace WhaleLauncher.Views
             _loading = false;
             if (!string.IsNullOrEmpty(view.Dir)) _libraryDir = view.Dir;
             // 频率 / 必发（main 上新增的 UI）：数据来自 status（内核在线）或库存脚本（离线）
-            SldDemand.Value = Math.Round(Math.Clamp(view.DemandChance, 0, 1) * 100);
-            ChkEnsure.IsChecked = view.EnsureSend;
-            TxtDemandValue.Text = Math.Round(SldDemand.Value) + "%";
+            if (!_demandDirty && !_savingDemand && demandRevision == _demandRevision)
+            {
+                _loading = true;
+                SldDemand.Value = Math.Round(Math.Clamp(view.DemandChance, 0, 1) * 100);
+                ChkEnsure.IsChecked = view.EnsureSend;
+                TxtDemandValue.Text = Math.Round(SldDemand.Value) + "%";
+                _loading = false;
+            }
             var frequencyEnabled = view.Enabled;
-            SldDemand.IsEnabled = ChkEnsure.IsEnabled = BtnSaveDemand.IsEnabled = frequencyEnabled;
+            SldDemand.IsEnabled = ChkEnsure.IsEnabled = true;
+            BtnSaveDemand.IsEnabled = !_savingDemand;
             BtnImportPresets.IsEnabled = view.Online && frequencyEnabled && !_importingPresets
                 && view.MaintPhase != "running" && view.MaintPhase != "pending";
             DemandHint.Opacity = frequencyEnabled ? 1 : 0.55;
@@ -285,6 +295,7 @@ namespace WhaleLauncher.Views
         private void OnDemandChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (TxtDemandValue == null) return;
+            if (!_loading && IsLoaded) { _demandDirty = true; _demandRevision++; }
             TxtDemandValue.Text = Math.Round(e.NewValue) + "%";
             if (DemandHint == null) return;
             DemandHint.Text = e.NewValue >= 99.5
@@ -292,20 +303,39 @@ namespace WhaleLauncher.Views
                 : "0 = 只靠模型自觉；70% ≈ 一半多轮次提醒；100% = 每轮都提醒。勾选「必发」后，命中轮次即使模型没写标记也会补一张（难过/求助除外）。";
         }
 
+        private void OnEnsureChanged(object sender, RoutedEventArgs e)
+        {
+            if (_loading || !IsLoaded) return;
+            _demandDirty = true;
+            _demandRevision++;
+        }
+
         private async void OnSaveDemand(object sender, RoutedEventArgs e)
         {
-            if (_loading) return;
+            if (_loading || _savingDemand) return;
+            var revision = _demandRevision;
             var chance = Math.Round(Math.Clamp(SldDemand.Value / 100.0, 0, 1), 2);
             var ensure = ChkEnsure.IsChecked == true;
-            var res = await _sup.PatchConfigurationAsync( new Dictionary<string, object>
+            _savingDemand = true;
+            BtnSaveDemand.IsEnabled = false;
+            try
             {
-                ["sticker.demandChance"] = chance,
-                ["sticker.ensureSend"] = ensure
-            });
-            StatusText.Text = res.Ok
-                ? $"表情包频率已保存：{Math.Round(chance * 100)}%" + (ensure ? "，必发已开" : "") + " · " + DateTime.Now.ToString("HH:mm:ss")
-                : "保存失败：" + Api.Message(res);
-            if (res.Ok) await LoadAsync();
+                var res = await _sup.PatchConfigurationAsync(new Dictionary<string, object>
+                {
+                    ["sticker.demandChance"] = chance,
+                    ["sticker.ensureSend"] = ensure
+                });
+                if (res.Ok && revision == _demandRevision)
+                {
+                    _demandDirty = false;
+                    _demandRevision++;
+                }
+                StatusText.Text = res.Ok
+                    ? $"表情包频率已保存：{Math.Round(chance * 100)}%" + (ensure ? "，必发已开" : "")
+                    : "保存失败：" + Api.Message(res);
+            }
+            catch (Exception ex) { StatusText.Text = "保存失败：" + Api.FriendlyError(ex); }
+            finally { _savingDemand = false; BtnSaveDemand.IsEnabled = true; }
         }
 
         /* ── 页签 ──────────────────────────────────────────────── */

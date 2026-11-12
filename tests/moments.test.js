@@ -307,21 +307,69 @@ test('朋友圈 HTTP 全链路：请求、鉴权领取、回传与读取', async
 });
 
 
-test('Moments test post with an empty image folder is claimed as a text post', t => {
-  const { MomentsPublisher } = require('../src/services/momentsPublisher');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-moments-publish-'));
+test('立即发表使用正常文案和三种心情配图，不占或受限于自动额度', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-manual-moods-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const publisher = new MomentsPublisher({ config: {
-    paths: { dataDir: root }, moments: { publishFeatureEnabled: true, publishWithImage: true },
-  } });
-  assert.equal(publisher.queueTest('account', true), '');
-  publisher.save = patch => Object.assign(publisher.state, patch);
-  const job = publisher.claim('account');
-  assert.equal(job.action, 'publish');
-  assert.equal(job.query.image, '');
-  assert.ok(job.query.text);
+  for (const [emotion, category] of Object.entries({ happy: '开心', cute: '傲娇', angry: '炸毛' })) {
+    const folder = path.join(root, emotion);
+    const messages = ['今天学了一首新曲子', '早上的咖啡有点苦呢', '终于收拾好了书桌'].map(text =>
+      ({ role: 'user', ts: Date.now(), text }));
+    const publisher = new MomentsPublisher({
+      config: { root: folder, paths: { dataDir: folder }, moments: { publishFeatureEnabled: true, publishMaxPerDay: 1 } },
+      store: { sessions: new Map([['wechat:g:fixture', { messages }]]), messages: () => messages },
+      llm: { complete: async () => JSON.stringify({ text: '慢慢找到自己的节奏，今天也值得认真度过。', emotion }) },
+    });
+    const imageDir = path.join(publisher.images, category);
+    fs.mkdirSync(imageDir, { recursive: true });
+    fs.writeFileSync(path.join(imageDir, 'sample.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS/8AAAAASUVORK5CYII=', 'base64'));
+    publisher.save({ day: publisher.today(), count: 1 });
+    assert.equal(publisher.queueTest('account', true), '');
+    assert.equal(publisher.queueTest('account', true), 'busy');
+    await new Promise(resolve => setImmediate(resolve));
+    const job = publisher.claim('account');
+    assert.equal(job.query.manual, true);
+    assert.equal(job.query.category, category);
+    assert.equal(job.query.image, path.join(imageDir, 'sample.png'));
+    assert.doesNotMatch(job.query.text, /朋友圈测试/);
+    assert.equal(publisher.dailyCount(), 1);
+    assert.equal(publisher.complete({ id: job.id, account: 'account', publishStatus: 'failed' }), true);
+    assert.equal(publisher.dailyCount(), 1, '手动失败不能退还自动额度');
+    publisher.save({ lastHash: '', lastSource: 0, count: 0 });
+    assert.equal(publisher.queueTest('account', false), '');
+    await new Promise(resolve => setImmediate(resolve));
+    const textJob = publisher.claim('account');
+    assert.equal(textJob.query.image, '');
+    publisher.complete({ id: textJob.id, account: 'account', publishStatus: 'confirmed' });
+    assert.equal(publisher.dailyCount(), 0);
+  }
 });
 
+test('朋友圈发表允许小数间隔、大于旧限制的设置和不限每日条数', () => {
+  const publisher = new MomentsPublisher({
+    config: { paths: { dataDir: os.tmpdir() }, moments: { publishIntervalHours: 0.25, publishMaxPerDay: 0 } },
+  });
+  assert.equal(publisher.settings().interval, 0.25);
+  assert.equal(publisher.settings().maxPerDay, 0);
+  publisher.config.moments.publishIntervalHours = 72;
+  publisher.config.moments.publishMaxPerDay = 100;
+  assert.equal(publisher.settings().interval, 72);
+  assert.equal(publisher.settings().maxPerDay, 100);
+  const { FIELDS, checkValue } = require('../src/infra/configSchema');
+  assert.equal(checkValue(0.25, FIELDS['moments.publishIntervalHours']), null);
+  assert.equal(checkValue(72, FIELDS['moments.publishIntervalHours']), null);
+  assert.equal(checkValue(100, FIELDS['moments.publishMaxPerDay']), null);
+  assert.equal(checkValue(0, FIELDS['moments.publishMaxPerDay']), null);
+  assert.ok(checkValue(0, FIELDS['moments.publishIntervalHours']));
+  publisher.config.moments.publishFeatureEnabled = true;
+  publisher.config.moments.publishMaxPerDay = 0;
+  publisher.save = patch => Object.assign(publisher.state, patch);
+  publisher.state = { day: publisher.today(), count: 100 };
+  publisher.reconcile();
+  publisher.queueDraft({ text: '慢慢找到自己的节奏，今天也值得认真度过。', emotion: 'happy' },
+    'account', publisher.settings(), { hash: 'unlimited', lastSource: 1 });
+  assert.ok(publisher.claim('account'));
+  assert.equal(publisher.dailyCount(), 101);
+});
 
 test('定时发表从首次在线开始计时，重启后到六小时才生成、领取和回执', async t => {
   const { MomentsPublisher } = require('../src/services/momentsPublisher');
@@ -483,7 +531,7 @@ test('朋友圈发表：每日额度按 env.timezone 的日期重置', (t) => {
     },
     now: () => now,
   });
-  assert.equal(publisher.queueTest('acct', false), '');
+  publisher.queueDraft({ text: '慢慢找到自己的节奏，今天也值得认真度过。', emotion: 'happy' }, 'acct', publisher.settings(), { hash: 'fixture', lastSource: now });
   const job = publisher.claim('acct');
   assert.equal(publisher.state.day, '2025-12-31');
   assert.equal(publisher.dailyCount(), 1);
@@ -505,7 +553,7 @@ test('朋友圈发表：领取后从领取时刻计时，排队久也不会误�
     },
     now: () => now,
   });
-  assert.equal(publisher.queueTest('acct', false), '');
+  publisher.queueDraft({ text: '慢慢找到自己的节奏，今天也值得认真度过。', emotion: 'happy' }, 'acct', publisher.settings(), { hash: 'fixture', lastSource: now });
   now += 110_000; // 排队 110 秒，仍可领取
   const job = publisher.claim('acct');
   assert.ok(job, '排队 110 秒后仍应能领取');
@@ -513,4 +561,94 @@ test('朋友圈发表：领取后从领取时刻计时，排队久也不会误�
   assert.equal(publisher.allowed(job.id, 'acct'), true);
   now += 70_000; // 领取后 130 秒，超过任务时限
   assert.equal(publisher.allowed(job.id, 'acct'), false);
+});
+
+test('朋友圈发表：状态查询清除过期排队，已领取超时仍保留额度和去重游标', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-moments-expired-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  let now = 1_000_000;
+  const config = { paths: { dataDir: root }, moments: { publishFeatureEnabled: true, publishMaxPerDay: 1 } };
+  const publisher = new MomentsPublisher({ config, now: () => now });
+  const draft = { text: '慢慢找到自己的节奏，今天也值得认真度过。', emotion: 'happy' };
+  publisher.save({ status: 'generating' });
+  publisher.queueDraft(draft, 'acct', publisher.settings(), { hash: 'queued', lastSource: now });
+  now += 121_000;
+  assert.equal(publisher.status().status, 'failed');
+  assert.equal(publisher.job, null);
+  assert.equal(publisher.dailyCount(), 0);
+
+  publisher.queueDraft(draft, 'acct', publisher.settings(), { hash: 'claimed', lastSource: now });
+  const job = publisher.claim('acct');
+  now += 121_000;
+  assert.equal(publisher.status().status, 'unconfirmed');
+  assert.equal(publisher.dailyCount(), 1);
+  assert.equal(publisher.state.lastHash, 'claimed');
+  assert.equal(publisher.complete({ id: job.id, account: 'acct', publishStatus: 'failed' }), false);
+
+  publisher.queueDraft(draft, 'acct', publisher.settings(), { hash: 'cancelled', lastSource: now });
+  config.moments.publishFeatureEnabled = false;
+  assert.equal(publisher.status().status, 'failed');
+  assert.equal(publisher.job, null);
+  assert.equal(publisher.dailyCount(), 1);
+});
+
+
+test('朋友圈配图在目录后建或图片放入子目录后可见，超大图不进入桥接', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-moments-images-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const publisher = new MomentsPublisher({ config: { paths: { dataDir: root }, moments: { publishWithImage: true } } });
+  const draft = { text: '今天的天空很蓝，慢慢走也能看到新的风景。', emotion: 'happy' };
+  publisher.queueDraft(draft, 'account', publisher.settings(), {});
+  assert.equal(publisher.status().imageReason, 'no_usable_image');
+  const folder = path.join(publisher.images, '开心', '新图');
+  fs.mkdirSync(folder, { recursive: true });
+  const image = path.join(folder, 'small.png');
+  fs.writeFileSync(image, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS/8AAAAASUVORK5CYII=', 'base64'));
+  const big = path.join(folder, 'too-big.png');
+  fs.writeFileSync(big, 'x');
+  fs.truncateSync(big, 8 * 1024 * 1024 + 1);
+  publisher.queueDraft(draft, 'account', publisher.settings(), {});
+  assert.equal(publisher.job.query.image, image);
+  assert.equal(publisher.status().imageReason, 'selected');
+  publisher.queueDraft(draft, 'account', publisher.settings(), {}, false);
+  assert.equal(publisher.status().imageReason, 'disabled');
+});
+
+
+test('朋友圈内置图与表情包清单一致，三类自动补齐并保留已有图', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-moments-presets-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.resolve(__dirname, '..');
+  const publisher = new MomentsPublisher({ config: {
+    root: repo, paths: { dataDir: root }, features: { stickers: false },
+    moments: { publishFeatureEnabled: true },
+  } });
+  const existing = path.join(publisher.images, '开心', 'custom.png');
+  fs.mkdirSync(path.dirname(existing), { recursive: true });
+  fs.writeFileSync(existing, 'keep-my-image');
+  assert.equal(await publisher.prepareImages(), 27);
+  const manifest = JSON.parse(fs.readFileSync(path.join(repo, 'assets/stickers/manifest.json'), 'utf8'));
+  for (const item of manifest.files)
+    assert.deepEqual(fs.readFileSync(path.join(publisher.images, item.file)),
+      fs.readFileSync(path.join(repo, 'assets/stickers', item.file)));
+  assert.equal(await publisher.prepareImages(), 0);
+  assert.equal(fs.readFileSync(existing, 'utf8'), 'keep-my-image');
+  assert.equal(publisher.config.features.stickers, false);
+});
+
+test('素材不足时清除上次文案和配图状态，本次没有进入发表队列', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-moments-empty-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const publisher = new MomentsPublisher({ config: {
+    root, paths: { dataDir: root }, moments: { publishFeatureEnabled: true },
+  }, store: { sessions: new Map() } });
+  publisher.preview = { text: '旧内容', image: '', imageReason: 'disabled' };
+  publisher.save({ lastImageReason: 'selected', lastImage: true, lastImageCategory: '开心' });
+  assert.equal(publisher.queueTest('account', true), '');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(publisher.status().status, 'no_material');
+  assert.equal(publisher.status().preview, '');
+  assert.equal(publisher.status().imageReason, '');
+  assert.equal(publisher.status().image, false);
+  assert.equal(publisher.claim('account'), null);
 });

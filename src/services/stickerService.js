@@ -381,7 +381,7 @@ class StickerService {
       this.config.sticker?.collectReceived === true].join('|');
     const cached = this._statusCache;
     if (cached.value && cached.key === cacheKey && this.now() - cached.at < STATUS_CACHE_MS) {
-      const hit = { ...cached.value, ...queue };
+      const hit = { ...cached.value, ...this._demandSettings(), ...queue };
       probe.emit(this.logger, 'debug', `status(异步) 命中缓存 RTT=${probe.ms(probe.now() - t0)}ms`);
       return hit;
     }

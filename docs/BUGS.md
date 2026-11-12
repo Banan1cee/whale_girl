@@ -5,6 +5,9 @@
 
 | # | 现象 | 根因 | 修复 | 版本 | 回归测试 |
 | --- | --- | --- | --- | --- | --- |
+| 82 | 朋友圈卡在相机菜单、选图窗口或绿色发表按钮前 | 菜单小字漏识别，文件控件类型/层级与固定假设不符，自绘按钮 Invoke 可返回成功但无实际动作；原生 UIA 失败会影响整个桥接 | 独立子进程执行、内存 OCR、原生控件绑定 UIA、文案/预览核验后单次真实点击；未知结果不重发，保留额度和去重游标；补齐手动发表与三类配图 | 4.1.0 | `tests/test_moments_publish.py`、`tests/test_moments_worker.py`、`tests/test_moments_ocr.py`、`tests/moments.test.js` |
+| 81 | 表情包概率改完又回到 70%，关闭表情包时不能调概率 | 异步刷新覆盖待保存值，状态缓存返回旧概率，控件可用性绑定发送开关 | 按修改版本保护本地编辑和保存，缓存读取合并最新设置，停机/关闭时保留设置能力 | 4.1.0 | `tests/sticker-status-cache.test.js`、启动器构建 |
+| 80 | 消息汇总在工作台和插件中出现两个入口 | 宿主旧页面和插件工具入口同时保留，汇总消息读取未对齐会话存储 | 删除重复工作台页面，保留插件按次授权入口与宿主接口，使用统一消息存储读取 | 4.1.0 | `tests/digest.test.js`、启动器构建 |
 | 79 | 用户说「安静」反而收到「我走了」；刚被赶走发一个「？」或「开麦」她又回来；群里 @ 了别人她还抢答 | 退场、命令、静默、接话窗口各自手写一套优先级和状态写入，顺序互相覆盖 | 新增 `core/sessionState` 和 `core/addressing`：静默只由显式 @/回复解除，接话窗口和 followup 统一受 `groupAddressGuard` 约束；显式命令先于退场词，否定句不赶人；`directedElsewhere` 给主人/显式 @/叫她/被骂让路；裸 @ 的「？」不再被旧问题回填 | 4.1.0 | `tests/core-modules.test.js`、`tests/silence.test.js`、`tests/bot.test.js`、`tests/context.test.js` |
 | 78 | 换话题/空闲一段时间后，她只记得最后一个 episode；重启后偶尔整段对话消失 | `closeEpisode` 每次 `resetSummary` 清空所有 segments；`rotateIfNeeded` 在异步摘要完成前就推进 coverage | episode 关闭只追加当前段，summary 段持续累积；coverage 等 `applySegment` 成功后再前进。群聊上下文改按 token 裁剪，修复「间隔+时间戳」历史行解析 | 4.1.0 | `tests/memory-episode.test.js`、`tests/memory-crash.test.js`、`tests/core-modules.test.js` |
 | 77 | 自动备份目录里能看到 API Key；恢复旧备份后几个月不活跃的会话全部消失；改预算/字数/服务商后界面显示生效、实际仍用旧值 | 自动快照 `withSecrets:true`；恢复直接删 `memory/` 且不保留 `archive/`；预算 plan、settings 影子、Key 清理解耦 | 快照默认脱敏，恢复保留 `archive/`；`Store.replan()` 跟随配置热更新；切换服务商清旧 Key/地址/模型；`historyTurns`/字数上限真正接入主路径。另修 `/forget` 空参数清空人物卡、网关部分成功当整体成功、提醒额度重复计数 | 4.1.0 | `tests/memory-backup.test.js`、`tests/memory-budget-plan.test.js`、`tests/server.test.js`、`tests/core-modules.test.js` |
