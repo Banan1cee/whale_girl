@@ -108,6 +108,9 @@ try
     Check(PluginMarket.ParseCatalog(personaCatalog, 1, "persona").Length == 1);
     Check(PluginMarket.ParseCatalog(personaCatalog, 1, "tool").Length == 0);
     Check(PluginMarket.ParseCatalog(personaCatalog, 3, "message").Length == 0);
+    // 回归：市场还没签名时，条目没有 Signature 也必须能解析，否则整个市场会被过滤成空的。
+    var unsignedCatalog = JsonSerializer.SerializeToUtf8Bytes(new[] { personaListing with { Signature = null } });
+    Check(PluginMarket.ParseCatalog(unsignedCatalog, 1, "persona").Length == 1);
     var codeCatalog = JsonSerializer.SerializeToUtf8Bytes(new[] { info with {
         Download = "https://github.com/example/plugin.zip", Sha256 = new string('a', 64),
         Signature = "catalog-signature-present" } });

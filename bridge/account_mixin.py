@@ -154,12 +154,20 @@ class AccountMixin:
             self.alias_cache[key] = out
         return out
 
-    def _account_locked(self, fn):
-        """把账号窗口绑定函数整体罩进 account_lock（见上面注释）。"""
+    @staticmethod
+    def _account_locked(fn):
+        """把账号窗口绑定函数整体罩进 account_lock（见上面注释）。
 
-        def _wrap(*args, **kwargs):
-            with self.account_lock:
-                return fn(*args, **kwargs)
+        包装器必须从**调用现场**取实例（inst），不能闭包捕获 self：
+        这里是在类体里调用的，那时根本没有实例；以前写成
+        `_account_locked(None, ...)` + 闭包 self，结果每次调用都在
+        `with self.account_lock` 抛 AttributeError('NoneType' object has no attribute 'account_lock')，
+        择窗永远失败、桥接一直卡在「等待微信主窗可用」。
+        """
+
+        def _wrap(inst, *args, **kwargs):
+            with inst.account_lock:
+                return fn(inst, *args, **kwargs)
         _wrap.__name__ = fn.__name__
         return _wrap
 
@@ -538,7 +546,7 @@ class AccountMixin:
         return True
 
     # 生产环境给择窗/rebind 全程加 account_lock；测试单函数抽取仍用原函数。
-    pick_account_window = _account_locked(None, pick_account_window)
+    pick_account_window = _account_locked(pick_account_window)
 
     def ensure_account_window(self, engine=None):
         """发送前确认「锁定的微信窗口」还活着；微信重启/换号后自动重认。

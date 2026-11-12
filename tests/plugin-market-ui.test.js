@@ -40,12 +40,16 @@ test('本地安装提示来源和替换版本，人设页应用市场预设须�
   assert.match(persona, /StartsWith\("market-", StringComparison\.Ordinal\)[\s\S]*AppDialog\.Confirm\([\s\S]*\) return;\s+var res/);
 });
 
-test('市场目录和插件包都必须通过内置公钥验签', () => {
+test('签名可选：有就验、没有就按未签名加载', () => {
   const market = read('launcher/PluginMarket.cs');
   const trust = read('launcher/PluginTrust.cs');
   assert.match(market, /ParseSignedCatalog/);
   assert.match(market, /PluginTrust\.Verify\(bytes, listing\.Signature\)/);
   assert.match(market, /url \+ "\.sig"/);
+  // 回归：目录没有 .sig 时整份拒绝的话，未签名市场永远打不开。
+  assert.match(market, /DownloadMissingException/);
+  assert.doesNotMatch(market, /目录缺少 \.sig 签名，已拒绝加载/);
+  assert.doesNotMatch(market, /!string\.IsNullOrWhiteSpace\(i\.Signature\)/);
   assert.match(trust, /ECDsa/);
   assert.match(trust, /ImportSubjectPublicKeyInfo/);
 });
