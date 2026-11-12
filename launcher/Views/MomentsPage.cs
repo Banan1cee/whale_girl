@@ -273,7 +273,7 @@ public sealed partial class MomentsPage : UserControl
                 ChkPublishFeature.IsChecked = res.Bool("featureEnabled");
                 ChkPublish.IsChecked = res.Bool("enabled");
                 ChkPublishImage.IsChecked = res.Bool("withImage");
-                TxtPublishInterval.Text = res.Long("interval").ToString();
+                TxtPublishInterval.Text = res.Prop("interval").ToString();
                 TxtPublishLimit.Text = res.Long("maxPerDay").ToString();
                 publishSettingsLoaded = true;
             }
@@ -284,10 +284,10 @@ public sealed partial class MomentsPage : UserControl
 
     async Task SavePublishAsync()
     {
-        if (!int.TryParse(TxtPublishInterval.Text, out var interval) || interval < 1 || interval > 24
-            || !int.TryParse(TxtPublishLimit.Text, out var maxPerDay) || maxPerDay < 1 || maxPerDay > 5)
+        if (!double.TryParse(TxtPublishInterval.Text, out var interval) || !double.IsFinite(interval) || interval <= 0
+            || !int.TryParse(TxtPublishLimit.Text, out var maxPerDay) || maxPerDay < 0)
         {
-            PublishStatus.Text = "间隔须为 1～24 小时，每日上限须为 1～5 条。";
+            PublishStatus.Text = "间隔请填大于 0 的小时数（可填小数），每日上限填非负整数，0 表示不限。";
             return;
         }
         var featureEnabled = ChkPublishFeature.IsChecked == true;
@@ -329,9 +329,9 @@ public sealed partial class MomentsPage : UserControl
                 if (generation != viewGeneration) return;
                 if (!res.Ok) { PublishStatus.Text = Api.Message(res); return; }
                 ShowPublishStatus(res);
-                if (res.Str("status") is not ("queued" or "sending")) return;
+                if (res.Str("status") is not ("generating" or "queued" or "sending")) return;
             }
-            PublishStatus.Text = "测试结果待确认，请到微信核对。";
+            PublishStatus.Text = "发表结果待确认，请到微信核对。";
         }
         catch (Exception ex) { if (generation == viewGeneration) PublishStatus.Text = Api.FriendlyError(ex); }
         finally { BtnTestPublish.IsEnabled = true; }
@@ -347,33 +347,52 @@ public sealed partial class MomentsPage : UserControl
             "sending" => "正在识别微信界面",
             "confirmed" => "已在自己的朋友圈缓存中确认",
             "unconfirmed" => "上次已尝试发表，需在微信确认",
-            "no_material" => "上次没有足够的新素材，已跳过",
-            "filtered" => "上次文案重复或未通过检查，已跳过",
+            "no_material" => "近 24 小时没有至少 3 条可用聊天素材，本次未发表",
+            "model_unavailable" => "模型未就绪，本次未发表",
+            "filtered" => "文案重复或未通过检查，已跳过",
             "state_error" => "发布状态文件无法读取，已暂停",
             "failed" => "上次未完成：" + (reason switch {
-                "camera_not_recognized" => "未识别到朋友圈相机图标",
+                "fullscreen_blocked" => "前台处于全屏，已跳过本次自动发表；可点击立即发表",
+                "account_not_verified" => "微信账号窗口尚未确认，请查看微信桥接状态",
+                "window_unavailable" => "微信窗口已失效，请刷新桥接账号",
+                "gui_unavailable" => "微信操作驱动未就绪，请重启桥接",
+                "window_bind_failed" => "未能绑定到已确认的微信窗口",
+                "job_cancelled" => "任务已取消或超时，请检查当前微信界面",
+                "ocr_transport_error" => "微信界面识别或操作失败，请查看桥接诊断",
+                "publish_worker_exited" => "朋友圈操作进程异常退出，请查看诊断中的最后步骤",
+                "publish_worker_timeout" => "朋友圈操作超时，已停止，请查看微信当前界面",
+                "camera_not_recognized" => "未识别到朋友圈相机按钮",
+                "timeline_not_recognized" => "未识别到朋友圈页面",
                 "text_menu_not_recognized" => "未识别到发表文字菜单",
-                "image_menu_not_recognized" => "未识别到发表图片菜单",
-                "image_dialog_not_recognized" => "未识别到微信选图窗口",
+                "image_menu_not_recognized" => "未识别到相机菜单中的图片入口",
+                "image_dialog_not_recognized" => "未识别到微信选图窗口或文件名框",
+                "image_picker_still_open" => "选图窗口未关闭，图片尚未导入，本次未发表",
+                "image_dialog_timeout" => "微信选图窗口未响应，已停止本次操作",
                 "image_preview_not_recognized" => "无法确认图片预览，已停止",
                 "editor_not_recognized" => "未识别到朋友圈编辑框",
                 "editor_not_empty" => "无法确认空白编辑框，已停止",
                 "draft_not_verified" => "无法确认待发文案，已停止",
-                "job_cancelled" => "账号或前台状态变化，任务已取消",
                 "wechat_not_foreground" => "微信没有切到前台",
                 "invalid_draft" => "文案不符合发表要求",
                 "invalid_image" => "配图无效",
-                "timeline_not_recognized" => "未识别到朋友圈页面",
-                "ocr_transport_error" => "OCR/界面操作异常",
                 "publish_exception" => "发表流程异常",
                 _ => "请查看桥接诊断",
             }),
             _ => "等待下一次检查",
         };
         var preview = res.Str("preview");
+        var imageInfo = res.Str("imageReason") switch
+        {
+            "selected" => $"配图已选中（{res.Str("category")}）",
+            "disabled" => "本次纯文字：未勾选按情绪配图",
+            "no_usable_image" => $"本次纯文字：「{res.Str("category")}」目录没有可用的 PNG/JPG（每张不超过 8 MB）",
+            _ => res.Bool("withImage") ? "已开启配图" : "配图未开启",
+        };
+        if (res.Str("status") is not ("no_material" or "model_unavailable" or "filtered" or "generating"))
+            detail += " · " + imageInfo;
         var mode = res.Bool("enabled") ? "定时发表已开" : "定时发表已关";
         PublishStatus.Text = res.Bool("featureEnabled")
-            ? $"{mode} · 今日占用 {res.Long("count")} 条额度 · {detail}" + (preview.Length > 0 ? Environment.NewLine + preview : "")
+            ? $"{mode} · 今日自动发表占用 {res.Long("count")} 条额度 · {detail}" + (preview.Length > 0 ? Environment.NewLine + preview : "")
             : "朋友圈发表总开关已关闭";
     }
 

@@ -281,22 +281,23 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
                         self.bind_gui_window(self.gui)
                         return perform(WeChat(gui=self.gui, db=self.db).Moment, action, query, log=G.log)
             def moments_publish(query, gate):
-                from moments_publish import publish
-                from wechatauto import WeChat
-                with self.send_lock:
-                    if (self.foreground_is_fullscreen() or not self.account_send_allowed('朋友圈发表')
-                            or not self.ACCOUNT.get('verified') or not self.wechat_window_alive()):
+                from moments_worker import publish_isolated
+                # 发表也属于发送临界区，心跳不能在菜单/编辑器打开时重建 UIA。
+                with self.send_lock, G._SendStateScope(budget=110):
+                    if query.get('manual') is not True and self.foreground_is_fullscreen():
+                        return 'failed', 'fullscreen_blocked'
+                    if not self.account_send_allowed('朋友圈发表') or not self.ACCOUNT.get('verified'):
                         return 'failed', 'account_not_verified'
+                    if not self.wechat_window_alive():
+                        return 'failed', 'window_unavailable'
                     hwnd = int(self.ACCOUNT.get('hwnd') or 0)
                     def allowed():
                         return (self.ACCOUNT.get('verified') and self.ACCOUNT.get('hwnd') == hwnd
                                 and self.wechat_window_alive() and gate())
                     with self.gui_lock:
-                        if self.gui is None or not allowed():
-                            return 'failed', 'account_not_verified'
-                        if not self.gui.use_window(hwnd) or int(self.gui.main_hwnd) != hwnd:
-                            return 'failed', 'account_not_verified'
-                        return publish(self, WeChat(gui=self.gui, db=self.db).Moment, query, allowed)
+                        if not allowed():
+                            return 'failed', 'job_cancelled'
+                        return publish_isolated(self, query, allowed, G.log)
 
             moments_reader = MomentsReader(self.db, G.LOCAL_HTTP, self.bot_url.rsplit('/webhook', 1)[0], {'x-bot-token': self.token, 'x-whale-bridge': '1'}, G.log, interact=moments_interact, publish=moments_publish).start()
         except Exception as exc:

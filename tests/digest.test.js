@@ -5,7 +5,7 @@
  *
  * 起因：4.1 只有「插件市场」，插件运行时拿不到聊天记录、输出也只有整数，
  * 做不了「把今天的会话汇总成一段简报」。这个功能由内核自己做：
- * 读记忆库 → 拼提示词 → 聊天模型写 Markdown → 启动器「消息汇总」页展示。
+ * 读记忆库 → 拼提示词 → 聊天模型写 Markdown → 插件设置页展示。
  *
  * 这里盯住四件事：
  *   1) 时间窗只取当天（昨天的不许混进来）；
@@ -257,29 +257,10 @@ test('路由：GET 读状态，POST 立刻 202 并把范围交给后台生成', 
 const repoRoot = path.resolve(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 
-test('启动器：导航里有「消息汇总」，并指向 DigestPage', () => {
+test('消息汇总通过插件设置进入，工作台不重复挂入口', () => {
   const main = read('launcher/MainWindow.xaml.cs');
-  assert.match(main, /Key = "消息汇总", Label = "消息汇总"/);
-  assert.match(main, /case "消息汇总": return new DigestPage\(_sup\);/);
-});
-
-test('启动器：DigestPage 的类名、事件处理和样式键都对得上', () => {
-  const xaml = read('launcher/Views/DigestPage.xaml');
-  const code = read('launcher/Views/DigestPage.xaml.cs');
-  assert.match(xaml, /x:Class="WhaleLauncher\.Views\.DigestPage"/);
-  assert.match(code, /namespace WhaleLauncher\.Views/);
-  assert.match(code, /partial class DigestPage/);
-
-  // XAML 挂的事件在后台必须有同名方法：写错名字编译能过，点一下才抛 XamlParseException。
-  const handlers = [...xaml.matchAll(/(?:Click|SelectionChanged)="(\w+)"/g)].map((m) => m[1]);
-  assert.ok(handlers.length >= 3, '至少要有生成 / 复制 / 切换范围三个入口');
-  for (const name of new Set(handlers)) {
-    assert.match(code, new RegExp(`private (?:async )?void ${name}\\(`), '缺少事件处理 ' + name);
-  }
-
-  // 样式键必须真的定义在 App.xaml 里，否则同样是运行时才炸。
-  const keys = new Set([...read('launcher/App.xaml').matchAll(/x:Key="([^"]+)"/g)].map((m) => m[1]));
-  for (const [, key] of xaml.matchAll(/StaticResource (\w+)/g)) {
-    assert.ok(keys.has(key), '未定义的样式键 ' + key);
-  }
+  const tool = read('launcher/Views/PluginToolPage.xaml.cs');
+  assert.doesNotMatch(main, /Key = "消息汇总"|new DigestPage\(/);
+  assert.match(tool, /PluginHostActions.SummarizeAsync\(_sup, value\)/);
+  assert.match(tool, /if \(digest && !AppDialog\.Confirm\([\s\S]*?"确认聊天汇总权限", okText: "允许一次"\)\)\s*return;/);
 });

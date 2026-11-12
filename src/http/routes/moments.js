@@ -47,8 +47,9 @@ module.exports = function register(router) {
     const gateway = runtime.gateways.get('wechat');
     return gateway?.bridgeStatus().online && gateway.bridge.accountOk === true ? gateway.bridge.account : '';
   };
-  router.get('/api/moments/publish-settings', (runtime, req, res) => {
+  router.get('/api/moments/publish-settings', async (runtime, req, res) => {
     local(req);
+    await runtime.momentsPublisher.prepareImages();
     return json(res, 200, publishInfo(runtime));
   });
   router.post('/api/moments/publish-settings', async (runtime, req, res) => {
@@ -70,7 +71,7 @@ module.exports = function register(router) {
   router.post('/api/moments/publish-test', async (runtime, req, res) => {
     local(req);
     const body = await readBody(req) || {};
-    if (body.confirm !== true) return json(res, 400, { ok: false, error: '测试会实际发表一条朋友圈' });
+    if (body.confirm !== true) return json(res, 400, { ok: false, error: '立即生成并发表一条朋友圈' });
     const code = runtime.momentsPublisher.queueTest(accountReady(runtime), body.withImage === true);
     if (!code) return json(res, 200, publishInfo(runtime));
     const messages = {
@@ -85,6 +86,7 @@ module.exports = function register(router) {
     local(req);
     const body = await readBody(req) || {};
     if (!Object.hasOwn(EMOTIONS, body.emotion)) return json(res, 400, { ok: false, error: '分类无效' });
+    await runtime.momentsPublisher.prepareImages();
     return json(res, 200, { ok: true,
       dir: safeDirectory(path.join(runtime.momentsPublisher.images, EMOTIONS[body.emotion])),
     });

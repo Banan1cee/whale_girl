@@ -40,17 +40,17 @@
                     <TextBlock Text="每天最多" Style="{StaticResource Label}" VerticalAlignment="Center" />
                     <TextBox x:Name="TxtPublishLimit" Width="56" Text="1" Margin="6,0,16,0" />
                     <Button x:Name="BtnSavePublish" Content="保存自动发表设置" Style="{StaticResource Primary}" />
-                    <Button x:Name="BtnTestPublish" Content="立即测试发表一条" Style="{StaticResource Ghost}" Margin="8,0,0,0" />
+                    <Button x:Name="BtnTestPublish" Content="立即发表一条" Style="{StaticResource Ghost}" Margin="8,0,0,0" />
                     <Button x:Name="BtnRefreshPublish" Content="刷新状态" Style="{StaticResource Ghost}" Margin="8,0,0,0" />
                 </WrapPanel>
-                <TextBlock Text="测试会真实发表固定文案。开启配图时会从「开心」选一张，测试计入每日上限。"
+                <TextBlock Text="立即发表会根据近期聊天生成文案，不占自动发表额度。按文案心情从开心、傲娇或炸毛目录选图。间隔支持小数小时，每日上限填 0 表示不限。"
                            Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" />
                 <WrapPanel Margin="0,8,0,0">
                     <Button x:Name="BtnPublishHappy" Content="开心图片目录" Style="{StaticResource Ghost}" Margin="0,0,6,0" />
                     <Button x:Name="BtnPublishCute" Content="傲娇图片目录" Style="{StaticResource Ghost}" Margin="0,0,6,0" />
                     <Button x:Name="BtnPublishAngry" Content="炸毛图片目录" Style="{StaticResource Ghost}" />
                 </WrapPanel>
-                <TextBlock Text="配图只收 PNG / JPG，单张最多 8 MB。找不到对应图片时按纯文字发表；微信界面无法核验时跳过这条。"
+                <TextBlock Text="内置配图与表情包使用相同的开心、傲娇、炸毛图片，每类 9 张，自动添加。也可加入 PNG / JPG，单张最多 8 MB。找不到对应图片时按纯文字发表；微信界面无法核验时跳过这条。"
                            Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,7,0,0" />
                 <TextBlock x:Name="PublishStatus" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,5,0,0" />
             </StackPanel>

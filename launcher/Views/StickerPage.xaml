@@ -75,7 +75,7 @@
                                 ToolTip="这一轮要不要提醒她带一张；不是最终发送概率" />
                         <TextBlock x:Name="TxtDemandValue" Width="46" Margin="8,0,0,0" VerticalAlignment="Center"
                                    Style="{StaticResource Small}" />
-                        <CheckBox x:Name="ChkEnsure" Content="没写标记也补一张（必发）" Margin="10,0,0,0" VerticalAlignment="Center"
+                        <CheckBox x:Name="ChkEnsure" Click="OnEnsureChanged" Content="没写标记也补一张（必发）" Margin="10,0,0,0" VerticalAlignment="Center"
                                   ToolTip="命中频率的轮次，模型没写 [[sticker:分类]] 也由程序按语气补一张；难过/求助时不发" />
                         <Button x:Name="BtnSaveDemand" Content="保存频率" Style="{StaticResource Ghost}"
                                 Margin="8,0,0,0" Click="OnSaveDemand" />
