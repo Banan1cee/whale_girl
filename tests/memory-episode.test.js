@@ -59,6 +59,24 @@ test('空闲 30 分钟：关闭旧 episode，写一条 L2 + thread', async () =>
   cleanup(dir);
 });
 
+test('连续关闭 episode，摘要段要累积而不是只剩最后一段', async () => {
+  const { store, dir } = tempStore();
+  const key = 'wechat:u:a';
+  try {
+    store.appendMessage(key, { role: 'user', name: '小海', uid: 'u1', text: '第一段', ts: Date.now() - 60000 });
+    store.appendMessage(key, { role: 'assistant', name: '鲸鲸', text: '收到', ts: Date.now() - 59000 });
+    await store.closeEpisode(key, { llm: fakeLlm, now: Date.now() });
+    store.appendMessage(key, { role: 'user', name: '小海', uid: 'u1', text: '第二段', ts: Date.now() });
+    store.appendMessage(key, { role: 'assistant', name: '鲸鲸', text: '好', ts: Date.now() + 1 });
+    await store.closeEpisode(key, { llm: fakeLlm, now: Date.now() });
+    const chat = store.chatStore.chats.get(key);
+    assert.ok((chat.summary.segments || []).length >= 2, '旧 episode 的摘要段不能每轮被清空');
+  } finally {
+    store.close();
+    cleanup(dir);
+  }
+});
+
 test('L2 幂等：同一个 episode 关两次，事件只写一条', async () => {
   const { store, dir } = tempStore();
   const key = 'wechat:u:a';

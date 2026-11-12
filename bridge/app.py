@@ -225,6 +225,7 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
             G.log_warn('读取会话列表失败：', e)
         self.name_cache = {}
         self.alias_cache = {}
+        self._mention_cache = None
         self.open_cache = {}
         self.gui = None
         self.gui_lock = G.threading.Lock()

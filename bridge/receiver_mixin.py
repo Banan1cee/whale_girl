@@ -29,6 +29,70 @@ class ReceiverMixin:
             self._media_box['downloader'] = dl
             return dl
 
+    def self_identity_ids(self):
+        """所有能代表「自己」的内部 id：真 wxid、账号目录名、目录推出来的 wxid。"""
+        ids = set()
+        values = [getattr(self, 'me', ''), getattr(self, 'self_wxid', ''),
+                  getattr(getattr(self, 'db', None), 'wxid', ''),
+                  getattr(getattr(self, 'db', None), 'account', '')]
+        try:
+            values.append(G.account_wxid(getattr(self.db, 'account', '')))
+        except Exception:
+            pass
+        for value in values:
+            value = str(value or '').strip()
+            if value:
+                ids.add(value)
+        return ids
+
+    def self_mention_names(self, chat=''):
+        """当前「她」在群里可能被 @ 到的名字。
+
+        人设名 + 别名 + 账号昵称 + 账号备注 + 自己 wxid/账号目录，
+        再加群成员表里自己的昵称/备注。缓存 60 秒，避免每条消息都开库；
+        配置热重载会主动清缓存。改名后最多 60 秒自动跟上。
+        """
+        now = G.time.time()
+        cache = getattr(self, '_mention_cache', None)
+        if cache and cache.get('chat') == chat and now - float(cache.get('ts') or 0) < 60:
+            return cache['names']
+
+        info = {}
+        try:
+            info = self.db.get_self_info() or {}
+        except Exception:
+            info = {}
+        nick = str(info.get('nick_name') or '').strip()
+        remark = str(info.get('remark') or '').strip()
+        if nick and nick != getattr(self, '_self_nick', ''):
+            G.log('当前登录账号昵称已更新：', nick)
+        if nick:
+            self._self_nick = nick
+        else:
+            nick = str(getattr(self, '_self_nick', '') or '').strip()
+
+        persona = (getattr(self, 'cfg', {}) or {}).get('persona') or {}
+        aliases = getattr(self, 'aliases', None) or []
+        group_names = []
+        if str(chat or '').endswith('@chatroom'):
+            ids = self.self_identity_ids()
+            try:
+                for member in self.db.get_group_members(chat) or []:
+                    if str(member.get('username') or '') in ids:
+                        group_names += [member.get('nick_name'), member.get('remark')]
+            except Exception:
+                pass
+
+        names = G.mention.build_names(
+            persona.get('name'), aliases, nick, remark, group_names,
+            sorted(self.self_identity_ids()),
+        )
+        self._mention_cache = {'chat': chat, 'ts': now, 'names': names}
+        if names and names != getattr(self, '_mention_logged', None):
+            self._mention_logged = list(names)
+            G.log('群聊称呼：%s' % (' / '.join(names[:10])))
+        return names
+
     def is_latest_message(self, username, msg):
         """这条是不是当前会话的最后一条。
 
@@ -355,14 +419,19 @@ class ReceiverMixin:
             if '拍了拍' in content and '<url>' not in content:
                 G.log('跳过拍一拍提示：', content[:24])
                 return
-            import re as _mention_re
-            _at_text = content.replace('\u2005', ' ')
-            addressed = any((a and _mention_re.search('@\\s*' + _mention_re.escape(str(a)) + '(?=$|[\\s，,：:！!~～…?？。\\-—])', _at_text) for a in self.aliases))
-            _at_remainder = _mention_re.sub('^[A-Za-z0-9_\\-]{4,}:\\s*', '', _at_text).strip()
-            for _alias in self.aliases:
-                if _alias:
-                    _at_remainder = _mention_re.sub('@\\s*' + _mention_re.escape(str(_alias)), ' ', _at_remainder)
-            _bare_mention = not _at_remainder.strip(' \t\r\n，,。.!！?？…~～')
+            _names = self.self_mention_names(username) if is_group else []
+            _mention = G.mention.analyze(
+                content, _names, self.display_name(username) if is_group else '')
+            addressed = bool(_mention['addressed'])
+            _structured = None
+            if is_group and '@' in content:
+                # 优先用 source 里的 atuserlist（wxid），昵称改名也不会漏；
+                # 读不到再退回显示名匹配。
+                _structured = G.mention_meta.self_mentioned(
+                    self.db, username, msg, self.self_identity_ids())
+                if _structured is not None:
+                    addressed = bool(_structured)
+            _bare_mention = _mention['bare_any'] if _structured else _mention['bare_self']
             if username.endswith('@chatroom') and addressed and _bare_mention:
                 try:
                     for m in self.db.get_messages(username, limit=12):
@@ -372,20 +441,33 @@ class ReceiverMixin:
                             continue
                         prev = G.fix_garbled((m.get('content') or '').strip())
                         prev = __import__('re').sub('^[A-Za-z0-9_\\-]{4,}:\\s*', '', prev).strip()
-                        if prev and (not any((a in prev for a in self.aliases))):
+                        # 上一条如果已经叫过她，就不是「裸 @ 补问题」的素材。
+                        # 这里必须用和 @ 解析同一套名字/归一化，不能用短别名的子串匹配。
+                        if prev and not G.mention.contains_name(prev, _names):
                             content = prev
                             G.log('补上一条问题：', prev[:20])
                             break
                 except Exception as e:
                     G.log('补问题失败：', repr(e))
-            _mentioned_names = []
-            if is_group:
-                for _hit in _mention_re.findall('@\\s*([^\\s@，,：:！!~～…?？。—]+)', _at_text):
-                    _name = str(_hit).strip()
-                    if _name and _name not in self.aliases and (_name not in _mentioned_names):
-                        _mentioned_names.append(_name)
+            _mentioned_names = list(_mention['mentioned_names'])
+            if is_group and not addressed and '@' in content:
+                # 同一组「@对象」在每个群只提醒一次，避免正常 @ 别人也刷屏。
+                # 这次「@许愿 被跳过」如果留着这条日志，一眼就能看到称呼表不对。
+                G.log_throttled(
+                    'mention-miss:%s:%s' % (
+                        username, ','.join(sorted(_mentioned_names[:4])) or '?'),
+                    '群消息含 @ 但没认出是叫我：@对象=%r 当前称呼=%r 消息id=%s:%s:%s'
+                    % (_mentioned_names[:4], _names[:6], username,
+                       msg.get('shard') or '', msg.get('local_id')),
+                )
             G.log('收到', '群' if is_group else '私聊', self.display_name(username), '←', nickname, '（%d 字）' % len(content))
-            payload = {'chat_id': username, 'chat_type': 'group' if is_group else 'private', 'user_id': sender or 'unknown', 'senderId': sender or 'unknown', 'sender_id': sender or 'unknown', 'senderName': nickname, 'nickname': nickname, 'text': content, 'msg_id': '%s:%s:%s' % (username, msg.get('shard') or '', msg.get('local_id')), 'at_me': addressed, 'mentioned_names': _mentioned_names, 'chat_title': self.display_name(username) if is_group else ''}
+            # 给内核的只放显示名；wxid/账号目录只参与 @ 元数据判断，别拿去匹配正文。
+            try:
+                _ids = self.self_identity_ids()
+            except Exception:
+                _ids = set()
+            _payload_names = [n for n in (_names or []) if n not in _ids]
+            payload = {'chat_id': username, 'chat_type': 'group' if is_group else 'private', 'user_id': sender or 'unknown', 'senderId': sender or 'unknown', 'sender_id': sender or 'unknown', 'senderName': nickname, 'nickname': nickname, 'text': content, 'msg_id': '%s:%s:%s' % (username, msg.get('shard') or '', msg.get('local_id')), 'at_me': addressed, 'mentioned_names': _mentioned_names, 'self_names': _payload_names, 'chat_title': self.display_name(username) if is_group else ''}
             try:
                 headers = {'x-whale-bridge': '1'}
                 if self.token:

@@ -322,7 +322,7 @@ class ReminderService {
     const previous = JSON.parse(JSON.stringify(this.items));
     // 已领取但尚未回执的任务也占用每日额度，防止多轮领取超限。
     // 日记通知不走用户提醒额度，所以不计入 reserved。
-    const reserved = this.items.filter(it => it.status === 'sending' && it.kind !== 'diary').length;
+    // rules().sentToday 已经统计 sending/retrying，不能再加一遍 reserved。
     for (const item of this.items) {
       if (out.length >= limit) break;
       if (item.status !== 'pending' && item.status !== 'retrying') continue;
@@ -345,7 +345,7 @@ class ReminderService {
           continue;
         }
       }
-      if (!isDiary && rules.dailyCap && rules.sentToday + reserved + out.length >= rules.dailyCap) {
+      if (!isDiary && rules.dailyCap && rules.sentToday + out.length >= rules.dailyCap) {
         item.status = 'expired';
         item.error = `今天提醒次数已满（${rules.dailyCap} 次），不补发`;
         item.finishedAt = now;

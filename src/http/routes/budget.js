@@ -12,6 +12,9 @@ module.exports = function register(router) {
     return json(res, 200, estimate(runtime.config, {
       ...(out > 0 ? { outputTokens: out } : {}),
       ...(budget > 0 ? { dialogueBudget: budget } : {}),
+      provider: runtime.llm?.provider || '',
+      model: runtime.llm?.model || '',
+      timeZone: runtime.config?.env?.timezone || 'Asia/Shanghai',
     }));
   });
 };

@@ -242,7 +242,8 @@ async function describeLink(urlString, { timeoutMs = 6000, cacheMinutes = 60, al
   // 允许/不允许私网的结果要分开缓存，否则「试过一次被挡」会一直挡
   const cacheKey = key + (allowPrivate ? '|p' : '');
   const hit = cache.get(cacheKey);
-  if (hit && Date.now() - hit.at < cacheMinutes * 60 * 1000) return { ...hit.value, cached: true };
+  const hitTtl = hit && Number.isFinite(hit.ttl) ? hit.ttl : cacheMinutes;
+  if (hit && Date.now() - hit.at < hitTtl * 60 * 1000) return { ...hit.value, cached: true };
 
   const res = await fetchUrl(key, { timeoutMs, allowPrivate });
   let value;
@@ -261,7 +262,13 @@ async function describeLink(urlString, { timeoutMs = 6000, cacheMinutes = 60, al
       error: ok ? '' : 'empty',
     };
   }
-  cache.set(cacheKey, { at: Date.now(), value });
+  // 失败结果只缓存很短时间：一次 DNS/超时抖动不该让同一个链接一小时内
+  // 都被判成“打不开”，后续重试根本没发请求。
+  cache.set(cacheKey, {
+    at: Date.now(),
+    value,
+    ttl: value.ok ? cacheMinutes : Math.min(2, cacheMinutes),
+  });
   if (cache.size > 100) {
     const oldest = [...cache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
     if (oldest) cache.delete(oldest[0]);

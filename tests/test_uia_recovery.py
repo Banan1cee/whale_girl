@@ -23,7 +23,7 @@ class RecoveryTests(unittest.TestCase):
             launch.assert_not_called()
             popen.assert_not_called()
 
-    def test_hidden_existing_window_restored_without_process_or_foreground(self):
+    def test_hidden_existing_window_is_woken_without_process_or_foreground(self):
         win32gui = SimpleNamespace(IsWindowVisible=Mock(), IsIconic=Mock(), ShowWindow=Mock(), SetForegroundWindow=Mock())
         win32con = SimpleNamespace(SW_SHOWNOACTIVATE=4)
         win = dict(hwnd=123, pid=456, version='4.2.0.9')
@@ -33,10 +33,13 @@ class RecoveryTests(unittest.TestCase):
                 patch.object(win32gui, 'ShowWindow') as show, \
                 patch.object(win32gui, 'SetForegroundWindow') as foreground, \
                 patch.object(boot, 'pick_window', return_value=win), \
-                patch.object(boot, 'tree_state', return_value='ok'), \
+                patch.object(boot, 'tree_state', side_effect=['shell', 'ok']), \
+                patch.object(boot, 'click_tray_icon', return_value=False), \
+                patch.object(boot, 'wake_by_hotkey', return_value=True) as hotkey, \
                 patch.object(boot.subprocess, 'Popen') as popen:
             self.assertTrue(boot.restore_wechat(win))
-            show.assert_called_once_with(123, win32con.SW_SHOWNOACTIVATE)
+            hotkey.assert_called_once_with(123, log=None)
+            show.assert_not_called()
             foreground.assert_not_called()
             popen.assert_not_called()
 
@@ -46,6 +49,8 @@ class RecoveryTests(unittest.TestCase):
                 patch.object(win32gui, 'IsWindowVisible', return_value=True), \
                 patch.object(win32gui, 'IsIconic', return_value=False), \
                 patch.object(win32gui, 'ShowWindow') as show, \
+                patch.object(boot, 'tree_state', return_value='shell'), \
+                patch.object(boot, 'wake_by_hotkey', return_value=False), \
                 patch.object(boot.subprocess, 'Popen') as popen:
             self.assertFalse(boot.restore_wechat(dict(hwnd=123, pid=456)))
             show.assert_not_called()
@@ -172,6 +177,75 @@ class RecoveryTests(unittest.TestCase):
             process.GetWindowThreadProcessId = lambda h: (1, 444 if h == 111 else 333)
             self.assertIsNone(boot.resolve_account_windows(windows)[0])
 
+    def test_prefer_main_windows_drops_small_same_pid_helper_only(self):
+        sizes = {1: (1120, 689), 2: (262, 296), 3: (262, 296)}
+        gui = SimpleNamespace(IsIconic=lambda _h: False,
+                              GetWindowRect=lambda h: (0, 0) + sizes[h])
+        with patch.dict(sys.modules, {'win32gui': gui}):
+            self.assertEqual(boot.prefer_main_windows([(1, 9), (2, 9), (3, 8)]),
+                             [(1, 9), (3, 8)])
+
+    def test_single_pid_large_and_small_window_picks_largest_with_evidence(self):
+        windows = [(460366, 777), (328942, 777)]
+        sizes = {460366: (1120, 689), 328942: (262, 296)}
+        gui = SimpleNamespace(
+            IsIconic=lambda _h: False,
+            IsWindowVisible=lambda h: h == 460366,
+            GetClassName=lambda _h: 'Qt51514QWindowIcon',
+            GetWindowRect=lambda h: (0, 0) + sizes[h],
+            GetAncestor=lambda h, _kind: h,
+        )
+        process = SimpleNamespace(GetWindowThreadProcessId=lambda _h: (1, 777))
+        with patch.dict(sys.modules, {'win32gui': gui, 'win32process': process}), \
+                patch.object(boot, 'tree_state', return_value='shell'):
+            picked, evidence = boot.resolve_account_windows(windows)
+            self.assertEqual(picked, (460366, 777))
+            self.assertEqual(evidence[0]['picked'], 'largest_in_single_pid')
+            # 跨进程同尺寸绝不合并：两个账号必须继续按会话树判断。
+            process.GetWindowThreadProcessId = lambda h: (1, 777 if h == 460366 else 888)
+            self.assertIsNone(boot.resolve_account_windows(windows)[0])
+
+    def test_wake_by_hotkey_presses_twice_until_tree_recovers(self):
+        with patch.object(boot, '_send_hotkey', return_value=True) as hotkey, \
+                patch.object(boot.time, 'sleep', lambda _s: None):
+            def tree(*_a, **_k):
+                # 第一次热键可能只是把开关拨回托盘；第二次才真正打开。
+                return 'ok' if hotkey.call_count >= 2 else 'shell'
+            with patch.object(boot, 'tree_state', side_effect=tree):
+                self.assertTrue(boot.wake_by_hotkey(123, wait=0.01))
+            self.assertEqual(hotkey.call_count, 2)
+
+    def test_wake_by_hotkey_does_nothing_when_tree_is_healthy(self):
+        with patch.object(boot, 'tree_state', return_value='ok'), \
+                patch.object(boot, '_send_hotkey') as hotkey:
+            self.assertTrue(boot.wake_by_hotkey(123))
+            hotkey.assert_not_called()
+
+    def test_ensure_without_wake_never_opens_a_hidden_window(self):
+        win = dict(hwnd=123, pid=456, version='4.2.0.9')
+        with patch.object(boot, 'pick_window', return_value=win), \
+                patch.object(boot, 'tree_state', return_value='shell'), \
+                patch.object(boot, 'restore_wechat') as restore:
+            res = boot.ensure(wake=False)
+            self.assertEqual(res['reason'], 'asleep')
+            restore.assert_not_called()
+
+    def test_stray_login_window_filter_keeps_wide_or_tall_main_windows(self):
+        windows = [
+            dict(hwnd=100, pid=1, title='微信'),
+            dict(hwnd=200, pid=2, title='微信'),   # 442x581 登录小窗：关
+            dict(hwnd=300, pid=3, title='微信'),   # 1000x400：宽够，保留
+            dict(hwnd=400, pid=4, title='微信'),   # 500x700：高够，保留
+        ]
+        sizes = {100: (1120, 689), 200: (442, 581), 300: (1000, 400), 400: (500, 700)}
+        gui = SimpleNamespace(GetWindowRect=lambda h: (0, 0) + sizes[h],
+                              PostMessage=Mock())
+        with patch.dict(sys.modules, {'win32gui': gui}), \
+                patch.object(boot, '_iter_windows', return_value=windows), \
+                patch.object(boot, 'tree_state', return_value='shell'):
+            boot.close_stray_login_windows(100)
+        self.assertEqual([c.args[0] for c in gui.PostMessage.call_args_list], [200])
+
     def test_wechat_title_has_priority_over_a_large_detached_chat(self):
         windows = [
             dict(hwnd=111, pid=1, title='Detached chat', cls='QtQWindowIcon', area=900000, foreground=True),
@@ -193,16 +267,30 @@ class RecoveryTests(unittest.TestCase):
                    _UIA_READY={'ts': 0}, log=Mock())
         ensure = load_function('ensure_uia_ready', env)
         new_driver = load_function('new_window_driver', env)
+        # 账号未确认时仍然要允许 UIA 物化，否则「等账号确认」和「等控件树」互相死锁。
         self.assertFalse(ensure(force=True)['ok'])
-        uia.ensure.assert_not_called()
+        uia.ensure.assert_called_once_with(prefer_hwnd=0, log=env['log'],
+                                           strict=False, wake=True)
         with self.assertRaises(RuntimeError):
             new_driver()
         gui.assert_not_called()
+        uia.ensure.reset_mock()
         env['ACCOUNT'].update(hwnd=requested, verified=True)
         self.assertFalse(ensure(force=True)['ok'])
-        uia.ensure.assert_called_once_with(prefer_hwnd=requested, log=env['log'], strict=True)
+        uia.ensure.assert_called_once_with(prefer_hwnd=requested, log=env['log'],
+                                           strict=True, wake=True)
         new_driver()
         gui.assert_called_once_with(hwnd=requested)
+
+    def test_heartbeat_can_keep_wechat_asleep(self):
+        uia = SimpleNamespace(ensure=Mock(return_value={'ok': False, 'reason': 'asleep'}),
+                              describe=lambda _: 'UIA 待命')
+        env = dict(acct='', ACCOUNT={'verified': False}, uia_boot=uia,
+                   _UIA_READY={'ts': 0}, log=Mock())
+        ensure = load_function('ensure_uia_ready', env)
+        self.assertFalse(ensure(force=True, wake=False)['ok'])
+        uia.ensure.assert_called_once_with(prefer_hwnd=0, log=env['log'],
+                                           strict=False, wake=False)
 
     def test_strict_probe_will_not_wake_another_wechat_window(self):
         gate = SimpleNamespace(_weixin_dll_module=Mock(return_value=(1, 2, 'Weixin.dll')))

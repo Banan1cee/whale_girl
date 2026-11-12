@@ -172,6 +172,28 @@ test('旧版 v1 备份（files.store）能恢复，下一次启动走迁移', ()
   cleanup(root);
 });
 
+test('自动快照不写明文 Key', () => {
+  const { root, store } = seed({ settings: { provider: 'qwen', apiKey: 'sk-snapshot-secret' } });
+  store.close();
+  const file = backup.writeSnapshot(root, 'startup');
+  const raw = fs.readFileSync(file, 'utf8');
+  assert.ok(!raw.includes('sk-snapshot-secret'), 'data/backups 里的快照不能带 Key');
+  cleanup(root);
+});
+
+test('恢复记忆不会删掉 archive/ 冷数据', () => {
+  const { root, store } = seed();
+  const archive = path.join(root, 'data', 'memory', 'archive', 'old.json');
+  fs.mkdirSync(path.dirname(archive), { recursive: true });
+  fs.writeFileSync(archive, '{"keep":true}');
+  const dest = path.join(root, 'restore.json');
+  backup.exportTo(root, dest);
+  store.close();
+  backup.restoreFromFile(root, dest);
+  assert.equal(fs.readFileSync(archive, 'utf8'), '{"keep":true}');
+  cleanup(root);
+});
+
 test('没有记忆时导出会明确报错，而不是生成空文件', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-mem-empty-'));
   fs.mkdirSync(path.join(root, 'data'), { recursive: true });

@@ -4,10 +4,15 @@ const { createHash } = require('node:crypto');
 const { sanitizeForModel, formatStamp } = require('./text');
 const { stripMasterDispute } = require('./identity');
 const time = require('../infra/time');
+const history = require('./history');
+const { estimateBudgetTokens } = require('../infra/textBudget');
 
 // Qwen 需要足够的上下文才能分清群里是谁在说话；按字符限额而不是只给几条消息。
 const MAX_TURN_CHARS = 1800;
-const MAX_PROMPT_CHARS = 60000;
+// 和 memory/constants.hardTotalTokens 一致；按 token 裁剪，不再拿字符数冒充预算。
+const MAX_PROMPT_TOKENS = 64000;
+// 兼容旧调用方/测试的导出；实际裁剪已改成 token 口径。
+const MAX_PROMPT_CHARS = 100000;
 
 // 时间戳只在「首条 / 与上一条隔了 5 分钟以上 / 跨天」时标，别每条都写，省 token 也更像聊天记录。
 const STAMP_GAP_MS = 5 * 60 * 1000;
@@ -81,16 +86,19 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '
     const current = currentStamp + JSON.stringify({
       发言人: speaker(msg),
       // 挨骂的时候要让它看见原话，否则不知道对面骂了什么，回怼就没劲
-      内容: msg.fight ? String(msg.cleanText || msg.text) : sanitizeForModel(msg.cleanText || msg.text),
+      内容: String(msg.fight ? String(msg.cleanText || msg.text) : sanitizeForModel(msg.cleanText || msg.text))
+        .slice(0, MAX_TURN_CHARS),
       叫到鲸鲸: Boolean(msg.addressedToBot || msg.atMe || msg.replyToBot),
       其他提及对象: msg.mentionedNames || [],
       ...(msg.replyToName ? { 引用对象: msg.replyToName } : {}),
     });
-    let size = entries.reduce((n, s) => n + s.length + 1, current.length + 200) + memory.length + tail.length;
+    const lineTokens = (s) => estimateBudgetTokens(s) + 2;
+    let size = entries.reduce((n, s) => n + lineTokens(s), 0)
+      + estimateBudgetTokens(current) + 200 + estimateBudgetTokens(memory) + estimateBudgetTokens(tail);
     const dropped = [];
-    while (size > MAX_PROMPT_CHARS && entries.length > 1) {
+    while (size > MAX_PROMPT_TOKENS && entries.length > 1) {
       const old = entries.shift();
-      size -= old.length + 1;
+      size -= lineTokens(old);
       dropped.push(old);
     }
     // 被挤掉的旧消息压成一句摘要，别让更早的话题凭空消失
@@ -98,15 +106,19 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '
     if (dropped.length) {
       const texts = dropped
         .map((line) => {
-          try {
-            const obj = JSON.parse(line.replace(/^\[[^\]]*\]\s*/, '').replace(/^\[间隔[^\]]*\]\n/, ''));
-            return `${obj.发言人 ? String(obj.发言人).replace(/（参与者[0-9a-f]+）/, '') : ''}：${String(obj.内容 || '').slice(0, 24)}`;
-          } catch {
-            return '';
-          }
+          const obj = history.parseHistoryLine(line);
+          if (!obj) return '';
+          return `${obj.发言人 ? String(obj.发言人).replace(/（参与者[0-9a-f]+）/, '') : ''}：${String(obj.内容 || '').slice(0, 24)}`;
         })
         .filter(Boolean);
       if (texts.length) summary = '【更早的对话（已压缩）】' + texts.slice(-12).join('；') + '\n';
+      // 摘要也是 prompt 的一部分：裁剪后拼上去必须重新算预算。
+      const summaryTokens = estimateBudgetTokens(summary);
+      while (size + summaryTokens > MAX_PROMPT_TOKENS && entries.length > 1) {
+        const old = entries.shift();
+        size -= lineTokens(old);
+        dropped.push(old);
+      }
     }
     return [{
       role: 'user',
@@ -169,13 +181,13 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '
     else turns.push({ role: 'user', content: tail });
   }
   // 总长度控制：从最旧事件开始删，保留当前事件和最近的完整边界。
-  let total = turns.reduce((n, t) => n + t.content.length, 0);
-  while (total > MAX_PROMPT_CHARS && turns.length > 1) {
-    total -= turns[0].content.length;
+  let total = turns.reduce((n, t) => n + estimateBudgetTokens(t.content), 0);
+  while (total > MAX_PROMPT_TOKENS && turns.length > 1) {
+    total -= estimateBudgetTokens(turns[0].content);
     turns.shift();
   }
   while (turns.length && turns[0].role !== 'user') turns.shift();
   return turns;
 }
 
-module.exports = { MAX_TURN_CHARS, MAX_PROMPT_CHARS, STAMP_GAP_MS, buildTurns, makeStamper };
+module.exports = { MAX_TURN_CHARS, MAX_PROMPT_CHARS, MAX_PROMPT_TOKENS, STAMP_GAP_MS, buildTurns, makeStamper };
