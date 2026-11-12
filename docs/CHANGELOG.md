@@ -21,6 +21,10 @@
 - 未签名时其余校验不变：下载域名白名单、SHA-256、包内清单与目录条目一致性、API/权限/最低版本。
 - 回归：`tests/plugin-market-ui.test.js` 与 `tests/plugin-market/Program.cs` 都要求「未签名条目能解析」。
 
+### 修复 · 微信小窗清理边界
+
+- 无法确认主窗所属进程时不再清理登录小窗，避免误关其他账号的窗口。回归覆盖同进程尺寸判断、跨进程保护和进程查询失败。
+
 ### 修复 · 桥接找不到微信主窗
 
 - 择窗函数 `pick_account_window` 的账号锁包装在类体里执行，把实例写成了 `None`，包装器闭包捕获空对象；每次调用都在 `with self.account_lock` 抛 `AttributeError('NoneType' object has no attribute 'account_lock')`，桥接因此永远锁不到微信主窗，日志反复刷「等待微信主窗可用」，收不到也发不出。
