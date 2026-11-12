@@ -10,13 +10,15 @@ using System.Threading.Tasks;
 
 namespace WhaleLauncher
 {
-    /// <summary>更新策略：正常 / 只提示 / 强制 / 禁止启动。</summary>
+    /// <summary>更新策略：正常 / 只提示 / 强制 / 禁止启动 / 已下架。</summary>
     public enum UpdatePolicy
     {
         Ok,
         Warn,
         Force,
-        Kill
+        Kill,
+        /// <summary>命中了 withdrawn 名单，但没有更高版本可升：停下并引导装回旧包。</summary>
+        Withdrawn
     }
 
     /// <summary>release-manifest.json 的本体。字段缺失一律按「不强制」处理，别因为一次写错锁死用户。</summary>
@@ -28,6 +30,8 @@ namespace WhaleLauncher
         public bool? Force { get; set; }
         public string ForceFrom { get; set; } = "";
         public string KillBelow { get; set; } = "";
+        /// <summary>下架名单：写进去的版本不许再运行（精确匹配，不做区间）。</summary>
+        public List<string> Withdrawn { get; set; } = new List<string>();
         public string Message { get; set; } = "";
         public string ReleaseNotes { get; set; } = "";
         public string ReleaseDetails { get; set; } = "";
@@ -87,6 +91,9 @@ namespace WhaleLauncher
         }
 
         private const string Repo = "Banan1cee/whale_girl";
+
+        /// <summary>下架后的去处：全部版本的列表页，用户自己挑能装的那个，不用我们猜。</summary>
+        public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
 
         // 顺序不重要（并行拉），但源要覆盖三种网络：GitHub 直连 / 墙内镜像 / CDN 兜底。
         private static readonly string[] Sources =
@@ -187,13 +194,20 @@ namespace WhaleLauncher
         }
 
         /// <summary>
-        /// 判定顺序：已是最新 → 正常；低于熔断线 → 禁止启动；显式 force → 强制；
-        /// 显式 force=false → 只提示；否则看发布时间是否超过时间闸。
+        /// 判定顺序：下架名单 → 已是最新 → 低于熔断线 → 显式 force → 时间闸。
+        ///
+        /// 下架必须排在最前：它是唯一能让「已经是最新版」的用户也停下来的分支。
+        /// 命中后先看有没有更高版本可升——有就推去升级，没有才停下让人装回旧包。
+        /// 这也是 kill_below 做不到的：阈值表达不了「只停 4.1.0、放行 4.0.8.2」。
         /// </summary>
         public static UpdatePolicy Decide(string local, UpdateManifest m, DateTimeOffset now)
         {
             if (m == null || string.IsNullOrWhiteSpace(m.Latest)) return UpdatePolicy.Ok;
             if (string.IsNullOrWhiteSpace(local)) return UpdatePolicy.Ok;   // 版本号都读不到，别猜
+
+            if (IsWithdrawn(local, m.Withdrawn))
+                return CompareVersion(m.Latest, local) > 0 ? UpdatePolicy.Force : UpdatePolicy.Withdrawn;
+
             if (CompareVersion(local, m.Latest) >= 0) return UpdatePolicy.Ok;
 
             if (!string.IsNullOrWhiteSpace(m.KillBelow) && CompareVersion(local, m.KillBelow) < 0)
@@ -213,6 +227,21 @@ namespace WhaleLauncher
             if (m.ReleasedAt == default) return UpdatePolicy.Warn;
             var due = m.ReleasedAt.AddHours(Math.Max(0, m.ForceAfterHours));
             return now >= due ? UpdatePolicy.Force : UpdatePolicy.Warn;
+        }
+
+        /// <summary>
+        /// 版本是否在下架名单里。精确匹配（忽略开头的 v），不做区间：
+        /// 区间读起来模糊，一旦写宽了会把本来能用的旧版一起锁死。
+        /// </summary>
+        public static bool IsWithdrawn(string local, IEnumerable<string> withdrawn)
+        {
+            if (withdrawn == null) return false;
+            foreach (var one in withdrawn)
+            {
+                if (string.IsNullOrWhiteSpace(one)) continue;
+                if (CompareVersion(local, one) == 0) return true;
+            }
+            return false;
         }
 
         /// <summary>逐段数值比较，3.9 &lt; 3.64。</summary>
@@ -289,6 +318,7 @@ namespace WhaleLauncher
             }
 
             m.KillBelow = Str(r, "kill_below");
+            m.Withdrawn = VersionList(r, "withdrawn");
             m.ForceFrom = Str(r, "force_from");
             m.Message = Str(r, "message");
             m.ReleaseNotes = Str(r, "release_notes");
@@ -300,6 +330,30 @@ namespace WhaleLauncher
 
         private static string Str(JsonElement e, string name)
             => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? (v.GetString() ?? "") : "";
+
+        /// <summary>
+        /// 下架名单：推荐写成数组；也接受单个字符串，免得手写时少一层方括号就整条失效。
+        /// 元素类型不对就跳过——一次写错不能把所有人锁死。
+        /// </summary>
+        private static List<string> VersionList(JsonElement e, string name)
+        {
+            var list = new List<string>();
+            if (!e.TryGetProperty(name, out var v)) return list;
+            if (v.ValueKind == JsonValueKind.String)
+            {
+                var one = (v.GetString() ?? "").Trim();
+                if (one.Length > 0) list.Add(one);
+                return list;
+            }
+            if (v.ValueKind != JsonValueKind.Array) return list;
+            foreach (var item in v.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String) continue;
+                var s = (item.GetString() ?? "").Trim();
+                if (s.Length > 0) list.Add(s);
+            }
+            return list;
+        }
 
         // ── 缓存：断网时用上次成功拿到的策略，而不是「什么都拿不到就放行」 ──
 
@@ -317,6 +371,8 @@ namespace WhaleLauncher
                     force = m.Force,
                     force_from = m.ForceFrom,
                     kill_below = m.KillBelow,
+                    // 下架名单必须进缓存：断网时也要能认出「我这个版本已经被下架了」。
+                    withdrawn = m.Withdrawn ?? new List<string>(),
                     message = m.Message,
                     release_notes = m.ReleaseNotes,
                     release_details = m.ReleaseDetails,

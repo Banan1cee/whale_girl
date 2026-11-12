@@ -1,4 +1,4 @@
-﻿<#
+<#
 生成 release-manifest.json —— 启动器启动时读它，决定「提不提示 / 强不强制 / 让不让启动」。
 
 用法：
@@ -38,6 +38,7 @@ $policy = [ordered]@{
     force             = $null      # null=按时间闸 / true=立即强制 / false=只提示
     force_from        = $null      # 紧急热修只强制 >= 这个版本；null=不限制
     kill_below        = $null      # 填版本号 = 低于它的直接不许启动
+    withdrawn         = @()        # 下架名单：写进去的版本不许再运行（精确匹配）
     message           = ''
     manifest_version  = 1
     channel           = 'stable'
@@ -54,6 +55,8 @@ if (-not $Fresh -and (Test-Path -LiteralPath $OutFile)) {
         if ($names -contains 'force') { $policy.force = $old.force }
         if ($names -contains 'force_from') { $policy.force_from = if ($old.force_from) { [string]$old.force_from } else { $null } }
         if ($names -contains 'kill_below') { $policy.kill_below = $old.kill_below }
+        # 下架字段必须原样带过去：发版时这些是「当前策略」，不是发版参数。
+        if ($names -contains 'withdrawn') { $policy.withdrawn = @(@($old.withdrawn) | Where-Object { $_ }) }
         if ($names -contains 'channel') { $policy.channel = [string]$old.channel }
         if ($names -contains 'latest') { $oldLatest = [string]$old.latest }
         if ($names -contains 'message') { $oldMessage = [string]$old.message }
@@ -102,4 +105,6 @@ Write-Host ("  force      $forceText")
 $killText = if ($null -eq $policy.kill_below) { 'null（不熔断）' } else { "$($policy.kill_below)" }
 Write-Host ("  force_from $($policy.force_from)")
 Write-Host ("  kill_below $killText")
+$withdrawnText = if (@($policy.withdrawn).Count -eq 0) { '（空：没有下架版本）' } else { (@($policy.withdrawn) -join ', ') }
+Write-Host ("  withdrawn  $withdrawnText")
 Write-Host ("  序号       $($policy.manifest_version)")

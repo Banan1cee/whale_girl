@@ -19,6 +19,8 @@
         "brake": "node scripts/manifest-policy.js --force false",
         "unbrake": "node scripts/manifest-policy.js --force null",
         "force-now": "node scripts/manifest-policy.js --force true",
+        "withdraw": "node scripts/manifest-policy.js --withdraw",
+        "unwithdraw": "node scripts/manifest-policy.js --withdraw null",
         "ci": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci-local.ps1"
     },
     "engines": {

@@ -110,6 +110,45 @@ test('发版步骤会写 latest / released_at / manifest_version', () => {
   assert.ok(block.includes('$manifest.manifest_version = [int]$manifest.manifest_version + 1'), 'manifest_version 没有递增');
 });
 
+/**
+ * 下架名单（withdrawn）是唯一能让「已经是最新版」的用户也停下来的分支，
+ * 所以它必须排在「已是最新 → 放行」之前；排序错了整个机制就静默失效。
+ */
+test('版本下架：判定排在最前，且策略脚本能改', () => {
+  const policy = read('scripts/manifest-policy.js');
+  assert.ok(policy.includes("--withdraw"), '策略脚本没有 --withdraw');
+  assert.ok(policy.includes('m.withdrawn'), '策略脚本没有写 withdrawn');
+  assert.ok(manifestCode.includes('Withdrawn'), '客户端没有下架策略');
+  assert.ok(manifestCode.includes('IsWithdrawn(local, m.Withdrawn)'), '客户端没有按名单判定');
+  assert.ok(/ReleasesPage\s*=\s*"https:\/\/github\.com\/"[^;]*\/releases"/.test(manifestCode),
+    '下架后的去处必须是全部版本的列表页，让用户自己挑');
+  const withdrawnAt = manifestCode.indexOf('IsWithdrawn(local, m.Withdrawn)');
+  const latestAt = manifestCode.indexOf('CompareVersion(local, m.Latest) >= 0');
+  assert.ok(withdrawnAt > 0 && latestAt > 0, '判定链缺分支');
+  assert.ok(withdrawnAt < latestAt, '下架判定必须排在「已是最新」之前，否则对最新版无效');
+});
+
+test('版本下架：清单默认是空名单，发版不会误停', () => {
+  assert.ok(Array.isArray(manifest.withdrawn), 'release-manifest.json 的 withdrawn 必须是数组');
+  assert.equal(manifest.withdrawn.length, 0, '默认不能有下架版本');
+});
+
+/**
+ * 启动判定必须真的拦人。曾经启动路径走的是 allowBlocking:false，
+ * 结果「满 12 小时强制 / 熔断 / 下架」只在用户手点「检查更新」时才生效，
+ * 文档承诺的「下次启动就会被要求更新」根本没发生。
+ */
+test('启动判定：强制 / 熔断 / 下架必须在启动时生效，不能只靠手点检查更新', () => {
+  const code = read('launcher/MainWindow.xaml.cs');
+  assert.ok(code.includes('_ = StartupUpdateGateAsync();'), '启动时没有走强制判定');
+  const gate = code.slice(code.indexOf('_ = StartupUpdateGateAsync();'));
+  assert.ok(gate.includes('allowBlocking: blocking'), '启动判定没有按策略决定是否拦人');
+  for (const p of ['UpdatePolicy.Force', 'UpdatePolicy.Kill', 'UpdatePolicy.Withdrawn']) {
+    assert.ok(gate.includes(p), '启动判定漏了 ' + p);
+  }
+});
+
+
 test('更新浮层先显示摘要，展开才显示另存的详细说明', () => {
   const xaml = read('launcher/MainWindow.xaml');
   assert.match(xaml, /x:Name="UpdateToast" Grid.Row="1"[^>]*Panel.ZIndex="9"/s);
@@ -121,7 +160,8 @@ test('更新浮层先显示摘要，展开才显示另存的详细说明', () =>
 });
 
 test('release-manifest.json 的字段与 UpdateManifest.Parse 一一对应', () => {
-  const fields = ['latest', 'released_at', 'force_after_hours', 'force', 'force_from', 'kill_below', 'message', 'manifest_version'];
+  const fields = ['latest', 'released_at', 'force_after_hours', 'force', 'force_from', 'kill_below',
+    'withdrawn', 'message', 'manifest_version'];
   for (const f of fields) {
     assert.ok(Object.prototype.hasOwnProperty.call(manifest, f), `release-manifest.json 缺字段 ${f}`);
     assert.ok(manifestCode.includes(`"${f}"`), `UpdateManifest.cs 没有解析 ${f}`);

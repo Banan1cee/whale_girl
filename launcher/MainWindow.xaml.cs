@@ -82,7 +82,7 @@ namespace WhaleLauncher
             Loaded += async (_, __) =>
             {
                 Nav.SelectedIndex = 0;
-                _ = SilentUpdateCheckAsync();
+                _ = StartupUpdateGateAsync();
                 await RefreshAsync();
             };
             Closing += OnClosingDuringUpdate;
@@ -222,6 +222,29 @@ namespace WhaleLauncher
         }
 
         /// <summary>
+        /// 启动判定：这是「满 12 小时强制」「坏版本下架」「熔断」真正生效的唯一入口。
+        ///
+        /// 之前启动路径走的是 allowBlocking:false，等于强制/熔断永远只在用户手点
+        /// 「检查更新」时才生效——文档承诺的「下次启动就会被要求更新」其实没发生。
+        /// 这里只拦 Force / Kill / Withdrawn；普通有新版（Warn）仍旧只提示，不打断启动。
+        /// </summary>
+        private async Task StartupUpdateGateAsync()
+        {
+            if (_updating || _checkingUpdates) return;
+            _checkingUpdates = true;
+            _lastManifestCheck = DateTime.Now;
+            try
+            {
+                var chk = await UpdateManifestService.FetchAsync(_sup.BaseDir);
+                var blocking = chk.Policy == UpdatePolicy.Force
+                    || chk.Policy == UpdatePolicy.Kill
+                    || chk.Policy == UpdatePolicy.Withdrawn;
+                ApplyManifestPolicy(chk, false, allowBlocking: blocking);
+            }
+            finally { _checkingUpdates = false; }
+        }
+
+        /// <summary>
         /// 挂后台一直不关的用户，也需要知道有新版。
         /// 运行中只更新提示和按钮，不弹强制窗——人正在用，突然盖遮罩太粗暴；
         /// 强制 / 熔断仍然只在「启动」那一刻判定，下次重启才真的拦。
@@ -250,6 +273,21 @@ namespace WhaleLauncher
                     _lastManifest = null;
                     SetUpdateButton(false);
                     ShowKilled(chk);
+                    return;
+
+                case UpdatePolicy.Withdrawn:
+                    if (!allowBlocking)
+                    {
+                        // 运行中不打断：只提示，下次启动才真的停
+                        _lastManifest = chk;
+                        SetUpdateButton(false);
+                        ShowToast("当前版本已下架，请更换版本");
+                        StatusLine.Text = "当前版本已被下架，下次启动需要换回旧版";
+                        return;
+                    }
+                    _lastManifest = null;
+                    SetUpdateButton(false);
+                    ShowWithdrawn(chk);
                     return;
 
                 case UpdatePolicy.Force:
@@ -300,6 +338,44 @@ namespace WhaleLauncher
                 + "\n\n请到 GitHub Releases 下载最新安装包。";
             AppDialog.Show(this, msg, "版本已停用", danger: true);
             Application.Current.Shutdown();
+        }
+
+        /// <summary>
+        /// 版本被下架：停下，说清原因，然后把人送到版本列表页，自己去挑能装的版本。
+        ///
+        /// 不自动装、也不指定「装回哪一版」：这是救火，我们只负责别让坏版本继续跑，
+        /// 「装哪个」交给用户和 Releases 页——那里有版本说明，比我们猜得准。
+        /// </summary>
+        private void ShowWithdrawn(ManifestCheck chk)
+        {
+            var m = chk.Manifest;
+            var reason = m != null && !string.IsNullOrWhiteSpace(m.Message)
+                ? m.Message
+                : "这个版本存在已知的严重问题。";
+
+            var msg = "当前版本 v" + chk.Current + " 已被下架。\n\n"
+                + reason + "\n\n"
+                + "请打开下载页，选一个能用的版本覆盖安装（安装前建议先备份 data 目录）。";
+
+            var picked = AppDialog.ShowActions(this, msg, "版本已下架", true,
+                ("exit", "退出", false),
+                ("download", "打开下载页", true));
+
+            if (picked == "download") OpenUrl(UpdateManifestService.ReleasesPage);
+            Application.Current.Shutdown();
+        }
+
+        /// <summary>用系统默认浏览器打开链接；打不开就把地址显示出来，别让人卡死在弹窗里。</summary>
+        private void OpenUrl(string url)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                AppDialog.Show(this, "打不开浏览器：" + ex.Message + "\n\n请手动访问：\n" + url, "下载旧版");
+            }
         }
 
         /// <summary>

@@ -25,3 +25,23 @@ var now = DateTimeOffset.UtcNow;
 Check(UpdateManifestService.Decide("4.0.8", hotfix, now) == UpdatePolicy.Force, "紧急热修只强制上一个发布版本");
 Check(UpdateManifestService.Decide("4.0.7", hotfix, now) == UpdatePolicy.Warn, "更老版本不被热修强制");
 Check(UpdateManifestService.Decide("4.0.8.1", hotfix, now) == UpdatePolicy.Ok, "已是最新版本不再强制");
+
+// 下架名单：唯一能让「已经是最新版」的用户也停下来的分支。
+var pulled = (UpdateManifest)parse.Invoke(null, new object[] { "{\"latest\":\"4.0.8.2\",\"withdrawn\":[\"4.1.0\"]}" });
+Check(UpdateManifestService.Decide("4.1.0", pulled, now) == UpdatePolicy.Withdrawn, "下架版本且没有更高版本时停下，引导去下载页");
+Check(UpdateManifestService.Decide("4.0.8.2", pulled, now) == UpdatePolicy.Ok, "下架不影响名单外的版本");
+Check(UpdateManifestService.Decide("4.0.8", pulled, now) == UpdatePolicy.Warn, "更老的版本仍然只提示");
+Check(UpdateManifestService.Decide("4.1.0.1", pulled, now) == UpdatePolicy.Ok, "比下架版本更新的版本不会被误伤");
+Check(pulled.Withdrawn.Count == 1 && pulled.Withdrawn[0] == "4.1.0", "下架名单解析正确");
+
+var pulledWithFix = (UpdateManifest)parse.Invoke(null, new object[] { "{\"latest\":\"4.1.0.1\",\"withdrawn\":[\"4.1.0\"]}" });
+Check(UpdateManifestService.Decide("4.1.0", pulledWithFix, now) == UpdatePolicy.Force, "下架且已有修复版时直接推去升级");
+Check(UpdateManifestService.Decide("4.1.0.1", pulledWithFix, now) == UpdatePolicy.Ok, "装上修复版后不再被拦");
+
+var withdrawnAsString = (UpdateManifest)parse.Invoke(null, new object[] { "{\"latest\":\"4.0.8.2\",\"withdrawn\":\"4.1.0\"}" });
+Check(UpdateManifestService.Decide("4.1.0", withdrawnAsString, now) == UpdatePolicy.Withdrawn, "下架名单写成字符串也认");
+var badWithdrawn = (UpdateManifest)parse.Invoke(null, new object[] { "{\"latest\":\"4.0.8.2\",\"withdrawn\":[123,null]}" });
+Check(UpdateManifestService.Decide("4.1.0", badWithdrawn, now) == UpdatePolicy.Ok, "名单写坏时按放行处理，不能锁死用户");
+Check(UpdateManifestService.IsWithdrawn("v4.1.0", new[] { "4.1.0" }), "下架匹配忽略开头的 v");
+Check(UpdateManifestService.IsWithdrawn("4.1", new[] { "4.1.0" }), "补零写法（4.1 / 4.1.0）视为同一版本");
+Check(!UpdateManifestService.IsWithdrawn("4.10.0", new[] { "4.1.0" }), "按数值逐段比较，4.10.0 不等于 4.1.0");

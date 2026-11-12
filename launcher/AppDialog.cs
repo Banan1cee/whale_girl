@@ -70,6 +70,23 @@ namespace WhaleLauncher
             });
         }
 
+        /// <summary>
+        /// 多按钮弹窗：按下的按钮返回它的 key；直接关窗返回 null。
+        /// 用于「停下之后给你几条出路」这种场景（下架后要下载旧包 / 打开 data 目录）。
+        /// </summary>
+        public static string ShowActions(Window owner, string message, string title, bool danger,
+            params (string key, string text, bool primary)[] actions)
+        {
+            return OnUi(() =>
+            {
+                string picked = null;
+                var win = BuildWithActions(ResolveOwner(owner), message, title, danger, actions,
+                    key => picked = key);
+                win.ShowDialog();
+                return picked;
+            });
+        }
+
         private static Window ResolveOwner(Window owner)
         {
             return owner ?? Application.Current?.MainWindow;
@@ -82,8 +99,8 @@ namespace WhaleLauncher
             return app.Dispatcher.Invoke(action);
         }
 
-        private static Window Build(Window owner, string message, string title, bool danger,
-            string okText, string cancelText)
+        /// <summary>标题 + 正文 + 空按钮行；两种弹窗共用这一套壳，样式只在这里定义一次。</summary>
+        private static (Window win, StackPanel panel) BuildShell(Window owner, string message, string title)
         {
             var win = new Window
             {
@@ -100,30 +117,37 @@ namespace WhaleLauncher
             win.SetResourceReference(Window.BackgroundProperty, "Bg");
 
             var panel = new StackPanel { Margin = new Thickness(22, 20, 22, 18) };
-            var primary = Application.Current?.TryFindResource("Primary") as Style;
-            var ghost = Application.Current?.TryFindResource("Ghost") as Style;
             var textBrush = Application.Current?.TryFindResource("Text") as Brush;
             var bodyBrush = Application.Current?.TryFindResource("Text2") as Brush;
 
-            var head = new TextBlock
+            panel.Children.Add(new TextBlock
             {
                 Text = win.Title,
                 FontSize = 15,
                 FontWeight = FontWeights.SemiBold,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = textBrush,
-            };
-            panel.Children.Add(head);
+            });
 
-            var body = new TextBlock
+            panel.Children.Add(new TextBlock
             {
                 Text = message ?? string.Empty,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 10, 0, 0),
                 LineHeight = 21,
                 Foreground = bodyBrush,
-            };
-            panel.Children.Add(body);
+            });
+
+            win.Content = panel;
+            return (win, panel);
+        }
+
+        private static Window Build(Window owner, string message, string title, bool danger,
+            string okText, string cancelText)
+        {
+            var (win, panel) = BuildShell(owner, message, title);
+            var primary = Application.Current?.TryFindResource("Primary") as Style;
+            var ghost = Application.Current?.TryFindResource("Ghost") as Style;
 
             var row = new StackPanel
             {
@@ -158,7 +182,41 @@ namespace WhaleLauncher
             row.Children.Add(ok);
 
             panel.Children.Add(row);
-            win.Content = panel;
+            return win;
+        }
+
+        private static Window BuildWithActions(Window owner, string message, string title, bool danger,
+            (string key, string text, bool primary)[] actions, Action<string> onPick)
+        {
+            var (win, panel) = BuildShell(owner, message, title);
+            var primary = Application.Current?.TryFindResource("Primary") as Style;
+            var ghost = Application.Current?.TryFindResource("Ghost") as Style;
+
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 18, 0, 0),
+            };
+
+            var first = true;
+            foreach (var action in actions ?? Array.Empty<(string, string, bool)>())
+            {
+                var button = new Button
+                {
+                    Content = action.text,
+                    Style = action.primary ? primary : ghost,
+                    Padding = new Thickness(16, 5, 16, 5),
+                    Margin = new Thickness(first ? 0 : 10, 0, 0, 0),
+                };
+                if (action.primary && danger) button.SetResourceReference(Control.ForegroundProperty, "Bad");
+                var key = action.key;
+                button.Click += (_, _) => { onPick?.Invoke(key); win.DialogResult = true; };
+                row.Children.Add(button);
+                first = false;
+            }
+
+            panel.Children.Add(row);
             return win;
         }
     }
