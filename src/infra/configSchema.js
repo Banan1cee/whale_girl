@@ -94,7 +94,7 @@ const FIELDS = {
   'websearch.semanticRoute': { type: 'bool' },
   // 环境块（提示词里的 <env>）：地点只到区，时区留空就用系统自己的。
   // 太长的地址一定是把门牌粘进来了，直接拒掉，别等到拼提示词时才截断。
-  'env.location': { type: 'string', maxLen: 40 },
+  'env.location': { type: 'string', maxLen: 40, redactValue: true },
   // 唯一的时区来源：日记、主动搭话、提醒、朋友圈、聊天时间戳都读它。
   'env.timezone': { type: 'timezone' },
   // 自动探测所在地（Windows 定位服务优先）；false = 只用手填和 websearch.city
@@ -112,7 +112,7 @@ const FIELDS = {
   'moments.publishWithImage': { type: 'bool' },
   'moments.publishIntervalHours': { type: 'float', min: Number.MIN_VALUE },
   'moments.publishMaxPerDay': { type: 'int', min: 0 },
-  'moments.publishAccount': { type: 'string', maxLen: 120 },
+  'moments.publishAccount': { type: 'string', maxLen: 120, redactValue: true },
   'diary.sendToOwner': { type: 'bool' },
   'reminder.maxPerDay': { type: 'int', min: 0, max: 200 },
   'reminder.quietAfterMinutes': { type: 'int', min: 0, max: 1440 },
@@ -176,6 +176,11 @@ function describe(expected) {
   }
 }
 
+/** 错误里要不要回显原值：地点、账号这类字段只提示格式，不把值写进日志 */
+function shownValue(value, spec) {
+  return spec && spec.redactValue ? '（已隐藏）' : JSON.stringify(value);
+}
+
 /** 校验单个值；返回错误文字，或 null 表示通过。 */
 function checkValue(value, spec) {
   if (spec.type === 'bool') {
@@ -183,18 +188,18 @@ function checkValue(value, spec) {
     // 老配置里有写成字符串的 "false"；只要值本身合法就放行
     if (typeof value === 'string' && BOOLISH.has(value.trim().toLowerCase())) return null;
     if (value === 1 || value === 0) return null;
-    return `应该是 ${describe(spec)}，实际是 ${JSON.stringify(value)}`;
+    return `应该是 ${describe(spec)}，实际是 ${shownValue(value, spec)}`;
   }
   if (spec.type === 'int') {
     const n = typeof value === 'number' ? value : Number(String(value).trim());
-    if (!Number.isFinite(n) || !Number.isInteger(n)) return `应该是整数，实际是 ${JSON.stringify(value)}`;
+    if (!Number.isFinite(n) || !Number.isInteger(n)) return `应该是整数，实际是 ${shownValue(value, spec)}`;
     if (spec.min !== undefined && n < spec.min) return `不能小于 ${spec.min}（实际 ${n}）`;
     if (spec.max !== undefined && n > spec.max) return `不能大于 ${spec.max}（实际 ${n}）`;
     return null;
   }
   if (spec.type === 'float') {
     const n = typeof value === 'number' ? value : Number(String(value).trim());
-    if (!Number.isFinite(n)) return `应该是数字，实际是 ${JSON.stringify(value)}`;
+    if (!Number.isFinite(n)) return `应该是数字，实际是 ${shownValue(value, spec)}`;
     if (spec.min !== undefined && n < spec.min) return `不能小于 ${spec.min}（实际 ${n}）`;
     if (spec.max !== undefined && n > spec.max) return `不能大于 ${spec.max}（实际 ${n}）`;
     return null;
@@ -205,10 +210,10 @@ function checkValue(value, spec) {
     const values = Array.isArray(spec.values) ? spec.values : [];
     const text = typeof value === 'string' ? value : String(value);
     if (values.includes(text)) return null;
-    return `只能是 ${values.join(' / ')}，实际是 ${JSON.stringify(value)}`;
+    return `只能是 ${values.join(' / ')}，实际是 ${shownValue(value, spec)}`;
   }
   if (spec.type === 'clock') {
-    if (time.parseClock(value) === null) return `请填写 24 小时制时间（如 23:00），实际是 ${JSON.stringify(value)}`;
+    if (time.parseClock(value) === null) return `请填写 24 小时制时间（如 23:00），实际是 ${shownValue(value, spec)}`;
     return null;
   }
   if (spec.type === 'windows') {
@@ -219,12 +224,12 @@ function checkValue(value, spec) {
   if (spec.type === 'timezone') {
     const text = String(value == null ? '' : value).trim();
     if (text && !time.isValidTimeZone(text)) {
-      return `不是有效时区：${JSON.stringify(text)}（如 Asia/Shanghai；留空 = 系统时区）`;
+      return `不是有效时区：${shownValue(text, spec)}（如 Asia/Shanghai；留空 = 系统时区）`;
     }
     return null;
   }
   if (spec.type === 'string') {
-    if (typeof value !== 'string') return `应该是字符串，实际是 ${JSON.stringify(value)}`;
+    if (typeof value !== 'string') return `应该是字符串，实际是 ${shownValue(value, spec)}`;
     if (spec.pattern && !spec.pattern.test(value)) return '格式不对';
     if (spec.maxLen && value.length > spec.maxLen) return `太长（最多 ${spec.maxLen} 个字符）`;
     return null;

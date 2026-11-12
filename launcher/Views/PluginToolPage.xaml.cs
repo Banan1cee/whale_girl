@@ -16,8 +16,8 @@ namespace WhaleLauncher.Views
             _info = info;
             _sup = sup;
             InitializeComponent();
-            Title.Text = info.Name;
-            Description.Text = info.Description;
+            Title.Text = PluginMarket.SafeText(info.Name, 80);
+            Description.Text = PluginMarket.SafeText(info.Description, 600);
             if (info.HostAction == PluginMarket.DigestAction)
             {
                 InputPanel.Visibility = Visibility.Collapsed;
@@ -42,7 +42,9 @@ namespace WhaleLauncher.Views
             {
                 var result = await _market.RunAsync(_info.Id, digest ? range : Input.Text, _info.HostAction,
                     digest ? value => PluginHostActions.SummarizeAsync(_sup, value) : null);
-                Result.Text = _info.Api == 1 ? _info.ResultLabel + "：" + result : result;
+                Result.Text = _info.Api == 1
+                    ? PluginMarket.SafeText(_info.ResultLabel, 80) + "：" + PluginMarket.SafeMultiline(result)
+                    : PluginMarket.SafeMultiline(result);
             }
             catch (Exception ex) { Result.Text = "运行失败：" + ex.Message; }
             finally { Run.IsEnabled = true; }

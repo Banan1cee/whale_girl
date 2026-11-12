@@ -112,7 +112,6 @@ namespace WhaleLauncher.Views
                 new FieldSpec { Path = "log.level", Label = "日志级别", Kind = "select", Options = new[] { "debug", "info", "error" }, Hint = "界面 / 控制台用哪一档；日志文件始终记 debug 全量（data/whale.log、data/wechat-bridge-4x.log），改完重启生效" },
                 new FieldSpec { Path = "storage.mediaKeepDays", Label = "媒体缓存保留几天", Kind = "num", Min = 0, Max = 90 },
                 new FieldSpec { Path = "storage.mediaMaxMB", Label = "媒体缓存上限(MB)", Kind = "num", Min = 0, Max = 10000 },
-                new FieldSpec { Path = "admin.allowAll", Label = "开放其他管理命令", Kind = "bool", Hint = "魔咒、群禁言和清空记忆仍限已绑定微信 ID 的主人" },
             }},
         };
 

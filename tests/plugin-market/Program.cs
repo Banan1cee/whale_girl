@@ -1,6 +1,10 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using WhaleLauncher;
+
+using var signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
 
 var dir = Directory.CreateTempSubdirectory("whale-market-checks-").FullName;
 try
@@ -26,6 +30,20 @@ try
         throw new Exception("预期拒绝无效插件");
     }
 
+    // 先确认内置公钥能验证 Node crypto.sign 生成的 DER 签名。
+    PluginTrust.ResetForTests();
+    Check(PluginTrust.Verify(Encoding.UTF8.GetBytes("node-signed payload"),
+        "MEUCIDBBfBa9vaCxzbY89r4pB+pPsbBGfVLsmd7o2REi6vJcAiEAynUtERoXG5E7MCTc5kSfQfVyynmZlOQqoUt52XpShwc="));
+    PluginTrust.UsePublicKeysForTests(Convert.ToBase64String(signingKey.ExportSubjectPublicKeyInfo()));
+
+    var signedBytes = Encoding.UTF8.GetBytes("signed payload");
+    var signed = Convert.ToBase64String(signingKey.SignData(signedBytes, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence));
+    Check(PluginTrust.Verify(signedBytes, signed));
+    Check(!PluginTrust.Verify(signedBytes, signed + "x"));
+    Check(PluginMarket.SafeText("正常\n伪造", 80) == "正常 伪造");
+    Check(!PluginMarket.SafeText("A\u202EB", 80).Contains('\u202E'));
+    Check(PluginMarket.SafeMultiline("第一行\n第二行\u0000") == "第一行\n第二行");
+
     Reject(() => PluginMarket.ReadPackage(Pack(info with { Id = "../escape" })));
     Reject(() => PluginMarket.ReadPackage(Pack(info, "../plugin.wasm")));
     Reject(() => PluginMarket.ReadPackage(Pack(info with { Id = "nul" })));
@@ -45,6 +63,10 @@ try
     Check(!market.Enabled(info.Id));
     market.SetEnabled(info.Id, true);
     Check(market.Enabled(info.Id));
+    var foreignAuthor = info with { Version = "1.1.0", Author = "别人" };
+    File.WriteAllBytes(package, Pack(foreignAuthor));
+    Reject(() => market.InstallLocal(package));
+    Check(market.Installed().Single() == info && market.Enabled(info.Id));
     var localUpdate = info with { Version = "1.1.0" };
     File.WriteAllBytes(package, Pack(localUpdate));
     Check(!market.InstallLocal(package, (incoming, current) =>
@@ -80,13 +102,15 @@ try
     Check(market.Installed().Length == 0 && !market.Enabled(info.Id));
     var persona = new PluginInfo("gentle-chat", "温和聊天", "测试", "1.0.0", "4.1.0", "示例", null, 1,
         Kind: "persona", MaxAppVersion: "4.1.9");
-    var personaListing = persona with { Download = "https://github.com/example/plugin.zip", Sha256 = new string('a', 64) };
+    var personaListing = persona with { Download = "https://github.com/example/plugin.zip", Sha256 = new string('a', 64),
+        Signature = "catalog-signature-present" };
     var personaCatalog = JsonSerializer.SerializeToUtf8Bytes(new[] { personaListing });
     Check(PluginMarket.ParseCatalog(personaCatalog, 1, "persona").Length == 1);
     Check(PluginMarket.ParseCatalog(personaCatalog, 1, "tool").Length == 0);
     Check(PluginMarket.ParseCatalog(personaCatalog, 3, "message").Length == 0);
     var codeCatalog = JsonSerializer.SerializeToUtf8Bytes(new[] { info with {
-        Download = "https://github.com/example/plugin.zip", Sha256 = new string('a', 64) } });
+        Download = "https://github.com/example/plugin.zip", Sha256 = new string('a', 64),
+        Signature = "catalog-signature-present" } });
     Check(PluginMarket.ParseCatalog(codeCatalog, 1, "persona").Length == 0);
     Check(PluginMarket.Compatible(persona, "4.1.0"));
     Check(PluginMarket.Compatible(persona, "4.1.9"));
@@ -128,9 +152,18 @@ try
             return Task.FromResult("昨日汇总\n测试通过");
         });
         Check(called == 1 && report == "昨日汇总\n测试通过");
-        var known = summary with { Download = "https://example.invalid/plugin.zip", Sha256 = new string('a', 64) };
+        var known = summary with { Download = "https://example.invalid/plugin.zip", Sha256 = new string('a', 64), Signature = "test" };
         Check(PluginMarket.ParseCatalog(JsonSerializer.SerializeToUtf8Bytes(new[] { known, known with { Api = 99 } }))
             .Single() == known);
+        var catalogBytes = JsonSerializer.SerializeToUtf8Bytes(new[] { known });
+        var catalogSignature = Convert.ToBase64String(signingKey.SignData(catalogBytes, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence));
+        Check(PluginMarket.ParseSignedCatalog(catalogBytes, catalogSignature).Single() == known);
+        try
+        {
+            PluginMarket.ParseSignedCatalog(catalogBytes, catalogSignature + "x");
+            throw new Exception("未拒绝无效目录签名");
+        }
+        catch (InvalidDataException) { }
         market.Uninstall(summaryId);
     }
     var messageInfo = info with { Id = "message-demo", Api = 3, Kind = "message", MinAppVersion = "4.1.0", Hooks = ["chat.pre_reply"], Permissions = [] };
@@ -164,7 +197,12 @@ try
     File.WriteAllBytes(package, Pack(messageInfo with { Version = "1.1.0" }));
     market.InstallLocal(package);
     Check(!market.Enabled(messageInfo.Id) && !File.Exists(grantFile));
+    var settingsFile = Path.Combine(dir, "data", "plugins", "message-demo.flow-settings.json");
+    var stateFile = Path.Combine(dir, "data", "plugins", "message-demo.0123456789abcdef.state.json");
+    File.WriteAllText(stateFile, "{}");
+    Check(File.Exists(settingsFile) && File.Exists(stateFile));
     market.Uninstall(messageInfo.Id);
+    Check(!File.Exists(settingsFile) && !File.Exists(stateFile));
     if (args.Length > 1 && args[1] == "--live")
     {
         var listed = (await PluginMarket.CatalogAsync()).Single(x => x.Id == info.Id);

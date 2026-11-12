@@ -6,5 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../launcher/PluginMarket.cs" Link="PluginMarket.cs" />
+    <Compile Include="../../launcher/PluginTrust.cs" Link="PluginTrust.cs" />
   </ItemGroup>
 </Project>

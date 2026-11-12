@@ -203,8 +203,8 @@ const DEFAULT_CONFIG = {
   },
   // 别人发链接时，读一下标题/摘要/文章正文（视频只读得到文案）
   links: { enabled: true, timeoutMs: 6000, cacheMinutes: 60, allowPrivate: false },
-  // 魔咒：主人在微信私聊输入口令后，临时解锁当前会话的群禁言命令。
-  admin: { spell: '', minutes: 30, allowAll: false },
+  // 魔咒：主人在微信私聊输入口令后，临时解锁当前会话的管理命令。
+  admin: { spell: '', minutes: 30 },
   // 表情包（实验性）：总闸在 features.stickers，这里只管「怎么挑、发多勤」。
   // 关闭时整个功能不生效：不挑图、不回包带字段、桥接不轮询、测试接口 404。
   sticker: {
@@ -280,7 +280,8 @@ const DEFAULT_CONFIG = {
   },
   // 记忆参数以 src/memory/constants.js 为准（写死的那些不改）；
   // 唯一可调的是「对话预算」：config.json 的 memory.dialogueBudget，默认 5,500。
-  // 启动器「高级模式 → 高级」里能改；旧的 memory.maxSessions / maxMessages 等仍然被忽略。
+  // 启动器「高级模式 → 高级」里能改；memory.maxMessages 会作为原文保留条数上限，
+  // memory.maxSessions 等旧字段仍然被忽略。
   memory: {
     // 对话预算（不含 system prompt）= memory 900 + summary 900 + recent 3,200 + reserve 500
     dialogueBudget: 5500,
@@ -537,7 +538,12 @@ function saveSettings(cfg, patch) {
   next.keys = keys;
   require('./redact').registerSecrets(next);
   fs.mkdirSync(cfg.paths.dataDir, { recursive: true });
-  fs.writeFileSync(cfg.paths.settingsFile, JSON.stringify(next, null, 2), 'utf8');
+  // settings.json 存所有服务商 Key；直接 writeFileSync 中途崩溃会留下半截
+  // JSON，loadSettings 静默回落 {}，表现为所有 Key 突然消失。
+  const file = cfg.paths.settingsFile;
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8');
+  fs.renameSync(tmp, file);
   return next;
 }
 

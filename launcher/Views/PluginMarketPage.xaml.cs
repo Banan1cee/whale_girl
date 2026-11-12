@@ -67,14 +67,23 @@ namespace WhaleLauncher.Views
 
         private bool ConfirmLocalInstall(PluginInfo info, PluginInfo current)
         {
-            var kind = info.IsPersona ? "人设预设" : "功能工具";
-            var details = $"{info.Name} · {info.Version}（{kind}）\n包内自报作者 · {info.Author}";
+            var kind = info.IsPersona ? "人设预设" : info.IsMessage ? "消息插件（启用后自动参与聊天）" : "功能工具";
+            var details = $"{PluginMarket.SafeText(info.Name, 80)} · {info.Version}（{kind}）"
+                + $"\n包内自报作者 · {PluginMarket.SafeText(info.Author, 80)}";
+            if (info.IsMessage)
+                details += "\n扩展点：" + string.Join("、", info.Hooks ?? Array.Empty<string>())
+                    + "\n附加权限：" + string.Join("、", info.Permissions ?? Array.Empty<string>());
             if (current != null)
-                details += $"\n将替换已安装的「{current.Name}」{current.Version}。";
+            {
+                details += $"\n将替换已安装的「{PluginMarket.SafeText(current.Name, 80)}」{current.Version}。";
+                if (!PluginMarket.SameAuthor(current.Author, info.Author))
+                    details += $"\n⚠ 作者已变化：{PluginMarket.SafeText(current.Author, 80)} → {PluginMarket.SafeText(info.Author, 80)}。"
+                        + "\n只有在确认新作者可信时才继续。";
+            }
             if (info.IsPersona)
                 details += "\n\n应用人设才会替换当前自定义提示词。停用或卸载后，已应用的提示词仍会保留。";
             return AppDialog.Confirm(Window.GetWindow(this),
-                "此本地 ZIP 未经鲸鲸插件市场审核。请确认你信任文件的提供者。\n\n" + details,
+                "此本地 ZIP 未经鲸鲸插件市场审核或签名。请确认你信任文件的提供者。\n\n" + details,
                 "安装本地插件", danger: true, okText: "仍然安装");
         }
 
@@ -105,11 +114,13 @@ namespace WhaleLauncher.Views
                     var body = new StackPanel();
                     var card = new Border { Style = (Style)FindResource("Card"), Child = body, Width = 286,
                         Margin = new Thickness(0, 0, 12, 12), Padding = new Thickness(14) };
-                    body.Children.Add(new TextBlock { Text = info.Name, FontSize = 17, FontWeight = FontWeights.SemiBold,
-                        TextWrapping = TextWrapping.Wrap });
-                    body.Children.Add(Small(info.Author + "  ·  v" + info.Version));
-                    body.Children.Add(Small(info.Description));
+                    body.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80),
+                        FontSize = 17, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                    body.Children.Add(Small(PluginMarket.SafeText(info.Author, 80) + "  ·  v" + info.Version));
+                    body.Children.Add(Small(PluginMarket.SafeText(info.Description, 600)));
                     body.Children.Add(Small(info.CompatibilityLabel));
+                    if (!_showInstalled)
+                        body.Children.Add(Small(info.Signature != null ? "来源：市场目录（已签名）" : "来源：未签名目录"));
                     body.Children.Add(Small(info.IsMessage ? "消息插件：启用后自动参与聊天；权限见设置" : info.IsPersona ? "类型：人设预设" :
                         info.HostAction == PluginMarket.DigestAction ? "权限：按次确认后生成聊天汇总" : "权限：仅本页输入"));
                     var buttons = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
@@ -121,8 +132,9 @@ namespace WhaleLauncher.Views
                         AddButton(buttons, enabled ? "停用" : "启用", () =>
                         {
                             if (!enabled && info.IsMessage && !AppDialog.Confirm(Window.GetWindow(this),
-                                "此插件将自动读取收到的消息、发送者及上一条回复，并参与聊天处理。\n扩展点：" + string.Join("、", info.Hooks)
-                                + "\n附加权限：" + string.Join("、", info.Permissions)
+                                "此插件将自动读取收到的消息、发送者及上一条回复，并参与聊天处理。\n扩展点："
+                                + string.Join("、", info.Hooks ?? Array.Empty<string>())
+                                + "\n附加权限：" + string.Join("、", info.Permissions ?? Array.Empty<string>())
                                 + "\n授权持续到停用插件。是否启用？", "启用消息插件", okText: "启用"))
                                 return Task.FromResult("已取消启用");
                             _market.SetEnabled(info.Id, !enabled);
@@ -147,6 +159,8 @@ namespace WhaleLauncher.Views
                     }
                     else if (!PluginMarket.Compatible(info, _version))
                         body.Children.Add(Small("此版本与你的鲸鲸不兼容"));
+                    else if (current != null && !PluginMarket.SameAuthor(current.Author, info.Author))
+                        body.Children.Add(Small("作者与已安装版本不一致，请先卸载旧版本再安装"));
                     else if (current == null || Version.Parse(info.Version) > Version.Parse(current.Version))
                         AddButton(buttons, current == null ? "安装" : "更新", async () =>
                         {
@@ -188,7 +202,7 @@ namespace WhaleLauncher.Views
         private async Task ShowPersonaSettings(PluginInfo info)
         {
             var panel = new StackPanel();
-            panel.Children.Add(new TextBlock { Text = info.Name, Style = (Style)FindResource("H1") });
+            panel.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80), Style = (Style)FindResource("H1") });
             var hint = Small(_sup.NodeRunning ? "正在加载预览…" : "请先启动内核，再打开设置预览和应用。");
             panel.Children.Add(hint);
             ShowDetail(panel);
@@ -210,7 +224,7 @@ namespace WhaleLauncher.Views
             hint.Text = "预览人设正文。应用后会替换当前的自定义提示词。";
             panel.Children.Add(new TextBox
             {
-                Text = prompt.GetString(), IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
+                Text = PluginMarket.SafeMultiline(prompt.GetString()), IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
                 MaxHeight = 280, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 Margin = new Thickness(0, 8, 0, 8)
             });
@@ -255,8 +269,9 @@ namespace WhaleLauncher.Views
         private void ShowMessageSettings(PluginInfo info)
         {
             var body = new StackPanel { Margin = new Thickness(12) };
-            body.Children.Add(Small(info.Name + " · 消息流程设置"));
-            body.Children.Add(Small("扩展点：" + string.Join("、", info.Hooks) + "\n附加权限：" + string.Join("、", info.Permissions)));
+            body.Children.Add(Small(PluginMarket.SafeText(info.Name, 80) + " · 消息流程设置"));
+            body.Children.Add(Small("扩展点：" + string.Join("、", info.Hooks ?? Array.Empty<string>())
+                + "\n附加权限：" + string.Join("、", info.Permissions ?? Array.Empty<string>())));
             body.Children.Add(Small("由插件作者提供配置 JSON。保存后自动用于后续消息。停用可结束持续授权。"));
             var editor = new TextBox { Text = _market.MessageSettings(info.Id), AcceptsReturn = true,
                 TextWrapping = TextWrapping.Wrap, MinHeight = 160, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };

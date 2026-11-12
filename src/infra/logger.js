@@ -19,6 +19,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const util = require('node:util');
+const { scrubSensitive } = require('./privacy');
 const { registerSecrets, redactSecrets } = require('./redact');
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40, silent: 99 };
@@ -122,8 +123,9 @@ function createLogger({ level = 'info', fileLevel = 'debug', file = null, tag = 
 
     const ts = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date());
     // 不省略：对象展开到任意深度、长字符串不截断，否则出错时看不到真正的现场。
+    // 先按已知密钥打码（redact），再兜底扫描 wxid/群号/手机号等格式（privacy）。
     for (const arg of args) registerSecrets(arg);
-    const text = redactSecrets(args
+    const text = scrubSensitive(redactSecrets(args
       .map((a) => (typeof a === 'string' ? a : util.inspect(a, {
         depth: null,
         maxArrayLength: 200,
@@ -131,7 +133,8 @@ function createLogger({ level = 'info', fileLevel = 'debug', file = null, tag = 
         colors: false,
         breakLength: 160,
       })))
-      .join(' '));
+      .join(' ')));
+    // 调用点应只写哈希/长度；这里再兜一层，防止新日志把 wxid、群号、手机号原样带出去。
     // warn/error 抓调用点；抓不到（打包压缩过）就退回模块 tag
     const site = (n >= LEVELS.warn || lv === 'debug') ? callerSite() : '';
     const prefix = (site || tagName) ? `${site || tagName}  ` : '';

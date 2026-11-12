@@ -66,10 +66,17 @@ test('预设标题不能当她的名字；只有 personaName 才能改名', () =
     const one = presets.load(cfg, item.id);
     const patch = presets.toPatch(one);
     assert.ok(one.name, item.id + ' 预设本身有标题');
-    assert.ok(!('name' in patch), item.id + ' 的标题不能写进 persona.name');
+    if (one.personaName) {
+      assert.equal(patch.name, String(one.personaName).trim(), item.id + ' 要用 personaName 改名');
+    } else {
+      assert.ok(!('name' in patch), item.id + ' 的标题不能写进 persona.name');
+    }
   }
   const patch = presets.toPatch({ name: '别拿标题当名字', personaName: '真正的名字' });
   assert.equal(patch.name, '真正的名字');
+  // 回归：大肥鱼预设要让项目识别链真的认识「大肥鱼」
+  const dafeiyu = presets.toPatch(presets.load(cfg, 'persona-dafeiyu'));
+  assert.equal(dafeiyu.name, '大肥鱼');
 });
 
 test('HTTP：预览不写盘；导入预设不打乱她的名字和外形', async (t) => {

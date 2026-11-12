@@ -435,7 +435,9 @@ class AccountMixin:
                 import win32process
                 if win32gui.IsWindow(G.WINDOW_HWND):
                     pid = win32process.GetWindowThreadProcessId(G.WINDOW_HWND)[1]
-                    if not getattr(self, 'acct', '') or self._window_account_matches(pid) is True:
+                    # 自动选号时也要证明窗口确实持有当前账号的数据库；
+                    # 否则库是 A 号、windowHwnd 指向 B 号会把发送串到 B。
+                    if self._window_account_matches(pid) is True:
                         self.ACCOUNT.update(hwnd=G.WINDOW_HWND, pid=pid, verified=True, label='hwnd=%s（配置）' % G.WINDOW_HWND, why='config.wechat.windowHwnd')
                         self.rebind_uia(G.WINDOW_HWND)
                         if not quiet:
@@ -486,9 +488,9 @@ class AccountMixin:
                 G.log('账号窗口：只有一个微信主窗（hwnd=%s），直接用它' % h)
             return True
         want = self._account_recent_names()
-        G.log('账号窗口：本机有 %d 个微信主窗，按账号 %s 的最近会话认窗口：%s' % (len(cands), self.db.account, ' / '.join(want[:6]) or '（空）'))
+        G.log('账号窗口：本机有 %d 个微信主窗，按账号 %s 的最近会话认窗口：%s' % (len(cands), G.safe_id(self.db.account), ' / '.join(G.safe_name(x) for x in want[:6]) or '（空）'))
         for h, _c, rows in cands:
-            G.log('   hwnd=%s 可见 %d 行：%s' % (h, len(rows), ' | '.join(rows[:6]) or '（读不到会话列表）'))
+            G.log('   hwnd=%s 可见 %d 行：%s' % (h, len(rows), ' | '.join(G.safe_name(x) for x in rows[:6]) or '（读不到会话列表）'))
         score_fn = getattr(probe, '_row_score', None)
         scored = []
         for h, c, rows in cands:
@@ -523,7 +525,7 @@ class AccountMixin:
             best_hits = scored[0][1]
             tied = [x for x in scored if x[1] == best_hits]
             if best_hits < 2 or len(tied) > 1:
-                self.ACCOUNT.update(verified=False, hwnd=0, why=self._explain_unverified('没有一个窗口对得上账号 %s 的最近会话' % self.db.account))
+                self.ACCOUNT.update(verified=False, hwnd=0, why=self._explain_unverified('没有一个窗口对得上账号 %s 的最近会话' % G.safe_id(self.db.account)))
                 return False
         self.ACCOUNT.update(hwnd=h, verified=True, label='hwnd=%s' % h, why='命中最近会话 %d 条' % nhit)
         m = self._compat_mod()
@@ -534,6 +536,9 @@ class AccountMixin:
                 G.log('账号窗口：pin_window 失败：', repr(e))
         G.log('账号窗口：锁定 hwnd=%s（%d 个窗口里对上 %d 条最近会话%s）' % (h, len(scored), nhit, '，最新一条也在' if newest_ok else ''))
         return True
+
+    # 生产环境给择窗/rebind 全程加 account_lock；测试单函数抽取仍用原函数。
+    pick_account_window = _account_locked(None, pick_account_window)
 
     def ensure_account_window(self, engine=None):
         """发送前确认「锁定的微信窗口」还活着；微信重启/换号后自动重认。
@@ -592,7 +597,9 @@ class AccountMixin:
         if not wanted:
             return ''
         current = str(getattr(self.db, 'account', '') or '')
-        if wanted == current or G.account_wxid(wanted) == G.account_wxid(current) or (current and current.lower().startswith(wanted.lower())):
+        # 只认完全相同或「目录名去掉 4 位哈希 = 真 wxid」；不能用前缀，
+        # 否则 wxid_ab 会把 wxid_abc 当成同一个号放行。
+        if wanted == current or (wanted and current and G.account_wxid(wanted) == G.account_wxid(current)):
             return current
         if not c['dir']:
             try:
@@ -607,13 +614,13 @@ class AccountMixin:
         current = str(getattr(self.db, 'account', '') or '')
         if pinned and pinned != current:
             self.ACCOUNT['blockedAt'] = G.time.time()
-            G.log_throttled('account-pin-mismatch', '⚠️ 不发送（%s）：config 里选的账号是 %s，但桥接现在连的是 %s。切号后桥接没重启成功，先从别的号发就露馅了 —— 重启桥接后再发。' % (where, pinned, current), ttl=60)
+            G.log_throttled('account-pin-mismatch', '⚠️ 不发送（%s）：config 里选的账号是 %s，但桥接现在连的是 %s。切号后桥接没重启成功，先从别的号发就露馅了 —— 重启桥接后再发。' % (where, G.safe_id(pinned), G.safe_id(current)), ttl=60)
             return False
         if self.ensure_account_window(engine):
             return True
         if G.ACCOUNT_GUARD or getattr(self, 'acct', ''):
             self.ACCOUNT['blockedAt'] = G.time.time()
-            G.log('⚠️ 不发送（%s）：没能确认哪个微信窗口是账号 %s（%s）；现在可能同时登着别的号，乱发会从别人的号发出去。' % (where, self.db.account, self.ACCOUNT['why'] or '未知'))
+            G.log('⚠️ 不发送（%s）：没能确认哪个微信窗口是账号 %s（%s）；现在可能同时登着别的号，乱发会从别人的号发出去。' % (where, G.safe_id(self.db.account), self.ACCOUNT['why'] or '未知'))
             return False
         return True
 

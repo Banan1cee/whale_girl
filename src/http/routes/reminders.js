@@ -13,6 +13,7 @@
 
 const { json, readBody } = require('../util');
 const { isLoopbackRequest } = require('../security');
+const { textMeta } = require('../../infra/privacy');
 
 const BRIDGE_ONLY = new Set(['/api/reminders/due', '/api/reminders/ack']);
 
@@ -48,7 +49,7 @@ module.exports = function register(router) {
       const body = await readBody(req);
       const out = service.cancel(body && body.id);
       if (!out.ok) return json(res, out.statusCode || 400, out);
-      runtime.logger.info('提醒已取消：' + out.item.text);
+      runtime.logger.info(`提醒已取消：id=${out.item.id} ${textMeta(out.item.text)}`);
       return json(res, 200, { ok: true, item: out.item });
     }
 
@@ -65,7 +66,7 @@ module.exports = function register(router) {
       const out = service.ack(body && body.id, { ok: Boolean(body && body.ok), error: (body && body.error) || '' });
       if (!out.ok) return json(res, out.statusCode || 400, out);
       const it = out.item;
-      runtime.logger.info(`提醒回执：${it.status}${it.error ? '（' + it.error + '）' : ''} —— ${it.text}`);
+      runtime.logger.info(`提醒回执：${it.status}${it.error ? '（' + it.error + '）' : ''} id=${it.id} ${textMeta(it.text)}`);
       return json(res, 200, { ok: true, item: it });
     }
 

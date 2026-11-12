@@ -78,7 +78,7 @@
     "masterAlwaysReply": true,
     "engagedMinutes": 6,
     "silentMinutes": 10,
-    "maxRepliesPerHour": 1000,
+    "maxRepliesPerMinute": 15,
     "muteDefaultMinutes": 30
   },
   "memory": {
@@ -89,10 +89,9 @@
     "maxNotesPerUser": 6
   },
   "admin": {
-    "_说明": "魔咒：主人在微信私聊发送 spell 后，可在当前私聊临时使用群禁言和解禁；留空关闭魔咒验证。allowAll 只影响其他管理命令",
+    "_说明": "管理命令必须验证魔咒：主人在微信私聊发送 spell 后，才能在同一个私聊里执行群禁言/解禁、改人设等管理命令。spell 留空时任何管理命令都不执行；minutes 是有效期",
     "spell": "",
-    "minutes": 30,
-    "allowAll": false
+    "minutes": 30
   },
   "care": {
     "_说明": "主动找话题（她没事时自己来一句「在干啥」）。默认只找主人，不进群、不找别人： enabled=总开关；onlyMaster=只找主人；allowGroups=允许群聊；allowOthers=允许主动私聊别人。windows 是允许搭话的时间段，按 env.timezone 算，支持 09:00~12:00 / 09:00到12:00 / 跨零点 / 结束点 24:00，保存时统一写成 09:00-12:00。",
@@ -171,7 +170,7 @@
     "cacheMinutes": 60
   },
   "log": {
-    "_说明": "level=界面/控制台级别，fileLevel=文件级别（默认 debug 全量），日志在 data/whale.log。trace=记「为什么回/为什么不回」的判定链（不含正文），traceRaw=本地留 24 小时的消息原文副本（导出日志包时默认不带，要带得手动勾选）",
+    "_说明": "level=界面/控制台级别，fileLevel=文件级别（默认 debug 全量），日志在 data/whale.log。日志只写哈希、长度和原因，不写正文/昵称。trace=记「为什么回/为什么不回」的判定链（不含正文），traceRaw=本地留 24 小时的消息原文副本（导出日志包默认不带，必须在诊断页勾选「包含原文」才带）",
     "level": "info",
     "fileLevel": "debug",
     "trace": true,

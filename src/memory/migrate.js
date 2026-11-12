@@ -18,6 +18,7 @@ const personCard = require('./personCard');
 const compression = require('./compression');
 const { writeJsonAtomic } = require('./chatStore');
 const { describeError } = require('../infra/errors');
+const { tagId, tagName } = require('../infra/privacy');
 
 const LEGACY_SOURCES = ['memory.json', 'store.json'];
 
@@ -110,7 +111,7 @@ function copyLegacyBackup(memoryDir, sourceFile, logger) {
       '确认新记忆正常后，可以自己决定要不要删这个目录。',
     ].join('\r\n'), 'utf8');
   }
-  if (logger) logger.info('旧记忆已保留只读副本：' + legacyDir);
+  if (logger) logger.info('旧记忆已保留只读副本：' + path.basename(legacyDir));
 }
 
 /* ------------------------------ 消息 / 人物卡 ------------------------------ */
@@ -289,7 +290,7 @@ function mergeSession({ chat, chatStore, session, sourceName, logger, now, dryRu
   chat.meta.importedAt = now;
   chatStore.saveMeta(chat, { immediate: true });
   if (logger) {
-    logger.info(`合并旧记忆：${sourceName} → ${chat.chatId}（补 ${add.length} 条消息 / ${applied} 条偏好，共 ${chat.messages.length} 条）`);
+    logger.info(`合并旧记忆：source=${tagName(sourceName)} chat=${tagId(chat.chatId)}（补 ${add.length} 条消息 / ${applied} 条偏好，共 ${chat.messages.length} 条）`);
   }
   return {
     imported: false, merged: true, chatId: chat.chatId,
@@ -361,7 +362,7 @@ function importSession({ chatStore, key, session, sourceName, now, logger, dryRu
   chat.lastActiveAt = Number(session.lastActiveAt) || now;
   chatStore.saveMeta(chat, { immediate: true });
   chatStore.checkpoint(chat);
-  if (logger) logger.info(`迁移旧记忆：${sourceName} → ${chatId}（${messages.length} 条消息）`);
+  if (logger) logger.info(`迁移旧记忆：source=${tagName(sourceName)} chat=${tagId(chatId)}（${messages.length} 条消息）`);
   return { imported: true, merged: false, chatId, messages: messages.length, notes: applied, totalMessages: messages.length };
 }
 
@@ -387,7 +388,7 @@ function migrateSessions({ chatStore, sessions, sourceName = 'legacy', now = Dat
       report.plan.push(result);
     } catch (err) {
       report.skipped += 1;
-      if (logger) logger.warn(`迁移旧记忆失败（${key}）：${describeError(err)}`);
+      if (logger) logger.warn(`迁移旧记忆失败（${tagId(key)}）：${describeError(err)}`);
     }
   }
   return report;

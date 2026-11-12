@@ -42,27 +42,28 @@ test('主人在群里不 @ 她也会回', async () => {
   cleanup();
 });
 
-test('主人在群里不 @ 也能执行命令', async () => {
+test('主人在群里也不能绕过魔咒改配置', async () => {
   const { bot, config, cleanup } = makeBot();
+  const before = config.chat.historyTurns;
   const r = await bot.decide(master('上下文 20'));
-  assert.equal(r.action, 'command');
-  assert.equal(config.chat.historyTurns, 20);
+  assert.equal(r.commandType, 'admin_hint');
+  assert.match(r.text, /管理员魔咒/);
+  assert.equal(config.chat.historyTurns, before);
   cleanup();
 });
 
-test('主人在群里说「闭麦」直接执行', async () => {
+test('「闭麦」不再是命令，不会改静音状态', async () => {
   const { bot, cleanup } = makeBot();
   const r = await bot.decide(master('闭麦 5 分钟'));
-  assert.equal(r.action, 'command');
-  assert.equal(r.commandType, 'mute');
+  assert.notEqual(r.commandType, 'mute');
   cleanup();
 });
 
-test('普通人同样的话不执行、也不理', async () => {
+test('普通人同样的话不执行、也不改配置', async () => {
   const { bot, config, cleanup } = makeBot();
   const before = config.chat.historyTurns;
   const r = await bot.decide(stranger('上下文 20'));
-  assert.equal(r.action, 'ignore');
+  assert.notEqual(r.commandType, 'admin');
   assert.equal(config.chat.historyTurns, before, '普通人不能改配置');
   const r2 = await bot.decide(stranger('闭麦 5 分钟', { msgId: 'x2' }));
   assert.notEqual(r2.action, 'command');
@@ -73,7 +74,7 @@ test('冒充主人（改昵称）没有命令权', async () => {
   const { bot, config, cleanup } = makeBot();
   const before = config.chat.historyTurns;
   const r = await bot.decide({ ...stranger('上下文 20'), senderName: 'Master', senderId: 'wxid_fake' });
-  assert.equal(r.action, 'ignore');
+  assert.notEqual(r.commandType, 'admin');
   assert.equal(config.chat.historyTurns, before);
   cleanup();
 });

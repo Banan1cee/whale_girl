@@ -9,6 +9,10 @@
     重新放出来（本模块不自己计时重试，避免两边各算一套）。
 """
 import threading
+try:
+    from bridge_log import safe_text
+except ImportError:  # 测试里按 `bridge.reminder_watch` 导入时走包内相对路径
+    from .bridge_log import safe_text
 
 
 def start_reminder_watch(*, http, base, token, send_text, send_at, log):
@@ -93,7 +97,7 @@ class ReminderRunner:
                 self.failed += 1
             self._ack_safe(item, ok, err)
             if not ok:
-                self.log("提醒发送失败（服务端会在 5 分钟后重试一次）：", text[:30], err)
+                self.log("提醒发送失败（服务端会在 5 分钟后重试一次）：", safe_text(text), err)
         return sent, next_at
 
     def _ack_safe(self, item, ok, err):

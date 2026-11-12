@@ -27,6 +27,7 @@ const SKIP_PREFIX = [
   'dist/', 'release/', 'artifacts/',
   'tests/launcher/Checks/bin/', 'tests/launcher/Checks/obj/',
   'tests/launcher/FakeBridge/bin/', 'tests/launcher/FakeBridge/obj/',
+  'tests/plugin-market/bin/', 'tests/plugin-market/obj/',
   'tests/voice-send/bin/', 'tests/voice-send/obj/',
   '.venv/', 'venv/',
 ];
@@ -113,8 +114,9 @@ const BINARY_RULES = [
         'raw.githubusercontent.com/banan1cee/whale-girl-plugins/main/index.json',
         'raw.githubusercontent.com/banan1cee/whale-girl-plugins/main/index-v2.json']
         .some(prefix => text.slice(index).toLowerCase().startsWith(prefix)) &&
-      // .NET 字符串后的二进制长度标记不一定解码成空白或 NUL。
-      !/^raw\.githubusercontent\.com\/banan1cee\/whale-girl-plugins\/main\/index-v3\.json(?![a-z0-9._~:/?#%=&+\-])/i.test(text.slice(index)),
+      // .NET 字符串后的二进制长度标记不一定解码成空白或 NUL，所以带文件名的目录
+      // 必须紧跟 URL 分隔符（或什么都没跟）才算官方路径。
+      !/^raw\.githubusercontent\.com\/banan1cee\/whale-girl-plugins\/main\/(?:index-v3|index-personas)\.json(?![a-z0-9._~:/?#%=&+\-])/i.test(text.slice(index)),
   },
 ];
 

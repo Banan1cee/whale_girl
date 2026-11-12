@@ -9,6 +9,7 @@ const { applyConfigPatch } = require('../../infra/configPatch');
 const { sendDenial } = require('../../core/wechatSendPolicy');
 const { isLoopbackRequest } = require('../security');
 const { json, readBody } = require('../util');
+const { tagId } = require('../../infra/privacy');
 
 module.exports = function register(router) {
   router.post('/api/wechat/send-permission', async (runtime, req, res) => {
@@ -49,7 +50,7 @@ module.exports = function register(router) {
       return json(res, 400, { ok: false, error: `本机没有账号 ${wanted}。现有：${list}` });
     }
     const out = applyConfigPatch(runtime, { 'wechat.account': wanted });
-    runtime.logger.info(`微信账号已设为 ${wanted || '自动（按最近活跃选）'}（桥接会在几秒内自动重启）`);
+    runtime.logger.info(`微信账号已设为 ${wanted ? tagId(wanted) : '自动（按最近活跃选）'}（桥接会在几秒内自动重启）`);
     return json(res, 200, {
       ...wechatAccountsPayload(runtime),
       changed: out.changed,
@@ -81,7 +82,7 @@ module.exports = function register(router) {
       items: (body && body.items) || [],
       at: (body && body.at) || Date.now(),
     });
-    runtime.logger.info(`联系人缓存已同步：${out.count} 条${out.account ? `（账号 ${out.account}）` : ''}`);
+    runtime.logger.info(`联系人缓存已同步：${out.count} 条${out.account ? `（账号 ${tagId(out.account)}）` : ''}`);
     return json(res, 200, { ok: true, ...out });
   });
 };

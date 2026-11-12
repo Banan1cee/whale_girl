@@ -15,6 +15,7 @@ const retrieval = require('./retrieval');
 const relations = require('./relations');
 const { personHash } = require('./hash');
 const { describeError } = require('../infra/errors');
+const { tagId } = require('../infra/privacy');
 
 const TOPIC_SHIFT_RE = /(换个话题|换话题|不说这个|不聊这个|聊点别的|说点别的|跳过这个话题|别聊了|算了不聊)/;
 
@@ -226,7 +227,7 @@ async function closeEpisode({ chat, chatStore, llm = null, logger = null, now = 
     chatStore.saveMeta(chat, { immediate: true });
 
     if (logger) {
-      logger.info(`episode 关闭（${reason}）：事件 ${writtenEvents} 条、关系 ${writtenRelations} 条（chat ${chat.chatId}）`);
+      logger.info(`episode 关闭（${reason}）：事件 ${writtenEvents} 条、关系 ${writtenRelations} 条（chat ${tagId(chat.chatId)}）`);
     }
     return { closed: true, episodeId: ep.id, reason, events: writtenEvents, relations: writtenRelations, summary: summaryText };
   } finally {

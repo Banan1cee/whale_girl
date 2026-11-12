@@ -51,6 +51,10 @@ launcher/publish/*.pdb
 .tools/
 artifacts/
 
+# 插件市场签名私钥只放离线环境，绝不入库
+plugin-market-private-key.pem
+*.private.pem
+
 # 启动器回归测试的构建缓存
 tests/launcher/**/bin/
 tests/launcher/**/obj/

@@ -5,6 +5,7 @@ const { applyConfigPatch } = require('../infra/configPatch');
 const vision = require('../adapters/vision');
 const { statusPayload } = require('./status');
 const { describeError } = require('../infra/errors');
+const { tagName } = require('../infra/privacy');
 
 function getSettings(runtime) {
   const { config, llm } = runtime;
@@ -304,7 +305,7 @@ async function applySettings(runtime, body) {
     config.persona.ownerName = name;
     try {
       applyConfigPatch(runtime, { 'persona.ownerName': name });
-      runtime.logger.info(`称呼已改为「${name}」`);
+      runtime.logger.info(`称呼已更新：${tagName(name)}`);
     } catch (err) {
       runtime.logger.warn('称呼写入 config.json 失败，仅本次生效：' + describeError(err));
     }
