@@ -418,6 +418,8 @@ function migrateSampling(cfg, log) {
 }
 
 function loadConfig({ root = projectRoot(), env = process.env, readOnly = false } = {}) {
+  const { registerSecrets } = require('./redact');
+  registerSecrets(env);
   const configPath = path.join(root, 'config.json');
   const configExists = fs.existsSync(configPath);
   // 解析失败不能悄悄当成「空配置」：那会让所有默认值顶上来，用户看到的是
@@ -437,11 +439,12 @@ function loadConfig({ root = projectRoot(), env = process.env, readOnly = false 
       }
       fromFile = parsed;
     } catch (err) {
-      configError = String((err && err.message) || err);
+      configError = require('./redact').redactSecrets((err && err.message) || err);
       fromFile = {};
     }
   }
   const cfg = deepMerge(DEFAULT_CONFIG, fromFile);
+  registerSecrets(cfg);
   // 表情包不再按概率发送（分类由模型标记决定），旧的 chances / genericChance
   // 即使还留在 config.json 里也不参与运行，这里不再做任何兼容搬移。
   // 老配置迁移（在 env 覆盖之前做，避免把用户的 env 设置改掉）
@@ -502,7 +505,9 @@ function ensureConfigFile(root = projectRoot()) {
 }
 
 function loadSettings(cfg) {
-  return readJson(cfg.paths.settingsFile, {}) || {};
+  const settings = readJson(cfg.paths.settingsFile, {}) || {};
+  require('./redact').registerSecrets(settings);
+  return settings;
 }
 
 function saveSettings(cfg, patch) {
@@ -530,6 +535,7 @@ function saveSettings(cfg, patch) {
     next.apiKey = keys[providerName] || '';
   }
   next.keys = keys;
+  require('./redact').registerSecrets(next);
   fs.mkdirSync(cfg.paths.dataDir, { recursive: true });
   fs.writeFileSync(cfg.paths.settingsFile, JSON.stringify(next, null, 2), 'utf8');
   return next;

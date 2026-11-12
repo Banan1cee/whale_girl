@@ -19,6 +19,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const util = require('node:util');
+const { registerSecrets, redactSecrets } = require('./redact');
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40, silent: 99 };
 const COLORS = {
@@ -121,7 +122,8 @@ function createLogger({ level = 'info', fileLevel = 'debug', file = null, tag = 
 
     const ts = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date());
     // 不省略：对象展开到任意深度、长字符串不截断，否则出错时看不到真正的现场。
-    const text = args
+    for (const arg of args) registerSecrets(arg);
+    const text = redactSecrets(args
       .map((a) => (typeof a === 'string' ? a : util.inspect(a, {
         depth: null,
         maxArrayLength: 200,
@@ -129,7 +131,7 @@ function createLogger({ level = 'info', fileLevel = 'debug', file = null, tag = 
         colors: false,
         breakLength: 160,
       })))
-      .join(' ');
+      .join(' '));
     // warn/error 抓调用点；抓不到（打包压缩过）就退回模块 tag
     const site = (n >= LEVELS.warn || lv === 'debug') ? callerSite() : '';
     const prefix = (site || tagName) ? `${site || tagName}  ` : '';

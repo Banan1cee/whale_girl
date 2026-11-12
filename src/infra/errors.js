@@ -1,4 +1,5 @@
 'use strict';
+const { redactSecrets } = require('./redact');
 
 /**
  * 一行式错误摘要，专供日志使用。
@@ -43,7 +44,7 @@ function describeError(err, { maxDetail = 300 } = {}) {
 }
 
 function clipWithEllipsis(value, max) {
-  const s = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+  const s = redactSecrets(value).replace(/\s+/g, ' ').trim();
   return s.length > max ? s.slice(0, max) + '…' : s;
 }
 
