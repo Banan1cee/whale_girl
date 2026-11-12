@@ -67,7 +67,7 @@ def _log_name(value) -> str:
     text = str(value or "")
     if not text:
         return "-"
-    return "#" + hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:8]
+    return "#" + hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:8]
 
 _APPLIED = False
 _seen_logged = set()

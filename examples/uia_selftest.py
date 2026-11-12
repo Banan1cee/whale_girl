@@ -64,7 +64,7 @@ def _log_name(value) -> str:
     text = str(value or "")
     if not text:
         return "-"
-    return "#" + hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:8]
+    return "#" + hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:8]
 
 
 # wechatauto 自己的日志也跟着进这份文件，方便一眼看全

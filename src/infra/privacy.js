@@ -10,7 +10,7 @@
 const crypto = require('node:crypto');
 
 function shortHash(value, len = 8) {
-  return crypto.createHash('sha1')
+  return crypto.createHash('sha256')
     .update(String(value == null ? '' : value))
     .digest('hex')
     .slice(0, len);
