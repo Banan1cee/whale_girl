@@ -14,6 +14,12 @@
                     <Button DockPanel.Dock="Right" Content="刷新" Style="{StaticResource Ghost}" Click="OnRefresh" Margin="0,0,8,0" />
                 </DockPanel>
                 <TextBlock Text="发现社区工具与人设预设，在「已安装」里管理。" Style="{StaticResource Small}" Margin="0,6,0,16" />
+                <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="第三方插件免责声明" FontWeight="SemiBold" />
+                        <TextBlock Text="社区插件由各自作者提供。上架、校验或扫描不保证无病毒、无漏洞；使用可能造成隐私泄露、数据损坏、异常发言或账号风险。请核对来源与权限，备份后谨慎安装。完整说明见右侧「免责声明」。" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                    </StackPanel>
+                </Border>
                 <DockPanel LastChildFill="False">
                     <Button x:Name="Discover" Content="发现" Style="{StaticResource Primary}" Click="OnDiscover" MinWidth="80" />
                     <Button x:Name="Installed" Content="已安装" Style="{StaticResource Ghost}" Click="OnInstalled" Margin="8,0,0,0" MinWidth="80" />
@@ -35,10 +41,12 @@
         <Border Grid.Column="1" Style="{StaticResource Card}" Padding="12" VerticalAlignment="Top">
             <StackPanel>
                 <TextBlock Text="文档" Style="{StaticResource H2}" />
+                <Button Content="免责声明" Style="{StaticResource Ghost}" Click="OnDisclaimer" Margin="0,8,0,0" />
                 <Button Content="下载与安装指南" Style="{StaticResource Ghost}" Click="OnDownloadGuide" Margin="0,8,0,0" />
                 <Button Content="插件作者入门" Style="{StaticResource Ghost}" Click="OnAuthorGuide" Margin="0,6,0,0" />
                 <Button Content="消息插件 API" Style="{StaticResource Ghost}" Click="OnMessageGuide" Margin="0,6,0,0" />
                 <Button Content="插件市场规范" Style="{StaticResource Ghost}" Click="OnRulesGuide" Margin="0,6,0,0" />
+                <Button Content="安全检测与溯源" Style="{StaticResource Ghost}" Click="OnSecurityGuide" Margin="0,6,0,0" />
             </StackPanel>
         </Border>
     </Grid>

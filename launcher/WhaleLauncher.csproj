@@ -35,10 +35,12 @@
     <PackageReference Include="NAudio" Version="2.2.1" />
     <Resource Include="Assets\app.ico" />
     <EmbeddedResource Include="..\docs\插件市场规范.md" LogicalName="WhaleLauncher.PluginRulesGuide.md" />
+    <EmbeddedResource Include="..\docs\插件免责声明.md" LogicalName="WhaleLauncher.PluginDisclaimer.md" />
     <EmbeddedResource Include="..\docs\插件作者入门.md" LogicalName="WhaleLauncher.PluginAuthorGuide.md" />
     <EmbeddedResource Include="..\docs\插件消息流程Api3.md" LogicalName="WhaleLauncher.PluginMessageGuide.md" />
     <EmbeddedResource Include="..\docs\插件下载指南.md" LogicalName="WhaleLauncher.PluginDownloadGuide.md" />
     <EmbeddedResource Include="..\scripts\vb-cable-pack45.json" LogicalName="WhaleLauncher.VbCablePack45.json" />
+    <EmbeddedResource Include="..\docs\插件安全检测.md" LogicalName="WhaleLauncher.PluginSecurityGuide.md" />
     <EmbeddedResource Include="Assets\minimax-voices.json" LogicalName="WhaleLauncher.MiniMaxVoices.json" />
   </ItemGroup>
 
