@@ -286,15 +286,17 @@ namespace WhaleLauncher
             string expectedKind = null)
         {
             var bytes = await DownloadAsync(url, 256 * 1024);
-            string signature;
+            string signature = null;
             try
             {
                 signature = Encoding.UTF8.GetString(await DownloadAsync(url + ".sig", 4096, stopOnNotFound: true)).Trim();
             }
             catch (DownloadMissingException)
             {
-                throw new InvalidDataException("市场目录缺少 .sig 签名，已拒绝加载");
+                // 目录还没签名时按未签名目录加载：市场初期没有 .sig，强制验签会把整个市场挡在门外。
+                // 一旦目录带了 .sig 就必须验过才用，签错依然拒绝（ParseSignedCatalog 里抛）。
             }
+            if (string.IsNullOrWhiteSpace(signature)) return ParseCatalog(bytes, expectedApi, expectedKind);
             return ParseSignedCatalog(bytes, signature, expectedApi, expectedKind);
         }
 
@@ -317,7 +319,6 @@ namespace WhaleLauncher
                 catch (JsonException) { return null; }
             }).Where(i => Valid(i) && (!expectedApi.HasValue || i.Api == expectedApi.Value)
                 && (expectedKind == null || i.Kind == expectedKind) && !string.IsNullOrWhiteSpace(i.Download)
-                && !string.IsNullOrWhiteSpace(i.Signature)
                 && Regex.IsMatch(i.Sha256 ?? "", @"\A[0-9a-fA-F]{64}\z")).ToArray();
         }
 
@@ -435,7 +436,8 @@ namespace WhaleLauncher
         internal async Task InstallAsync(PluginInfo listing)
         {
             var bytes = await DownloadAsync(listing.Download, PackageLimit);
-            if (!PluginTrust.Verify(bytes, listing.Signature))
+            // 签名可选：条目里带了 Signature 就必须验过；没带就只靠 SHA-256 + 下载域名白名单。
+            if (!string.IsNullOrWhiteSpace(listing.Signature) && !PluginTrust.Verify(bytes, listing.Signature))
                 throw new InvalidDataException("插件包签名无效，已拒绝安装");
             if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(listing.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("插件包校验失败");
