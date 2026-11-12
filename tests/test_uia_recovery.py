@@ -263,18 +263,34 @@ class RecoveryTests(unittest.TestCase):
     def test_stray_login_window_filter_keeps_wide_or_tall_main_windows(self):
         windows = [
             dict(hwnd=100, pid=1, title='微信'),
-            dict(hwnd=200, pid=2, title='微信'),   # 442x581 登录小窗：关
-            dict(hwnd=300, pid=3, title='微信'),   # 1000x400：宽够，保留
-            dict(hwnd=400, pid=4, title='微信'),   # 500x700：高够，保留
+            dict(hwnd=200, pid=1, title='微信'),   # 同进程 442x581 登录小窗：关
+            dict(hwnd=300, pid=1, title='微信'),   # 1000x400：宽够，保留
+            dict(hwnd=400, pid=1, title='微信'),   # 500x700：高够，保留
+            dict(hwnd=500, pid=2, title='微信'),   # 另一个账号的小窗也不能关
         ]
-        sizes = {100: (1120, 689), 200: (442, 581), 300: (1000, 400), 400: (500, 700)}
+        sizes = {100: (1120, 689), 200: (442, 581), 300: (1000, 400), 400: (500, 700),
+                 500: (442, 581)}
         gui = SimpleNamespace(GetWindowRect=lambda h: (0, 0) + sizes[h],
                               PostMessage=Mock())
-        with patch.dict(sys.modules, {'win32gui': gui}), \
+        process = SimpleNamespace(GetWindowThreadProcessId=lambda _h: (1, 1))
+        with patch.dict(sys.modules, {'win32gui': gui, 'win32process': process}), \
                 patch.object(boot, '_iter_windows', return_value=windows), \
                 patch.object(boot, 'tree_state', return_value='shell'):
             boot.close_stray_login_windows(100)
         self.assertEqual([c.args[0] for c in gui.PostMessage.call_args_list], [200])
+
+    def test_stray_login_cleanup_requires_confirmed_process(self):
+        for owner in [None, SimpleNamespace(GetWindowThreadProcessId=Mock(side_effect=OSError)),
+                      SimpleNamespace(GetWindowThreadProcessId=lambda _h: (1, 0))]:
+            with self.subTest(owner=owner):
+                gui = SimpleNamespace(GetWindowRect=lambda _h: (0, 0, 442, 581),
+                                      PostMessage=Mock())
+                with patch.dict(sys.modules, {'win32gui': gui, 'win32process': owner}), \
+                        patch.object(boot, '_iter_windows', return_value=[
+                            dict(hwnd=200, pid=2, title='微信')]), \
+                        patch.object(boot, 'tree_state', return_value='shell'):
+                    boot.close_stray_login_windows(100)
+                gui.PostMessage.assert_not_called()
 
     def test_wechat_title_has_priority_over_a_large_detached_chat(self):
         windows = [
