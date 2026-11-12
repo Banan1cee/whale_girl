@@ -108,7 +108,7 @@ async function search({ text = '', history = [], llm, config = {}, now = new Dat
     }
     if (!active()) throw searchError(controller.signal.aborted ? 'aborted' : 'deadline_exceeded');
     if (policy.DOMAINS[intent.site]) q = q.replace(/\bsite:[a-z0-9.-]+/gi, '').trim() + ' site:' + policy.DOMAINS[intent.site];
-    const value = await call('web', () => providers.searchResult(q, { ...options(), limit: 4,
+    const value = await call('web', () => providers.searchResult(q, { ...options(), limit: 4, keirolabsApiKey: config.keirolabsApiKey,
       maxAgeDays: effectiveMaxAgeDays(`${text} ${q}`, intent.fresh, intent.timeRange) }));
     return finish(value);
   };

@@ -92,6 +92,8 @@ const FIELDS = {
   // 语义路由（每句话先问一次模型「要不要联网」）：不配时只在像问句/命中事实词时才问；
   // true 则每句都问（更准，每句多 ~2 秒）；false 则完全按关键词。
   'websearch.semanticRoute': { type: 'bool' },
+  // 可选的 Keirolabs 搜索 Key；日志里只显示「已隐藏」。
+  'websearch.keirolabsApiKey': { type: 'string', maxLen: 200, redactValue: true },
   // 环境块（提示词里的 <env>）：地点只到区，时区留空就用系统自己的。
   // 太长的地址一定是把门牌粘进来了，直接拒掉，别等到拼提示词时才截断。
   'env.location': { type: 'string', maxLen: 40, redactValue: true },

@@ -176,7 +176,8 @@ const DEFAULT_CONFIG = {
   chat: { privateMaxChars: 100, groupMaxChars: 70, historyTurns: 120, groupHistoryTurns: 100, maxBubbles: 2, discussionMaxChars: 400, emojiChance: 0 },
   // 联网：问天气/新闻这类实时问题时现搜。city 用来把「今天天气怎么样」补成「上海 天气」，
   // 搜到的结果准得多；留空就按对方原话搜（也能用，但经常搜到别的城市）。
-  websearch: { enabled: true, city: '', timeoutMs: 8000 },
+  // keirolabsApiKey 可选：填了就先用 Keirolabs 搜索，结果不够再走 Bing / 360。
+  websearch: { enabled: true, city: '', timeoutMs: 8000, keirolabsApiKey: '' },
   // 环境：拼进提示词 <env> 块的稳定信息（开关在 features.envContext）。
   // location 是给人填的，可以精确到区（「厦门市思明区」）；留空就交给自动探测，
   // 探测也拿不到才退回 websearch.city（只有城市级），都没有就整行不写。

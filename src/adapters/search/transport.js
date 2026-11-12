@@ -58,10 +58,12 @@ function getText(url, opts = {}) {
     try {
       const parsed = new URL(target);
       if (parsed.protocol !== 'https:') return finish(searchError('unsupported_protocol'));
-      req = https.get(parsed.toString(), { headers: {
+      const headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0 Safari/537.36',
         'Accept-Language': 'zh-CN,zh;q=0.9', Accept: 'text/html,application/json,*/*', ...(opts.headers || {}),
-      } }, res => {
+      };
+      // 只有带 body 的接口（Keirolabs）走 POST；其余仍是 GET，跳转后也不重发 body。
+      const respond = res => {
         response = res;
         res.on('error', err => finish(err));
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -87,7 +89,11 @@ function getText(url, opts = {}) {
           chunks.push(chunk);
         });
         res.on('end', () => finish(null, Buffer.concat(chunks).toString('utf8')));
-      });
+      };
+      if (opts.body != null && redirects === 0) {
+        req = https.request(parsed.toString(), { method: 'POST', headers }, respond);
+        req.end(opts.body);
+      } else req = https.get(parsed.toString(), { headers }, respond);
       req.on('error', err => finish(err));
     } catch (err) { finish(err); }
   });
@@ -99,4 +105,10 @@ async function getJson(url, opts) {
   try { return JSON.parse(body); } catch { throw searchError('parse_error'); }
 }
 
-module.exports = { getText, getJson, remaining, searchError, errorInfo, report };
+async function postJson(url, payload, opts = {}) {
+  const body = await getText(url, { ...opts, body: JSON.stringify(payload),
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(opts.headers || {}) } });
+  try { return JSON.parse(body); } catch { throw searchError('parse_error'); }
+}
+
+module.exports = { getText, getJson, postJson, remaining, searchError, errorInfo, report };

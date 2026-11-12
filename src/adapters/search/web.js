@@ -2,6 +2,7 @@
 
 const bing = require('./bing');
 const so360 = require('./so360');
+const keirolabs = require('./keirolabs');
 const { remaining, report, errorInfo } = require('./transport');
 const quality = require('../../core/search/quality');
 const { result } = require('../../core/search/result');
@@ -27,7 +28,7 @@ async function searchResult(query, opts = {}) {
     // 首源最多占大部分预算，给备用源留出机会；极短预算不再切成无意义的小请求。
     const timeoutMs = reserve && left > 100 ? Math.floor(left * 0.65) : left;
     try {
-      const parsed = await ({ bing, so360 }[provider]).search(term, { ...opts, deadline, timeoutMs });
+      const parsed = await ({ bing, so360, keirolabs }[provider]).search(term, { ...opts, deadline, timeoutMs });
       const scoped = site ? parsed.filter(item => {
         const host = new URL(item.url).hostname.toLowerCase();
         return host === site.toLowerCase() || host.endsWith('.' + site.toLowerCase());
@@ -51,11 +52,15 @@ async function searchResult(query, opts = {}) {
       report(opts.trace, 'failed', { provider, ...info });
     }
   };
-  await ask('bing', q, true);
-  const named = quality.modelNames(body).length || /\b(?:macbook|ipad|watch|airpods)\b/i.test(body);
-  if (!site && !named && /(苹果|iphone|mac)/i.test(body) && /(最新|机器|机型|型号|出到|几代|发布)/.test(body)) {
-    const product = /(电脑|笔记本|mac)/i.test(body) ? 'Mac 机型' : /手机|iphone/i.test(body) ? 'iPhone 机型' : '苹果 产品';
-    await ask('bing', 'site:apple.com.cn ' + product, true);
+  // 配了 Keirolabs Key 时先问它；够两条有效结果就不再爬 Bing，否则照旧走 Bing / 360。
+  if (opts.keirolabsApiKey) await ask('keirolabs', q, true);
+  if (!opts.keirolabsApiKey || valid().length < 2) {
+    await ask('bing', q, true);
+    const named = quality.modelNames(body).length || /\b(?:macbook|ipad|watch|airpods)\b/i.test(body);
+    if (!site && !named && /(苹果|iphone|mac)/i.test(body) && /(最新|机器|机型|型号|出到|几代|发布)/.test(body)) {
+      const product = /(电脑|笔记本|mac)/i.test(body) ? 'Mac 机型' : /手机|iphone/i.test(body) ? 'iPhone 机型' : '苹果 产品';
+      await ask('bing', 'site:apple.com.cn ' + product, true);
+    }
   }
   if (valid().length < 2) {
     // 保留原始查询作主检索，纠错只产生候选，不覆盖用户的专名和型号。
