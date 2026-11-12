@@ -112,7 +112,9 @@ const BINARY_RULES = [
       !['raw.githubusercontent.com/banan1cee/whale_girl/', 'raw.githubusercontent.com/banan1cee/whale_gril/',
         'raw.githubusercontent.com/banan1cee/whale-girl-plugins/main/index.json',
         'raw.githubusercontent.com/banan1cee/whale-girl-plugins/main/index-v2.json']
-        .some(prefix => text.slice(index).toLowerCase().startsWith(prefix)),
+        .some(prefix => text.slice(index).toLowerCase().startsWith(prefix)) &&
+      // .NET 字符串后的二进制长度标记不一定解码成空白或 NUL。
+      !/^raw\.githubusercontent\.com\/banan1cee\/whale-girl-plugins\/main\/index-v3\.json(?![a-z0-9._~:/?#%=&+\-])/i.test(text.slice(index)),
   },
 ];
 
