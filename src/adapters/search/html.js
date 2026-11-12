@@ -19,9 +19,9 @@ function decodeEntities(s) {
 }
 
 function stripTags(s) {
-  // 结束标签允许空白（</script >），否则过滤后会残留脚本内容。
-  return decodeEntities(String(s || '').replace(/<script[\s\S]*?<\/script\s*>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style\s*>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+  // 结束标签可能带空白或属性（</script >、</script\n bar>），按标签整体匹配。
+  return decodeEntities(String(s || '').replace(/<script[\s\S]*?<\/script\b[^>]*>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style\b[^>]*>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
 }
 
 function sourceUrl(raw, base) {
