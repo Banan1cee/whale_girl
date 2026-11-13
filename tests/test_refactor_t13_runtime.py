@@ -9,6 +9,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
+import os
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'bridge'))
@@ -193,6 +196,179 @@ class ConfigSnapshotTests(unittest.TestCase):
         scope['restart_for_config_change'].assert_called_once()
         self.assertEqual(scope['PIPELINE_WORKERS'], 4)
         self.assertEqual(scope['CONFIG_SNAPSHOT']['values']['PIPELINE_WORKERS'], 4)
+
+
+class DefaultSafetyTests(unittest.TestCase):
+    """Actual startup/publication and sender/window bodies, with inert boundaries.
+
+    Reuse the AST entry above: never import engine or a GUI mixin. Every
+    configured root is temporary, and live capabilities are blocked before
+    importing the pure config module or executing any bridge body.
+    """
+
+    def setUp(self):
+        fixture = tempfile.TemporaryDirectory(prefix='whale-t13-defaults-')
+        self.addCleanup(fixture.cleanup)
+        self.fixture_root = fixture.name
+        self.live_effects = []
+        blocked = AssertionError('live capability forbidden in default-safety fixture')
+        for target in ('socket.socket', 'socket.create_connection', 'subprocess.Popen',
+                       'subprocess.run', 'os.system', 'os.startfile', 'os.walk',
+                       'os.scandir', 'glob.glob'):
+            blocker = patch(target, side_effect=blocked, create=True)
+            self.live_effects.append(blocker.start())
+            self.addCleanup(blocker.stop)
+        modules = patch.dict(sys.modules, {name: None for name in (
+            'engine', 'app', 'wechatauto', 'win32gui', 'win32api', 'win32con',
+            'pyautogui', 'bg_sender', 'uia_boot', 'parent_watch')})
+        modules.start()
+        self.addCleanup(modules.stop)
+        environment = patch.dict(os.environ, {}, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.parser = load_pure_module('runtime_config')
+        self.identity_error = type('FixtureIdentityError', (Exception,), {})
+
+    def tearDown(self):
+        for effect in self.live_effects:
+            effect.assert_not_called()
+
+    def startup(self, config):
+        scope = ConfigSnapshotTests.scope(self, config)
+        scope.update(ROOT=self.fixture_root, _BOOT_CONFIG_VALID=True, _cfg=config,
+                     BACKGROUND_SEND=object(), QUOTE_REPLY=object(), CURRENT_CONFIG=object())
+        engine = ast.parse((ROOT / 'bridge/engine.py').read_text(encoding='utf-8-sig'))
+        boot = next(n for n in engine.body if isinstance(n, ast.If)
+                    and isinstance(n.test, ast.Name) and n.test.id == '_BOOT_CONFIG_VALID')
+        exec(compile(ast.Module(body=[boot], type_ignores=[]), 'isolated-startup', 'exec'), scope)
+        self.assertIs(scope['CURRENT_CONFIG'], config)
+        self.assertEqual(scope['ROOT'], self.fixture_root)
+        self.assert_app_config_assembly(scope, config)
+        return scope
+
+    def assert_app_config_assembly(self, scope, config):
+        app = ast.parse((ROOT / 'bridge/app.py').read_text(encoding='utf-8-sig'))
+        start = next(n for n in ast.walk(app) if isinstance(n, ast.FunctionDef) and n.name == 'start')
+        assignment = next(n for n in start.body if isinstance(n, ast.Assign)
+                          and any(isinstance(t, ast.Attribute) and t.attr == 'cfg' for t in n.targets))
+        runtime = SimpleNamespace()
+        g = SimpleNamespace(**scope)
+        g.read_config = Mock(side_effect=AssertionError('app must use the published startup read'))
+        exec(compile(ast.Module(body=[assignment], type_ignores=[]), 'isolated-app-assembly', 'exec'),
+             {'G': g, 'self': runtime})
+        self.assertIs(runtime.cfg, config)
+        g.read_config.assert_not_called()
+
+    def window(self, scope):
+        events = []
+        snapshot = object()
+        runtime = SimpleNamespace(
+            snapshot_win_state=Mock(side_effect=lambda: events.append('snapshot') or snapshot),
+            restore_win_state=Mock(side_effect=lambda value: events.append('restore')))
+
+        def foreground(fn, **kwargs):
+            events.append('foreground')
+            return fn()
+
+        runtime.force_send_foreground = Mock(side_effect=foreground)
+        g = SimpleNamespace(BACKGROUND_SEND=scope['BACKGROUND_SEND'], STICKER_TEST_ON=False,
+                            ChatIdentityError=self.identity_error, log=Mock())
+        call = load_function('bridge/window_mixin.py', 'with_window_on_top', {'G': g})
+        return runtime, lambda fn: call(runtime, fn), events, snapshot
+
+    def test_background_default_configured_and_restore(self):
+        for config, expected in (({}, True), ({'wechat': {}}, True),
+                                 ({'wechat': {'backgroundSend': False}}, False),
+                                 ({'wechat': {'backgroundSend': 'false'}}, False),
+                                 ({'wechat': {'backgroundSend': True}}, True)):
+            scope = self.startup(config)
+            for stage in ('startup', 'reload'):
+                with self.subTest(config=config, stage=stage):
+                    if stage == 'reload':
+                        self.assertTrue(scope['reload_config'](config=config))
+                    self.assertIs(scope['BACKGROUND_SEND'], expected)
+                    runtime, send, events, snapshot = self.window(scope)
+                    action = Mock(side_effect=lambda: events.append('send') or True)
+                    self.assertTrue(send(action))
+                    action.assert_called_once()
+                    if expected:
+                        self.assertEqual(events, ['snapshot', 'send', 'restore'])
+                        runtime.restore_win_state.assert_called_once_with(snapshot)
+                        runtime.force_send_foreground.assert_not_called()
+                    else:
+                        self.assertEqual(events, ['foreground', 'send'])
+                        runtime.snapshot_win_state.assert_not_called()
+                        runtime.restore_win_state.assert_not_called()
+            self.assertTrue(scope['reload_config'](config={}))
+            self.assertIs(scope['BACKGROUND_SEND'], True)
+
+    def test_background_restore_on_error_and_identity_failure(self):
+        scope = self.startup({})
+        runtime, send, events, snapshot = self.window(scope)
+        action = Mock(side_effect=[False, True])
+        self.assertTrue(send(action))
+        self.assertEqual(action.call_count, 2)
+        runtime.force_send_foreground.assert_called_once_with(action)
+        runtime.restore_win_state.assert_called_once_with(snapshot)
+        for failure in (RuntimeError('fixture send failure'), self.identity_error('fixture identity failure')):
+            with self.subTest(error=type(failure).__name__):
+                runtime, send, events, snapshot = self.window(scope)
+                action = Mock(side_effect=failure)
+                with self.assertRaises(type(failure)):
+                    send(action)
+                runtime.restore_win_state.assert_called_once_with(snapshot)
+                self.assertEqual(events[-1], 'restore')
+                if isinstance(failure, self.identity_error):
+                    runtime.force_send_foreground.assert_not_called()
+
+    def assert_quote_path(self, scope, requested=True, allowed=True):
+        runtime, window, events, snapshot = self.window(scope)
+        runtime.__dict__.update(
+            dead_chats=set(), group_is_alive=Mock(return_value=True), is_self_chat=Mock(return_value=False),
+            ui_chat_name=Mock(return_value='fixture-chat'), account_send_allowed=Mock(return_value=allowed),
+            send_lock=nullcontext(), gui_lock=nullcontext(), send_policy_allows=Mock(return_value=True),
+            sticker_quarantine_allows=Mock(return_value=True), fail_streak={}, bg_send=Mock(return_value=False),
+            gui=SimpleNamespace(quote_msg=Mock(return_value=True), _get_uia=Mock(return_value=object())),
+            bind_gui_window=Mock(), uia_send=Mock(return_value=True), with_window_on_top=window)
+        g = SimpleNamespace(QUOTE_REPLY=scope['QUOTE_REPLY'], STICKER_TEST_ON=False,
+            BG_SEND=scope['BG_SEND'], SEND_STATE={}, _SendStateScope=lambda _: nullcontext(),
+            time=SimpleNamespace(time=lambda: 10000), log=Mock(), log_error=Mock(), log_throttled=Mock(),
+            safe_name=lambda _: 'fixture-chat', ChatIdentityError=self.identity_error,
+            DraftDirtyError=type('FixtureDraftError', (Exception,), {}))
+        send = load_function('bridge/sender_mixin.py', 'send_text', {'G': g})
+        result = send(runtime, 'fixture text', 'fixture-chat', 'fixture-peer', quote_latest=requested)
+        self.assertIs(result, allowed)
+        if not allowed:
+            runtime.gui.quote_msg.assert_not_called()
+            runtime.bg_send.assert_not_called()
+            runtime.uia_send.assert_not_called()
+        elif requested and scope['QUOTE_REPLY']:
+            runtime.gui.quote_msg.assert_called_once_with('fixture text', who='fixture-chat', verify=False)
+            runtime.uia_send.assert_not_called()
+        else:
+            runtime.gui.quote_msg.assert_not_called()
+            runtime.uia_send.assert_called_once_with('fixture text', 'fixture-chat', 'fixture-peer')
+
+    def test_quote_reply_default_configured_and_reload(self):
+        for config, expected in (({}, False), ({'wechat': {}}, False),
+                                 ({'wechat': {'quoteReply': True}}, True),
+                                 ({'wechat': {'quoteReply': 'false'}}, False),
+                                 ({'wechat': {'quoteReply': False}}, False)):
+            scope = self.startup(config)
+            for stage in ('startup', 'reload'):
+                with self.subTest(config=config, stage=stage):
+                    if stage == 'reload':
+                        self.assertTrue(scope['reload_config'](config=config))
+                    self.assertIs(scope['QUOTE_REPLY'], expected)
+                    self.assert_quote_path(scope)
+            self.assertTrue(scope['reload_config'](config={}))
+            self.assertIs(scope['QUOTE_REPLY'], False)
+            self.assert_quote_path(scope)
+
+    def test_quote_request_and_identity_gate_remain_required(self):
+        scope = self.startup({'wechat': {'quoteReply': True}})
+        self.assert_quote_path(scope, requested=False)
+        self.assert_quote_path(scope, requested=True, allowed=False)
 
 
 class LogThrottleTests(unittest.TestCase):
