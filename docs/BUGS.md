@@ -96,4 +96,11 @@
 2. **定位到最底层**：现象 → 直接原因 → 根因（哪个判断/哪行代码/哪个环境假设）。
 3. **一处修复**：同类判断只保留一份实现（主人判定、mime 判定、ffmpeg 查找都是这么收的）。
 4. **补回归测试**：`tests/` 里要有能在修复前失败、修复后通过的用例。
+   台账这一列只写 CI 真的会执行的入口，自检会拿 `.github/workflows/` 反查，写错就红：
+   - JS：`tests/xxx.test.js`（`npm test` 只跑 `tests/` 浅一层，别放子目录）
+   - Python：`tests/test_xxx.py`（`unittest discover -s tests -p 'test_*.py'`）
+   - C#：`tests/voice-send/VoiceSendChecks.csproj` 这类**项目文件**，或直接写它所在目录
+     （如 `tests/launcher/Checks`，自检会归约到目录里 CI 执行的 csproj）
+   - 出包类：写 `scripts/release-check.js` 这类真的在 CI 里跑的自检脚本；一个 bug 一行，
+     别写「启动器构建」这种没法验证的说法
 5. **写进这里**：一行一个问题，别让下一个人重踩。
