@@ -89,6 +89,8 @@ test('online partial publish-settings omits absent maxPerDay and preserves its c
   const { status, response } = await post(f, { featureEnabled: true, enabled: false, withImage: false, interval: 8 });
   assert.equal(status, 200);
   assert.equal(response.ok, true);
+  assert.equal(response.revision, 1);
+  assert.equal(f.events.filter(name => name === 'publisherReconcile').length, 1);
   const saved = JSON.parse(fs.readFileSync(f.file, 'utf8'));
   assert.equal(saved.moments.publishFeatureEnabled, true);
   assert.equal(saved.moments.publishEnabled, false);
