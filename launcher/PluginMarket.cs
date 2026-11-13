@@ -18,10 +18,13 @@ namespace WhaleLauncher
     internal sealed record PluginInfo(string Id, string Name, string Author, string Version, string MinAppVersion,
         string Description, string ResultLabel, int Api, string Download = null, string Sha256 = null, string Kind = "tool",
         string MaxAppVersion = null, int DiscussionIssue = 0, string HostAction = null,
-        string[] Hooks = null, string[] Permissions = null, string Signature = null)
+        string[] Hooks = null, string[] Permissions = null, string Signature = null,
+        int ExecutionTimeoutMs = 30000, int IntervalSeconds = 60)
     {
         internal bool IsPersona => Kind == "persona";
         internal bool IsMessage => Api == 3 && Kind == "message";
+        internal bool IsJavaScript => Api == 4 && Kind is "message" or "tool";
+        internal bool IsFlow => IsMessage || IsJavaScript;
         internal string CompatibilityLabel => string.IsNullOrEmpty(MaxAppVersion)
             ? $"鲸鲸 {MinAppVersion} 及以上" : $"鲸鲸 {MinAppVersion} – {MaxAppVersion}";
     }
@@ -34,8 +37,10 @@ namespace WhaleLauncher
         internal const string DigestAction = "chat.summary";
         private const string CatalogV2Url = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-v2.json";
         private const string CatalogV3Url = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-v3.json";
+        private const string CatalogV4Url = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-v4.json";
         private const string PersonaCatalogUrl = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-personas.json";
-        private const int PackageLimit = 1024 * 1024;
+        private const int PackageLimit = 16 * 1024 * 1024;
+        private static readonly string[] NativeHooks = ["chat.received", "chat.pre_reply", "chat.prompt", "chat.generate", "chat.reply", "chat.before_send", "chat.dispatched", "chat.search", "chat.search_result", "app.start", "app.stop", "timer.tick", "tool.run"];
         private const int PluginTimeoutMs = 3000;
         private static readonly HttpClient Http = CreateClient();
         private static readonly JsonSerializerOptions ReadOptions = new() { PropertyNameCaseInsensitive = true };
@@ -132,28 +137,46 @@ namespace WhaleLauncher
                     && info.Hooks.Distinct().Count() == info.Hooks.Length
                     && info.Hooks.All(h => h is "chat.received" or "chat.pre_reply" or "chat.prompt" or "chat.generate" or "chat.reply" or "chat.before_send" or "chat.dispatched")
                     && info.Permissions is { Length: <= 2 }
-                    && info.Permissions.All(p => p is "chat.history" or "model.prompt"))
+                    && info.Permissions.All(p => p is "chat.history" or "model.prompt")
+                || info.IsJavaScript && info.HostAction == null && info.Hooks is { Length: > 0 and <= 13 }
+                    && info.Hooks.Distinct().Count() == info.Hooks.Length && info.Hooks.All(NativeHooks.Contains)
+                    && info.Permissions is ["system.full"]
+                    && info.ExecutionTimeoutMs is >= 100 and <= 120000
+                    && info.IntervalSeconds is >= 1 and <= 86400)
             && Version.TryParse(info.Version, out _) && Version.TryParse(info.MinAppVersion, out var min)
             && (!info.IsMessage || min >= new Version(4, 1, 0))
+            && (!info.IsJavaScript || min >= new Version(4, 1, 2))
             && (string.IsNullOrEmpty(info.MaxAppVersion) || (Version.TryParse(info.MaxAppVersion, out var max) && max >= min))
             && info.DiscussionIssue >= 0
             && info.Name?.Trim().Length is > 0 and <= 80
             && info.Author?.Trim().Length is > 0 and <= 80
             && SafeText(info.Name, 80).Length > 0
             && SafeText(info.Author, 80).Length > 0
-            && info.Description?.Length is <= 600 && (info.IsPersona || info.IsMessage ||
+            && info.Description?.Length is <= 600 && (info.IsPersona || info.IsFlow ||
                 (info.Kind == "tool" && info.ResultLabel?.Trim().Length is > 0 and <= 80
                     && SafeText(info.ResultLabel, 80).Length > 0));
 
         internal static PluginPackage ReadPackage(byte[] bytes)
         {
-            if (bytes.Length > PackageLimit) throw new InvalidDataException("插件包超过 1 MiB");
+            if (bytes.Length > PackageLimit) throw new InvalidDataException("插件包超过 16 MiB");
             using var zip = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
             if (zip.Entries.Count != 2 || zip.GetEntry("plugin.json") is not { } manifest)
                 throw new InvalidDataException("ZIP 根目录必须包含 plugin.json 和一个插件文件");
             using var metadata = manifest.Open();
             var info = JsonSerializer.Deserialize<PluginInfo>(ReadLimited(metadata, 8192), ReadOptions);
             if (!Valid(info)) throw new InvalidDataException("插件清单无效或接口版本不支持");
+            if (!info.IsJavaScript && bytes.Length > 1024 * 1024) throw new InvalidDataException("旧接口插件包超过 1 MiB");
+            if (zip.Entries.Any(e => ((e.ExternalAttributes >> 16) & 0xF000) == 0xA000))
+                throw new InvalidDataException("插件包不得包含符号链接");
+            if (info.IsJavaScript)
+            {
+                using var script = (zip.GetEntry("plugin.js") ?? throw new InvalidDataException("JavaScript 插件需要 plugin.js")).Open();
+                var source = ReadLimited(script, 8 * 1024 * 1024);
+                try { _ = new UTF8Encoding(false, true).GetString(source); }
+                catch (DecoderFallbackException) { throw new InvalidDataException("plugin.js 必须为 UTF-8"); }
+                if (source.Length == 0) throw new InvalidDataException("plugin.js 不能为空");
+                return new PluginPackage(info, source);
+            }
             if (info.IsPersona)
             {
                 using var preset = (zip.GetEntry("persona.json") ??
@@ -275,6 +298,9 @@ namespace WhaleLauncher
             try { items = items.Concat(await LoadCatalogAsync(CatalogV3Url, 3, "message")).ToArray(); }
             catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidDataException
                 or OperationCanceledException or InvalidOperationException) { }
+            try { items = items.Concat(await LoadCatalogAsync(CatalogV4Url, 4)).ToArray(); }
+            catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidDataException
+                or OperationCanceledException or InvalidOperationException) { }
             try { items = items.Concat(await LoadCatalogAsync(PersonaCatalogUrl, 1, "persona")).ToArray(); }
             catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidDataException
                 or OperationCanceledException or InvalidOperationException) { }
@@ -376,7 +402,7 @@ namespace WhaleLauncher
             return File.Exists(FileFor(id, ".enabled")) || File.Exists(FileFor(id, ".persona.json"));
         }
 
-        internal void SetEnabled(string id, bool enabled)
+        internal void SetEnabled(string id, bool enabled, bool fullAccessApproved = false)
         {
             EnsureRoot();
             var marker = FileFor(id, ".enabled");
@@ -399,10 +425,12 @@ namespace WhaleLauncher
                     version = package.Info.Version, customPrompt = package.Prompt
                 }));
             }
-            else if (package.Info.IsMessage)
+            else if (package.Info.IsFlow)
             {
+                if (package.Info.IsJavaScript && !fullAccessApproved)
+                    throw new InvalidDataException("JavaScript 插件需要明确确认完整系统权限");
                 PublishMessagePackage(package);
-                SetMessageSettings(id, MessageSettings(id));
+                SaveFlowGrant(package.Info, MessageSettings(id), package.Info.IsJavaScript);
                 WriteAtomically(marker, []);
             }
             else if (!File.Exists(marker))
@@ -483,8 +511,9 @@ namespace WhaleLauncher
                 DeletePluginData(info.Id);
             }
             if (current != null && info.IsPersona) SetEnabled(info.Id, false);
+            if (info.IsFlow || current?.IsFlow == true) SetEnabled(info.Id, false);
             WriteAtomically(target, bytes);
-            if (info.IsMessage)
+            if (info.IsFlow)
             {
                 File.Delete(FileFor(info.Id, ".flow-grant.json"));
                 File.Delete(FileFor(info.Id, ".enabled"));
@@ -496,6 +525,16 @@ namespace WhaleLauncher
         private void PublishMessagePackage(PluginPackage package)
         {
             var info = package.Info;
+            if (info.IsJavaScript)
+            {
+                WriteAtomically(FileFor(info.Id, ".flow.json"), JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    id = info.Id, api = 4, kind = info.Kind, hooks = info.Hooks, permissions = info.Permissions,
+                    executionTimeoutMs = info.ExecutionTimeoutMs, intervalSeconds = info.IntervalSeconds,
+                    javascript = Encoding.UTF8.GetString(package.Module)
+                }, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
+                return;
+            }
             WriteAtomically(FileFor(info.Id, ".flow.json"), JsonSerializer.SerializeToUtf8Bytes(new
             {
                 id = info.Id, api = 3, hooks = info.Hooks, permissions = info.Permissions,
@@ -513,16 +552,36 @@ namespace WhaleLauncher
         internal void SetMessageSettings(string id, string settings)
         {
             EnsureRoot();
-            if (Encoding.UTF8.GetByteCount(settings) > 4096) throw new InvalidDataException("设置超过 4 KiB");
+            var package = ReadPackage(ReadFile(FileFor(id, ".zip")));
+            if (!package.Info.IsFlow || package.Info.Id != id) throw new InvalidDataException("消息插件无效");
+            var limit = package.Info.IsJavaScript ? 65536 : 4096;
+            if (Encoding.UTF8.GetByteCount(settings) > limit) throw new InvalidDataException("设置超过大小限制");
             using var value = JsonDocument.Parse(settings);
             if (value.RootElement.ValueKind != JsonValueKind.Object) throw new InvalidDataException("设置需要 JSON 对象");
-            var package = ReadPackage(ReadFile(FileFor(id, ".zip")));
-            if (!package.Info.IsMessage || package.Info.Id != id) throw new InvalidDataException("消息插件无效");
-            var flow = ReadFile(FileFor(id, ".flow.json"));
             WriteAtomically(FileFor(id, ".flow-settings.json"), Encoding.UTF8.GetBytes(settings));
-            WriteAtomically(FileFor(id, ".flow-grant.json"), JsonSerializer.SerializeToUtf8Bytes(new
+            // 保存配置不能创造运行授权；只有明确启用才能生成初始授权。
+            if (Enabled(id) && File.Exists(FileFor(id, ".flow-grant.json")))
             {
-                enabled = true, hash = Convert.ToHexString(SHA256.HashData(flow)).ToLowerInvariant(), settings = value.RootElement
+                using var grant = JsonDocument.Parse(ReadFile(FileFor(id, ".flow-grant.json")));
+                using var current = File.OpenRead(FileFor(id, ".flow.json"));
+                var hash = Convert.ToHexString(SHA256.HashData(current)).ToLowerInvariant();
+                if (grant.RootElement.TryGetProperty("hash", out var oldHash) && oldHash.GetString() == hash
+                    && grant.RootElement.TryGetProperty("enabled", out var active) && active.ValueKind == JsonValueKind.True
+                    && (!package.Info.IsJavaScript || grant.RootElement.TryGetProperty("fullAccess", out var full) && full.ValueKind == JsonValueKind.True))
+                    SaveFlowGrant(package.Info, settings, package.Info.IsJavaScript);
+            }
+        }
+
+        private void SaveFlowGrant(PluginInfo info, string settings, bool fullAccess)
+        {
+            using var value = JsonDocument.Parse(settings);
+            if (value.RootElement.ValueKind != JsonValueKind.Object || Encoding.UTF8.GetByteCount(settings) > (info.IsJavaScript ? 65536 : 4096))
+                throw new InvalidDataException("插件设置无效");
+            using var stream = File.OpenRead(FileFor(info.Id, ".flow.json"));
+            var flow = ReadLimited(stream, 64 * 1024 * 1024);
+            WriteAtomically(FileFor(info.Id, ".flow-grant.json"), JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                enabled = true, fullAccess, hash = Convert.ToHexString(SHA256.HashData(flow)).ToLowerInvariant(), settings = value.RootElement
             }));
         }
 
@@ -543,7 +602,7 @@ namespace WhaleLauncher
             EnsureRoot();
             if (!Enabled(id)) throw new InvalidOperationException("请先启用插件");
             var package = ReadPackage(ReadFile(FileFor(id, ".zip")));
-            if (package.Info.IsPersona || package.Info.IsMessage || package.Info.Id != id || !Compatible(package.Info, UpdateManifestService.LocalVersion(_baseDir)))
+            if (package.Info.IsPersona || package.Info.IsFlow || package.Info.Id != id || !Compatible(package.Info, UpdateManifestService.LocalVersion(_baseDir)))
                 throw new InvalidDataException("插件类型、标识或兼容版本无效");
             if (package.Info.HostAction != authorizedAction)
                 throw new InvalidOperationException("此插件需要确认宿主权限");

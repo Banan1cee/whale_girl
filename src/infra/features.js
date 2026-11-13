@@ -22,6 +22,12 @@ const REGISTRY = [
     experimental: true,
   },
   {
+    key: 'javascriptPlugins', path: 'features.javascriptPlugins',
+    label: 'JavaScript 插件（实验性，完整系统权限）',
+    desc: '默认关闭。开启后仍须逐个确认插件权限。JavaScript 可访问网络、文件、系统命令及全部主程序 API，只启用信任的作者。关闭会停止受管理的插件进程并取消尚未执行的插件发送任务。',
+    default: false, experimental: true,
+  },
+  {
     key: 'envContext',
     path: 'features.envContext',
     label: '环境信息注入（系统 / 时区 / 所在地）',

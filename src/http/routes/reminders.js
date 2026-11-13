@@ -15,7 +15,7 @@ const { json, readBody } = require('../util');
 const { isLoopbackRequest } = require('../security');
 const { textMeta } = require('../../infra/privacy');
 
-const BRIDGE_ONLY = new Set(['/api/reminders/due', '/api/reminders/ack']);
+const BRIDGE_ONLY = new Set(['/api/reminders/due', '/api/reminders/ack', '/api/reminders/permission']);
 
 module.exports = function register(router) {
   router.pattern(/^\/api\/reminders(?:\/.*)?$/, async (runtime, req, res, info) => {
@@ -29,6 +29,11 @@ module.exports = function register(router) {
       }
     }
     const method = req.method || 'GET';
+    if (info.pathname === '/api/reminders/permission' && method === 'POST') {
+      const body = await readBody(req);
+      const item = service.items.find(row => row.id === body?.id && row.kind === 'plugin');
+      return json(res, 200, { ok: Boolean(item && item.status === 'sending' && service.pluginAllowed?.(item)) });
+    }
 
     if (info.pathname === '/api/reminders' && method === 'GET') {
       const rules = service.rules();

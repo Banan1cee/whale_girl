@@ -85,6 +85,9 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
     server.listen(listenPort, listenHost, resolve);
   });
   const actualPort = server.address().port;
+  const pluginHost = ['::', '::1'].includes(listenHost) ? '[::1]' : '127.0.0.1';
+  runtime.pluginApiUrl = `http://${pluginHost}:${actualPort}`;
+  runtime.bot.javascriptPlugins.start();
   // 探针：listen 成功 = 内核第一次能被连上。这条数字直接对应「启动器 10 秒超时 / 积极拒绝」
   probe.emit(logger, 'info',
     `listen 就绪 端口=${actualPort} 启动到 listen=${probe.ms(probe.now() - probeBootAt)}ms`);
@@ -110,6 +113,7 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
   const close = async () => {
     if (closed) return;
     closed = true;
+    await runtime.bot.javascriptPlugins.stop();
     // SSE / keep-alive 连接会让 server.close() 一直等，先强制断开空闲连接
     try { if (server.closeIdleConnections) server.closeIdleConnections(); } catch { /* ignore */ }
     setTimeout(() => {
@@ -120,6 +124,7 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
     logger.close();
   };
   server.on('close', () => {
+    void runtime.bot.javascriptPlugins.stop();
     runtime.scheduler?.stopAll();
     runtime.moments?.stopAutoRead();
     runtime.diary?.stop();

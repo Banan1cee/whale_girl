@@ -32,6 +32,7 @@ const { ReminderService } = require('./services/reminderService');
 const { DiaryService } = require('./services/diary');
 const { DigestService } = require('./services/digest');
 const locationProbe = require('./services/location');
+const { PluginHost } = require('./services/pluginHost');
 
 const VERSION = require('../package.json').version;
 
@@ -216,6 +217,11 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
     logger.warn('记忆启动恢复失败（不影响聊天）：' + describeError(err));
   }
   runtime.gateways = createGateways({ config, bot: runtime.bot, logger: child('gateway') });
+  runtime.pluginHost = new PluginHost(runtime);
+  runtime.bot.javascriptPlugins.hostCall = (...args) => runtime.pluginHost.call(...args);
+  const pluginAllowed = item => runtime.bot.javascriptPlugins.isApproved(item.pluginId, item.pluginHash);
+  runtime.reminders.pluginAllowed = pluginAllowed;
+  runtime.stickerService.pluginAllowed = pluginAllowed;
   watchConfigFile(runtime);
   // 探针：createRuntime 结束 = server.js 可以 listen 的时刻，这条就是「启动被堵了多久」
   probe.emit(logger, 'info', `createRuntime 耗时=${probe.ms(probe.now() - probeT0)}ms（listen 之前）`);

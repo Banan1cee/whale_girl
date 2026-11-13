@@ -113,7 +113,7 @@ function collect(root = ROOT) {
       else if (/^scripts\//.test(rel) && /\.(?:py|js|ps1)$/i.test(rel)) scripts.add(rel);
       else if (/^tests\//.test(rel) && /\.(?:py|js|cs)$/i.test(rel)) files.add(rel);
     }
-    const direct = line.match(/node\s+--test\s+["']?([^"'\s]+)/);
+    const direct = line.match(/node\s+--test(?:\s+--[^\s]+)*\s+["']?([^"'\s]+)/);
     if (direct && /\*/.test(direct[1])) {
       globs.push({ dir: path.posix.dirname(normalize(direct[1])), pattern: path.posix.basename(normalize(direct[1])), from: 'node --test' });
     }
@@ -128,7 +128,7 @@ function collect(root = ROOT) {
   const pkg = readJson(path.join(root, 'package.json'));
   const npmTest = pkg && pkg.scripts && pkg.scripts.test;
   if (runsNpmTest && npmTest) {
-    const m = String(npmTest).match(/node\s+--test\s+["']?([^"'\s]+)/);
+    const m = String(npmTest).match(/node\s+--test(?:\s+--[^\s]+)*\s+["']?([^"'\s]+)/);
     if (m && /\*/.test(m[1])) {
       globs.push({ dir: path.posix.dirname(normalize(m[1])), pattern: path.posix.basename(normalize(m[1])), from: 'package.json scripts.test' });
     }
