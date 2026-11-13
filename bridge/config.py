@@ -10,6 +10,7 @@ import os
 
 from bridge_log import log, log_error, log_warn
 from ffmpeg_runtime import configure_ffmpeg
+from runtime_config import runtime_snapshot, restart_fields
 
 ROOT = ""
 CONFIG_PATH = ""
@@ -27,21 +28,28 @@ def set_local_http(client):
     LOCAL_HTTP = client
 
 
-def read_config():
+def read_config(strict=False):
     cfg = {}
+    if strict and (not CONFIG_PATH or not os.path.exists(CONFIG_PATH)):
+        raise FileNotFoundError('配置文件不存在')
     if CONFIG_PATH and os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8-sig") as f:
                 cfg = json.load(f)
+            if not isinstance(cfg, dict):
+                raise ValueError('config.json 必须是对象')
         except Exception as e:
+            if strict:
+                raise
             log_error("读取 config.json 失败（会按默认值跑）：", e)
+            cfg = {}
     return cfg
 
 
 def wechat_token(cfg):
     # 与内核合并 DEFAULT_CONFIG 的规则一致，显式空值仍保留。
-    gateway = (cfg.get('gateway') or {}).get('wechat') or {}
-    return str(gateway.get('inboundToken', 'change-me-wechat') or '')
+    from runtime_config import inbound_token
+    return inbound_token(cfg)
 
 
 def build_bot_url(cfg):
@@ -67,9 +75,9 @@ def wait_for_server(url, timeout=30):
     """
     import time as _t
     health = url.rsplit("/webhook", 1)[0] + "/healthz"
-    deadline = _t.time() + max(5, timeout)
+    deadline = _t.monotonic() + max(5, timeout)
     waited = 0
-    while _t.time() < deadline:
+    while _t.monotonic() < deadline:
         try:
             r = LOCAL_HTTP.get(health, timeout=3)
             body = r.json() if r.status_code == 200 else None

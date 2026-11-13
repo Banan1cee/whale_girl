@@ -8,7 +8,7 @@ bot_url/token/send_text 构造 ReminderRunner），但调用处仍按模块顶�
 - 启动器是 `loop_mixin.LoopMixin.start_reminder_watch(self)`；
 - `app.py` 用 `self.start_reminder_watch()` 无参调用并写回 `G.REMINDER_RUNNER`。
 
-这里钉住「调用必须和最近的同名定义签名一致」，防止再被同名遮蔽坑一次。
+保留签名和实例回收检查，并通过真实组合类与注入依赖验证实际发送接线。
 """
 import ast
 import pathlib

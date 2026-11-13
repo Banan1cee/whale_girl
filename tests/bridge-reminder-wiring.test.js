@@ -7,7 +7,7 @@
  * 遮蔽了模块顶部从 `reminder_watch` 导入的那个；调用处仍按模块级签名传 6 个
  * 关键字参数 → 桥接启动末尾必抛 TypeError，进程 code=1，启动器不会拉起。
  *
- * 这里用文本断言守住调用形态（不导入 engine，它有启动副作用）。
+ * 保留调用形态检查，并运行隔离的真实组合类行为回归；不导入有副作用的 engine。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');

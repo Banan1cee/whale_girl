@@ -33,6 +33,10 @@ try:
     from bridge_log import safe_id
 except ImportError:  # 测试里按 `bridge.msg_pipeline` 导入时走包内相对路径
     from .bridge_log import safe_id
+try:
+    from runtime_log_throttle import log_throttled as bounded_log
+except ImportError:
+    from .runtime_log_throttle import log_throttled as bounded_log
 
 
 def split_runs(items, key="sender_username"):
@@ -146,7 +150,7 @@ class MessagePipeline:
         self._running = set()      # 正在被处理的会话
         self._closed = False
         # 积压日志节流：卡住时每条新消息都溢出一次，原样打印就是刷屏。
-        self._drop_log_at = {}     # chat -> 上次打日志的时间
+        self._drop_log_at = {}     # 有界的日志窗口记录，不作业务去重
         self._drop_count = {}      # chat -> 本窗口内已丢条数
         self.stats = {"in": 0, "done": 0, "dropped": 0, "errors": 0, "peak_queue": 0}
 
@@ -166,12 +170,18 @@ class MessagePipeline:
                 q.pop(0)
                 self.stats["dropped"] += 1
                 self._drop_count[chat] = self._drop_count.get(chat, 0) + 1
-                now = time.time()
-                if now - self._drop_log_at.get(chat, 0.0) >= self.drop_log_interval:
-                    self._drop_log_at[chat] = now
+
+                def emit_drop():
                     n = self._drop_count.pop(chat, 1)
                     self.log("会话积压超过 %d 条，%.0f 秒内丢掉 %d 条：%s"
                              % (self.per_chat_limit, self.drop_log_interval, n, safe_id(chat)))
+                bounded_log(self._drop_log_at, chat, ttl=self.drop_log_interval,
+                            emit=emit_drop, clock=time.monotonic)
+                # These are log counters only; business queues and deduplication
+                # remain untouched when old log keys expire or are evicted.
+                for old_chat in tuple(self._drop_count):
+                    if old_chat not in self._drop_log_at:
+                        self._drop_count.pop(old_chat, None)
             if len(q) > self.stats["peak_queue"]:
                 self.stats["peak_queue"] = len(q)
             if chat in self._running:

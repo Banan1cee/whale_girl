@@ -4,7 +4,8 @@
 原来这些函数混在 engine.py 里，和启动流程、配置解析互相看见。拆出来后：
 
 - 只依赖 `configure()` 传进来的日志路径和级别；
-- `log_throttled` 仍留在 engine（它要读调用方的节流表），这里只提供最底层的
+- `log_throttled` 兼容入口仍留在 engine，有界抑制规则由 runtime_log_throttle 共享；
+  这里只提供最底层的
   `log` / `log_warn` / `log_error` / `boot` / `log_window_problem`；
 - warn/error 继续带「文件:行」调用点，拆模块后也不会丢。
 """
@@ -278,11 +279,12 @@ def log_window_problem(where, err):
     挪不动/置顶不了窗口不该让整条发送失败（UIA 还能把字打进去），
     更不该让看门狗以为“发送卡住”把桥接反复重启——那会一直弹「拒绝访问」。
     """
-    now = time.time()
-    if now - _win_problem_ts.get(where, 0) < 120:
-        return
-    _win_problem_ts[where] = now
-    log_warn(where + "：", repr(err))
+    try:
+        from runtime_log_throttle import log_throttled as bounded_log
+    except ImportError:
+        from .runtime_log_throttle import log_throttled as bounded_log
+    bounded_log(_win_problem_ts, where, where + "：", repr(err),
+                ttl=120, emit=log_warn, folded=log, clock=time.monotonic)
 
 
 for _fn in (log, log_debug, log_warn, log_error, _emit_log):
