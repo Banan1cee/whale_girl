@@ -221,11 +221,11 @@ function csharpCode(source) {
   }).join('\n');
 }
 
-function blockEnd(code, open) {
+function blockEnd(code, open, opening = '{', closing = '}') {
   let depth = 0;
   for (let i = open; i < code.length; i++) {
-    if (code[i] === '{') depth++;
-    if (code[i] === '}' && --depth === 0) return i + 1;
+    if (code[i] === opening) depth++;
+    if (code[i] === closing && --depth === 0) return i + 1;
   }
   return code.length;
 }
@@ -243,12 +243,53 @@ function entryCode(source) {
     const open = code.indexOf('{', match.index);
     code = code.slice(0, match.index) + ' '.repeat(blockEnd(code, open) - match.index) + code.slice(blockEnd(code, open));
   }
-  for (let match; (match = /\b(?:if|while)\s*\(\s*false\s*\)\s*(\{|[^;]*;)/.exec(code));) {
-    const start = match.index;
-    const end = match[1] === '{' ? blockEnd(code, code.indexOf('{', start)) : start + match[0].length;
-    code = code.slice(0, start) + ' '.repeat(end - start) + code.slice(end);
+  const controls = /\b(if|while|for)\s*\(/g;
+  for (let match; (match = controls.exec(code));) {
+    const open = code.indexOf('(', match.index), close = blockEnd(code, open, '(', ')');
+    const header = code.slice(open + 1, close - 1);
+    const condition = match[1] === 'for' ? header.split(';')[1] : header;
+    if (condition === undefined || condition.trim() !== 'false') continue;
+    let body = close;
+    while (/\s/.test(code[body] || '') && body < code.length) body++;
+    const semicolon = code.indexOf(';', body);
+    const end = code[body] === '{' ? blockEnd(code, body) : semicolon < 0 ? code.length : semicolon + 1;
+    code = code.slice(0, match.index) + ' '.repeat(end - match.index) + code.slice(end);
+    controls.lastIndex = end;
   }
   return code;
+}
+
+// 只识别入口中的直连语句，不沿委托/局部函数表达式追踪，也不充当 C# 控制流证明。
+// 分块记录明显终止语句，避免把 return 后的尾部重新当作下一条入口语句。
+function hasDirectEntryCall(code, call) {
+  const frames = [{ start: 0, fresh: true, terminated: false }];
+  let parentheses = 0;
+  for (let i = 0; i < code.length; i++) {
+    const frame = frames[frames.length - 1], char = code[i];
+    if (parentheses === 0 && frame.fresh && /\S/.test(char)) {
+      frame.fresh = false;
+      if (!frame.terminated) {
+        if (call.test(code.slice(i))) return true;
+        if (/^(?:return|throw|break|continue)\b/.test(code.slice(i))) frame.terminated = true;
+      }
+    }
+    if (char === '(') parentheses++;
+    else if (char === ')') parentheses = Math.max(0, parentheses - 1);
+    else if (parentheses === 0 && char === '{') {
+      const prefix = code.slice(frame.start, i).trim();
+      frames.push({ start: i + 1, fresh: true, terminated: frame.terminated,
+        unconditional: prefix === '' || prefix === 'try' || prefix === 'finally' });
+    } else if (parentheses === 0 && char === '}' && frames.length > 1) {
+      const finished = frames.pop(), parent = frames[frames.length - 1];
+      if (finished.unconditional && finished.terminated) parent.terminated = true;
+      parent.start = i + 1;
+      parent.fresh = true;
+    } else if (parentheses === 0 && char === ';') {
+      frame.start = i + 1;
+      frame.fresh = true;
+    }
+  }
+  return false;
 }
 
 function compiledSource(rel, project, root) {
@@ -316,8 +357,8 @@ function resolveRef(token, inventory, root = ROOT) {
     if (base !== 'Program') {
       const program = `${dir}/Program.cs`;
       const wired = fs.existsSync(path.join(root, program)) && compiledSource(program, project, root) &&
-        new RegExp(`\\b${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\.\\s*Run\\s*\\(`)
-          .test(entryCode(fs.readFileSync(path.join(root, program), 'utf8')));
+        hasDirectEntryCall(entryCode(fs.readFileSync(path.join(root, program), 'utf8')),
+          new RegExp(`^(?:await\\s+)?${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\.\\s*Run\\s*\\(`));
       if (!wired) return { ok: false, reason: `${rel} 没有可识别的已编译入口直连接线；静态文本不证明 case 执行` };
     }
     return { ok: true, kind: 'cs', entry: project, evidence: 'declared-entry', executionVerified: false };
