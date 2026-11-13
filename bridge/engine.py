@@ -167,8 +167,8 @@ def fix_garbled(text):
 
 def log_throttled(key, *args, ttl=600, emit=None):
     from runtime_log_throttle import log_throttled as bounded_log
-    return bounded_log(_THROTTLE_LOG, key, *args, ttl=ttl, emit=emit or log,
-                       folded=log, clock=getattr(time, 'monotonic', time.time))
+    bounded_log(_THROTTLE_LOG, key, *args, ttl=ttl, emit=emit or log,
+                folded=log, clock=getattr(time, 'monotonic', time.time))
 
 def _publish_runtime_config(cfg, snapshot):
     global CURRENT_CONFIG, CONFIG_SNAPSHOT

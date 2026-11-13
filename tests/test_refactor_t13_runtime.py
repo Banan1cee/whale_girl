@@ -208,6 +208,11 @@ class LogThrottleTests(unittest.TestCase):
         fn('fixture-error', 'fixture log')
         scope['log'].assert_called_once_with('fixture log')
 
+    def test_compatibility_entry_keeps_its_none_return_value(self):
+        fn, scope, clock = self.throttle()
+        self.assertIsNone(fn('fixture-return', 'fixture log'))
+        self.assertIsNone(fn('fixture-return', 'fixture suppressed'))
+
     def test_unique_log_keys_are_bounded(self):
         fn, scope, clock = self.throttle()
         for index in range(2000):
