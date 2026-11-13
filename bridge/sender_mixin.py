@@ -45,12 +45,17 @@ class SenderMixin:
         self.BG_STATS['tried'] += 1
         self.BG_STATS['last'] = why
         self.BG_STATS['lastAt'] = G.time.time()
+        G.log('[delivery] stage=background result=%s reason=%s' % ('submitted' if ok else 'failed', why))
         if why == 'chat_mismatch':
             raise G.ChatIdentityError('后台通道：当前会话不是目标 %s' % G.safe_name(chat_display_name))
         if why == 'content_mismatch':
             raise G.DraftDirtyError('正文回读校验未通过，本次输入已清理，未发送（%s）' % why)
-        if why in ('input_dirty', 'residue_left', 'input_not_empty'):
-            raise G.DraftDirtyError('输入框存在草稿或正文校验失败，请检查草稿后再试（%s）' % why)
+        if why == 'input_not_empty':
+            raise G.DraftDirtyError('目标输入框已有草稿，本条未输入也未发送，请先手动处理草稿（input_not_empty）')
+        if why == 'input_dirty':
+            raise G.DraftDirtyError('本次输入中断或清理未确认，已暂停发送，请检查目标输入框（input_dirty）')
+        if why == 'residue_left':
+            raise G.DraftDirtyError('已尝试点击发送但输入框未清空，请先核对微信是否已收到，避免重复补发（residue_left）')
         if ok:
             self.BG_STATS['ok'] += 1
             self.BG_STATS['treeFails'] = 0
@@ -379,6 +384,7 @@ class SenderMixin:
         # 现在不管调用方是谁，都先换成昵称/备注；换不出来就放弃，别让 open_chat 空转。
         resolved = self.ui_chat_name(chat_username, chat_display_name)
         if not resolved:
+            G.log('[delivery] stage=resolve_target result=failed reason=chat_name_unresolved chat=%s' % G.safe_id(chat_username or chat_display_name))
             G.log_throttled('send-no-name-' + str(chat_username or chat_display_name)[:18],
                             '发送跳过：%s 只拿到了内部 id，微信会话列表和搜索框都不认，先给 TA 加个备注再试' % G.safe_id(chat_username or chat_display_name),
                             ttl=600)

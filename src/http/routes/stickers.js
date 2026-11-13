@@ -18,7 +18,7 @@ const stickers = require('../../adapters/stickers');
 const { json, readBody, MIME } = require('../protocol');
 const { isLoopbackRequest } = require('../security');
 
-const BRIDGE_ONLY = new Set(['/api/stickers/gate', '/api/stickers/pending', '/api/stickers/claim', '/api/stickers/ack']);
+const BRIDGE_ONLY = new Set(['/api/stickers/gate', '/api/stickers/pending', '/api/stickers/claim', '/api/stickers/ack', '/api/stickers/cancel']);
 
 function stickerPath(config, emotion, name) {
   const dir = stickers.stickerDir(config, config.root);
@@ -243,6 +243,13 @@ module.exports = function register(router) {
       return (async () => {
         const body = await readBody(req);
         return json(res, 200, { ok: true, item: service.claim(body && body.id) });
+      })();
+    }
+
+    if (pathname === '/api/stickers/cancel' && method === 'POST') {
+      return (async () => {
+        const body = await readBody(req);
+        return json(res, 200, { ok: true, item: service.cancelReserved(body && body.id, body && body.generation, body && body.chatUsername) });
       })();
     }
 

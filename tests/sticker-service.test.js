@@ -126,6 +126,32 @@ test('没有冷却：私聊也能连续发；同一会话同时只排一个任�
   assert.equal(service.plan({ ...msg, platform: 'web' }, '其他'), null, '非微信平台不排表情包');
 });
 
+test('文字发送失败立即取消同会话预留表情包，后续请求不用等待超时', (t) => {
+  const { root, cfg } = fixture(t);
+  upload(cfg, root);
+  const service = new StickerService(cfg, { rng: () => 0 });
+  const msg = { platform: 'wechat', chatId: 'test-group@chatroom', chatType: 'group' };
+  const job = service.plan(msg, '开心');
+  assert.equal(job.status, 'reserved');
+  assert.equal(service.cancelReserved(job.id, job.generation, msg.chatId).status, 'cancelled');
+  assert.equal(service.cancelReserved(job.id, job.generation, msg.chatId).status, 'cancelled', '取消回执应当幂等');
+  assert.ok(service.plan(msg, '开心'), '取消应立即释放同会话的在途限制');
+});
+
+test('预留任务取消必须匹配代次和会话，不能取消已领取任务', (t) => {
+  const { root, cfg } = fixture(t);
+  upload(cfg, root);
+  const service = new StickerService(cfg, { rng: () => 0 });
+  const job = service.plan({ platform: 'wechat', chatId: 'peer-test', chatType: 'private' }, '开心');
+  for (const [generation, chat] of [['', 'peer-test'], ['old-generation', 'peer-test'], [job.generation, 'other-peer']]) {
+    assert.throws(() => service.cancelReserved(job.id, generation, chat), { statusCode: 409 });
+    assert.equal(service.jobs.get(job.id).status, 'reserved');
+  }
+  service.claim(job.id);
+  assert.throws(() => service.cancelReserved(job.id, job.generation, 'peer-test'), { statusCode: 409 });
+  assert.equal(service.jobs.get(job.id).status, 'sending');
+});
+
 test('任务过期不重试，满队列明确报错而非静默丢任务', (t) => {
   const { root, cfg } = fixture(t);
   upload(cfg, root);
@@ -184,6 +210,23 @@ test('HTTP：默认关404；热开上传/分类/领取/结果；关闭取消任�
   const cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
   assert.equal(cfg.persona.ownerName, '测试主人');
   assert.deepEqual(cfg.persona.master.wxids, ['wxid-master']);
+});
+
+test('HTTP：取消预留任务需要桥接 token、正确代次和精确会话', async (t) => {
+  const { root, inst, request, toggle } = await live(t);
+  await toggle('true');
+  upload(inst.runtime.config, root);
+  const service = inst.runtime.stickerService;
+  const job = service.plan({ platform: 'wechat', chatId: 'cancel-peer', chatType: 'private' }, '开心');
+  const payload = { id: job.id, generation: job.generation, chatUsername: job.chatUsername };
+  assert.equal((await request('/api/stickers/cancel', payload, 'wrong-token')).status, 403);
+  assert.equal((await request('/api/stickers/cancel', { ...payload, generation: 'old' }, 'sticker-test-token')).status, 409);
+  assert.equal((await request('/api/stickers/cancel', { ...payload, chatUsername: 'other-peer' }, 'sticker-test-token')).status, 409);
+  assert.equal((await request('/api/stickers/cancel', payload, 'sticker-test-token')).body.item.status, 'cancelled');
+  assert.equal((await request('/api/stickers/cancel', payload, 'sticker-test-token')).status, 200);
+  const next = service.plan({ platform: 'wechat', chatId: 'cancel-peer', chatType: 'private' }, '开心');
+  service.claim(next.id);
+  assert.equal((await request('/api/stickers/cancel', { ...payload, id: next.id }, 'sticker-test-token')).status, 409);
 });
 
 test('网关默认关回包真正无sticker字段，不给远程/其他平台发本机路径', async () => {

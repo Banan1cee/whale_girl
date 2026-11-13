@@ -307,6 +307,21 @@ class StickerService {
     this.logger?.info('[sticker] stage=claim result=sending job=' + job.id);
     return { ...job };
   }
+  cancelReserved(id, generation, chatUsername) {
+    this.requireEnabled();
+    const job = this.jobs.get(String(id || ''));
+    if (!job) throw fail('找不到这个任务', 404);
+    if (!generation || generation !== this.generation || generation !== job.generation
+      || !chatUsername || chatUsername !== job.chatUsername) throw fail('任务代次或目标会话不匹配', 409);
+    if (job.status === 'cancelled') return { ...job };
+    // 已领取的任务可能已经操作微信，不能伪装成尚未发送的取消。
+    if (job.status !== 'reserved') throw fail('任务已领取或结束，不能取消预留任务', 409);
+    job.status = 'cancelled';
+    job.error = 'reply_delivery_stopped';
+    this._note(job, 'cancelled');
+    this.logger?.info('[sticker] stage=cancel result=cancelled job=' + job.id + ' reason=reply_delivery_stopped');
+    return { ...job };
+  }
   ack(id, status, error = '') {
     this.requireEnabled();
     const job = this.jobs.get(String(id || ''));

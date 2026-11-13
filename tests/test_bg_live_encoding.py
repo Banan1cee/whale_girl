@@ -279,6 +279,10 @@ class DirtyDraftPipelineTests(unittest.TestCase):
                 fallback.assert_not_called()
                 self.assertEqual(env['dead_chats'], set())
                 self.assertEqual(env['fail_streak'], {})
+                messages = '\n'.join(str(call.args[0]) for call in env['log_error'].call_args_list)
+                self.assertNotIn('草稿或正文校验失败', messages)
+                events = '\n'.join(str(call.args[0]) for call in env['log'].call_args_list)
+                self.assertIn('stage=background result=failed reason=' + reason, events)
 
 
 class InputChannelTests(unittest.TestCase):
