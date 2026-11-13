@@ -195,6 +195,8 @@ try
     }
     market.SetEnabled(messageInfo.Id, false);
     Check(!File.Exists(grantFile));
+    market.SetMessageSettings(messageInfo.Id, "{\"turns\":3}");
+    Check(!File.Exists(grantFile) && !market.Enabled(messageInfo.Id));
     market.SetEnabled(messageInfo.Id, true);
     Check(market.MessageSettings(messageInfo.Id).Contains("3"));
     File.WriteAllBytes(package, Pack(messageInfo with { Version = "1.1.0" }));
@@ -206,6 +208,33 @@ try
     Check(File.Exists(settingsFile) && File.Exists(stateFile));
     market.Uninstall(messageInfo.Id);
     Check(!File.Exists(settingsFile) && !File.Exists(stateFile));
+    var nativeInfo = info with { Id = "native-demo", Api = 4, MinAppVersion = "4.1.2", Kind = "tool",
+        Hooks = ["tool.run", "chat.search"], Permissions = ["system.full"] };
+    var script = Encoding.UTF8.GetBytes("module.exports.run = async () => ({text:'你好😀'});");
+    Reject(() => PluginMarket.ReadPackage(Pack(nativeInfo with { MinAppVersion = "4.1.1" }, "plugin.js", script)));
+    Reject(() => PluginMarket.ReadPackage(Pack(nativeInfo with { Permissions = [] }, "plugin.js", script)));
+    Reject(() => PluginMarket.ReadPackage(Pack(nativeInfo with { ExecutionTimeoutMs = 0 }, "plugin.js", script)));
+    Reject(() => PluginMarket.ReadPackage(Pack(nativeInfo, "plugin.wasm", script)));
+    Reject(() => PluginMarket.ReadPackage(Pack(nativeInfo, "plugin.js", [0xFF, 0xFE])));
+    File.WriteAllBytes(package, Pack(nativeInfo, "plugin.js", script));
+    market.InstallLocal(package);
+    Reject(() => market.SetEnabled(nativeInfo.Id, true));
+    Check(!market.Enabled(nativeInfo.Id));
+    market.SetMessageSettings(nativeInfo.Id, "{\"mode\":\"保持😀\"}");
+    var nativeGrant = Path.Combine(dir, "data", "plugins", "native-demo.flow-grant.json");
+    Check(!File.Exists(nativeGrant));
+    market.SetEnabled(nativeInfo.Id, true, fullAccessApproved: true);
+    using (var grant = JsonDocument.Parse(File.ReadAllBytes(nativeGrant)))
+        Check(grant.RootElement.GetProperty("fullAccess").GetBoolean());
+    var nativeState = Path.Combine(dir, "data", "plugins", "native-demo.test.state.json");
+    File.WriteAllText(nativeState, "{\"counter\":7}");
+    File.WriteAllBytes(package, Pack(nativeInfo with { Version = "1.1.0" }, "plugin.js", script));
+    market.InstallLocal(package);
+    Check(!market.Enabled(nativeInfo.Id) && !File.Exists(nativeGrant));
+    Check(market.MessageSettings(nativeInfo.Id).Contains("保持") && File.ReadAllText(nativeState).Contains("7"));
+    market.SetMessageSettings(nativeInfo.Id, "{}");
+    Check(!File.Exists(nativeGrant));
+    market.Uninstall(nativeInfo.Id);
     if (args.Length > 1 && args[1] == "--live")
     {
         var listed = (await PluginMarket.CatalogAsync()).Single(x => x.Id == info.Id);
@@ -229,6 +258,6 @@ namespace WhaleLauncher
 {
     internal static class UpdateManifestService
     {
-        internal static string LocalVersion(string _) => "4.1.0";
+        internal static string LocalVersion(string _) => "4.1.2";
     }
 }

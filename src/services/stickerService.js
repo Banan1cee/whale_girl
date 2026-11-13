@@ -184,6 +184,11 @@ class StickerService {
       if (enabled) this.startMaintenance();
     }
     for (const job of this.jobs.values()) {
+      if (job.pluginId && ACTIVE.has(job.status) && !this.pluginAllowed?.(job)) {
+        job.status = job.status === 'sending' ? 'unconfirmed' : 'cancelled';
+        job.error = '插件授权已撤回，未自动重试';
+        this._note(job, job.status);
+      }
       // 卡住的任务 90 秒就释放：以前是 5 分钟，失败一次就把这个会话堵 5 分钟，
       // 用户感觉「25% 概率压根没生效」。
       if (ACTIVE.has(job.status) && this.now() - job.at > 90 * 1000) {

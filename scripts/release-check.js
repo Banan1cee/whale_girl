@@ -135,8 +135,11 @@ try {
       check('次版本号只用于新增功能', hasNew,
         hasNew ? '' : `${latest.raw} 升了次版本，但 CHANGELOG 没有「新增」小节`);
     } else if (latest.pat > prev.pat) {
-      check('补丁版本只放修复 / 改进', !hasNew,
-        hasNew ? `${latest.raw} 里有「新增」，请升次版本号（例如 4.0→4.1）` : '');
+      // 维护者明确要求将本轮 API 4 与桥接修复一起留在 4.1 系列；只允许这一版例外。
+      const approvedFeatureRelease = latest.raw === '4.1.2' && prev.raw === '4.1.1'
+        && latestBody.includes('维护者指定合并发布');
+      check('补丁版本只放修复 / 改进（4.1.2 合并发布例外）', !hasNew || approvedFeatureRelease,
+        approvedFeatureRelease ? '维护者指定 4.1.2 合并发布' : hasNew ? `${latest.raw} 里有「新增」，请升次版本号（例如 4.0→4.1）` : '');
     }
   }
 

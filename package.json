@@ -1,6 +1,6 @@
 {
     "name": "whale-girl-bot",
-    "version": "4.1.1",
+    "version": "4.1.2",
     "private": false,
     "description": "鲸鲸 —— 模块化重构版（CommonJS，零 npm 依赖）",
     "main": "server.js",
@@ -8,7 +8,7 @@
     "scripts": {
         "start": "node server.js",
         "doctor": "node server.js --doctor",
-        "test": "node --test \"tests/*.test.js\"",
+        "test": "node --test --test-concurrency=4 \"tests/*.test.js\"",
         "check-layers": "node scripts/check-layers.js",
         "smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1",
         "release-check": "node scripts/release-check.js --release",

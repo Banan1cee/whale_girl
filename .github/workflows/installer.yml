@@ -87,7 +87,7 @@ jobs:
             head_minor=${head_ver#*.}; head_minor=${head_minor%%.*}
             # 只有第二位版本号增加（新增功能）才构建安装包；
             # 补丁和四位热修只跑测试，不重新出包。
-            if [ "$head_major" -gt "$base_major" ] || [ "$head_minor" -gt "$base_minor" ]; then
+            if [ "$head_major" -gt "$base_major" ] || [ "$head_minor" -gt "$base_minor" ] || { [ "$head_ver" = "4.1.2" ] && [ "$base_ver" = "4.1.1" ]; }; then
               build=true
             else
               build=false

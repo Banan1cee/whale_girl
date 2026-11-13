@@ -21,12 +21,17 @@ const modules = [
   require('./budget'),
   require('./memory'),
   require('./moments'),
+  require('./plugins'),
 ];
 
 /** 组装路由表：每个领域一个文件，server 只负责启动。 */
 function createRouter(runtime) {
   const router = new Router(runtime);
   for (const register of modules) register(router);
+  runtime.pluginApiRoutes = [
+    ...router.routes.map(({ method, path }) => ({ method, path })),
+    ...router.patterns.map(({ regex }) => ({ method: '*', pattern: regex.source })),
+  ];
   return router;
 }
 

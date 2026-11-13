@@ -47,6 +47,7 @@ const { LIMITS } = require('../memory/constants');
 const tokenCalibration = require('../memory/calibration');
 const budgetPricing = require('../services/budget');
 const { MessagePlugins } = require('../services/messagePlugins');
+const { JavaScriptPlugins, PluginRuntime } = require('../services/javascriptPlugins');
 const SEPARATE_REPLY_RE = /(?:^|[，。！？\s])(?:请|麻烦|能不能|可以|记得)?\s*你?\s*(?:要|给我)?\s*(?:分[条段开](?:来)?(?:发(?:送)?|回(?:复)?|说)|(?:一条一条|一句一句)地?[发回]|每(?:条|句|段)(?:话)?单独[发回]|分(?:成)?[两二三四五六七八九十\d]+[条段](?:气泡|发|回)?)(?:一下)?(?=$|[\s，。！？?!吧嘛哦啊,])/;
 
 // 主人私聊问起朋友圈时才注入快照；普通聊天和群聊都不带，避免第三方内容乱入。
@@ -200,7 +201,10 @@ class Bot {
     this.globalReplyTimes = [];
     this.lastBudget = null;
     this.lastUsage = null;
-    this.messagePlugins = new MessagePlugins({ dataDir: config.paths?.dataDir || path.join(process.cwd(), 'data'), logger });
+    const pluginOptions = { dataDir: config.paths?.dataDir || path.join(process.cwd(), 'data'), logger };
+    this.javascriptPlugins = new JavaScriptPlugins({ ...pluginOptions,
+      enabled: () => features.isOn(this.config, 'javascriptPlugins') });
+    this.messagePlugins = new PluginRuntime(new MessagePlugins(pluginOptions), this.javascriptPlugins);
   }
 
   /** 按 provider|model 分别学习估算倍数；默认落在 data/calibration.json。 */
@@ -837,13 +841,20 @@ class Bot {
     const linkUrls = (this.config.links && this.config.links.enabled === false)
       ? [] : links.extractUrls(clean.text || '');
     const linkTask = linkUrls.length ? this.readLink(linkUrls[0], key) : Promise.resolve('');
-    const searchResult = await searchService.search({
+    const pluginSearch = this.messagePlugins.supports?.('chat.search')
+      ? await this.messagePlugins.run('chat.search', this.pluginContext({ key, msg })) : null;
+    let searchResult = pluginSearch?.search || await searchService.search({
       text: clean.text,
       history: () => this.recentHeard({ msg, key }).filter(line => line !== clean.text),
       llm: this.llm, config: this.config.websearch || {}, now: this.now(),
       timeZone: time.resolveTimeZone(this.config),
       trace: (stage, data) => this.logger?.info('[search] stage=' + stage + ' ' + JSON.stringify(data)),
     });
+    if (this.messagePlugins.supports?.('chat.search_result')) {
+      const transformed = await this.messagePlugins.run('chat.search_result',
+        this.pluginContext({ key, msg }, { search: searchResult }));
+      searchResult = transformed.search || searchResult;
+    }
     if (searchResult.status !== 'skipped') {
       try {
         this.store.appendEvent(key, {
@@ -856,6 +867,7 @@ class Bot {
     const linkText = await linkTask;
     msg.linkText = linkText;
     msg.webText = searchResult.text;
+    msg.searchResult = searchResult;
     msg.webSearchStatus = searchResult.status === 'skipped' ? '' : searchResult.status;
     msg.webSearchReason = searchResult.reason;
     if (msg.webText) this.logger?.info('联网资料已注入提示词：' + msg.webText.length + ' 字');
@@ -1157,7 +1169,8 @@ class Bot {
     return { key: decision.key, now: this.now().getTime(),
       message: { platform: msg.platform, chatId: msg.chatId, chatType: msg.chatType,
         senderId: msg.senderId, text: msg.text, atMe: Boolean(msg.atMe), replyToBot: Boolean(msg.replyToBot),
-        mentionedNames: msg.mentionedNames || [] }, history, lastBot: last, ...extra };
+        mentionedNames: msg.mentionedNames || [] }, history, lastBot: last,
+      search: msg.searchResult, webText: msg.webText || '', ...extra };
   }
 
   async transformPluginReply(decision, text) {

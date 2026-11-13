@@ -198,6 +198,7 @@
     "mediaMaxMB": 500
   },
   "features": {
+    "javascriptPlugins": false,
     "_说明": "功能开关。关掉 = 回到旧行为，也可以直接在调试台「功能开关」卡片里勾。",
     "stickers": false,
     "groupAddressGuard": true,

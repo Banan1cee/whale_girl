@@ -31,7 +31,7 @@ const MAX_ACTIVE_PER_CHAT = 20;
 const RETRY_DELAY_MS = 5 * 60 * 1000;
 const CLAIM_TIMEOUT_MS = 2 * 60 * 1000;
 const ACTIVE = new Set(['pending', 'retrying', 'sending']);
-const DONE = new Set(['done', 'failed', 'expired', 'cancelled']);
+const DONE = new Set(['done', 'failed', 'expired', 'cancelled', 'unconfirmed']);
 
 /**
  * 提醒的「规则」：和主动搭话同语义（每天上限 / 刚聊过先跳过），但配置独立
@@ -133,7 +133,7 @@ class ReminderService {
     // 只数 done 的话，桥接还没回执时连续领取能突破每日上限。
     const sentToday = this.items.filter((it) => {
       // 日记发送是内核自己的存档通知，不占用户提醒的每日额度。
-      if (it.kind === 'diary') return false;
+      if (it.kind === 'diary' || it.kind === 'plugin') return false;
       if (it.status === 'done') return time.dayKey(Number(it.finishedAt) || 0, tz) === today;
       if (it.status === 'sending' || it.status === 'retrying') {
         const at = Number(it.claimedAt || it.dueAt || 0);
@@ -198,7 +198,7 @@ class ReminderService {
    * 立即加入主动发送队列（日记等内核自己产生的内容）。
    * 不受提醒开关、每日次数、刚刚聊过限制；文本允许换行和较长正文。
    */
-  enqueueNow({ wxid, name = '', chatType = 'private', text, kind = 'diary' } = {}) {
+  enqueueNow({ wxid, name = '', chatType = 'private', text, kind = 'diary', pluginId, pluginHash, delivery = 'text' } = {}) {
     const chatId = clean(wxid, 120);
     const what = String(text == null ? '' : text).replace(/\u0000/g, '').trim().slice(0, 20000);
     if (!chatId) throw Object.assign(new Error('缺少会话'), { statusCode: 400 });
@@ -223,6 +223,11 @@ class ReminderService {
       retryAt: 0,
       finishedAt: 0,
     };
+    if (kind === 'plugin') {
+      item.pluginId = pluginId; item.pluginHash = pluginHash;
+      item.delivery = delivery === 'voice' ? 'voice' : 'text';
+      if (!this.pluginAllowed?.(item)) throw Object.assign(new Error('插件授权已撤回'), { statusCode: 403 });
+    }
     const previous = JSON.parse(JSON.stringify(this.items));
     this.items.push(item);
     this.trim();
@@ -256,6 +261,12 @@ class ReminderService {
     const previous = JSON.parse(JSON.stringify(this.items));
     for (const item of this.items) {
       if (!ACTIVE.has(item.status)) continue;
+      if (item.kind === 'plugin' && (!this.pluginAllowed?.(item) || strict
+          || item.status === 'sending' && now - Number(item.claimedAt || 0) > CLAIM_TIMEOUT_MS)) {
+        item.status = item.status === 'sending' ? 'unconfirmed' : 'cancelled';
+        item.error = '插件授权撤回、服务重启或回执超时；不自动重发';
+        item.finishedAt = now; expired += 1; continue;
+      }
       if (strict && now > Number(item.dueAt) + RETRY_DELAY_MS) {
         item.status = 'expired';
         item.error = '过了提醒时间，未发送（不补发）';
@@ -328,7 +339,7 @@ class ReminderService {
       if (item.status !== 'pending' && item.status !== 'retrying') continue;
       if (Number(item.dueAt) > now) continue;
       if (item.status === 'retrying' && Number(item.retryAt) > now) continue;
-      const isDiary = item.kind === 'diary';
+      const isDiary = item.kind === 'diary' || item.kind === 'plugin';
       if (!isDiary && !rules.enabled) {
         item.status = 'expired';
         item.error = '提醒功能已关闭';
@@ -394,6 +405,10 @@ class ReminderService {
       item.finishedAt = now;
       // 日记正文已经落在 data/diary/，发送成功后不再在 reminders.json 里留一份全文。
       if (item.kind === 'diary') item.text = '（日记已发送）';
+    } else if (item.kind === 'plugin') {
+      item.status = 'unconfirmed';
+      item.error = '未确认发送成功；不自动重发';
+      item.finishedAt = now;
     } else if (item.attempts < 2 && now <= Number(item.dueAt) + RETRY_DELAY_MS) {
       item.status = 'retrying';
       item.retryAt = now + RETRY_DELAY_MS;
@@ -422,14 +437,14 @@ class ReminderService {
   /** 给启动器看的列表（新的在前） */
   list({ limit = 100 } = {}) {
     // 日记通知是内核自己的存档发送，不混进「提醒」列表。
-    return this.items.filter((it) => it.kind !== 'diary').slice(-limit).reverse().map(({ id, wxid, name, chatType, text, dueAt, status, attempts, error, createdAt, finishedAt }) => ({
+    return this.items.filter((it) => it.kind !== 'diary' && it.kind !== 'plugin').slice(-limit).reverse().map(({ id, wxid, name, chatType, text, dueAt, status, attempts, error, createdAt, finishedAt }) => ({
       id, wxid, name, chatType, text, dueAt, status, attempts, error, createdAt, finishedAt,
     }));
   }
 
   /** 某个会话自己的未发提醒（「我设过哪些提醒」用） */
   pendingFor(wxid) {
-    return this.items.filter((it) => it.kind !== 'diary' && it.wxid === String(wxid || '') && ACTIVE.has(it.status));
+    return this.items.filter((it) => it.kind !== 'diary' && it.kind !== 'plugin' && it.wxid === String(wxid || '') && ACTIVE.has(it.status));
   }
 }
 

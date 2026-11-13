@@ -9,7 +9,7 @@ const { result, formatResult } = require('../core/search/result');
 const { remaining, errorInfo, report, searchError } = require('../adapters/search/transport');
 
 /** 单轮搜索的唯一入口；只返回证据，不读写会话存储或决定聊天回复。 */
-async function search({ text = '', history = [], llm, config = {}, now = new Date(), timeZone = '', signal, trace } = {}, deps = {}) {
+async function search({ text = '', history = [], llm, config = {}, now = new Date(), timeZone = '', signal, trace, force = false } = {}, deps = {}) {
   const providers = deps.providers || web;
   const places = deps.places || weather;
   const routeSearch = deps.route || router.route;
@@ -59,8 +59,8 @@ async function search({ text = '', history = [], llm, config = {}, now = new Dat
   };
   const run = async () => {
     const gate = policy.gate(text, config.semanticRoute);
-    let route = { failed: true, need: false };
-    if (gate.route && active()) {
+    let route = force ? { failed: false, need: true, query: text } : { failed: true, need: false };
+    if (!force && gate.route && active()) {
       const routeStarted = Date.now();
       try {
         route = await routeSearch(llm, text, { ...options(), now, timeZone,
