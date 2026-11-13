@@ -4,6 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { matchGlob } = require('./test-inventory');
 const ROOT = path.resolve(__dirname, '..');
 
 function loadPlan(root = ROOT) {
@@ -12,6 +13,25 @@ function loadPlan(root = ROOT) {
 
 function ciTaskIds(workflow) {
   return [...String(workflow).matchAll(/^\s*(?:run:\s*)?node scripts\/test-tasks\.js --task ([a-z0-9-]+)(?:\s|$)/gm)].map((m) => m[1]);
+}
+
+function nodeSelectsEntry(task, entry) {
+  return (task.commands || []).some(([program, ...args]) => {
+    if (!['{node}', 'node', process.execPath].includes(program) || !args.includes('--test')) return false;
+    const operands = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === '--') { operands.push(...args.slice(i + 1)); break; }
+      if (arg === '--test' || /^--test-concurrency=\d+$/.test(arg)) continue;
+      if (['--test-concurrency', '--require', '-r', '--import', '--test-reporter', '--test-reporter-destination'].includes(arg)) { i++; continue; }
+      // 未识别或会过滤 case 的选项不能证明必需入口被完整选中。
+      if (arg.startsWith('-')) return false;
+      operands.push(arg);
+    }
+    return matchGlob(entry, operands.map((operand) => ({
+      dir: path.posix.dirname(operand), pattern: path.posix.basename(operand),
+    })));
+  });
 }
 
 function validatePlan(plan, root = ROOT) {
@@ -33,6 +53,26 @@ function validatePlan(plan, root = ROOT) {
         return fs.readFileSync(path.join(root, part), 'utf8').replace(/\\/g, '/').includes(project);
       }));
       if (!direct && !throughScript) errors.push(`project has no command declaration: ${project}`);
+    }
+    for (const { project, entry } of task.projectEntries || []) {
+      if (![project, entry].every((value) => typeof value === 'string' && /^tests\/[\w./-]+$/.test(value) &&
+        !value.split('/').some((part) => part === '.' || part === '..')) ||
+        !project.endsWith('.csproj') || !entry.endsWith('.test.js')) {
+        errors.push(`invalid nested project entry: ${project}`); continue;
+      }
+      if (!nodeSelectsEntry(task, entry)) {
+        errors.push(`nested project entry not selected by required Node command: ${entry}`); continue;
+      }
+      const projectExists = fs.existsSync(path.join(root, project)), entryExists = fs.existsSync(path.join(root, entry));
+      // 这是现存项目的归属映射，不新增执行任务。独立分支尚无两端时没有项目可枚举；
+      // 一旦任意一端进入当前树，另一端必须存在，且不能靠源码文本冒充运行回执。
+      if (!projectExists && !entryExists) continue;
+      if (!projectExists || !entryExists || !fs.statSync(path.join(root, project)).isFile() ||
+        !fs.statSync(path.join(root, entry)).isFile()) {
+        errors.push(`incomplete nested project entry: ${project} -> ${entry}`); continue;
+      }
+      if (listed.has(project)) errors.push(`duplicate project declaration: ${project}`);
+      listed.add(project);
     }
   }
   function projects(dir) {
