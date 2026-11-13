@@ -24,9 +24,25 @@ function size(bytes) {
   return bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MiB` : `${(bytes / 1024).toFixed(1)} KiB`;
 }
 
+function withoutComments(text) {
+  const fragments = [];
+  let cursor = 0;
+  for (;;) {
+    const start = text.indexOf('<!--', cursor);
+    if (start === -1) { fragments.push(text.slice(cursor)); break; }
+    fragments.push(text.slice(cursor, start));
+    // 保留边界，避免删除后将两侧碎片重新拼成 HTML 标记；输出仍须逐段转义。
+    fragments.push('\n');
+    const end = text.indexOf('-->', start + 4);
+    if (end === -1) break;
+    cursor = end + 3;
+  }
+  return fragments.join('');
+}
+
 function notes(body) {
   // 不执行发行说明中的 HTML，也不将第三方 Markdown 链接变成可执行 URL。
-  const lines = String(body || '此版本未提供更新说明，请查看 GitHub 发行页。').replace(/<!--[^]*?-->/g, '').split(/\r?\n/);
+  const lines = withoutComments(String(body || '此版本未提供更新说明，请查看 GitHub 发行页。')).split(/\r?\n/);
   let code = false;
   let list = false;
   const result = [];

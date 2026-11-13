@@ -81,6 +81,12 @@ async function main() {
       }
     }
     checkLinks(output);
+    buildSite({ root, output, data: { ...data, latest: { ...latest,
+      body: '说明<!<!-- 内部注释 -->--><script>仅显示文本</script>',
+    } } });
+    const commentPage = read('downloads/v4.1.0/index.html');
+    assert.doesNotMatch(commentPage, /&lt;!--/, '移除注释时不拼接出新的注释起始标记');
+    assert.match(commentPage, /&lt;script&gt;仅显示文本&lt;\/script&gt;/);
     const scriptPlugin = { ...data.plugins[0], Id: 'script-tool', Name: '脚本工具', Api: 4,
       Kind: 'tool', MinAppVersion: '4.1.2', SourceIndex: 'index-v4.json', Permissions: ['system.full'],
       Download: 'https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/packages/script-tool-1.0.0.zip' };
