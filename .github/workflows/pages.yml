@@ -14,6 +14,7 @@ on:
       - 'scripts/render-website-releases.js'
       - 'scripts/build-website.js'
       - 'scripts/fetch-website-data.js'
+      - 'scripts/wait-pages-artifact.js'
   release:
     types: [published, edited, unpublished, deleted]
   schedule:
@@ -41,6 +42,14 @@ jobs:
 
   deploy:
     if: github.event_name != 'release' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      actions: read
+      pages: write
+      id-token: write
+    env:
+      # 重跑使用独立名称，避免同一次 run 的旧产物参与本次部署。
+      PAGES_ARTIFACT_NAME: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
     concurrency:
       group: pages
       cancel-in-progress: false
@@ -70,7 +79,15 @@ jobs:
 
       - uses: actions/upload-pages-artifact@v3
         with:
+          name: ${{ env.PAGES_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/site
+
+      - name: 等待 Pages 产物可见
+        run: node scripts/wait-pages-artifact.js
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: ${{ env.PAGES_ARTIFACT_NAME }}
