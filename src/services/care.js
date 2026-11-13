@@ -2,6 +2,7 @@
 
 const { configuredWhitelist, sendDenial } = require('../core/wechatSendPolicy');
 const { masterLists, masterTargetFacts, sameWxid } = require('../core/master');
+const { parseBoolean } = require('../infra/configValues');
 const time = require('../infra/time');
 
 // 读布尔开关：兼容老配置里的字符串 "false"（Boolean("false") 会被当成开）
@@ -190,9 +191,20 @@ function cleanCareText(raw) {
   return t.slice(0, 40).trim();
 }
 
-function onlyMasterEnabled(config) {
+/** 权限使用严格解析；显式非法值不能与缺失配置混同，也不能交给宽松兼容 reader。 */
+function carePermissions(config, overrides = {}) {
   const care = config?.care || {};
-  return typeof care.onlyMaster === 'boolean' ? care.onlyMaster : care.allowOthers !== true;
+  const value = key => Object.hasOwn(overrides, key) ? overrides[key] : care[key];
+  const masterSupplied = Object.hasOwn(overrides, 'onlyMaster') || Object.hasOwn(care, 'onlyMaster');
+  return {
+    onlyMaster: masterSupplied ? parseBoolean(value('onlyMaster')) !== false : parseBoolean(care.allowOthers) !== true,
+    allowOthers: parseBoolean(value('allowOthers')) === true,
+    allowGroups: parseBoolean(value('allowGroups')) === true,
+  };
+}
+
+function onlyMasterEnabled(config) {
+  return carePermissions(config).onlyMaster;
 }
 
 /** 默认找已绑定的主人；关闭「只找主人」时才保留文件传输助手。 */
@@ -252,11 +264,9 @@ function resolveByName(config, contacts) {
  *   - onlyMaster / allowOthers / allowGroups  覆盖配置（测试用）
  * @returns {Array<{wxid,name,isGroup,kind}>}
  */
-function careTargets(config, { contacts = null, onlyMaster, allowOthers, allowGroups } = {}) {
-  const cfg = (config && config.care) || {};
-  const master = onlyMaster === undefined ? onlyMasterEnabled(config) : Boolean(onlyMaster);
-  const others = allowOthers === undefined ? cfg.allowOthers === true : Boolean(allowOthers);
-  const groups = allowGroups === undefined ? cfg.allowGroups === true : Boolean(allowGroups);
+function careTargets(config, options = {}) {
+  const { contacts = null } = options;
+  const { onlyMaster: master, allowOthers: others, allowGroups: groups } = carePermissions(config, options);
   let whitelist = careWhitelist(config);
   // 主人只填了昵称、没填 wxid：从联系人缓存里把 wxid 补进默认白名单
   if (!hasExplicitWhitelist(config) && config.wechat?.whitelistOnly !== true && contacts) {
@@ -298,7 +308,6 @@ function careDecide(config, { contacts = null, lastSentTs = 0, sentToday = 0, ac
   if (!base.due) return { ...base, due: false, target: null };
   const targets = careTargets(config, { contacts });
   if (!targets.length) {
-    const cfg = (config && config.care) || {};
     const whitelist = careWhitelist(config);
     return {
       ...base,
@@ -306,9 +315,7 @@ function careDecide(config, { contacts = null, lastSentTs = 0, sentToday = 0, ac
       reason: whitelist.length ? 'whitelist_filtered' : 'whitelist_empty',
       target: null,
       whitelist,
-      onlyMaster: onlyMasterEnabled(config),
-      allowOthers: cfg.allowOthers === true,
-      allowGroups: cfg.allowGroups === true,
+      ...carePermissions(config),
     };
   }
   const busy = new Set((activeWxids || []).map((x) => String(x)));
