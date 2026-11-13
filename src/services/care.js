@@ -1,7 +1,7 @@
 'use strict';
 
 const { configuredWhitelist, sendDenial } = require('../core/wechatSendPolicy');
-const { sameWxid } = require('../core/master');
+const { masterLists, masterTargetFacts, sameWxid } = require('../core/master');
 const time = require('../infra/time');
 
 // 读布尔开关：兼容老配置里的字符串 "false"（Boolean("false") 会被当成开）
@@ -198,7 +198,7 @@ function onlyMasterEnabled(config) {
 /** 默认找已绑定的主人；关闭「只找主人」时才保留文件传输助手。 */
 function defaultWhitelist(config) {
   const out = [];
-  const masters = ((config && config.persona && config.persona.master) || {}).wxids || [];
+  const { wxids: masters } = masterLists(config);
   for (const id of masters) {
     const wxid = String(id || '').trim();
     if (wxid) out.push(wxid);
@@ -216,18 +216,9 @@ function careWhitelist(config = {}) {
   return list.length || config.wechat?.whitelistOnly === true ? list : defaultWhitelist(config);
 }
 
-/** 按绑定 wxid 或联系人昵称确认主人。 */
+/** 保留旧入口；主动目标与消息判定共用主人身份事实。 */
 function isMasterTarget(config, wxid, contacts = null) {
-  const id = String(wxid || '').trim();
-  if (!id || id.toLowerCase() === 'filehelper') return false;
-  const masters = ((config && config.persona && config.persona.master) || {}).wxids || [];
-  // 主人 wxid 可能填的是账号目录名（多 4 位哈希），按归一化后的 id 比。
-  if (masters.some((m) => String(m || '').trim() && sameWxid(m, id))) return true;
-  // 没填 wxid 时按昵称兜底（以前 wxids 为空 → 一个目标都发不出去）
-  const names = ((config && config.persona && config.persona.master) || {}).names || [];
-  const hit = contacts && typeof contacts.get === 'function' ? contacts.get(id) : null;
-  const label = hit ? (hit.name || hit.label) : '';
-  return Boolean(label) && names.some((n) => String(n || '').trim() && String(n).trim() === label);
+  return masterTargetFacts(config, wxid, contacts).isMaster;
 }
 
 /**
@@ -239,13 +230,17 @@ function hasExplicitWhitelist(config) {
 }
 
 /** 昵称 → wxid（主人名单只填了昵称时的兜底） */
-function resolveByName(contacts, names) {
-  if (!contacts || !Array.isArray(contacts.items) || !Array.isArray(names)) return [];
-  const wanted = names.map((n) => String(n || '').trim()).filter(Boolean);
+function resolveByName(config, contacts) {
+  if (!contacts || !Array.isArray(contacts.items)) return [];
+  const wanted = masterLists(config).names.map(name => name.toLowerCase());
   if (!wanted.length) return [];
-  return contacts.items
-    .filter((item) => !item.isGroup && (wanted.includes(item.name) || wanted.includes(item.remark)))
-    .map((item) => item.wxid);
+  const out = [];
+  for (const item of contacts.items) {
+    if (item.isGroup || ![item.name, item.remark, item.label].some(value => wanted.includes(String(value || '').trim().toLowerCase()))) continue;
+    const facts = masterTargetFacts(config, item.wxid, contacts);
+    if (facts.weakMatch && !out.some(id => sameWxid(id, item.wxid))) out.push(item.wxid);
+  }
+  return out;
 }
 
 /**
@@ -265,16 +260,15 @@ function careTargets(config, { contacts = null, onlyMaster, allowOthers, allowGr
   let whitelist = careWhitelist(config);
   // 主人只填了昵称、没填 wxid：从联系人缓存里把 wxid 补进默认白名单
   if (!hasExplicitWhitelist(config) && config.wechat?.whitelistOnly !== true && contacts) {
-    const names = ((config && config.persona && config.persona.master) || {}).names || [];
-    const extra = resolveByName(contacts, names);
+    const extra = resolveByName(config, contacts);
     if (extra.length) whitelist = [...new Set([...whitelist, ...extra])];
   }
   const out = [];
   for (const raw of whitelist) {
     const wxid = String(raw).trim();
     const isFile = wxid.toLowerCase() === 'filehelper';
-    const isGroup = !isFile && /@chatroom$/i.test(wxid);
     const hit = contacts && typeof contacts.get === 'function' ? contacts.get(wxid) : null;
+    const isGroup = !isFile && (/@chatroom$/i.test(wxid) || hit?.isGroup === true);
     const name = isFile ? '文件传输助手' : (hit ? hit.label || hit.name : wxid);
     if (sendDenial(config, { id: wxid, names: [name, hit?.name, hit?.remark], isGroup })) continue;
     const masterHit = !isGroup && isMasterTarget(config, wxid, contacts);

@@ -14,7 +14,7 @@
  *      —— 微信里谁都能改昵称，配了真 wxid 还认昵称就等于给所有人开后门
  */
 
-const WXID_RE = /^wxid_[A-Za-z0-9_-]+$/;
+const WXID_RE = /^wxid_[A-Za-z0-9_-]+$/i;
 // 账号目录名比真 wxid 多 4 位哈希（wxid_xxx_c248），配置里两种写法都可能出现。
 const ACCOUNT_HASH_RE = /_[0-9a-f]{4}$/i;
 
@@ -119,7 +119,47 @@ function isVerifiedOwner(config, msg) {
   return hit.reason === 'wxid' && hit.senderId !== 'unknown';
 }
 
+const contactLabels = item => [item?.name, item?.remark, item?.label]
+  .map(value => String(value || '').trim().toLowerCase()).filter(Boolean);
+
+/** 主动目标事实；唯一旧昵称只作弱匹配，不授予管理权限，显示名也不是认证凭据。 */
+function masterTargetFacts(config, wxid, contacts = null) {
+  const id = String(wxid || '').trim();
+  const isFile = id.toLowerCase() === 'filehelper';
+  const isGroup = /@chatroom$/i.test(id);
+  const out = { wxid: id, isMaster: false, verified: false, weakMatch: false, ambiguous: false, isFile, isGroup, reason: '' };
+  if (!id || id.toLowerCase() === 'unknown' || isFile || isGroup) return out;
+
+  const contact = contacts && typeof contacts.get === 'function' ? contacts.get(id) : null;
+  if (contact?.isGroup === true) return { ...out, isGroup: true };
+  const identity = matchMaster(config, { platform: 'wechat', senderId: id });
+  if (identity.isMaster) return { ...out, isMaster: true, verified: true, reason: identity.reason };
+  const labels = contactLabels(contact);
+  const names = identity.names.filter(name => labels.includes(name.toLowerCase()));
+  if (!names.length) return out;
+  if (!identity.nameFallback) return { ...out, reason: 'name_blocked' };
+
+  // 每个已配置昵称分别解析：多个主人名字可以各自唯一，同名多个联系人则不能自动挑第一个。
+  // 兼容只实现 get 的旧调用者；有完整 items 时必须把所有候选纳入歧义检查。
+  const items = Array.isArray(contacts?.items) ? contacts.items : [{ ...contact, wxid: contact?.wxid || id }];
+  let ambiguous = false;
+  for (const name of names) {
+    const candidates = [];
+    for (const item of items) {
+      const candidate = String(item?.wxid || '').trim();
+      if (!candidate || item.isGroup || /@chatroom$/i.test(candidate) || /^(filehelper|unknown)$/i.test(candidate)) continue;
+      if (!contactLabels(item).includes(name.toLowerCase())) continue;
+      if (!candidates.some(other => sameWxid(other, candidate))) candidates.push(candidate);
+    }
+    if (candidates.length === 1 && sameWxid(candidates[0], id)) {
+      return { ...out, isMaster: true, weakMatch: true, reason: 'nickname' };
+    }
+    if (candidates.length > 1) ambiguous = true;
+  }
+  return { ...out, ambiguous, reason: ambiguous ? 'ambiguous_name' : '' };
+}
+
 module.exports = {
   matchMaster, masterWarnings, masterLists, looksLikeWxid, isVerifiedOwner,
-  sameWxid, stripAccountHash,
+  sameWxid, stripAccountHash, masterTargetFacts,
 };
