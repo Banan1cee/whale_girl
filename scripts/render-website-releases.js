@@ -52,7 +52,7 @@ function details(release) {
   };
 }
 
-function render(template, latest, releases) {
+function render(template, latest, releases, { localLinks = false } = {}) {
   if (!isPublished(latest) || !Array.isArray(releases)) throw new Error('GitHub 正式发行数据无效');
 
   const current = details(latest);
@@ -62,7 +62,8 @@ function render(template, latest, releases) {
     const item = details(release);
     const note = item.notes[0] ? '<small>' + escapeHtml(shortText(item.notes[0], 105)) + '</small>' : '';
     const badge = index === 0 ? ' <i>最新</i>' : '';
-    return `<a class="release-row" href="${item.link}" target="_blank" rel="noopener noreferrer"><span class="release-version">${item.version}${badge}</span><span class="release-info"><strong>${item.title}</strong>${note}</span><time datetime="${item.date}">${item.date.replaceAll('-', '.')}</time><span class="release-arrow" aria-hidden="true">↗</span></a>`;
+    const href = localLinks ? `./downloads/${encodeURIComponent(release.tag_name)}/` : item.link;
+    return `<a class="release-row" href="${href}"${localLinks ? '' : ' target="_blank" rel="noopener noreferrer"'}><span class="release-version">${item.version}${badge}</span><span class="release-info"><strong>${item.title}</strong>${note}</span><time datetime="${item.date}">${item.date.replaceAll('-', '.')}</time><span class="release-arrow" aria-hidden="true">↗</span></a>`;
   });
   const content = {
     hero: `探索 ${current.version} 的新变化`,
@@ -72,7 +73,9 @@ function render(template, latest, releases) {
     rows: rows.join('\n        '),
     'dialog-title': `${current.version} · ${current.title}`,
     'dialog-notes': current.notes.map(note => `<p>${escapeHtml(shortText(note, 300))}</p>`).join('\n    ') || '<p>完整更新说明见 GitHub。</p>',
-    'dialog-link': `<a class="button" href="${current.link}" target="_blank" rel="noopener noreferrer">查看完整更新说明 ↗</a>`,
+    'dialog-link': localLinks
+      ? `<a class="button" href="./downloads/${encodeURIComponent(latest.tag_name)}/">查看下载与完整更新说明 ↗</a>`
+      : `<a class="button" href="${current.link}" target="_blank" rel="noopener noreferrer">查看完整更新说明 ↗</a>`,
   };
   for (const [name, html] of Object.entries(content)) {
     const slot = new RegExp(`<!-- release:${name} -->[\\s\\S]*?<!-- /release:${name} -->`);

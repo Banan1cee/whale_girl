@@ -1,42 +1,6 @@
 'use strict';
 
 const root = document.documentElement;
-const themeButton = document.querySelector('#theme-toggle');
-const themeMedia = matchMedia('(prefers-color-scheme: light)');
-let explicitTheme = false;
-try { explicitTheme = ['light', 'dark'].includes(localStorage.getItem('whale-theme')); } catch (_) { /* 存储不可用不影响切换。 */ }
-function updateThemeLabel() {
-  themeButton.setAttribute('aria-label', root.dataset.theme === 'dark' ? '切换到浅色主题' : '切换到深色主题');
-  document.querySelector('meta[name="theme-color"]').content = root.dataset.theme === 'dark' ? '#070b13' : '#ffffff';
-}
-themeButton.addEventListener('click', () => {
-  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
-  explicitTheme = true;
-  try { localStorage.setItem('whale-theme', root.dataset.theme); } catch (_) { /* 当前页面仍保留选择。 */ }
-  updateThemeLabel();
-});
-themeMedia.addEventListener('change', event => {
-  if (!explicitTheme) { root.dataset.theme = event.matches ? 'light' : 'dark'; updateThemeLabel(); }
-});
-updateThemeLabel();
-
-const menuButton = document.querySelector('.menu-toggle');
-const navLinks = document.querySelector('.nav-links');
-function closeMenu() {
-  menuButton.setAttribute('aria-expanded', 'false');
-  navLinks.classList.remove('open');
-}
-menuButton.addEventListener('click', () => {
-  const open = menuButton.getAttribute('aria-expanded') !== 'true';
-  menuButton.setAttribute('aria-expanded', String(open));
-  navLinks.classList.toggle('open', open);
-});
-navLinks.addEventListener('click', event => { if (event.target.closest('a')) closeMenu(); });
-document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && navLinks.classList.contains('open')) { closeMenu(); menuButton.focus(); }
-});
-document.addEventListener('click', event => { if (!event.target.closest('.nav')) closeMenu(); });
-matchMedia('(min-width: 901px)').addEventListener('change', closeMenu);
 
 const dialog = document.querySelector('#article-dialog');
 document.querySelector('[data-article="report"]').addEventListener('click', () => dialog.showModal());

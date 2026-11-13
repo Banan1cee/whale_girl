@@ -42,13 +42,13 @@ assert.match(html, /微信账号窗口识别修复 &lt;示例&gt;/);
 assert.match(html, /修复窗口识别。 保留双开账号校验。/);
 assert.match(html, /<time datetime="2026-11-08">2026\.11\.08<\/time>/, '日期按北京时间显示');
 assert.doesNotMatch(html, /v4\.0\.9|v4\.1\.0-rc1|v4\.2\.0|内部注释|<!-- release:/);
-assert.match(html, /<a href="#updates">更新<\/a>/);
+assert.match(html, /href="\.\/downloads\/">下载中心<\/a>/);
 assert.throws(() => render(template, unpublished[0], stable), /正式发行数据无效/);
 
 const pages = fs.readFileSync(path.join(root, '.github/workflows/pages.yml'), 'utf8');
 assert.match(pages, /release:\s*types:\s*\[[^\]]*published/);
 assert.match(pages, /gh workflow run pages\.yml --ref main/);
-assert.match(pages, /releases\/latest/);
-assert.match(pages, /render-website-releases\.js/);
+assert.match(pages, /fetch-website-data\.js/);
+assert.match(pages, /build-website\.js/);
 
 console.log('website releases: stable selection, date, escaped HTML and Pages triggers passed');
