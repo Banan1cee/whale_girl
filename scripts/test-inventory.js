@@ -243,6 +243,19 @@ function entryCode(source) {
     const open = code.indexOf('{', match.index);
     code = code.slice(0, match.index) + ' '.repeat(blockEnd(code, open) - match.index) + code.slice(blockEnd(code, open));
   }
+  // 匿名方法与箭头 lambda 一样是 callable 声明；不进入其方法体推断入口，
+  // 但保留声明结束后的真实直连。只处理 delegate 的可选参数表和配对方法体。
+  const delegates = /\bdelegate\b/g;
+  for (let match; (match = delegates.exec(code));) {
+    let open = match.index + match[0].length;
+    while (open < code.length && /\s/.test(code[open])) open++;
+    if (code[open] === '(') open = blockEnd(code, open, '(', ')');
+    while (open < code.length && /\s/.test(code[open])) open++;
+    if (code[open] !== '{') continue;
+    const end = blockEnd(code, open);
+    code = code.slice(0, match.index) + ' '.repeat(end - match.index) + code.slice(end);
+    delegates.lastIndex = end;
+  }
   const controls = /\b(if|while|for)\s*\(/g;
   for (let match; (match = controls.exec(code));) {
     const open = code.indexOf('(', match.index), close = blockEnd(code, open, '(', ')');

@@ -26,6 +26,8 @@ for (const [name, program, options] of [
   ['uncalled lambda', 'class Program { static void Main() { Action never = () => { Unused.Run(); }; } }'],
   ['uncalled expression lambda', 'using System; class Program { static void Main() { Action never = () => Unused.Run(); } }'],
   ['uncalled expression local function', 'class Program { static void Main() { void Never() => Unused.Run(); } }'],
+  ['uncalled anonymous delegate', 'using System; class Program { static void Main() { Action never = delegate { Unused.Run(); }; } }'],
+  ['uncalled anonymous delegate with signature', 'using System; class Program { static void Main() { Action never = delegate() { Unused.Run(); }; } }'],
   ['unreachable after return', 'class Program { static void Main() { return; Unused.Run(); } }'],
   ['for literal false', 'class Program { static void Main() { for (; false;) { Unused.Run(); } } }'],
   ['conditional compilation', '#if OMITTED\nUnused.Run();\n#endif'],
@@ -48,6 +50,8 @@ for (const [name, program, options] of [
   ['direct call after an unrelated expression local function', 'class Program { static void Main() { void Never() => System.Console.WriteLine("fixture"); Unused.Run(); } }'],
   ['direct call after a conditional early return', 'class Program { static void Main() { if (System.DateTime.UtcNow.Ticks < 0) return; Unused.Run(); } }'],
   ['direct call after a nonexecuting loop', 'class Program { static void Main() { for (; false;) { System.Console.WriteLine("fixture"); } Unused.Run(); } }'],
+  ['direct call after an uncalled anonymous delegate', 'using System; class Program { static void Main() { Action never = delegate { Unused.Run(); }; Unused.Run(); } }'],
+  ['direct call after an uncalled signed delegate with a return', 'using System; class Program { static void Main() { Action never = delegate() { return; Unused.Run(); }; Unused.Run(); } }'],
 ]) {
   test(`C# inventory preserves ${name} as an unverified declaration`, () => {
     const result = resolve(program, options);
