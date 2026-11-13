@@ -9,6 +9,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { readJson } = require('../infra/jsonFile');
+const { recoverRestore, restoreFiles } = require('./backupRestore');
 
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -201,59 +202,21 @@ function validateBundle(bundle) {
   return files;
 }
 
-function writeMemoryFiles(memoryDir, memory, { keepLegacy = true, keepArchive = true } = {}) {
-  const legacyDir = path.join(memoryDir, 'legacy');
-  const legacyBackup = keepLegacy && fs.existsSync(legacyDir)
-    ? fs.readdirSync(legacyDir).map((n) => ({ n, body: fs.readFileSync(path.join(legacyDir, n)) }))
-    : [];
-  // archive/ 是「只移动、不删除」的冷数据，不在 bundle 里。恢复当前活跃记忆时
-  // 必须先把它暂存出来，否则下面 rmSync(memoryDir) 会把几个月不活跃的会话一起删掉。
-  const archiveDir = path.join(memoryDir, 'archive');
-  const archiveTmp = `${memoryDir}.archive-keep-${process.pid}`;
-  let archiveKept = false;
-  if (keepArchive && fs.existsSync(archiveDir)) {
-    try {
-      fs.rmSync(archiveTmp, { recursive: true, force: true });
-      fs.cpSync(archiveDir, archiveTmp, { recursive: true });
-      archiveKept = true;
-    } catch { archiveKept = false; }
-  }
-  try {
-    fs.rmSync(memoryDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 40 });
-    fs.mkdirSync(memoryDir, { recursive: true });
-    for (const [rel, body] of Object.entries(memory || {})) {
-      const target = path.join(memoryDir, rel);
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, String(body), 'utf8');
-    }
-    if (legacyBackup.length) {
-      fs.mkdirSync(legacyDir, { recursive: true });
-      for (const item of legacyBackup) fs.writeFileSync(path.join(legacyDir, item.n), item.body);
-    }
-    if (archiveKept) {
-      fs.cpSync(archiveTmp, archiveDir, { recursive: true });
-    }
-  } finally {
-    if (archiveKept) {
-      try { fs.rmSync(archiveTmp, { recursive: true, force: true }); } catch { /* ignore */ }
-    }
-  }
-}
-
 /** 从 bundle 恢复；恢复前先另存当前记忆 */
 function restoreFrom(root, bundle) {
   const files = validateBundle(bundle);
-  writeSnapshot(root, 'before-restore');
   const dir = dataDir(root);
+  recoverRestore(dir);
+  writeSnapshot(root, 'before-restore');
   fs.mkdirSync(dir, { recursive: true });
   const restored = [];
+  const preparedFiles = {};
 
   if (files.memory) {
-    writeMemoryFiles(path.join(dir, 'memory'), files.memory);
     restored.push('memory/');
   } else if (files.store) {
     // v1 备份：先落回旧文件，下一次启动会走迁移
-    fs.writeFileSync(path.join(dir, 'store.json'), JSON.stringify(files.store), 'utf8');
+    preparedFiles['store.json'] = JSON.stringify(files.store);
     restored.push('store.json（旧版，启动后自动迁移）');
   }
 
@@ -270,9 +233,10 @@ function restoreFrom(root, bundle) {
       if (value.provider && value.provider !== current.provider && value.apiKey === undefined) merged.apiKey = (merged.keys || {})[value.provider] || '';
       value = merged;
     }
-    fs.writeFileSync(path.join(dir, item.name), JSON.stringify(value, null, 2), 'utf8');
+    preparedFiles[item.name] = JSON.stringify(value, null, 2);
     restored.push(item.name);
   }
+  restoreFiles(dir, files.memory, preparedFiles);
   return { restored, ...summarize(bundle) };
 }
 
