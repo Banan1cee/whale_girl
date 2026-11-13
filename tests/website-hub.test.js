@@ -81,6 +81,20 @@ async function main() {
       }
     }
     checkLinks(output);
+    const scriptPlugin = { ...data.plugins[0], Id: 'script-tool', Name: '脚本工具', Api: 4,
+      Kind: 'tool', MinAppVersion: '4.1.2', SourceIndex: 'index-v4.json', Permissions: ['system.full'],
+      Download: 'https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/packages/script-tool-1.0.0.zip' };
+    buildSite({ root, output, data: { ...data, plugins: [...data.plugins, scriptPlugin] } });
+    const scriptPage = read('plugins/script-tool/index.html');
+    assert.match(scriptPage, /JavaScript 插件不是沙箱/);
+    assert.match(scriptPage, /system\.full/);
+    assert.match(scriptPage, /功能尚未正式发布/);
+    assert.match(scriptPage, /实验性/);
+    assert.throws(() => buildSite({ root, output, data: { ...data, plugins: [{ ...scriptPlugin, MinAppVersion: '4.1.0' }] } }), /4\.1\.2/);
+    assert.throws(() => buildSite({ root, output, data: { ...data, plugins: [{ ...scriptPlugin, Permissions: [] }] } }), /完整系统权限/);
+    assert.throws(() => buildSite({ root, output, data: { ...data, plugins: [{ ...scriptPlugin, SourceIndex: 'index-v3.json' }] } }), /目录/);
+    buildSite({ root, output, data: { ...data, plugins: [{ ...scriptPlugin, Kind: 'message' }] } });
+    assert.match(read('plugins/index.html'), /data-kind="message"/);
     buildSite({ root, output, data, tips: { updatedAt: '2026-11-13', entries: [
       { id: 'tip-example-a', date: '2026-11-12', amountMinor: 10, currency: 'CNY', consent: false },
       { id: 'tip-example-b', date: '2026-10-12', amountMinor: 20, currency: 'CNY', consent: true, name: '<示意昵称>', message: '<script>不可执行</script>' },

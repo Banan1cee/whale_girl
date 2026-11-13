@@ -7,7 +7,7 @@ const { describeError } = require('../src/infra/errors');
 const APP = 'https://github.com/Banan1cee/whale_girl';
 const MARKET = 'https://github.com/Banan1cee/whale-girl-plugins';
 const ORIGIN = 'https://bot.zyyc.cc/';
-const INDEXES = new Set(['index.json', 'index-v2.json', 'index-v3.json', 'index-personas.json']);
+const INDEXES = new Set(['index.json', 'index-v2.json', 'index-v3.json', 'index-v4.json', 'index-personas.json']);
 const dateFormat = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', dateStyle: 'short' });
 const e = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const date = value => dateFormat.format(new Date(value));
@@ -113,8 +113,19 @@ function releasePage(item, latest) {
     + `<section class="page-section"><p class="eyebrow">DOWNLOAD FILES</p><h2>下载 ${e(slug)}</h2><p>以下文件来自这个版本的官方 GitHub Release。优先选择名称以 <code>-setup.exe</code> 结尾的 Windows 安装包；旧版发行的文件结构可能不同。</p><div class="asset-list">${assets.length ? assets.map(asset => `<article class="asset-row"><div><h3>${e(asset.name)}</h3><p>${size(asset.size)}</p>${/^sha256:[a-f0-9]{64}$/i.test(asset.digest || '') ? `<p class="hash">SHA-256 <code>${e(asset.digest.slice(7))}</code></p>` : ''}</div>${link(asset.browser_download_url, '下载文件', 'button secondary')}</article>`).join('') : '<p class="empty-state">此版本未附带可下载文件，请查看原始发行页。</p>'}</div><p>若发行文件中提供了 <code>SHA256SUMS.txt</code>，请一并下载，并按校验指南核对文件。</p><div class="inline-links">${link(`${APP}/releases/tag/${encodeURIComponent(slug)}`, '原始发行页')}${link(`${APP}/blob/main/docs/DOWNLOAD.md`, '下载与校验指南')}</div></section><section class="page-section release-notes"><p class="eyebrow">RELEASE NOTES</p><h2>完整更新说明</h2>${notes(item.body)}</section>`;
 }
 
-function pluginKind(item) { return item.Kind === 'persona' ? 'persona' : item.Api === 3 ? 'message' : 'tool'; }
+function pluginKind(item) { return item.Kind === 'persona' ? 'persona' : item.Kind === 'message' || item.Api === 3 ? 'message' : 'tool'; }
 const kinds = { persona: '人设预设', message: '消息插件', tool: '功能工具' };
+
+function atLeastVersion(value, minimum) {
+  const parts = String(value).replace(/^v/i, '').split('.');
+  if (!parts.every(part => /^\d+$/.test(part))) return false;
+  const floor = minimum.split('.').map(Number);
+  for (let i = 0; i < Math.max(parts.length, floor.length); i += 1) {
+    const difference = Number(parts[i] || 0) - (floor[i] || 0);
+    if (difference) return difference > 0;
+  }
+  return true;
+}
 
 function validatePlugins(plugins, commit) {
   if (!Array.isArray(plugins) || !/^[a-f0-9]{40}$/.test(commit)) throw new Error('插件市场快照无效');
@@ -122,15 +133,19 @@ function validatePlugins(plugins, commit) {
   return plugins.map(item => {
     if (!/^[a-z][a-z0-9-]{0,79}$/.test(item.Id) || ids.has(item.Id)) throw new Error('插件 ID 无效或重复');
     ids.add(item.Id);
-    if (!INDEXES.has(item.SourceIndex) || ![1, 2, 3].includes(item.Api) || !item.Name || !item.Author
+    if (!INDEXES.has(item.SourceIndex) || ![1, 2, 3, 4].includes(item.Api) || !item.Name || !item.Author
       || !/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(item.Version) || !/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(item.MinAppVersion)
       || !/^[a-f0-9]{64}$/i.test(item.Sha256)) throw new Error(`插件清单无效：${item.Id}`);
-    const expectedIndex = item.Kind === 'persona' ? 'index-personas.json' : item.Api === 3 ? 'index-v3.json' : item.Api === 2 ? 'index-v2.json' : 'index.json';
+    const expectedIndex = item.Kind === 'persona' ? 'index-personas.json' : item.Api === 4 ? 'index-v4.json' : item.Api === 3 ? 'index-v3.json' : item.Api === 2 ? 'index-v2.json' : 'index.json';
     if (item.SourceIndex !== expectedIndex || (item.Api === 3 && item.Kind !== 'message')
       || (item.Kind && !['tool', 'message', 'persona'].includes(item.Kind))
-      || (item.Kind === 'message' && item.Api !== 3)) throw new Error(`插件类型与目录不符：${item.Id}`);
+      || (item.Kind === 'message' && ![3, 4].includes(item.Api))
+      || (item.Kind === 'persona' && item.Api !== 1)
+      || (item.Api === 4 && !['tool', 'message'].includes(item.Kind))) throw new Error(`插件类型与目录不符：${item.Id}`);
     if ((item.Hooks && (!Array.isArray(item.Hooks) || item.Hooks.some(value => typeof value !== 'string')))
       || (item.Permissions && (!Array.isArray(item.Permissions) || item.Permissions.some(value => typeof value !== 'string')))) throw new Error(`插件权限格式无效：${item.Id}`);
+    if (item.Api === 4 && !atLeastVersion(item.MinAppVersion, '4.1.2')) throw new Error(`JavaScript 插件最低客户端须为 4.1.2 或以上：${item.Id}`);
+    if (item.Api === 4 && !item.Permissions?.includes('system.full')) throw new Error(`JavaScript 插件须声明完整系统权限：${item.Id}`);
     const packageName = `${item.Id}-${item.Version}.zip`;
     const validDownloads = [`https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/packages/${packageName}`, `https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/${commit}/packages/${packageName}`];
     if (!validDownloads.includes(item.Download)) throw new Error(`插件下载地址无效：${item.Id}`);
@@ -149,14 +164,15 @@ function pluginsPage(plugins, data) {
     + (plugins.length ? pluginCards(plugins) : '<p class="empty-state">暂时没有已收录插件，欢迎提交你的作品。</p>')
     + '<p class="empty-state" id="filter-empty" hidden>没有找到符合条件的插件，试试其他关键词或类型。</p>'
     + `<section class="page-section split-panel"><div><p class="eyebrow">HOW IT WORKS</p><h2>先看清，再安装。</h2><ol class="steps"><li>打开插件详情，核对功能、权限和所需客户端版本。</li><li>在鲸鲸桌面启动器的「插件市场」安装；也可下载 ZIP，选择「从本地安装」。</li><li>在插件卡片中启用，并在「设置」内配置和使用。安装不等于授权。</li></ol></div><div class="info-panel"><h3>你的创意，也可以在这里。</h3><p>人设 ZIP 可以直接分享，无需 GitHub 账号。公开投稿通过市场仓库提交；没有账号也可请协作者代交。</p>${link(`${MARKET}/blob/main/README.md`, '阅读投稿指南')}${link(`${MARKET}/pulls`, '前往市场仓库')}</div></section>`
-    + `<section class="page-section prose"><h2>收录不是安全保证。</h2><p>校验、模拟测试和 GitHub 签署不代表无毒保证，也不是现实实名认证。安装前请核对来源、权限与版本，备份数据并谨慎启用。</p><p>新安全门禁须先合并市场检测流程并设为必需检查后才生效，具体版本以 Actions 报告为准。客户端尚未自动验证 GitHub 签署证明或远程撤回名单。</p><p>消息插件的能力取决于具体客户端构建，不能仅凭版本号认定兼容。更新后需要重新启用；定时任务、跨会话主动发送等能力不在当前公开接口范围内。</p><div class="inline-links">${link(`${MARKET}/tree/${data.sourceCommit}`, '查看本次目录快照')}${link(`${MARKET}/actions`, '检测记录')}${link(`${APP}/blob/main/docs/插件免责声明.md`, '第三方插件风险说明')}</div><p>目录同步时间：${date(data.fetchedAt)}</p></section>`;
+    + `<section class="page-section prose"><h2>收录不是安全保证。</h2><p>校验、模拟测试和 GitHub 签署不代表无毒保证，也不是现实实名认证。安装前请核对来源、权限与版本，备份数据并谨慎启用。</p><p>新安全门禁须先合并市场检测流程并设为必需检查后才生效，具体版本以 Actions 报告为准。客户端尚未自动验证 GitHub 签署证明或远程撤回名单。</p><p>API 3 Wasm 消息插件适用于 4.1.0 起的兼容客户端，不提供 Node.js、文件、网络或定时能力。JavaScript API 4 从 4.1.2 起支持，发布前仅供开发测试，以 GitHub Releases 为准；它不是沙箱，具有完整系统权限，实验总开关默认关闭，必须逐个确认后启用。更新后需要重新授权。</p><div class="inline-links">${link(`${MARKET}/tree/${data.sourceCommit}`, '查看本次目录快照')}${link(`${MARKET}/actions`, '检测记录')}${link(`${APP}/blob/main/docs/插件免责声明.md`, '第三方插件风险说明')}${link(`${APP}/blob/main/docs/插件JavaScriptApi4.md`, 'JavaScript 插件说明')}</div><p>目录同步时间：${date(data.fetchedAt)}</p></section>`;
 }
 
 function pluginDetail(item, data) {
   const kind = pluginKind(item);
   const permissions = [...new Set([...(item.Permissions || []), ...(item.HostAction ? [item.HostAction] : [])])];
-  const descriptions = { 'chat.history': '读取最近 12 条会话消息', 'model.prompt': '读取与替换本轮系统提示词', 'chat.summary': '按次确认后，由宿主调用模型汇总选定日期的消息；云端模型会收到参与汇总的片段，可能产生费用' };
-  const activation = kind === 'persona' ? '启用后，在插件卡片「设置」预览人设，并确认应用。'
+  const descriptions = { 'chat.history': '读取最近 12 条会话消息', 'model.prompt': '读取与替换本轮系统提示词', 'chat.summary': '按次确认后，由宿主调用模型汇总选定日期的消息；云端模型会收到参与汇总的片段，可能产生费用', 'system.full': '完整系统权限，可访问文件、网络、系统命令、聊天、记忆及主程序全部 API；不是沙箱，只启用信任的代码' };
+  const activation = item.Api === 4 ? '打开「启用 JavaScript 插件（实验性）」总开关，再逐个确认完整系统权限并启用。总开关默认关闭；更新后需重新授权。'
+    : kind === 'persona' ? '启用后，在插件卡片「设置」预览人设，并确认应用。'
     : kind === 'message' ? '启用时确认持续参与消息处理；停用即撤销授权，更新后需重新启用。'
       : '启用后，点击同一张插件卡片的「设置」使用工具。';
   const fields = [
@@ -165,6 +181,7 @@ function pluginDetail(item, data) {
   ];
   return '<a class="back-link" href="../">← 浏览全部插件</a>'
     + intro(kinds[kind], e(item.Name), e(item.Description))
+    + (item.Api === 4 ? `<div class="notice"><strong>JavaScript 插件不是沙箱。</strong>代码以当前系统用户权限执行，可访问文件、网络和主程序全部 API。只启用信任的作者；停用或卸载不能撤销已经完成的操作。${atLeastVersion(data.latest.tag_name, item.MinAppVersion) ? '' : '所需客户端功能尚未正式发布，当前仅供开发测试；以 GitHub Releases 实际版本为准。'}</div>` : '')
     + `<div class="detail-grid"><div>
       <section class="info-panel"><h2>安装与使用</h2><ol class="steps">
         <li>核对客户端构建支持此插件所需的 API 与权限；最低声明版本是 ${e(item.MinAppVersion)}${item.MaxAppVersion ? `，最高声明版本是 ${e(item.MaxAppVersion)}` : ''}。</li>

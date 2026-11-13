@@ -17,9 +17,10 @@
 - `images/`：网页用图片副本，原图保留在仓库原位置，不要反向覆盖原图。
 - `fonts/`：本地 Noto Sans SC（思源黑体体系）400 / 500 / 600 字重及 OFL 许可。字体按当前页面文案和 ASCII 字符子集化；新增中文文案时需重新生成子集，否则新增字会使用系统后备字体。
 
-- `scripts/fetch-website-data.js` 完整分页读取 GitHub Releases，并固定插件市场 `main` 的一个 commit，读取 `index.json`、`index-v2.json`、`index-v3.json`、`index-personas.json`。缺失或异常时终止部署，不把失败当作空市场发布。
+- `scripts/fetch-website-data.js` 完整分页读取 GitHub Releases，并固定插件市场 `main` 的一个 commit，读取 `index.json`、`index-v2.json`、`index-v3.json`、`index-v4.json`、`index-personas.json`。缺失或异常时终止部署，不把失败当作空市场发布。
 - `scripts/build-website.js` 生成 `downloads/`、每版详情、`plugins/`、每插件详情、`support/`、`support/transparency/` 与 `team/`，同时生成 sitemap 和 robots。首页版本区沿用 `scripts/render-website-releases.js`。
 - 下载历史只包含真实 Release，草稿不可见，预览版明确标注。旧版页面不能链接 `releases/latest`；只展示该版实际存在的资产、大小与 GitHub 提供的 SHA-256（如有）。插件 ZIP 固定到目录快照 commit。
+- API 3 与 API 4 的能力说明分开。JavaScript API 4 必须使用独立目录、最低客户端不低于 4.1.2、声明 `system.full`；详情页明确完整系统权限、非沙箱、默认实验总闸关闭和逐插件授权。所需客户端尚未发布时显示开发测试提示，不把 main 上的实现冒充正式发行。
 - GitHub Pages 使用 `.github/workflows/pages.yml` 自动生成与部署。保留正式发行事件触发、每日刷新和手动触发；插件市场更新最迟在下一次官网刷新同步。直接打开源码 `index.html` 不等于完整生成后的官网。
 
 ### 本地预览

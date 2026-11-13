@@ -5,7 +5,7 @@ const path = require('node:path');
 const { describeError } = require('../src/infra/errors');
 const APP = 'Banan1cee/whale_girl';
 const MARKET = 'Banan1cee/whale-girl-plugins';
-const INDEXES = ['index.json', 'index-v2.json', 'index-v3.json', 'index-personas.json'];
+const INDEXES = ['index.json', 'index-v2.json', 'index-v3.json', 'index-v4.json', 'index-personas.json'];
 
 async function collectPages(readPage) {
   const result = [];
