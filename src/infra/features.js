@@ -11,6 +11,7 @@
  */
 
 const { getByPath } = require('./objpath');
+const { parseBoolean } = require('./configValues');
 
 const REGISTRY = [
   {
@@ -136,9 +137,9 @@ function toBool(value, fallback = false) {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value !== 0;
   const s = String(value).trim().toLowerCase();
-  if (['1', 'true', 'yes', 'on', '开'].includes(s)) return true;
-  if (['0', 'false', 'no', 'off', '关', ''].includes(s)) return false;
-  return fallback;
+  if (!s) return false;
+  const parsed = parseBoolean(s);
+  return parsed === undefined ? fallback : parsed;
 }
 
 function isOn(config, key) {

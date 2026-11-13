@@ -2,6 +2,7 @@
 
 const { getByPath } = require('./objpath');
 const time = require('./time');
+const { parseBoolean, parseNumber } = require('./configValues');
 
 /**
  * 配置校验：一张纯数据的表 + 两个函数。
@@ -152,8 +153,6 @@ const FIELDS = {
   'wechat.pipelineQueueLimit': { type: 'int', min: 1, max: 32 },
 };
 
-const BOOLISH = new Set(['true', 'false', '1', '0', 'yes', 'no', 'on', 'off', '开', '关']);
-
 function describe(expected) {
   switch (expected.type) {
     case 'int':
@@ -184,21 +183,19 @@ function shownValue(value, spec) {
 /** 校验单个值；返回错误文字，或 null 表示通过。 */
 function checkValue(value, spec) {
   if (spec.type === 'bool') {
-    if (typeof value === 'boolean') return null;
     // 老配置里有写成字符串的 "false"；只要值本身合法就放行
-    if (typeof value === 'string' && BOOLISH.has(value.trim().toLowerCase())) return null;
-    if (value === 1 || value === 0) return null;
+    if (parseBoolean(value) !== undefined) return null;
     return `应该是 ${describe(spec)}，实际是 ${shownValue(value, spec)}`;
   }
   if (spec.type === 'int') {
-    const n = typeof value === 'number' ? value : Number(String(value).trim());
+    const n = parseNumber(value);
     if (!Number.isFinite(n) || !Number.isInteger(n)) return `应该是整数，实际是 ${shownValue(value, spec)}`;
     if (spec.min !== undefined && n < spec.min) return `不能小于 ${spec.min}（实际 ${n}）`;
     if (spec.max !== undefined && n > spec.max) return `不能大于 ${spec.max}（实际 ${n}）`;
     return null;
   }
   if (spec.type === 'float') {
-    const n = typeof value === 'number' ? value : Number(String(value).trim());
+    const n = parseNumber(value);
     if (!Number.isFinite(n)) return `应该是数字，实际是 ${shownValue(value, spec)}`;
     if (spec.min !== undefined && n < spec.min) return `不能小于 ${spec.min}（实际 ${n}）`;
     if (spec.max !== undefined && n > spec.max) return `不能大于 ${spec.max}（实际 ${n}）`;
