@@ -29,6 +29,8 @@ namespace WhaleLauncher
         public string ForceFrom { get; set; } = "";
         public string KillBelow { get; set; } = "";
         public string Message { get; set; } = "";
+        public string UpdateWarning { get; set; } = "";
+        public string UpdateWarningVersion { get; set; } = "";
         public string ReleaseNotes { get; set; } = "";
         public string ReleaseDetails { get; set; } = "";
         public int ManifestVersion { get; set; }
@@ -56,6 +58,14 @@ namespace WhaleLauncher
     /// </summary>
     public static class UpdateManifestService
     {
+        public static string ReleaseWarning(UpdateManifest manifest)
+        {
+            // 限定到本次版本，避免下一版继承旧清单后仍显示桥接专用警告。
+            if (manifest == null || string.IsNullOrWhiteSpace(manifest.UpdateWarningVersion)
+                || !string.Equals(manifest.Latest, manifest.UpdateWarningVersion, StringComparison.Ordinal)) return "";
+            return (manifest.UpdateWarning ?? "").Trim();
+        }
+
         public static string ReleaseSummary(UpdateManifest manifest)
         {
             var notes = !string.IsNullOrWhiteSpace(manifest?.ReleaseNotes) ? manifest.ReleaseNotes : manifest?.Message;
@@ -291,6 +301,8 @@ namespace WhaleLauncher
             m.KillBelow = Str(r, "kill_below");
             m.ForceFrom = Str(r, "force_from");
             m.Message = Str(r, "message");
+            m.UpdateWarning = Str(r, "update_warning");
+            m.UpdateWarningVersion = Str(r, "update_warning_version");
             m.ReleaseNotes = Str(r, "release_notes");
             m.ReleaseDetails = Str(r, "release_details");
             if (r.TryGetProperty("manifest_version", out var mv) && mv.ValueKind == JsonValueKind.Number && mv.TryGetInt32(out var i))
@@ -318,6 +330,8 @@ namespace WhaleLauncher
                     force_from = m.ForceFrom,
                     kill_below = m.KillBelow,
                     message = m.Message,
+                    update_warning = m.UpdateWarning,
+                    update_warning_version = m.UpdateWarningVersion,
                     release_notes = m.ReleaseNotes,
                     release_details = m.ReleaseDetails,
                     manifest_version = m.ManifestVersion,

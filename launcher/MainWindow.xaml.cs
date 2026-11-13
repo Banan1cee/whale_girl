@@ -108,6 +108,8 @@ namespace WhaleLauncher
             var opening = UpdateToast.Visibility != Visibility.Visible;
             var manifest = _lastManifest?.Manifest;
             UpdateToastText.Text = text ?? "已检测到新版本";
+            UpdateToastWarning.Text = UpdateManifestService.ReleaseWarning(manifest);
+            UpdateToastWarning.Visibility = UpdateToastWarning.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
             UpdateToastNotes.Text = UpdateManifestService.ReleaseSummary(manifest);
             var details = UpdateManifestService.ReleaseDetails(manifest);
             if (opening || details != UpdateToastDetails.Text) UpdateToastDetailsExpander.IsExpanded = false;
@@ -318,7 +320,8 @@ namespace WhaleLauncher
                     + (chk.Manifest.Message.Length > 0 ? chk.Manifest.Message + "\n\n" : "")
                     + "更新会下载官方安装包，校验 SHA256 后覆盖安装；data\\ 和 config.json 不会被改动。\n"
                     + "更新期间启动器会退出，结束后自动重新打开。\n\n现在更新吗？",
-                    "检查更新", okText: "现在更新", cancelText: "稍后")) return;
+                    "检查更新", okText: "现在更新", cancelText: "稍后",
+                    warningText: UpdateManifestService.ReleaseWarning(chk.Manifest))) return;
             }
 
             _updating = true;

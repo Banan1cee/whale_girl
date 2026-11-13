@@ -120,6 +120,17 @@ test('更新浮层先显示摘要，展开才显示另存的详细说明', () =>
   assert.match(manifestCode, /release_details = m\.ReleaseDetails/);
 });
 
+test('可选桥接更新在浮层及确认框用红字显示版本限定警告', () => {
+  assert.match(read('launcher/MainWindow.xaml'), /x:Name="UpdateToastWarning"[^>]*Foreground="\{DynamicResource Bad\}"/s);
+  const window = read('launcher/MainWindow.xaml.cs');
+  assert.match(window, /UpdateToastWarning\.Text = UpdateManifestService\.ReleaseWarning\(manifest\)/);
+  assert.match(window, /warningText: UpdateManifestService\.ReleaseWarning\(chk\.Manifest\)/);
+  assert.match(read('launcher/AppDialog.cs'), /warning\.SetResourceReference\(TextBlock\.ForegroundProperty, "Bad"\)/);
+  for (const field of ['update_warning', 'update_warning_version']) assert.ok(manifestCode.includes('"' + field + '"'));
+  assert.match(manifestCode, /update_warning = m\.UpdateWarning/);
+  assert.match(manifestCode, /update_warning_version = m\.UpdateWarningVersion/);
+});
+
 test('release-manifest.json 的字段与 UpdateManifest.Parse 一一对应', () => {
   const fields = ['latest', 'released_at', 'force_after_hours', 'force', 'force_from', 'kill_below', 'message', 'manifest_version'];
   for (const f of fields) {

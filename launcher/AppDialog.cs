@@ -26,11 +26,11 @@ namespace WhaleLauncher
 
         /// <summary>确认框：确定返回 true，取消/关闭返回 false。</summary>
         public static bool Confirm(Window owner, string message, string title = "鲸鲸",
-            bool danger = false, string okText = "确定", string cancelText = "取消")
+            bool danger = false, string okText = "确定", string cancelText = "取消", string warningText = null)
         {
             return OnUi(() =>
             {
-                var win = Build(ResolveOwner(owner), message, title, danger, okText, cancelText);
+                var win = Build(ResolveOwner(owner), message, title, danger, okText, cancelText, warningText);
                 return win.ShowDialog() == true;
             });
         }
@@ -83,7 +83,7 @@ namespace WhaleLauncher
         }
 
         private static Window Build(Window owner, string message, string title, bool danger,
-            string okText, string cancelText)
+            string okText, string cancelText, string warningText = null)
         {
             var win = new Window
             {
@@ -114,6 +114,21 @@ namespace WhaleLauncher
                 Foreground = textBrush,
             };
             panel.Children.Add(head);
+
+            if (!string.IsNullOrWhiteSpace(warningText))
+            {
+                var warning = new TextBlock
+                {
+                    Text = warningText,
+                    FontSize = 14,
+                    FontWeight = FontWeights.Bold,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 12, 0, 0),
+                    Foreground = Brushes.IndianRed,
+                };
+                warning.SetResourceReference(TextBlock.ForegroundProperty, "Bad");
+                panel.Children.Add(warning);
+            }
 
             var body = new TextBlock
             {

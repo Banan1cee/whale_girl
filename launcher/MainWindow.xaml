@@ -152,6 +152,8 @@
                     <TextBlock x:Name="UpdateToastText" Text="已检测到新版本" FontSize="13" FontWeight="SemiBold"
                                VerticalAlignment="Center" Foreground="{DynamicResource Accent}" />
                 </DockPanel>
+                <TextBlock x:Name="UpdateToastWarning" FontSize="13" FontWeight="Bold"
+                           Foreground="{DynamicResource Bad}" TextWrapping="Wrap" Margin="4,8,4,2" Visibility="Collapsed" />
                 <TextBlock x:Name="UpdateToastNotes" FontSize="12.5" Foreground="{DynamicResource Text2}"
                            LineHeight="20" TextWrapping="Wrap" Margin="4,6,4,2" />
                 <Expander x:Name="UpdateToastDetailsExpander" Header="详细更新" IsExpanded="False"

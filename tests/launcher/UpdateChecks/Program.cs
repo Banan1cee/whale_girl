@@ -22,6 +22,13 @@ Check(UpdateManifestService.ReleaseSummary(longNotes).Contains("五"), "第五�
 Check(UpdateManifestService.ReleaseDetails(longNotes).Length == 3000, "展开后保留完整详情");
 var hotfix = (UpdateManifest)parse.Invoke(null, new object[] { "{\"latest\":\"4.0.8.1\",\"force\":true,\"force_from\":\"4.0.8\"}" });
 var now = DateTimeOffset.UtcNow;
+var optionalBridge = (UpdateManifest)parse.Invoke(null, new object[] { "{\"latest\":\"4.1.1\",\"force\":false,\"update_warning_version\":\"4.1.1\",\"update_warning\":\"微信桥接正常的用户不要更新，仅建议微信桥接有问题的用户更新。\"}" });
+Check(UpdateManifestService.ReleaseWarning(optionalBridge).Contains("正常的用户不要更新"), "桥接专用版本显示明确更新范围");
+Check(UpdateManifestService.Decide("4.1.0", optionalBridge, now.AddDays(365)) == UpdatePolicy.Warn, "可选桥接补丁长期不变成强制更新");
+optionalBridge.Latest = "4.1.2";
+Check(UpdateManifestService.ReleaseWarning(optionalBridge) == "", "下一版不继承上一版专用警告");
+Check(UpdateManifestService.ReleaseWarning(new UpdateManifest { Latest = "4.1.1", UpdateWarning = "旧警告" }) == "", "未绑定版本的警告不显示");
+Check(UpdateManifestService.ReleaseWarning(null) == "", "无清单时没有警告");
 Check(UpdateManifestService.Decide("4.0.8", hotfix, now) == UpdatePolicy.Force, "紧急热修只强制上一个发布版本");
 Check(UpdateManifestService.Decide("4.0.7", hotfix, now) == UpdatePolicy.Warn, "更老版本不被热修强制");
 Check(UpdateManifestService.Decide("4.0.8.1", hotfix, now) == UpdatePolicy.Ok, "已是最新版本不再强制");
