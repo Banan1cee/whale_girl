@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Bridge runtime mixin: LoopMixin."""
 import engine as G
+from bridge_log import dump_hang_trace
 
 
 class LoopMixin:
@@ -251,6 +252,7 @@ class LoopMixin:
             _budget = float(G.SEND_STATE.get('budget') or 40)
             if G.SEND_STATE['active'] and G.time.time() - G.SEND_STATE['start'] > _budget:
                 G.log('发送卡住超过 %.0f 秒，强制重启桥接进程…' % _budget)
+                dump_hang_trace()
                 G.time.sleep(0.3)
                 G.os._exit(7)
 

@@ -9,6 +9,7 @@
 - warn/error 继续带「文件:行」调用点，拆模块后也不会丢。
 """
 
+import faulthandler
 import hashlib
 import os
 import json
@@ -155,6 +156,19 @@ def boot(msg):
             f.write("%s [pid %s] %s\n" % (time.strftime("%H:%M:%S"), os.getpid(), scrub(redact_secrets(msg))))
     except Exception:
         pass
+
+
+def dump_hang_trace():
+    """由检测到超时的 Python 线程持有 GIL 同步记录堆栈。"""
+    if not BOOT_LOG:
+        return
+    try:
+        path = os.path.join(os.path.dirname(BOOT_LOG), 'bridge-hang.log')
+        with open(path, 'a', encoding='utf-8') as hang_file:
+            hang_file.write('\n==== %s 处理超时（pid=%d）====\n' % (time.strftime('%Y-%m-%d %H:%M:%S'), os.getpid()))
+            faulthandler.dump_traceback(file=hang_file, all_threads=True)
+    except (OSError, RuntimeError) as exc:
+        boot('超时堆栈记录失败 type=%s' % type(exc).__name__)
 
 
 def _log_allowed(level, text):

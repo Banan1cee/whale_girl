@@ -109,7 +109,7 @@
                               StrokeThickness="1.6" StrokeLineJoin="Round" Width="16" Height="16" Stretch="Uniform" />
                     </Button>
                     <Button x:Name="BtnRestart" Style="{StaticResource Ghost}" Margin="6,0,0,0"
-                            Click="OnRestart" ToolTip="先停内核与桥接，再按固定顺序重启">
+                            Click="OnRestart" ToolTip="先停内核与桥接，再按固定顺序重启" ToolTipService.ShowOnDisabled="True">
                         <StackPanel Orientation="Horizontal">
                             <Path Data="M20 11a8 8 0 1 0-2.3 5.7 M20 5v6h-6"
                                   Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
@@ -118,7 +118,7 @@
                             <TextBlock Text="重启" Margin="7,0,0,0" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
-                    <Button x:Name="BtnToggle" Style="{StaticResource Primary}" Margin="8,0,0,0" Click="OnToggle">
+                    <Button x:Name="BtnToggle" Style="{StaticResource Primary}" Margin="8,0,0,0" Click="OnToggle" ToolTipService.ShowOnDisabled="True">
                         <StackPanel Orientation="Horizontal">
                             <Path Data="M12 3v9 M6.3 6.3a8 8 0 1 0 11.4 0"
                                   Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"

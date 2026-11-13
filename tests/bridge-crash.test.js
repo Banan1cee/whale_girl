@@ -62,6 +62,14 @@ test('原生崩溃尽量在死前留下当时在跑哪句（bridge-crash.log）'
   assert.match(bridge, /bridge-crash\.log/, '崩溃堆栈写进独立日志');
 });
 
+test('桥接禁用会并发遍历线程栈的定时转储，保留当前崩溃线程和实际卡死的诊断', () => {
+  assert.equal(/faulthandler\.dump_traceback_later\s*\(/.test(bridge), false, '正常运行时不能启动原生堆栈转储线程');
+  assert.match(bridge, /faulthandler\.enable\(file=_crash_file, all_threads=False\)/);
+  assert.match(bridge, /faulthandler\.dump_traceback\(file=\w+, all_threads=True\)/);
+  assert.match(bridge, /if _db_box\.get\('timeout'\):\s+dump_hang_trace\(\)/);
+  assert.match(bridge, /log\('发送卡住超过[^\n]+\n\s+dump_hang_trace\(\)/);
+});
+
 test('桥接由启动器守护：崩溃后自动拉起，且刹车交给 RuntimeSupervisor', () => {
   const cs = fs.readFileSync(path.join(root, 'launcher', 'RuntimeSupervisor.cs'), 'utf8');
   assert.match(cs, /_bridgeRestarts|BridgeRestartCap/, '启动器要记重启次数并按上限刹车');

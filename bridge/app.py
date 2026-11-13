@@ -2,6 +2,7 @@
 """bridge composition root: creates BridgeRuntime and runs start()."""
 import engine as G
 from account_mixin import AccountMixin
+from bridge_log import dump_hang_trace
 from parent_watch import start_watchdog
 from window_mixin import WindowMixin
 from sender_mixin import SenderMixin
@@ -61,18 +62,14 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
         try:
             import faulthandler
             try:
-                _hang_file = open(G.os.path.join(G.ROOT, 'data', 'bridge-hang.log'), 'a', encoding='utf-8')
-                # 健康运行时不能无限写栈：只 dump 一次，不 repeat。
-                faulthandler.dump_traceback_later(40, repeat=False, file=_hang_file)
-                G.boot('已开启卡死堆栈转储（40s）')
-            except Exception:
-                pass
-            try:
                 _crash_file = open(G.os.path.join(G.ROOT, 'data', 'bridge-crash.log'), 'a', encoding='utf-8')
                 _crash_file.write('\n==== %s 进程启动（pid=%d）====\n' % (G.time.strftime('%Y-%m-%d %H:%M:%S'), G.os.getpid()))
                 _crash_file.flush()
-                faulthandler.enable(file=_crash_file, all_threads=True)
-                G.boot('已开启崩溃堆栈记录（data/bridge-crash.log）')
+                # CPython 的定时转储线程在无 GIL 时读取其他线程的帧，
+                # 帧恰好被释放会让桥接崩溃（python/cpython#140815）。
+                # 原生异常也只记录故障线程，避免在异步回调中遍历其他线程。
+                faulthandler.enable(file=_crash_file, all_threads=False)
+                G.boot('已开启故障线程堆栈记录（data/bridge-crash.log）')
             except Exception:
                 pass
             G.boot('开始 import requests')
@@ -189,6 +186,7 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
         G.log('打开微信数据库（这一步偶尔会卡，最多等 90 秒）…')
         _db_box = self._open_db_with_timeout(90)
         if _db_box.get('timeout'):
+            dump_hang_trace()
             G.log('')
             G.log('✗ 打开微信数据库卡住超过 90 秒，已放弃这次启动（不是崩溃，是卡死）。')
             G.log('  常见原因：微信没完全登录 / 数据库被占用 / 微信正在更新。')

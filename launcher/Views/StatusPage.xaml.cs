@@ -29,6 +29,7 @@ namespace WhaleLauncher.Views
         private readonly System.Windows.Threading.DispatcherTimer _recentTimer;
         private bool _recentBusy;
         private string _recentJson = "";
+        private Snapshot _status = new Snapshot();
 
         public StatusPage(RuntimeSupervisor sup)
         {
@@ -45,6 +46,7 @@ namespace WhaleLauncher.Views
         public async Task RefreshAsync()
         {
             var s = await _sup.ProbeAsync();
+            _status = s;
             Apply(s);
 
             if ((DateTime.Now - _lastCare).TotalSeconds >= 30)
@@ -58,7 +60,7 @@ namespace WhaleLauncher.Views
         {
             if (_recentBusy || !IsLoaded) return;
             _recentBusy = true;
-            try { await RefreshRecentAsync(new Snapshot { NodeUp = _sup.NodeRunning }); }
+            try { await RefreshRecentAsync(_status); }
             finally { _recentBusy = false; }
         }
 
@@ -67,7 +69,7 @@ namespace WhaleLauncher.Views
             // 内核
             DotNode.Fill = s.NodeReady ? (Brush)FindResource("Ok") : (Brush)FindResource(s.NodeUp ? "Warn" : "Idle");
             NodeMain.Text = !s.NodeUp ? "未启动" : (s.NodeReady ? "运行中" : "等待就绪");
-            NodeAge.Text = s.NodeUp ? "已跑 " + Short(s.UptimeSec) : "";
+            NodeAge.Text = s.NodeUp ? (s.ExternalNode ? "后台启动 · " : "") + "已跑 " + Short(s.UptimeSec) : "";
             NodeSub.Text = s.NodeUp
                 ? $"端口 {s.Port} · {s.Provider}/{s.Model}{(!s.NeedsKey || s.HasKey ? "" : " · 还没有 Key")}{(s.Mock ? " · 演示模式" : "")}"
                 : "点顶栏 ⏻ 启动";
@@ -85,7 +87,7 @@ namespace WhaleLauncher.Views
             var who = !string.IsNullOrEmpty(s.BrAccountNick) ? s.BrAccountNick : s.BrAccount;
             DotWechat.Fill = s.BrOnline && s.BrAccountOk ? (Brush)FindResource("Ok")
                 : (s.BrOnline ? (Brush)FindResource("Warn") : (Brush)FindResource("Idle"));
-            WechatMain.Text = string.IsNullOrEmpty(who) ? "未知" : who;
+            WechatMain.Text = !s.BrOnline || string.IsNullOrEmpty(who) ? "未知" : who;
             WechatSub.Text = s.BrOnline
                 ? $"窗口 {(string.IsNullOrEmpty(s.BrWindow) ? "未知" : s.BrWindow)} · 账号{(s.BrAccountOk ? "已确认" : "未确认")} · 双开守卫{(s.BrAccountGuard ? "已开" : "已关")}"
                 : "—";
@@ -164,7 +166,7 @@ namespace WhaleLauncher.Views
             }
             try
             {
-                var res = await Api.Get(_sup.Url, "/api/recent?limit=10", 3);
+                var res = await Api.Get($"http://127.0.0.1:{s.Port}", "/api/recent?limit=10", 3);
                 if (!res.Ok)
                 {
                     RecentHint.Text = "更新暂时失败，正在重试";
