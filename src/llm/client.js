@@ -14,6 +14,7 @@ const { URL } = require('node:url');
 const { resolveRuntime, maskKey } = require('../infra/config');
 const { describeError } = require('../infra/errors');
 const { textMeta } = require('../infra/privacy');
+const { resolveModelCapabilities, normalizeTemperature } = require('./modelCapabilities');
 
 const FRIENDLY = {
   nokey: '呜…人家还没拿到深海的钥匙（API Key），去右上角「设置」里填一下吧 (｡•́︿•̀｡)',
@@ -156,6 +157,18 @@ function reasoningTokensOf(json) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+function requestIdOf(context) {
+  if (context === undefined || context === null) return undefined;
+  if (!context || typeof context !== 'object' || Array.isArray(context)) {
+    throw new TypeError('requestContext 要是 client.createRequestContext() 生成的对象');
+  }
+  const id = context.id;
+  if (typeof id !== 'string' || !id.trim() || id.length > 128 || /[\u0000-\u001f\u007f]/.test(id)) {
+    throw new TypeError('requestContext.id 无效');
+  }
+  return id;
+}
+
 /**
  * 每个模型族「关思考 / 开思考」要发什么参数 —— 2026-11-04 实测 11 个模型得来。
  * 顺序就是降级顺序：先换字段名，再丢参数。canDisable=false 表示关不干净（gpt-5 / O 系），
@@ -180,22 +193,8 @@ const RULE = {
 
 /** 按模型名（优先）匹配思考能力表；不认识返回 null，交给 provider 兜底 */
 function thinkingRuleByModel(model) {
-  const m = String(model || '').toLowerCase();
-  if (!m) return null;
-  // 更具体的型号必须排在族前面：glm-5.3-flash 走 thinking:disabled，不能落到 glm-5.3 那条
-  if (/^(gpt-5|gpt5|o[134](?:-|$)|chatgpt)/.test(m)) return RULE.openaiReasoning;
-  if (/^claude/.test(m)) return RULE.claude;
-  if (/(^|[/-])glm-5\.3(?!-flash)/.test(m)) return RULE.glm53;
-  if (/(^|[/-])glm/.test(m)) return RULE.glm;
-  if (/(^|[/-])deepseek/.test(m)) return RULE.deepseek;
-  if (/(^|[/-])qwen/.test(m)) return RULE.qwen;
-  if (/(^|[/-])hy\d/.test(m)) return RULE.hunyuan;
-  if (/(^|[/-])kimi/.test(m)) return RULE.kimi;
-  if (/(^|[/-])minimax/.test(m)) return RULE.minimax;
-  if (/(^|[/-])(mimo|longcat)/.test(m)) return RULE.thinkingDisabled;
-  if (/(^|[/-])step-/.test(m)) return RULE.noThinking;
-  if (/^(gemini|grok)/.test(m)) return RULE.gemini;
-  return null;
+  const { thinkingFamily } = resolveModelCapabilities(model);
+  return thinkingFamily ? RULE[thinkingFamily] || null : null;
 }
 
 /** provider 兜底：只对「这家只会跑自家模型」的服务商生效，opencode/custom/tju 交给自适应 */
@@ -277,6 +276,11 @@ class DeepSeekClient {
     // 每次 reload 清空，靠 provider|model + baseUrl 校验失效
     this._caps = null;
     this.reload();
+  }
+
+  /** 每个逻辑调用创建一次，并在所有重试中复用这个不透明用量标识。 */
+  createRequestContext() {
+    return Object.freeze({ id: crypto.randomBytes(16).toString('hex') });
   }
 
   /** 设置面板保存后调用，立即生效，无需重启 */
@@ -439,7 +443,7 @@ class DeepSeekClient {
   }
 
   /** 记下 API 返回的 usage（不打印内容，只记数字） */
-  _recordUsage(json, purpose = 'background') {
+  _recordUsage(json, purpose = 'background', requestId) {
     const u = json && json.usage;
     if (!u) return;
     const promptTokens = Number(u.prompt_tokens) || 0;
@@ -467,7 +471,9 @@ class DeepSeekClient {
       at: Date.now(),
     };
     this.usageSeq += 1;
-    this.usageEvents.push({ seq: this.usageSeq, purpose, ...this.lastUsage });
+    const event = { seq: this.usageSeq, purpose, ...this.lastUsage };
+    if (requestId !== undefined) event.requestId = requestId;
+    this.usageEvents.push(event);
     // 只留最近 64 次：够一轮里的重试，也不会把内存越攒越大
     if (this.usageEvents.length > 64) this.usageEvents.splice(0, this.usageEvents.length - 64);
   }
@@ -556,6 +562,7 @@ class DeepSeekClient {
       messages.push({ role, content: t.content });
     }
     const plan = this.thinkingPlan();
+    const capabilities = resolveModelCapabilities(this.model);
     const caps = this._capsFor();
     // 用户的选择；关不干净的模型（gpt-5 / O 系）由预算那一步单独处理，参数照样可以省
     const modeOn = thinking === undefined ? this.thinking === true : thinking === true;
@@ -567,29 +574,14 @@ class DeepSeekClient {
       // 关不掉思考：加大预算再试一次（封顶 8000，别无限烧）
       budget = Math.min(8000, Math.max(Number(this.thinkingMaxTokens) || 5000, budget) * 2);
     }
-    const payload = {
-      model: this.model,
-      messages,
-      stream,
-      temperature: (() => {
-        // safe = 刚才那条跑飞了，这次用更稳的参数再要一遍
-        let t = safe ? Math.min(0.7, Number(this.temperature) || 0.7) : Math.max(0, Math.min(2, Number(this.temperature) || 0.95));
-        // 智谱 GLM 的 temperature 只接受 0~1
-        if (this.provider === 'zhipu') t = Math.min(t, 0.99);
-        return t;
-      })(),
-      max_tokens: budget,
-    };
-    // OpenAI 系（gpt-5 / o1|o3|o4）字段名不同，而且不认 temperature
-    const openaiReasoning = /^(gpt-5|gpt5|o[134](?:-|$)|chatgpt)/.test(String(this.model || '').toLowerCase());
-    if (openaiReasoning) {
-      delete payload.max_tokens;
-      delete payload.temperature;
-      payload.max_completion_tokens = budget;
+    const payload = { model: this.model, messages, stream };
+    if (capabilities.supportsTemperature) {
+      payload.temperature = normalizeTemperature(this.temperature, { safe, provider: this.provider });
     }
+    payload[capabilities.maxTokensField] = budget;
     // 惩罚项会逼模型避开常用词，是「乱说话」的元凶之一；跑飞重试时一律不带
-    if (!safe && !openaiReasoning && this.frequencyPenalty) payload.frequency_penalty = this.frequencyPenalty;
-    if (!safe && !openaiReasoning && this.presencePenalty) payload.presence_penalty = this.presencePenalty;
+    if (!safe && capabilities.supportsFrequencyPenalty && this.frequencyPenalty) payload.frequency_penalty = this.frequencyPenalty;
+    if (!safe && capabilities.supportsPresencePenalty && this.presencePenalty) payload.presence_penalty = this.presencePenalty;
     // 思考参数：极少数兼容服务不认任何写法，此时 params 是空对象，什么都不发
     if (params && typeof params === 'object') Object.assign(payload, params);
     // DeepSeek 流式默认不回 usage；显式要一下，用来校准 token 估算。
@@ -742,7 +734,8 @@ class DeepSeekClient {
    *   5) 仍空 → 抛 LlmError(empty, detail)，detail 带 finish/usage/reasoning_tokens。
    * 参数被 400/422 拒时（不同服务商字段名不一样），按候选表换下一档再试。
    */
-  async complete({ system, turns, maxTokens, signal, thinking, allowOverflow = false, purpose = 'background' } = {}) {
+  async complete({ system, turns, maxTokens, signal, thinking, allowOverflow = false, purpose = 'background', requestContext } = {}) {
+    const requestId = requestIdOf(requestContext);
     this.lastUsage = null;
     let lastErr = null;
     let sawDegenerate = false;
@@ -786,7 +779,7 @@ class DeepSeekClient {
         } catch {
           throw new LlmError(FRIENDLY.empty, { code: 'bad_json', detail: 'invalid json: ' + textMeta(raw) });
         }
-        this._recordUsage(json, purpose);
+        this._recordUsage(json, purpose, requestId);
         // HTTP 200 也可能带错误体（网关 / 反向代理 / 部分兼容服务会这么干）。
         // 以前这里直接当「模型没说话」吞成空响应，日志里只剩一句「空泡泡」，
         // 真正的限流原因全丢了。
@@ -973,7 +966,8 @@ class DeepSeekClient {
   /**
    * 流式，异步生成器，每次 yield 一段新增文本。
    */
-  async *stream({ system, turns, signal, purpose = 'background' }) {
+  async *stream({ system, turns, signal, purpose = 'background', requestContext }) {
+    const requestId = requestIdOf(requestContext);
     this.lastUsage = null;
     const payload = this.buildPayload({ system, turns, stream: true });
     const { req, res } = await this._open(payload, { signal, stream: true });
@@ -1009,7 +1003,7 @@ class DeepSeekClient {
           if (json?.error) {
             throw new LlmError(FRIENDLY.default, { code: 'stream_error', detail: String(json.error.message || '') });
           }
-          if (json && json.usage) this._recordUsage(json, purpose);
+          if (json && json.usage) this._recordUsage(json, purpose, requestId);
           const finish = json?.choices?.[0]?.finish_reason;
           if (finish) lastFinish = finish;
           const delta = json?.choices?.[0]?.delta;
