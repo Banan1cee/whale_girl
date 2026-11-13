@@ -5,6 +5,7 @@ import sys
 import unittest
 from unittest.mock import Mock, patch
 import ast
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / 'bridge') not in sys.path:
@@ -111,9 +112,10 @@ class WiringTests(unittest.TestCase):
     def test_engine_imports_starts_and_retains_runner(self):
         app = ast.parse((ROOT / 'bridge/app.py').read_text(encoding='utf-8-sig'))
         loop = ast.parse((ROOT / 'bridge/loop_mixin.py').read_text(encoding='utf-8-sig'))
+        engine = ast.parse((ROOT / 'bridge/engine.py').read_text(encoding='utf-8-sig'))
         self.assertTrue(any(isinstance(n, ast.ImportFrom) and n.module == 'reminder_watch'
-                            and any(a.name == 'ReminderRunner' for a in n.names)
-                            for n in ast.walk(loop)))
+                            and any(a.name == 'start_reminder_watch' for a in n.names)
+                            for n in ast.walk(engine)))
         assignments = [n for n in ast.walk(app) if isinstance(n, ast.Assign)
                        and isinstance(n.value, ast.Call)
                        and isinstance(n.value.func, ast.Attribute)
@@ -123,8 +125,10 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(assignments[0].targets[0].attr, 'REMINDER_RUNNER')
 
     def test_real_adapter_fetches_with_token_sends_target_and_acks(self):
-        http = Mock()
-        http.request.return_value.json.return_value = {'ok': True, 'items': items('a')}
+        http = SimpleNamespace(get=Mock(), post=Mock())
+        http.get.return_value.json.return_value = {'ok': True, 'items': items('a')}
+        http.post.return_value.json.return_value = {'ok': True}
+        http.get.return_value.status_code = http.post.return_value.status_code = 200
         send_text, send_at = Mock(return_value=True), Mock(return_value=True)
         with patch.object(rw.threading, 'Thread') as thread:
             runner = rw.start_reminder_watch(http=http, base='http://127.0.0.1:5050',
@@ -133,15 +137,16 @@ class WiringTests(unittest.TestCase):
             thread.return_value.start.assert_called_once()
             self.assertEqual(runner.step()[0], 1)
         send_text.assert_called_once_with('开会', '阿螈', 'wxid_x')
-        self.assertEqual(http.request.call_args_list[0].args,
-                         ('GET', 'http://127.0.0.1:5050/api/reminders/due'))
-        self.assertEqual(http.request.call_args_list[0].kwargs['headers']['x-bot-token'], 'test-token')
-        self.assertEqual(http.request.call_args_list[1].kwargs['json'],
+        self.assertEqual(http.get.call_args.args,
+                         ('http://127.0.0.1:5050/api/reminders/due',))
+        self.assertEqual(http.get.call_args.kwargs['headers']['x-bot-token'], 'test-token')
+        self.assertEqual(http.post.call_args.kwargs['json'],
                          {'id': 'a', 'ok': True, 'error': ''})
 
     def test_failed_http_does_not_send_or_ack_as_success(self):
-        http, send = Mock(), Mock()
-        http.request.return_value.raise_for_status.side_effect = RuntimeError('403')
+        http, send = SimpleNamespace(get=Mock(), post=Mock()), Mock()
+        http.get.return_value.status_code = 403
+        http.get.return_value.raise_for_status.side_effect = RuntimeError('403')
         with patch.object(rw.threading, 'Thread'):
             runner = rw.start_reminder_watch(http=http, base='http://localhost', token='bad',
                                             send_text=send, send_at=send, log=Mock())
