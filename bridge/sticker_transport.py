@@ -362,6 +362,26 @@ def alias_match(current, aliases):
     return _alias_match(current, aliases)
 
 
+def _uia_bound_to(uia, hwnd):
+    """Accept the shipped driver's public binding and older private bindings.
+
+    WeChatUIA(hwnd=...) stores hwnd, not _pinned_hwnd. An explicitly unbound
+    public driver must still fail closed, even if private metadata is stale.
+    Callers separately verify the live root, account, chat and input control.
+    """
+    try:
+        missing = object()
+        public = getattr(uia, 'hwnd', missing)
+        legacy = int(getattr(uia, '_pinned_hwnd', 0) or 0)
+        if int(hwnd) <= 0:
+            return False
+        if public is missing:
+            return legacy == hwnd
+        return int(public or 0) == hwnd and legacy in (0, hwnd)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def quarantined_input_value(gui, hwnd, aliases):
     """Read-only proof for a quarantined target; never creates/rebinds UIA.
 
@@ -372,7 +392,7 @@ def quarantined_input_value(gui, hwnd, aliases):
         if gui is None or int(gui.main_hwnd) != hwnd:
             return None
         uia = getattr(gui, '_uia', None)
-        if (uia is None or int(getattr(uia, '_pinned_hwnd', 0)) != hwnd
+        if (uia is None or not _uia_bound_to(uia, hwnd)
                 or uia._win is None or int(uia._win.NativeWindowHandle) != hwnd
                 or not _alias_match(uia.current_chat(), aliases)):
             return None
@@ -417,7 +437,7 @@ def guarded_send(gui, uia, hwnd, aliases, path, root, db, username, gate,
             if not gate() or not activity_allowed() or not account_valid() or db_identity(db) != identity:
                 return None
             if (not desktop.foreground(hwnd) or int(getattr(gui, 'main_hwnd', 0)) != hwnd
-                    or int(getattr(uia, '_pinned_hwnd', 0)) != hwnd
+                    or not _uia_bound_to(uia, hwnd)
                     or uia._win is None or int(uia._win.NativeWindowHandle) != hwnd
                     or not _alias_match(uia.current_chat(), aliases)):
                 return None
@@ -445,7 +465,7 @@ def guarded_send(gui, uia, hwnd, aliases, path, root, db, username, gate,
                     return 'WeChat is not the foreground window'
                 if int(getattr(gui, 'main_hwnd', 0)) != hwnd:
                     return 'window driver points at another window'
-                if int(getattr(uia, '_pinned_hwnd', 0)) != hwnd:
+                if not _uia_bound_to(uia, hwnd):
                     return 'UIA is pinned to another window'
                 if uia._win is None or int(uia._win.NativeWindowHandle) != hwnd:
                     return 'UIA root window changed'

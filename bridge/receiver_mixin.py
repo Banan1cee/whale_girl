@@ -542,6 +542,8 @@ class ReceiverMixin:
             elif G.voice_reply.choose(G.voice_reply.settings(G.ROOT), content, is_group, G.random.random, log=G.log):
                 spoken = '\n'.join((line.strip() for line in bubbles if line.strip()))
                 if self.send_voice_reply(spoken, target, username):
+                    if isinstance(data.get('sticker'), dict):
+                        self.cancel_reply_sticker(data['sticker'], username)
                     G.log('[delivery] stage=voice result=handled textFallback=false stickerFallback=false reason=voice_may_have_sent')
                     return
                 G.log('[voice] stage=delivery result=text_fallback reason=prepare_or_synthesis_failed')
@@ -565,6 +567,8 @@ class ReceiverMixin:
                                     and data.get('commandType') != 'admin_spell'
                                     and self.is_latest_message(username, msg))
                 if not self.send_text(line, target, username, quote_latest=quote_latest):
+                    if isinstance(data.get('sticker'), dict):
+                        self.cancel_reply_sticker(data['sticker'], username)
                     G.log('[delivery] stage=text result=failed reason=send_failed remainingBubbles=cancelled stickers=cancelled')
                     return
                 first = False

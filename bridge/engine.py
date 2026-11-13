@@ -78,7 +78,8 @@ bridge_config.configure(ROOT, CONFIG_PATH)
 ONLY_CHATS = []
 SKIP_OLDER_THAN = 10
 MASTER_WXID = ''
-STALE_AFTER = float(os.environ.get('WHALE_STALE_AFTER', '4'))
+# 与内核/配置模板一致；旧配置缺字段时，WAL 快照延迟不应吞掉刚收到的消息。
+STALE_AFTER = float(os.environ.get('WHALE_STALE_AFTER', '120'))
 _GROUP_SENDER_PREFIX_RE = re.compile('^[A-Za-z][A-Za-z0-9_\\-]{3,}:(?!/)\\s*')
 CARE_ENABLED = False
 CARE_ALLOW_GROUPS = False
@@ -244,7 +245,7 @@ def reload_config(path=None):
         pass
     w = cfg.get('wechat') or {}
     try:
-        STALE_AFTER = float(w.get('staleAfterSec') or STALE_AFTER or 4)
+        STALE_AFTER = float(w.get('staleAfterSec') or STALE_AFTER or 120)
     except Exception:
         pass
     try:

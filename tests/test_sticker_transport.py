@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 from types import SimpleNamespace
+from typing import Optional
 import unittest
 from unittest.mock import Mock, patch
 
@@ -20,6 +21,24 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests'))
 sys.path.insert(0, str(ROOT / 'bridge'))
 import sticker_transport as transport
+
+
+def shipped_uia(hwnd):
+    """Run the shipped constructor with COM/process access stubbed out.
+
+    Our fake driver used to invent _pinned_hwnd, hiding an API mismatch with
+    the packaged driver. Do not import the Windows/UI module or edit vendor.
+    """
+    source = ROOT / 'vendor' / 'wechatauto' / 'uia_driver.py'
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'WeChatUIA')
+    constructor = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '__init__')
+    scope = {'Optional': Optional, 'auto': SimpleNamespace(
+        InitializeUIAutomationInCurrentThread=Mock(), SetGlobalSearchTimeout=Mock())}
+    exec(compile(ast.Module(body=[constructor], type_ignores=[]), str(source), 'exec'), scope)
+    driver = SimpleNamespace(_pid_from_hwnd=Mock(return_value=123))
+    scope['__init__'](driver, hwnd=hwnd)
+    return driver
 
 
 class FakeDB:
@@ -194,6 +213,33 @@ class TransportTest(unittest.TestCase):
         self.assertEqual(self.send(), {'status': 'confirmed', 'error': ''})
         self.assertEqual(self.keys, [0x56, 0x0D])
         self.assertEqual(set(self.db.queries), {'peer'})
+
+    def test_shipped_driver_public_handle_can_send_without_private_metadata(self):
+        driver = shipped_uia(100)
+        self.assertEqual(driver.hwnd, 100)
+        self.assertFalse(hasattr(driver, '_pinned_hwnd'))
+        driver._win = self.uia._win
+        driver.current_chat = self.uia.current_chat
+        driver._chat_input = self.uia._chat_input
+        self.assertEqual(self.send(uia=driver)['status'], 'confirmed')
+        self.assertEqual(self.keys, [0x56, 0x0D])
+
+    def test_public_and_legacy_bindings_must_agree(self):
+        for public, private in ((None, 100), (0, 100), (101, 100), (100, 101)):
+            with self.subTest(public=public, private=private):
+                self.uia.hwnd = public
+                self.uia._pinned_hwnd = private
+                self.assertEqual(self.send()['status'], 'failed')
+                self.assertEqual(self.keys, [])
+        self.uia.hwnd, self.uia._pinned_hwnd = 100, 0
+        self.assertEqual(self.send()['status'], 'confirmed')
+        self.assertEqual(self.keys, [0x56, 0x0D])
+
+    def test_public_binding_change_after_paste_never_presses_enter(self):
+        self.uia.hwnd = 100
+        self.on_paste = lambda: setattr(self.uia, 'hwnd', 101)
+        self.assertEqual(self.send()['status'], 'unconfirmed')
+        self.assertEqual(self.keys, [0x56])
 
     def test_initial_guards_never_paste(self):
         cases = [('account', False), ('active', False)]
@@ -775,6 +821,29 @@ class BridgeContractTest(unittest.TestCase):
         self.assertTrue(env['sticker_quarantine_allows']('peer', 'Peer'))
         self.assertNotIn('peer', env['sticker_draft_quarantine'])
         env['gui'].use_window.assert_not_called()
+
+    def test_shipped_driver_recovers_empty_input_after_unconfirmed_delivery(self):
+        # A delayed DB snapshot can miss the five-second receipt window even
+        # when the image was sent. Verified empty input must release the next
+        # request without retrying that image or requiring a bridge restart.
+        env, pattern, previous = self.quarantine_environment(observed=True, value='\n')
+        driver = shipped_uia(100)
+        driver._win = previous._win
+        driver.current_chat = previous.current_chat
+        driver._chat_input = previous._chat_input
+        env['gui']._uia = driver
+        self.assertTrue(env['sticker_quarantine_allows']('peer', 'Peer'))
+        self.assertNotIn('peer', env['sticker_draft_quarantine'])
+        env['gui'].use_window.assert_not_called()
+        env['guarded_sticker_send'].assert_not_called()
+
+    def test_public_binding_mismatch_never_releases_quarantine(self):
+        for public in (None, 0, 101):
+            with self.subTest(public=public):
+                env, _, driver = self.quarantine_environment(observed=True, value='')
+                driver.hwnd = public
+                self.assertFalse(env['sticker_quarantine_allows']('peer', 'Peer'))
+                self.assertIn('peer', env['sticker_draft_quarantine'])
 
     def test_quarantine_wrong_target_or_unavailable_value_never_releases(self):
         env, pattern, uia = self.quarantine_environment(observed=True, value='')
