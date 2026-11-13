@@ -230,6 +230,26 @@ test('online and offline feature commands accept identical legacy values and pre
   }
 });
 
+test('offline feature writes reject missing or non-schema values without changing config bytes', async t => {
+  for (const { name, initial, body } of [
+    { name: 'missing value', initial: true, body: { key: 'javascriptPlugins' } },
+    { name: 'invalid text', initial: true, body: { key: 'javascriptPlugins', value: 'not-a-boolean' } },
+    { name: 'numeric 2', initial: false, body: { key: 'javascriptPlugins', value: 2 } },
+    { name: 'array yes', initial: false, body: { key: 'javascriptPlugins', value: ['yes'] } },
+    { name: 'null', initial: true, body: { key: 'javascriptPlugins', value: null } },
+  ]) {
+    await t.test(name, async child => {
+      const f = fixture(child, { features: { javascriptPlugins: initial } });
+      const before = fs.readFileSync(f.file, 'utf8');
+      const result = await saveLocalConfiguration(f.root, { path: '/api/features', body }, {});
+      assert.equal(result.ok, false);
+      assert.match(result.error, /无效的功能设置/);
+      assert.equal(fs.readFileSync(f.file, 'utf8'), before);
+      assert.equal(loadConfig({ root: f.root, env: {}, readOnly: true }).features.javascriptPlugins, initial);
+    });
+  }
+});
+
 test('offline partial Moments fields leave other settings and publishing flags intact', async t => {
   const f = fixture(t, { moments: { autoLike: true, autoLikeMaxPerDay: 7, autoReadEveryHours: 6,
     publishFeatureEnabled: true, publishEnabled: true, publishWithImage: true,

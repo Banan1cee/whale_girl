@@ -1,14 +1,15 @@
 'use strict';
 
 const features = require('../infra/features');
-const { parseNumber } = require('../infra/configValues');
+const { parseBoolean, parseNumber } = require('../infra/configValues');
 const own = (body, key) => Object.prototype.hasOwnProperty.call(body || {}, key);
 
 function prepareFeatureCommand(body) {
   const key = String((body && body.key) || '').trim();
   const entry = features.REGISTRY.find(item => item.key === key);
   if (!entry) throw Object.assign(new Error('没有这个开关：' + key), { statusCode: 400 });
-  const value = features.toBool(body.value, false);
+  const value = parseBoolean(body.value);
+  if (value === undefined) throw Object.assign(new Error('功能开关值无效'), { statusCode: 400 });
   return { key, entry, value, patch: { [entry.path]: value } };
 }
 
