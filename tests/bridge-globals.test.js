@@ -20,8 +20,9 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
-const py = path.join(root, 'runtime', 'python', 'python.exe');
-const hasPy = fs.existsSync(py);
+const { selectTestPython, createBridgeFixture } = require('./helpers/test-python');
+const py = selectTestPython();
+const hasPy = Boolean(py);
 const bridgeDir = path.join(root, 'bridge');
 
 const ENGINE_GLOBALS = [
@@ -34,10 +35,11 @@ const ENGINE_GLOBALS = [
   'GOODNIGHT_TEXT',
 ];
 
-function runPy(code) {
-  return execFileSync(py, ['-c', code], {
+function runPy(code, fixture) {
+  return execFileSync(py, ['-I', '-B', '-c', code], {
     encoding: 'utf8',
-    env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+    cwd: fixture ? fixture.root : os.tmpdir(),
+    env: fixture ? fixture.env : { ...process.env, PYTHONDONTWRITEBYTECODE: '1', PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 180000,
   });
@@ -65,33 +67,30 @@ test('engine.py 给 7 个配置开关都留了模块级默认值（读配置之�
   assert.match(src, /^GOODNIGHT_TEXT = '晚安/m);
 });
 
-test('config.json 是坏的：engine 仍能导入，7 个全局都在（修复前是 NameError）', { skip: !hasPy && '没有内置 python' }, () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-bridge-cfg-'));
-  try {
-    fs.cpSync(bridgeDir, path.join(tmp, 'bridge'), { recursive: true });
-    // 和事故现场一样：Windows 路径只写了一个反斜杠 → Invalid \escape
-    fs.writeFileSync(path.join(tmp, 'config.json'), '{"wechat": {"dbDir": "E:\\WeChat Files"}}', 'utf8');
+test('config.json 是坏的：engine 仍能导入，7 个全局都在（修复前是 NameError）', { skip: !hasPy && '本地没有可用 Python' }, (t) => {
+  const fixture = createBridgeFixture(t);
+  const tmp = fixture.root;
+  // 和事故现场一样：Windows 路径只写了一个反斜杠 → Invalid \escape
+  fs.writeFileSync(path.join(tmp, 'config.json'), '{"wechat": {"dbDir": "E:\\WeChat Files"}}', 'utf8');
 
-    const code = [
-      'import importlib.util, json, sys',
-      `sys.path.insert(0, ${JSON.stringify(path.join(tmp, 'bridge'))})`,
-      `spec = importlib.util.spec_from_file_location("engine", ${JSON.stringify(path.join(tmp, 'bridge', 'engine.py'))})`,
-      'm = importlib.util.module_from_spec(spec)',
-      'sys.modules["engine"] = m',
-      'spec.loader.exec_module(m)',
-      `print(json.dumps({k: (k in vars(m)) for k in ${JSON.stringify(ENGINE_GLOBALS)}}))`,
-    ].join('\n');
+  const code = [
+    fixture.prelude,
+    'import importlib.util, json, sys',
+    `sys.path.insert(0, ${JSON.stringify(path.join(tmp, 'bridge'))})`,
+    `spec = importlib.util.spec_from_file_location("engine", ${JSON.stringify(path.join(tmp, 'bridge', 'engine.py'))})`,
+    'm = importlib.util.module_from_spec(spec)',
+    'sys.modules["engine"] = m',
+    'spec.loader.exec_module(m)',
+    `print(json.dumps({k: (k in vars(m)) for k in ${JSON.stringify(ENGINE_GLOBALS)}}))`,
+  ].join('\n');
 
-    const got = lastJsonLine(runPy(code));
-    for (const name of ENGINE_GLOBALS) {
-      assert.equal(got[name], true, `${name} 在配置解析失败时也必须有值`);
-    }
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 8, retryDelay: 80 });
+  const got = lastJsonLine(runPy(code, fixture));
+  for (const name of ENGINE_GLOBALS) {
+    assert.equal(got[name], true, `${name} 在配置解析失败时也必须有值`);
   }
 });
 
-test('mixin 不许裸用 engine 的模块级名字（裸名 = 运行到那一行才 NameError）', { skip: !hasPy && '没有内置 python' }, () => {
+test('mixin 不许裸用 engine 的模块级名字（裸名 = 运行到那一行才 NameError）', { skip: !hasPy && '本地没有可用 Python' }, () => {
   const code = [
     'import ast, json, os',
     `bridge = ${JSON.stringify(bridgeDir)}`,

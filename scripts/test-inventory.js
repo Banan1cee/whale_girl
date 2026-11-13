@@ -83,6 +83,25 @@ function matchGlob(rel, globs) {
   return globs.some((g) => normalize(g.dir) === dir && globToRegExp(g.pattern).test(name));
 }
 
+function nodeSelectsEntry(task, entry) {
+  return (task.commands || []).some(([program, ...args]) => {
+    if (!['{node}', 'node', process.execPath].includes(program) || !args.includes('--test')) return false;
+    const operands = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === '--') { operands.push(...args.slice(i + 1)); break; }
+      if (arg === '--test' || /^--test-concurrency=\d+$/.test(arg)) continue;
+      if (['--test-concurrency', '--require', '-r', '--import', '--test-reporter', '--test-reporter-destination'].includes(arg)) { i++; continue; }
+      // 未识别或会过滤 case 的选项不能证明必需入口被完整选中。
+      if (arg.startsWith('-')) return false;
+      operands.push(arg);
+    }
+    return matchGlob(entry, operands.map((operand) => ({
+      dir: path.posix.dirname(operand), pattern: path.posix.basename(operand),
+    })));
+  });
+}
+
 function readJson(file) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -106,6 +125,7 @@ function collect(root = ROOT) {
   const scripts = new Set();
   const files = new Set();
   const globs = [];
+  const projectEntries = [];
   // CI 实际选中的 task 才能进入台账，不能把 JSON 里未接线的项目当作在跑。
   const taskIds = commands.map(({ line }) => line.match(/\bnode scripts\/test-tasks\.js --task ([a-z0-9-]+)/))
     .filter(Boolean).map((match) => match[1]);
@@ -115,6 +135,8 @@ function collect(root = ROOT) {
       const task = plan.tasks.find((entry) => entry.id === id);
       if (!task) throw new Error(`CI 引用了未知测试任务 ${id}`);
       for (const project of task.projects || []) projects.add(project);
+      for (const declaration of task.projectEntries || []) projectEntries.push({ ...declaration,
+        selected: nodeSelectsEntry(task, declaration.entry) });
       for (const command of task.commands) commands.push({ workflow: 'test-tasks.json',
         line: command.map((part) => part.replace(/\{node\}/g, 'node').replace(/\{python\}/g, 'python')).join(' ') });
     }
@@ -159,7 +181,12 @@ function collect(root = ROOT) {
     }
   }
 
-  return { globs, projects, scripts, files, evidence: 'declared-plan', executionVerified: false };
+  const selectedEntries = projectEntries.filter(({ project, entry, selected }) => selected &&
+    fs.existsSync(path.join(root, project)) && fs.existsSync(path.join(root, entry)));
+  for (const { project } of selectedEntries) projects.add(project);
+  return { globs, projects, scripts, files, projectEntries: selectedEntries.map(({ selected, ...entry }) =>
+    ({ ...entry, evidence: 'declared-node-entry', executionVerified: false })),
+  evidence: 'declared-plan', executionVerified: false };
 }
 
 // 保守的词法遮罩用于拒绝明显的伪接线；它不承担 C# 编译或运行证明。
@@ -306,4 +333,4 @@ function resolveRef(token, inventory, root = ROOT) {
   return { ok: false, reason: `${rel} 不是 CI 会执行的测试入口` };
 }
 
-module.exports = { ROOT, collect, resolveRef, refsIn, normalize, matchGlob, runCommandLines, pathsIn };
+module.exports = { ROOT, collect, resolveRef, refsIn, normalize, matchGlob, runCommandLines, pathsIn, nodeSelectsEntry };

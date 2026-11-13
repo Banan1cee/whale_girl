@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { matchGlob } = require('./test-inventory');
+const { nodeSelectsEntry } = require('./test-inventory');
 const ROOT = path.resolve(__dirname, '..');
 
 function loadPlan(root = ROOT) {
@@ -13,25 +13,6 @@ function loadPlan(root = ROOT) {
 
 function ciTaskIds(workflow) {
   return [...String(workflow).matchAll(/^\s*(?:run:\s*)?node scripts\/test-tasks\.js --task ([a-z0-9-]+)(?:\s|$)/gm)].map((m) => m[1]);
-}
-
-function nodeSelectsEntry(task, entry) {
-  return (task.commands || []).some(([program, ...args]) => {
-    if (!['{node}', 'node', process.execPath].includes(program) || !args.includes('--test')) return false;
-    const operands = [];
-    for (let i = 0; i < args.length; i++) {
-      const arg = args[i];
-      if (arg === '--') { operands.push(...args.slice(i + 1)); break; }
-      if (arg === '--test' || /^--test-concurrency=\d+$/.test(arg)) continue;
-      if (['--test-concurrency', '--require', '-r', '--import', '--test-reporter', '--test-reporter-destination'].includes(arg)) { i++; continue; }
-      // 未识别或会过滤 case 的选项不能证明必需入口被完整选中。
-      if (arg.startsWith('-')) return false;
-      operands.push(arg);
-    }
-    return matchGlob(entry, operands.map((operand) => ({
-      dir: path.posix.dirname(operand), pattern: path.posix.basename(operand),
-    })));
-  });
 }
 
 function validatePlan(plan, root = ROOT) {
