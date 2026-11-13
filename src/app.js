@@ -15,6 +15,7 @@ const configSchema = require('./infra/configSchema');
 const { describeError } = require('./infra/errors');
 const { Store } = require('./memory/store');
 const memoryBackup = require('./memory/backup');
+const { recoverRestore } = require('./memory/backupRestore');
 const mediaCache = require('./adapters/mediaCache');
 const { DeepSeekClient } = require('./llm/client');
 const { Bot } = require('./pipeline/chat');
@@ -38,6 +39,8 @@ const VERSION = require('../package.json').version;
 
 function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env, loggerLevel } = {}) {
   const probeT0 = probe.now();   // 探针：createRuntime 整体耗时（listen 之前的关键路径）
+  // 恢复中断事务必须早于配置读取和 Store 建目录；失败沿用构造失败语义，不能带着替代空树继续启动。
+  recoverRestore(path.join(root, 'data'));
   ensureConfigFile(root);
   const config = loadConfig({ root, env });
   // 称呼只认一个真源：config.json 的 persona.ownerName。
