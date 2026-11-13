@@ -9,11 +9,11 @@
  *   - #86 照着 #68 的既有写法填了目录 `tests/launcher/Checks`，被判红；而 #68 里那个目录从来
  *     没被校验过（同行还有 JS 测试兜底），绿得没有意义——白名单会把「合法」和「真的在跑」混为一谈。
  *
- * 现在改成：工作流 run 块里真正执行什么，清单就是什么；台账引用必须能归约到清单里的一项。
- * 只读文件、不跑测试、零依赖。
+ * 这里证明的是已声明入口与静态接线，不是 case 已执行。执行成功须另看 runner 回执；
+ * 尤其不能用注释里的 Run 文本冒充一次调用。只读文件、不跑测试、零依赖。
  *
  * 覆盖的调用形式（tests.yml 里出现的都在内）：
- *   - dotnet run/build --project <p>.csproj
+ *   - dotnet run --project <p>.csproj（单独 build 不算测试入口）
  *   - npm test → package.json 的 scripts.test（node --test "<glob>"）
  *   - python -m unittest discover -s <dir> -p '<pattern>'
  *   - python scripts/x.py / node scripts/x.js / ./scripts/x.ps1
@@ -44,7 +44,7 @@ function runCommandLines(text) {
     const indent = raw.match(/^\s*/)[0].length;
     if (blockIndent >= 0) {
       if (indent > blockIndent) {
-        out.push(raw);
+        if (!raw.trim().startsWith('#')) out.push(raw);
         continue;
       }
       blockIndent = -1;
@@ -83,6 +83,25 @@ function matchGlob(rel, globs) {
   return globs.some((g) => normalize(g.dir) === dir && globToRegExp(g.pattern).test(name));
 }
 
+function nodeSelectsEntry(task, entry) {
+  return (task.commands || []).some(([program, ...args]) => {
+    if (!['{node}', 'node', process.execPath].includes(program) || !args.includes('--test')) return false;
+    const operands = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === '--') { operands.push(...args.slice(i + 1)); break; }
+      if (arg === '--test' || /^--test-concurrency=\d+$/.test(arg)) continue;
+      if (['--test-concurrency', '--require', '-r', '--import', '--test-reporter', '--test-reporter-destination'].includes(arg)) { i++; continue; }
+      // 未识别或会过滤 case 的选项不能证明必需入口被完整选中。
+      if (arg.startsWith('-')) return false;
+      operands.push(arg);
+    }
+    return matchGlob(entry, operands.map((operand) => ({
+      dir: path.posix.dirname(operand), pattern: path.posix.basename(operand),
+    })));
+  });
+}
+
 function readJson(file) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -106,10 +125,26 @@ function collect(root = ROOT) {
   const scripts = new Set();
   const files = new Set();
   const globs = [];
+  const projectEntries = [];
+  // CI 实际选中的 task 才能进入台账，不能把 JSON 里未接线的项目当作在跑。
+  const taskIds = commands.map(({ line }) => line.match(/\bnode scripts\/test-tasks\.js --task ([a-z0-9-]+)/))
+    .filter(Boolean).map((match) => match[1]);
+  if (taskIds.length) {
+    const plan = JSON.parse(fs.readFileSync(path.join(root, 'scripts/test-tasks.json'), 'utf8'));
+    for (const id of taskIds) {
+      const task = plan.tasks.find((entry) => entry.id === id);
+      if (!task) throw new Error(`CI 引用了未知测试任务 ${id}`);
+      for (const project of task.projects || []) projects.add(project);
+      for (const declaration of task.projectEntries || []) projectEntries.push({ ...declaration,
+        selected: nodeSelectsEntry(task, declaration.entry) });
+      for (const command of task.commands) commands.push({ workflow: 'test-tasks.json',
+        line: command.map((part) => part.replace(/\{node\}/g, 'node').replace(/\{python\}/g, 'python')).join(' ') });
+    }
+  }
 
   for (const { line } of commands) {
     for (const rel of pathsIn(line)) {
-      if (/\.csproj$/i.test(rel)) projects.add(rel);
+      if (/\.csproj$/i.test(rel) && /\bdotnet\s+run\b/.test(line)) projects.add(rel);
       else if (/^scripts\//.test(rel) && /\.(?:py|js|ps1)$/i.test(rel)) scripts.add(rel);
       else if (/^tests\//.test(rel) && /\.(?:py|js|cs)$/i.test(rel)) files.add(rel);
     }
@@ -135,7 +170,7 @@ function collect(root = ROOT) {
   }
 
   // 一层展开：CI 调用的 .ps1 里用 Join-Path 拼的 csproj 不会出现在工作流文本里，但确实在跑。
-  for (const rel of [...scripts]) {
+  for (const rel of taskIds.length ? [] : [...scripts]) {
     if (!/\.ps1$/i.test(rel)) continue;
     const abs = path.join(root, rel);
     if (!fs.existsSync(abs)) continue;
@@ -146,7 +181,142 @@ function collect(root = ROOT) {
     }
   }
 
-  return { globs, projects, scripts, files };
+  const selectedEntries = projectEntries.filter(({ project, entry, selected }) => selected &&
+    fs.existsSync(path.join(root, project)) && fs.existsSync(path.join(root, entry)));
+  for (const { project } of selectedEntries) projects.add(project);
+  return { globs, projects, scripts, files, projectEntries: selectedEntries.map(({ selected, ...entry }) =>
+    ({ ...entry, evidence: 'declared-node-entry', executionVerified: false })),
+  evidence: 'declared-plan', executionVerified: false };
+}
+
+// 保守的词法遮罩用于拒绝明显的伪接线；它不承担 C# 编译或运行证明。
+function csharpCode(source) {
+  let out = '', i = 0;
+  function hide(end) { out += source.slice(i, end).replace(/[^\r\n]/g, ' '); i = end; }
+  while (i < source.length) {
+    if (source.startsWith('//', i)) { const end = source.indexOf('\n', i); hide(end < 0 ? source.length : end); }
+    else if (source.startsWith('/*', i)) { const end = source.indexOf('*/', i + 2); hide(end < 0 ? source.length : end + 2); }
+    else if (source[i] === '"' || source[i] === "'") {
+      const quote = source[i], start = i;
+      const raw = quote === '"' && source.slice(i).match(/^"{3,}/);
+      if (raw) { const end = source.indexOf(raw[0], i + raw[0].length); hide(end < 0 ? source.length : end + raw[0].length); continue; }
+      const verbatim = quote === '"' && (source[i - 1] === '@' || source.slice(i - 2, i) === '@$');
+      let end = i + 1;
+      while (end < source.length) {
+        if (!verbatim && source[end] === '\\') { end += 2; continue; }
+        if (source[end] === quote) {
+          if (verbatim && source[end + 1] === quote) { end += 2; continue; }
+          end++; break;
+        }
+        end++;
+      }
+      i = start; hide(Math.min(end, source.length));
+    } else { out += source[i++]; }
+  }
+  let conditionalDepth = 0;
+  return out.split(/\r?\n/).map((line) => {
+    if (/^\s*#if\b/.test(line)) { conditionalDepth++; return ''; }
+    if (/^\s*#endif\b/.test(line)) { conditionalDepth = Math.max(0, conditionalDepth - 1); return ''; }
+    return conditionalDepth || /^\s*#/.test(line) ? '' : line;
+  }).join('\n');
+}
+
+function blockEnd(code, open, opening = '{', closing = '}') {
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    if (code[i] === opening) depth++;
+    if (code[i] === closing && --depth === 0) return i + 1;
+  }
+  return code.length;
+}
+
+function entryCode(source) {
+  let code = csharpCode(source);
+  const main = /\bstatic\b[^;{}=]*\bMain\s*\([^)]*\)\s*\{/.exec(code);
+  if (main) {
+    const open = code.indexOf('{', main.index);
+    code = code.slice(open + 1, blockEnd(code, open) - 1);
+  }
+  // 顶层语句可作入口；类和未调用的局部函数/lambda 的正文不能冒充入口直连。
+  const declaration = /\b(?:class|struct|interface|record|namespace)\b[^;{]*\{|\b(?:static\s+)?(?:async\s+)?[\w<>]+\s+\w+\s*\([^)]*\)\s*\{|=>\s*\{/;
+  for (let match; (match = declaration.exec(code));) {
+    const open = code.indexOf('{', match.index);
+    code = code.slice(0, match.index) + ' '.repeat(blockEnd(code, open) - match.index) + code.slice(blockEnd(code, open));
+  }
+  // 匿名方法与箭头 lambda 一样是 callable 声明；不进入其方法体推断入口，
+  // 但保留声明结束后的真实直连。只处理 delegate 的可选参数表和配对方法体。
+  const delegates = /\bdelegate\b/g;
+  for (let match; (match = delegates.exec(code));) {
+    let open = match.index + match[0].length;
+    while (open < code.length && /\s/.test(code[open])) open++;
+    if (code[open] === '(') open = blockEnd(code, open, '(', ')');
+    while (open < code.length && /\s/.test(code[open])) open++;
+    if (code[open] !== '{') continue;
+    const end = blockEnd(code, open);
+    code = code.slice(0, match.index) + ' '.repeat(end - match.index) + code.slice(end);
+    delegates.lastIndex = end;
+  }
+  const controls = /\b(if|while|for)\s*\(/g;
+  for (let match; (match = controls.exec(code));) {
+    const open = code.indexOf('(', match.index), close = blockEnd(code, open, '(', ')');
+    const header = code.slice(open + 1, close - 1);
+    const condition = match[1] === 'for' ? header.split(';')[1] : header;
+    if (condition === undefined || condition.trim() !== 'false') continue;
+    let body = close;
+    while (/\s/.test(code[body] || '') && body < code.length) body++;
+    const semicolon = code.indexOf(';', body);
+    const end = code[body] === '{' ? blockEnd(code, body) : semicolon < 0 ? code.length : semicolon + 1;
+    code = code.slice(0, match.index) + ' '.repeat(end - match.index) + code.slice(end);
+    controls.lastIndex = end;
+  }
+  return code;
+}
+
+// 只识别入口中的直连语句，不沿委托/局部函数表达式追踪，也不充当 C# 控制流证明。
+// 分块记录明显终止语句，避免把 return 后的尾部重新当作下一条入口语句。
+function hasDirectEntryCall(code, call) {
+  const frames = [{ start: 0, fresh: true, terminated: false }];
+  let parentheses = 0;
+  for (let i = 0; i < code.length; i++) {
+    const frame = frames[frames.length - 1], char = code[i];
+    if (parentheses === 0 && frame.fresh && /\S/.test(char)) {
+      frame.fresh = false;
+      if (!frame.terminated) {
+        if (call.test(code.slice(i))) return true;
+        if (/^(?:return|throw|break|continue)\b/.test(code.slice(i))) frame.terminated = true;
+      }
+    }
+    if (char === '(') parentheses++;
+    else if (char === ')') parentheses = Math.max(0, parentheses - 1);
+    else if (parentheses === 0 && char === '{') {
+      const prefix = code.slice(frame.start, i).trim();
+      frames.push({ start: i + 1, fresh: true, terminated: frame.terminated,
+        unconditional: prefix === '' || prefix === 'try' || prefix === 'finally' });
+    } else if (parentheses === 0 && char === '}' && frames.length > 1) {
+      const finished = frames.pop(), parent = frames[frames.length - 1];
+      if (finished.unconditional && finished.terminated) parent.terminated = true;
+      parent.start = i + 1;
+      parent.fresh = true;
+    } else if (parentheses === 0 && char === ';') {
+      frame.start = i + 1;
+      frame.fresh = true;
+    }
+  }
+  return false;
+}
+
+function compiledSource(rel, project, root) {
+  const xml = fs.readFileSync(path.join(root, project), 'utf8');
+  const file = path.posix.relative(path.posix.dirname(project), rel);
+  let included = !/<EnableDefaultCompileItems>\s*false\s*<\/EnableDefaultCompileItems>/i.test(xml);
+  for (const item of xml.matchAll(/<Compile\b([^>]+)>/gi)) {
+    for (const attribute of item[1].matchAll(/\b(Include|Remove)\s*=\s*["']([^"']+)["']/gi)) {
+      if (attribute[2].split(';').some((pattern) => globToRegExp(normalize(pattern)).test(file))) {
+        included = attribute[1].toLowerCase() === 'include' && !/\bCondition\s*=/i.test(item[1]);
+      }
+    }
+  }
+  return included;
 }
 
 /**
@@ -163,7 +333,7 @@ function refsIn(text) {
 }
 
 /**
- * 判断一个台账引用是否「CI 真的会跑」。
+ * 判断台账引用是否归属于声明的 CI 入口；不把静态声明标为实际 case 执行。
  * 返回 { ok: true, kind, entry? } 或 { ok: false, reason }。
  */
 function resolveRef(token, inventory, root = ROOT) {
@@ -194,18 +364,17 @@ function resolveRef(token, inventory, root = ROOT) {
 
   if (/\.cs$/i.test(rel)) {
     const dir = path.posix.dirname(rel);
-    const project = [...inventory.projects].find((p) => path.posix.dirname(p) === dir);
-    if (!project) return { ok: false, reason: `${rel} 所在目录没有 CI 执行的 C# 项目` };
+    const project = [...inventory.projects].find((p) => path.posix.dirname(p) === dir && compiledSource(rel, p, root));
+    if (!project) return { ok: false, reason: `${rel} 不属于 CI 声明项目的编译源码` };
     const base = path.posix.basename(rel, '.cs');
     if (base !== 'Program') {
-      // 光有文件不算数：入口文件得真的调它的 Run(，否则这个检查根本没被执行。
-      const wired = fs
-        .readdirSync(path.join(root, dir))
-        .filter((f) => f.endsWith('.cs'))
-        .some((f) => fs.readFileSync(path.join(root, dir, f), 'utf8').includes(base + '.Run('));
-      if (!wired) return { ok: false, reason: `${rel} 的 ${base}.Run( 没被入口文件调用，等于没跑` };
+      const program = `${dir}/Program.cs`;
+      const wired = fs.existsSync(path.join(root, program)) && compiledSource(program, project, root) &&
+        hasDirectEntryCall(entryCode(fs.readFileSync(path.join(root, program), 'utf8')),
+          new RegExp(`^(?:await\\s+)?${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\.\\s*Run\\s*\\(`));
+      if (!wired) return { ok: false, reason: `${rel} 没有可识别的已编译入口直连接线；静态文本不证明 case 执行` };
     }
-    return { ok: true, kind: 'cs', entry: project };
+    return { ok: true, kind: 'cs', entry: project, evidence: 'declared-entry', executionVerified: false };
   }
 
   if (matchGlob(rel, inventory.globs)) return { ok: true, kind: 'glob' };
@@ -218,4 +387,4 @@ function resolveRef(token, inventory, root = ROOT) {
   return { ok: false, reason: `${rel} 不是 CI 会执行的测试入口` };
 }
 
-module.exports = { ROOT, collect, resolveRef, refsIn, normalize, matchGlob, runCommandLines, pathsIn };
+module.exports = { ROOT, collect, resolveRef, refsIn, normalize, matchGlob, runCommandLines, pathsIn, nodeSelectsEntry };

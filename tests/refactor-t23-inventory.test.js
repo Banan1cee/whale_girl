@@ -1,0 +1,62 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const source = fs.readFileSync(path.join(__dirname, '../scripts/test-inventory.js'), 'utf8');
+const root = path.resolve('isolated-t23-inventory');
+function resolve(program, { included = true, extra = {} } = {}) {
+  const files = { 'Program.cs': program, 'Unused.cs': 'class Unused { public static void Run() {} }',
+    'Checks.csproj': `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><Compile Include="Program.cs" />${included ? '<Compile Include="Unused.cs" />' : ''}</ItemGroup></Project>`, ...extra };
+  const module = { exports: {} };
+  const mockFs = { existsSync: () => true, statSync: () => ({ isDirectory: () => false }),
+    readdirSync: () => Object.keys(files), readFileSync: (file) => files[path.basename(file)] || '' };
+  vm.runInNewContext(source, { module, require: (id) => id === 'node:fs' ? mockFs : require(id), __dirname: path.join(root, 'scripts') });
+  return module.exports.resolveRef('tests/checks/Unused.cs', {
+    projects: new Set(['tests/checks/Checks.csproj']), globs: [], scripts: new Set(), files: new Set(),
+  }, root);
+}
+for (const [name, program, options] of [
+  ['comment', '// Unused.Run();'],
+  ['string', 'System.Console.WriteLine("Unused.Run();");'],
+  ['dead branch', 'if (false) { Unused.Run(); }'],
+  ['uncalled method', 'class Program { static void Main() {} static void Never() { Unused.Run(); } }'],
+  ['uncalled local method', 'class Program { static void Main() { void Never() { Unused.Run(); } } }'],
+  ['uncalled lambda', 'class Program { static void Main() { Action never = () => { Unused.Run(); }; } }'],
+  ['uncalled expression lambda', 'using System; class Program { static void Main() { Action never = () => Unused.Run(); } }'],
+  ['uncalled expression local function', 'class Program { static void Main() { void Never() => Unused.Run(); } }'],
+  ['uncalled anonymous delegate', 'using System; class Program { static void Main() { Action never = delegate { Unused.Run(); }; } }'],
+  ['uncalled anonymous delegate with signature', 'using System; class Program { static void Main() { Action never = delegate() { Unused.Run(); }; } }'],
+  ['unreachable after return', 'class Program { static void Main() { return; Unused.Run(); } }'],
+  ['for literal false', 'class Program { static void Main() { for (; false;) { Unused.Run(); } } }'],
+  ['conditional compilation', '#if OMITTED\nUnused.Run();\n#endif'],
+  ['raw string', 'System.Console.WriteLine("""Unused.Run();""");'],
+  ['uncompiled file', 'Unused.Run();', { included: false }],
+  ['call in another uncompiled file', 'System.Console.WriteLine("fixture");', { extra: { 'Excluded.cs': 'class Never { void Call() { Unused.Run(); } }' } }],
+]) {
+  test(`C# inventory rejects ${name} as case wiring`, () => { assert.equal(resolve(program, options).ok, false); });
+}
+test('a compiled direct entry call is a declaration, never a verified execution receipt', () => {
+  const result = resolve('class Program { static void Main() { Unused.Run(); } }');
+  assert.equal(result.ok, true);
+  assert.equal(result.executionVerified, false);
+  assert.equal(result.evidence, 'declared-entry');
+});
+for (const [name, program, options] of [
+  ['top-level direct call', 'Unused.Run();'],
+  ['awaited direct call', 'class Program { static async System.Threading.Tasks.Task Main() { await Unused.Run(); } }',
+    { extra: { 'Unused.cs': 'class Unused { public static System.Threading.Tasks.Task Run() => System.Threading.Tasks.Task.CompletedTask; }' } }],
+  ['direct call after an unrelated expression local function', 'class Program { static void Main() { void Never() => System.Console.WriteLine("fixture"); Unused.Run(); } }'],
+  ['direct call after a conditional early return', 'class Program { static void Main() { if (System.DateTime.UtcNow.Ticks < 0) return; Unused.Run(); } }'],
+  ['direct call after a nonexecuting loop', 'class Program { static void Main() { for (; false;) { System.Console.WriteLine("fixture"); } Unused.Run(); } }'],
+  ['direct call after an uncalled anonymous delegate', 'using System; class Program { static void Main() { Action never = delegate { Unused.Run(); }; Unused.Run(); } }'],
+  ['direct call after an uncalled signed delegate with a return', 'using System; class Program { static void Main() { Action never = delegate() { return; Unused.Run(); }; Unused.Run(); } }'],
+]) {
+  test(`C# inventory preserves ${name} as an unverified declaration`, () => {
+    const result = resolve(program, options);
+    assert.equal(result.ok, true, result.reason);
+    assert.equal(result.executionVerified, false);
+    assert.equal(result.evidence, 'declared-entry');
+  });
+}

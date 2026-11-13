@@ -5,6 +5,9 @@
 
 | # | 现象 | 根因 | 修复 | 版本 | 回归测试 |
 | --- | --- | --- | --- | --- | --- |
+| 98 | Python 同名测试被覆盖，桥接配置与目录回归在 CI 有可用解释器时仍被跳过 | 重复方法名只收集最后一个用例，测试只检查固定便携解释器路径 | 审计同名声明并保留两份原测试体，验证实际可用解释器；桥接回归使用隔离副本并禁止真实进程、磁盘和用户配置探测 | 4.1.3 | `tests/refactor-t23-python-audit.test.js`、`tests/refactor-t23-python-entry.test.js`、`tests/bridge-globals.test.js`、`tests/db-dir.test.js` |
+| 97 | 隐私扫描未读取文件或目录时仍可能报告干净 | 扫描计数与读取成功脱钩，读取异常未作为不完整结果传播 | 区分已读、主动排除和读取错误，严格 API 与命令行拒绝不完整结果；发布自检调用者的严格结果接线另行完成 | 4.1.3 | `tests/refactor-t23-privacy-scan.test.js`、`tests/privacy-scan.test.js` |
+| 96 | 本地与 CI 任务不一致，早先失败被后续成功覆盖，C# 静态文本被误记为执行证据 | 测试入口与退出码分别维护，库存未严格区分编译入口、调用声明和实际执行 | 共用有序任务清单并保留每个失败，校验嵌套项目的真实选中入口；静态声明明确不代表 case 已执行 | 4.1.3 | `tests/refactor-t23-test-tasks.test.js`、`tests/refactor-t23-inventory.test.js`、`tests/ci-test-order.test.js` |
 | 95 | 保存部分朋友圈设置时覆盖未提交字段，在线请求可能被严格校验拒绝，离线保存可能启动定位探测 | 调用者使用默认值或显式 undefined 补齐缺省字段，离线命令复用了在线副作用入口 | 在线与离线只保存本次提交字段，保留现有设置与显式零值；在线开启仍需确认并绑定实时账号，离线保存不启动定位探测 | 4.1.3 | `tests/refactor-t03-config-values.test.js`、`tests/refactor-t03-moments-caller.test.js`、`tests/launcher-offline-config.test.js` |
 | 94 | 合法开关写法被错存为关闭，空白数值变成零，留空密钥或嵌套功能更新覆盖原值 | 配置校验、两种补丁写入及离线命令使用不同转换和合并规则 | 共用严格布尔与数值解析，非法值整批拒绝，保留显式零值和留空密钥；按注册路径合并功能开关并拒绝非对象根及原型路径 | 4.1.3 | `tests/refactor-t03-config-values.test.js`、`tests/config-schema.test.js`、`tests/config-flag-compat.test.js` |
 | 93 | 记忆恢复复制归档失败后仍可能删除原数据，写入或交换中断可能留下部分恢复 | 归档复制异常被吞，恢复直接改写原目录；启动未先处理未完成事务 | 先完整准备并校验新树，再保留原副本执行交换；失败回滚，中断后在配置读取与 Store 构造前恢复，无法安全恢复时中止启动 | 4.1.3 | `tests/refactor-t08-restore.test.js`、`tests/refactor-t08-startup-recovery.test.js`、`tests/memory-backup.test.js` |

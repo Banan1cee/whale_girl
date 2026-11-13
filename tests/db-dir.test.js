@@ -20,17 +20,18 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
-const py = path.join(root, 'runtime', 'python', 'python.exe');
-const bridgePath = path.join(root, 'bridge', 'engine.py');
+const { selectTestPython, createBridgeFixture } = require('./helpers/test-python');
+const py = selectTestPython();
 const bridgeSrc = require('./helpers/bridge-source');
 // 目录探测已拆到 wechat_db.py；engine.py 只留同名薄封装。
 const wechatDbSrc = fs.readFileSync(path.join(root, 'bridge', 'wechat_db.py'), 'utf8');
-const hasPy = fs.existsSync(py);
+const hasPy = Boolean(py);
 
-function runPy(code) {
-  return execFileSync(py, ['-c', code], {
+function runPy(code, fixture) {
+  return execFileSync(py, ['-I', '-B', '-c', fixture.prelude + '\n' + code], {
     encoding: 'utf8',
-    env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+    cwd: fixture.root,
+    env: fixture.env,
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 120000,
   });
@@ -49,8 +50,9 @@ test('桥接源码：有更狠的目录探测，且找不到时给的是提示�
   assert.match(m[0], /return 2/, '要返回非 0 退出码，但不要 traceback');
 });
 
-test('目录判断：能认出 xwechat_files/<账号>/db_storage 这种布局', { skip: !hasPy && '没有内置 python' }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-db-'));
+test('目录判断：能认出 xwechat_files/<账号>/db_storage 这种布局', { skip: !hasPy && '本地没有可用 Python' }, (t) => {
+  const fixture = createBridgeFixture(t);
+  const dir = fixture.root;
   const good = path.join(dir, 'xwechat_files', 'wxid_test', 'db_storage');
   fs.mkdirSync(good, { recursive: true });
   const flat = path.join(dir, 'flat', 'wxid_test2', 'db_storage');
@@ -58,7 +60,7 @@ test('目录判断：能认出 xwechat_files/<账号>/db_storage 这种布局', 
 
   const out = runPy([
     'import importlib.util, json, sys',
-    `spec = importlib.util.spec_from_file_location("br", r"${bridgePath}")`,
+    `spec = importlib.util.spec_from_file_location("br", r"${fixture.engineFile}")`,
     'm = importlib.util.module_from_spec(spec)',
     'spec.loader.exec_module(m)',
     `print(json.dumps({`,
@@ -66,7 +68,7 @@ test('目录判断：能认出 xwechat_files/<账号>/db_storage 这种布局', 
     `  "flat": m.looks_like_db_root(r"${path.join(dir, 'flat')}"),`,
     `  "bad": m.looks_like_db_root(r"${path.join(dir, 'nope')}"),`,
     '}))',
-  ].join('\n'));
+  ].join('\n'), fixture);
 
   const r = JSON.parse(out.trim().split(/\r?\n/).pop());
   assert.equal(r.root, true, 'xwechat_files 下有账号库 → 认');
@@ -74,8 +76,9 @@ test('目录判断：能认出 xwechat_files/<账号>/db_storage 这种布局', 
   assert.equal(r.bad, false, '空目录/不存在 → 不认');
 });
 
-test('配置里填了 dbDir 就优先用它（用户手动指定必须生效）', { skip: !hasPy && '没有内置 python' }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-db2-'));
+test('配置里填了 dbDir 就优先用它（用户手动指定必须生效）', { skip: !hasPy && '本地没有可用 Python' }, (t) => {
+  const fixture = createBridgeFixture(t);
+  const dir = fixture.root;
   const data = path.join(dir, 'my-wechat-data');
   fs.mkdirSync(path.join(data, 'wxid_abc', 'db_storage'), { recursive: true });
   const cfg = path.join(dir, 'config.json');
@@ -83,33 +86,33 @@ test('配置里填了 dbDir 就优先用它（用户手动指定必须生效）'
 
   const out = runPy([
     'import importlib.util, json',
-    `spec = importlib.util.spec_from_file_location("br", r"${bridgePath}")`,
+    `spec = importlib.util.spec_from_file_location("br", r"${fixture.engineFile}")`,
     'm = importlib.util.module_from_spec(spec)',
     'spec.loader.exec_module(m)',
     // drives="" → 不扫盘，确保命中来自配置
     `print(m.resolve_db_dir(config_path=r"${cfg}", drives=""))`,
-  ].join('\n'));
+  ].join('\n'), fixture);
 
   assert.equal(out.trim().split(/\r?\n/).pop(), data, '配置里的 dbDir 要被采用');
 });
 
-test('配置里的 dbDir 是错的（用户填错路径）时不会卡死，会继续自动找', { skip: !hasPy && '没有内置 python' }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-db3-'));
+test('配置里的 dbDir 是错的（用户填错路径）时不会卡死，会继续自动找', { skip: !hasPy && '本地没有可用 Python' }, (t) => {
+  const fixture = createBridgeFixture(t);
+  const dir = fixture.root;
   const cfg = path.join(dir, 'config.json');
   fs.writeFileSync(cfg, JSON.stringify({ wechat: { dbDir: path.join(dir, 'not-exist') } }), 'utf8');
 
   const out = runPy([
     'import importlib.util',
-    `spec = importlib.util.spec_from_file_location("br", r"${bridgePath}")`,
+    `spec = importlib.util.spec_from_file_location("br", r"${fixture.engineFile}")`,
     'm = importlib.util.module_from_spec(spec)',
     'spec.loader.exec_module(m)',
     `print(repr(m.resolve_db_dir(config_path=r"${cfg}", drives="")))`,
-  ].join('\n'));
+  ].join('\n'), fixture);
 
   const last = out.trim().split(/\r?\n/).pop();
   const value = last.replace(/^'|'$/g, '');
-  // 本机微信正在跑时，resolve_db_dir 会从进程打开的文件里扫到真实目录 —— 那是正确行为。
-  // 这条用例只保证「填错的那个路径不会被当成结果」，不锁死必须是空串。
+  // 进程/磁盘探测已在导入前 stub；保留原有错误路径与返回值断言。
   assert.notEqual(value, path.join(dir, 'not-exist'), '填错的路径不能被当成结果');
   assert.ok(value === '' || fs.existsSync(value), '要么空串，要么是真实存在的目录：' + last);
 });
@@ -133,7 +136,8 @@ test('启动器有「微信文件保存位置」字段，且说明要重启桥�
  *
  * 这里用同一批 fixture 同时断言两边：looks 说「是」的，账号必须列得出来。
  */
-test('looks 说「是」的目录，find_account_dirs 必须能列出账号（四种布局）', { skip: !hasPy && '没有内置 python' }, () => {
+test('looks 说「是」的目录，find_account_dirs 必须能列出账号（四种布局）', { skip: !hasPy && '本地没有可用 Python' }, (t) => {
+  const fixture = createBridgeFixture(t);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-db4-'));
   try {
     const fixtures = {
@@ -153,7 +157,7 @@ test('looks 说「是」的目录，find_account_dirs 必须能列出账号（�
 
     const code = [
       'import importlib.util, json, sys',
-      `sys.path.insert(0, ${JSON.stringify(path.join(root, 'bridge'))})`,
+      `sys.path.insert(0, ${JSON.stringify(fixture.bridgeDir)})`,
       'import wechat_db as w',
       `fixtures = ${JSON.stringify(fixtures, null, 0)}`,
       'out = {}',
@@ -170,7 +174,7 @@ test('looks 说「是」的目录，find_account_dirs 必须能列出账号（�
       'print(json.dumps(out, ensure_ascii=False))',
     ].join('\n');
 
-    const got = JSON.parse(runPy(code).trim().split(/\r?\n/).pop());
+    const got = JSON.parse(runPy(code, fixture).trim().split(/\r?\n/).pop());
     for (const [key, v] of Object.entries(got)) {
       if (key === 'empty') {
         assert.equal(v.looks, false, '空目录不该被认成数据根');
@@ -191,7 +195,8 @@ test('looks 说「是」的目录，find_account_dirs 必须能列出账号（�
   }
 });
 
-test('dbDir 填高一层时 resolve_db_dir 要归一到真正含账号的那层', { skip: !hasPy && '没有内置 python' }, () => {
+test('dbDir 填高一层时 resolve_db_dir 要归一到真正含账号的那层', { skip: !hasPy && '本地没有可用 Python' }, (t) => {
+  const fixture = createBridgeFixture(t);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-db5-'));
   try {
     // 事故现场复刻：E:\WeChat Files\xwechat_files\<wxid>\db_storage
@@ -202,14 +207,14 @@ test('dbDir 填高一层时 resolve_db_dir 要归一到真正含账号的那层'
 
     const out = runPy([
       'import importlib.util, json, sys',
-      `sys.path.insert(0, ${JSON.stringify(path.join(root, 'bridge'))})`,
+      `sys.path.insert(0, ${JSON.stringify(fixture.bridgeDir)})`,
       'import wechat_db as w',
       // drives="" → 不扫盘；手填路径本来就排在最前，不会被本机微信进程干扰
       `print(json.dumps({`,
       `  "resolved": w.resolve_db_dir(config_path=${JSON.stringify(cfg)}, drives=""),`,
       `  "accounts": w.find_account_dirs(w.resolve_db_dir(config_path=${JSON.stringify(cfg)}, drives="")),`,
       '}))',
-    ].join('\n'));
+    ].join('\n'), fixture);
 
     const got = JSON.parse(out.trim().split(/\r?\n/).pop());
     assert.equal(got.resolved, path.join(manual, 'xwechat_files'), '要下钻到真正含账号的那一层');
