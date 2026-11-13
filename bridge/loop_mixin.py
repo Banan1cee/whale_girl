@@ -456,6 +456,18 @@ class LoopMixin:
             def _send_due(item, text):
                 wxid = str(item.get('wxid') or '').strip()
                 name = str(item.get('name') or '').strip() or self.display_name(wxid)
+                if item.get('kind') == 'plugin':
+                    def allowed():
+                        try:
+                            response = G.LOCAL_HTTP.post(base + '/api/reminders/permission',
+                                json={'id': item.get('id')}, headers=headers, timeout=3)
+                            return response.status_code == 200 and response.json().get('ok') is True
+                        except Exception:
+                            return False
+                    if not allowed():
+                        return False
+                    if item.get('delivery') == 'voice':
+                        return bool(self.send_voice_reply(text, name, wxid, cancelled=lambda: not allowed()))
                 return bool(self.send_text(text, name, wxid))
 
             def _ack_due(item, ok, err):
