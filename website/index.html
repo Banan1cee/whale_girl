@@ -4,13 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#070b13">
-  <meta name="description" content="认识鲸鲸 Whale Girl：有记忆、有个性的开源 AI 微信伙伴。探索功能、下载 Windows 版，阅读项目更新与开发手记。">
+  <meta name="description" content="认识鲸鲸 Whale Girl：有记忆、有个性的开源 AI 微信伙伴。下载 Windows 版与历史版本，探索社区插件，认识开发团队。">
   <title>鲸鲸 Whale Girl — 让陪伴，有了回响。</title>
   <link rel="canonical" href="https://bot.zyyc.cc/">
   <link rel="icon" href="./images/launcher-icon.png" type="image/png">
   <link rel="apple-touch-icon" href="./images/launcher-icon.png">
   <script src="./theme.js"></script>
   <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./pages.css">
+  <script src="./site.js" defer></script>
   <script src="./motion.js" defer></script>
   <script src="./app.js" defer></script>
 </head>
@@ -20,7 +22,7 @@
     <nav class="nav wrap" aria-label="主导航">
       <a class="brand" href="#home" aria-label="鲸鲸首页"><img class="brand-icon" src="./images/launcher-icon.png" alt="" width="256" height="256"><span>鲸鲸 <span class="brand-en">Whale Girl</span></span></a>
       <button class="menu-toggle icon-button" aria-label="打开导航" aria-expanded="false" aria-controls="nav-links"><span></span><span></span></button>
-      <div class="nav-links" id="nav-links"><a href="#features">探索鲸鲸</a><a href="#updates">更新</a><a href="#author">作者有话说</a><a href="#about">关于</a></div>
+      <div class="nav-links" id="nav-links"><a href="./" aria-current="page">首页</a><a href="./downloads/">下载中心</a><a href="./plugins/">插件市场</a><a href="./support/">支持我们</a><a href="./team/">团队</a></div>
       <div class="nav-actions"><button id="theme-toggle" class="icon-button" aria-label="切换明暗主题"><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z"/></svg></button><a class="button small" href="#download">免费下载 <span aria-hidden="true">↗</span></a></div>
     </nav>
   </header>
@@ -85,7 +87,7 @@
     </section>
 
     <section class="updates-section" id="updates"><div class="wrap">
-      <div class="section-heading reveal"><div><p class="eyebrow">THE NEXT CHAPTER</p><h2>每一次更新，<br>都更靠近你。</h2></div><a class="text-link" href="https://github.com/Banan1cee/whale_girl/releases" target="_blank" rel="noopener noreferrer">全部发行版本 <span aria-hidden="true">↗</span></a></div>
+      <div class="section-heading reveal"><div><p class="eyebrow">THE NEXT CHAPTER</p><h2>每一次更新，<br>都更靠近你。</h2></div><a class="text-link" href="./downloads/">全部发行版本 <span aria-hidden="true">↗</span></a></div>
       <article class="report-card reveal">
         <div class="report-art" aria-hidden="true"><span class="report-kicker">WHALE GIRL / RELEASE NOTES</span><span class="report-version"><!-- release:version -->Release<!-- /release:version --></span><div class="report-ring"></div><span class="overline">SMALL DETAILS.<br>BIG DIFFERENCE.</span></div>
         <div class="report-copy"><span class="tag">最新正式发行</span><h3><!-- release:title -->鲸鲸版本更新<!-- /release:title --></h3><p><!-- release:summary -->到 GitHub 查看最新正式版本与更新说明。<!-- /release:summary --></p><button class="text-link" data-article="report">阅读这次更新 <span aria-hidden="true">↗</span></button></div>
@@ -99,13 +101,18 @@
     </div></section>
 
 
-    <section class="author-section wrap reveal" id="author"><div class="author-label"><p class="eyebrow">A NOTE FROM THE MAKER</p><span class="author-monogram">B.</span><span>Banan1cee</span><small>Whale Girl 项目维护者</small></div><div class="author-copy"><span class="quote-mark" aria-hidden="true">“</span><h2>技术可以很远，<br>陪伴应该很近。</h2><p>鲸鲸的特别之处，是那些具体的小细节：一句短短的回复、一段被记住的日常，以及恰到好处的安静。</p><p>这个开源项目仍在成长。每一个问题、建议与贡献，都有机会让下一次相遇更好一点。</p><span class="fine-print">网站寄语草稿 · 根据项目理念撰写，待作者确认</span><a class="text-link" href="https://github.com/Banan1cee/whale_girl/issues" target="_blank" rel="noopener noreferrer">把你的想法告诉我们 <span aria-hidden="true">↗</span></a></div></section>
+    <section class="section wrap" id="plugins"><div class="section-heading reveal"><div><p class="eyebrow">A GROWING COMMUNITY</p><h2>给鲸鲸，<br>更多可能。</h2></div><a class="text-link" href="./plugins/">探索插件市场 <span aria-hidden="true">↗</span></a></div><!-- hub:plugins --><p>发现社区创作的人设、工具与消息插件。</p><!-- /hub:plugins --></section>
 
-    <section class="download-section" id="download"><div class="download-glow" aria-hidden="true"></div><div class="wrap reveal"><p class="eyebrow">YOUR NEXT HELLO STARTS HERE</p><h2>下一句「在吗」，<br><span class="gradient-text">有人回应。</span></h2><p>把鲸鲸带回你的日常。</p><a class="button download-button" href="https://github.com/Banan1cee/whale_girl/releases/latest" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m2 4 9-1v8H2Zm11-1 9-1v9h-9ZM2 13h9v8l-9-1Zm11 0h9v9l-9-1Z"/></svg>下载 Windows 版 <span aria-hidden="true">↗</span></a><span class="download-meta">Windows 10 / 11 · 开源 · AGPL-3.0 · 官方 GitHub Releases</span><div class="download-notes"><p>在发行页选择 <code>whale-girl-*-setup.exe</code>。安装包自带运行环境；你需要准备已登录的微信账号与模型 API Key，模型服务可能另行收费。</p><a href="https://github.com/Banan1cee/whale_girl#install-windows-installer" target="_blank" rel="noopener noreferrer">安装指南 ↗</a><a href="https://github.com/Banan1cee/whale_girl" target="_blank" rel="noopener noreferrer">从源码开始 ↗</a></div></div></section>
+    <section class="section wrap" id="team"><div class="section-heading reveal"><div><p class="eyebrow">THE PEOPLE BEHIND THE WHALE</p><h2>团队成员</h2></div><a class="text-link" href="./team/">听听我们的寄语 <span aria-hidden="true">↗</span></a></div><!-- hub:team --><p>不同的分工，同一个心愿。</p><!-- /hub:team --></section>
+
+    <section class="wrap home-support"><div><p class="eyebrow">A LITTLE ENCOURAGEMENT</p><h2>喜欢鲸鲸，<br>也是一种支持。</h2><p>给鲸鲸，也给创造她的人，一点鼓励。</p></div><a class="button secondary" href="./support/">支持团队创作 <span aria-hidden="true">↗</span></a></section>
+
+    <section class="download-section" id="download"><div class="download-glow" aria-hidden="true"></div><div class="wrap reveal"><p class="eyebrow">YOUR NEXT HELLO STARTS HERE</p><h2>下一句「在吗」，<br><span class="gradient-text">有人回应。</span></h2><p>把鲸鲸带回你的日常。</p><a class="button download-button" href="./downloads/"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m2 4 9-1v8H2Zm11-1 9-1v9h-9ZM2 13h9v8l-9-1Zm11 0h9v9l-9-1Z"/></svg>下载 Windows 版 <span aria-hidden="true">↗</span></a><span class="download-meta">Windows 10 / 11 · 开源 · AGPL-3.0 · 官方 GitHub Releases</span><div class="download-notes"><p>在下载中心选择正式发行版本和对应安装包。你需要准备已登录的微信账号与模型 API Key，模型服务可能另行收费。</p><a href="./downloads/">查看完整下载历史 ↗</a><a href="https://github.com/Banan1cee/whale_girl#install-and-first-run" target="_blank" rel="noopener noreferrer">安装指南 ↗</a><a href="https://github.com/Banan1cee/whale_girl" target="_blank" rel="noopener noreferrer">从源码开始 ↗</a></div></div></section>
 
     <section class="about-section wrap" id="about"><div><p class="eyebrow">OPEN BY NATURE</p><h2>关于鲸鲸。</h2><p>Whale Girl 是一个开源 AI 微信陪伴项目。以蓝发鲸鱼娘为人设，连接兼容 OpenAI 接口的模型，用桌面启动器管理对话、记忆和日常功能。</p><p class="fine-print">图标原创角色作者：上善无形；本项目图标为二创作品。</p></div><div class="about-facts"><div><span>许可证</span><strong>AGPL-3.0</strong></div><div><span>内核</span><strong>Node.js · 零 npm 运行时依赖</strong></div><div><span>桌面端</span><strong>Windows · WPF</strong></div><div><span>记忆存储</span><strong>本地保存，由你管理</strong></div></div></section>
+    <!-- hub:thanks --><p class="thanks-line wrap">感谢每一位为鲸鲸贡献代码、提交问题、分享建议、参与测试和完善文档的朋友。</p><!-- /hub:thanks -->
   </main>
-  <footer class="footer wrap"><div class="footer-top"><a class="brand" href="#home"><img class="brand-icon" src="./images/launcher-icon.png" alt="" width="256" height="256">鲸鲸 <span class="brand-en">Whale Girl</span></a><span>A little whale in your digital world.</span><a href="https://github.com/Banan1cee/whale_girl" target="_blank" rel="noopener noreferrer">GitHub ↗</a></div><div class="footer-bottom"><span>© <span id="year">2026</span> Whale Girl. 开源，让美好继续发生。</span><div><a href="https://github.com/Banan1cee/whale_girl/blob/main/docs/PRIVACY.md" target="_blank" rel="noopener noreferrer">隐私说明</a><a href="https://github.com/Banan1cee/whale_girl/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">开源许可</a><a href="#home">回到顶部 ↑</a></div></div></footer>
+  <footer class="footer wrap"><div class="footer-top"><a class="brand" href="#home"><img class="brand-icon" src="./images/launcher-icon.png" alt="" width="256" height="256">鲸鲸 <span class="brand-en">Whale Girl</span></a><span>A little whale in your digital world.</span><a href="https://github.com/Banan1cee/whale_girl" target="_blank" rel="noopener noreferrer">GitHub ↗</a></div><div class="footer-bottom"><span>© <span id="year">2026</span> Whale Girl. 开源，让美好继续发生。</span><div><a href="./support/transparency/">打赏公示</a><a href="https://github.com/Banan1cee/whale_girl/blob/main/docs/PRIVACY.md" target="_blank" rel="noopener noreferrer">隐私说明</a><a href="https://github.com/Banan1cee/whale_girl/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">开源许可</a><a href="#home">回到顶部 ↑</a></div></div></footer>
   <dialog id="article-dialog" aria-labelledby="article-title">
     <div class="dialog-top"><span class="eyebrow">RELEASE NOTES</span><button class="icon-button" id="close-dialog" aria-label="关闭更新报告">×</button></div>
     <h2 id="article-title"><!-- release:dialog-title -->鲸鲸版本更新<!-- /release:dialog-title --></h2>
