@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "tasks": [
+    { "id": "environment", "commands": [["{node}", "--version"], ["{python}", "-B", "-c", "import sys; print(sys.version)"], ["dotnet", "--version"]] },
+    { "id": "actionlint", "commands": [["{actionlint}", "-ignore", "input \"archive\" is not defined", ".github/workflows/build.yml", ".github/workflows/installer.yml", ".github/workflows/tests.yml"]] },
+    { "id": "layers", "commands": [["{node}", "scripts/check-layers.js"]] },
+    { "id": "release-check", "commands": [["{node}", "scripts/release-check.js"]] },
+    { "id": "privacy", "commands": [["{node}", "scripts/privacy-scan.js", "--strict", "."]] },
+    { "id": "python-dependencies", "commands": [["{python}", "-B", "-c", "import PIL, cryptography, requests"]] },
+    { "id": "python-test-audit", "commands": [["{python}", "-B", "scripts/check-python-tests.py", "tests"]] },
+    { "id": "node-tests", "commands": [["{node}", "--test", "--test-concurrency=4", "tests/*.test.js"]] },
+    { "id": "python-tests", "commands": [["{python}", "-B", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"]] },
+    { "id": "bridge-selftests", "commands": [["{python}", "-B", "scripts/bg-selftest.py"], ["{python}", "-B", "scripts/bridge-pipeline-selftest.py"]] },
+    { "id": "doctor", "commands": [["{node}", "server.js", "--doctor"]] },
+    { "id": "launcher-build", "platform": "win32", "commands": [["dotnet", "build", "launcher/WhaleLauncher.csproj", "-c", "Release", "--nologo"]] },
+    { "id": "update-checks", "projects": ["tests/launcher/UpdateChecks/UpdateChecks.csproj"], "commands": [["dotnet", "run", "--project", "tests/launcher/UpdateChecks/UpdateChecks.csproj", "-c", "Release", "--artifacts-path", "artifacts/update-checks"]] },
+    { "id": "voice-send", "platform": "win32", "projects": ["tests/voice-send/VoiceSendChecks.csproj"], "commands": [["dotnet", "run", "--project", "tests/voice-send/VoiceSendChecks.csproj", "-c", "Release"]] },
+    { "id": "plugin-market", "projects": ["tests/plugin-market/Checks.csproj"], "commands": [["dotnet", "run", "--project", "tests/plugin-market/Checks.csproj", "-c", "Release", "--", "{node}"]] },
+    { "id": "launcher-lifecycle", "platform": "win32", "projects": ["tests/launcher/Checks/Checks.csproj"], "buildProjects": ["tests/launcher/FakeBridge/FakeBridge.csproj"], "commands": [["{powershell}", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/test-launcher.ps1"]] }
+  ]
+}

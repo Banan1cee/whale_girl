@@ -46,12 +46,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: 环境版本
-        shell: pwsh
-        run: |
-          node -v
-          python -c "import sys, locale; print(sys.version); print('stdout=', sys.stdout.encoding, 'preferred=', locale.getpreferredencoding())"
-
       # 镜像一般自带 .NET 10；每次无条件下载 SDK 要 300MB、约 37 秒，
       # 所以先看本机有没有，缺了才装。版本线仍是 10.0.x。
       - name: 检查 .NET 10 SDK
@@ -69,10 +63,12 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      # workflow 文件本身也要过一遍静态检查：input 名写错、表达式语法错、引用不存在的
-      # action 输入，GitHub 大多只给一条黄警告，甚至静默忽略（upload-artifact v4 的
-      # archive 就是被忽略的），不拦下来等于没发现。放最前面，几十秒就能出结果。
-      - name: workflow 静态检查（actionlint）
+      # 安装只发生在临时 CI 镜像；本地 runner 只核验依赖，不擅自安装。
+      - name: Python 依赖（Node / Python 桥接回归）
+        if: always()
+        shell: pwsh
+        run: python -m pip install --disable-pip-version-check --quiet pillow cryptography requests
+      - name: 准备 actionlint（检查由共用任务执行）
         if: always()
         shell: pwsh
         run: |
@@ -100,153 +96,98 @@ jobs:
             if ($downloaded) { break }
           }
           if (-not $downloaded) {
-            # 外部下载源不稳定时不要卡住整个 PR；静态检查降级为警告。
-            Write-Output '::warning title=actionlint::下载 actionlint 失败，跳过 workflow 静态检查'
-            exit 0
+            # 未检查不能报告成功；保留失败供 always 汇总。
+            Write-Output '::error title=actionlint::下载 actionlint 失败，workflow 静态检查未完成'
+            exit 1
           }
           try { Expand-Archive -Path $zip -DestinationPath $dir -Force }
           catch {
-            Write-Output "::warning title=actionlint::actionlint 包解压失败，跳过静态检查：$($_.Exception.Message)"
-            exit 0
-          }
-          # SignPath 那两步还在用 upload-artifact v3 时代的 archive 输入（v4 已经没有），
-          # 签名路径当前没启用，先只忽略这一条；其它问题一律不许过。
-          & (Join-Path $dir 'actionlint.exe') -ignore 'input "archive" is not defined' `
-            .github/workflows/build.yml .github/workflows/installer.yml .github/workflows/tests.yml
-          if ($LASTEXITCODE -ne 0) {
-            Write-Output '::error title=actionlint::workflow 文件有静态错误，见上方输出'
+            Write-Output "::error title=actionlint::actionlint 包解压失败，静态检查未完成：$($_.Exception.Message)"
             exit 1
           }
+          $actionlint = Join-Path $dir 'actionlint.exe'
+          "ACTIONLINT_PATH=$actionlint" >> $env:GITHUB_ENV
 
-      # 后面每一步都加 if: always()，任何一步红了也把剩下的跑完，
-      # 这样一次运行就能看到整条流水线的真实状态，而不是在第一个错处停下。
+      - name: 环境版本
+        if: always()
+        shell: pwsh
+        run: node scripts/test-tasks.js --task environment --report artifacts/test-tasks/environment.json
+
+      - name: workflow 静态检查（actionlint）
+        if: always()
+        shell: pwsh
+        run: node scripts/test-tasks.js --task actionlint --report artifacts/test-tasks/actionlint.json
+
       - name: 分层依赖（谁可以 require 谁）
         if: always()
-        run: node scripts/check-layers.js
+        shell: pwsh
+        run: node scripts/test-tasks.js --task layers --report artifacts/test-tasks/layers.json
 
-      # 必须在启动器编译前检查发布树，避免混入本次编译的中间产物。
-      # 隐私检查仍独立执行。
       - name: 发布自检
         if: always()
         shell: pwsh
-        # 失败项也打成注解，不用登录也能看到是哪一条没过。
-        run: |
-          node scripts/release-check.js *> release-check.log
-          $code = $LASTEXITCODE
-          Get-Content release-check.log
-          if ($code -ne 0) {
-            $text = Get-Content -Raw -Encoding utf8 release-check.log
-            $bad = ($text -split "`n") | Where-Object { $_ -match '✗' -or $_ -match '^\s+- ' } | Select-Object -First 20
-            $msg = ((($bad -join "`n")) -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A')
-            if (-not $msg) { $msg = 'release-check failed' }
-            Write-Output "::error title=release-check::$msg"
-            exit $code
-          }
+        run: node scripts/test-tasks.js --task release-check --report artifacts/test-tasks/release-check.json
 
-      # release-check 里已经包含同一套规则；单独再跑一次是为了名字明确——
-      # 失败时一眼能看出是隐私扫描挂了，而不是别的问题。
-      # 只扫工作树，历史里的旧提交不在这里的覆盖范围内。
       - name: 隐私扫描（文本 + 二进制）
         if: always()
-        run: node scripts/privacy-scan.js .
+        shell: pwsh
+        run: node scripts/test-tasks.js --task privacy --report artifacts/test-tasks/privacy.json
 
-      # Node 回归也会启动 Python 并通过 bridge_ast 导入真实桥接模块，
-      # 因此 requests、图片解码和 AES 依赖必须在两组测试之前就绪。
-      - name: Python 依赖（Node / Python 桥接回归）
+      - name: Python 测试依赖核验
         if: always()
         shell: pwsh
-        run: python -m pip install --disable-pip-version-check --quiet pillow cryptography requests
+        run: node scripts/test-tasks.js --task python-dependencies --report artifacts/test-tasks/python-dependencies.json
+
+      - name: Python 测试声明完整性
+        if: always()
+        shell: pwsh
+        run: node scripts/test-tasks.js --task python-test-audit --report artifacts/test-tasks/python-test-audit.json
 
       - name: Node 单元测试（零 npm 依赖，含 Python 桥接回归）
         if: always()
         shell: pwsh
-        # 注意：pwsh 不会展开引号里的通配符，所以走 npm test（内部是
-        # node --test "tests/*.test.js"，由 Node 自己展开），和本地执行完全一致。
-        # 失败时把失败行打成注解，方便没有仓库权限时定位。
-        run: |
-          npm test *> node-tests.log
-          $code = $LASTEXITCODE
-          Get-Content node-tests.log
-          if ($code -ne 0) {
-            $bad = (Get-Content -Encoding utf8 node-tests.log) |
-              Select-String -Pattern 'not ok|✖|AssertionError|Error:|ℹ fail' |
-              Select-Object -First 40
-            $msg = (@($bad | ForEach-Object { $_.Line }) -join "`n") -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A'
-            if (-not $msg) { $msg = 'node tests failed' }
-            Write-Output "::error title=node-tests::$msg"
-            exit $code
-          }
+        run: node scripts/test-tasks.js --task node-tests --report artifacts/test-tasks/node-tests.json
 
       - name: Python 单元测试
         if: always()
         shell: pwsh
-        # 输出存下来，失败时把整段失败块转义进一条 ::error 注解，
-        # 没有仓库权限也能从 check run 的 annotations 里看到完整 traceback。
-        run: |
-          python -m unittest discover -s tests -p 'test_*.py' -v *> py-tests.log
-          $code = $LASTEXITCODE
-          Get-Content py-tests.log
-          if ($code -ne 0) {
-            $text = Get-Content -Raw -Encoding utf8 py-tests.log
-            $idx = $text.IndexOf('=====================')
-            $tail = if ($idx -ge 0) { $text.Substring($idx) } else { $text }
-            if ($tail.Length -gt 3800) { $tail = $tail.Substring(0, 3800) }
-            $msg = $tail -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A'
-            Write-Output "::error title=python-failures::$msg"
-            exit $code
-          }
+        run: node scripts/test-tasks.js --task python-tests --report artifacts/test-tasks/python-tests.json
 
-      # 这两个自检是纯逻辑的（不连微信、不要密钥），3.56/3.57 里就是拿它们
-      # 验证「零焦点发送」和「按会话串行、跨会话并发」的，但一直只在开发机上手动跑。
-      # 不进 CI 的后果是：谁动了 bridge/ 的编码或调度，只有真机才会发现。
       - name: 桥接自检（零焦点发送 / 消息调度）
         if: always()
         shell: pwsh
-        run: |
-          $failed = @()
-          foreach ($script in @('scripts/bg-selftest.py', 'scripts/bridge-pipeline-selftest.py')) {
-            Write-Output "===== $script ====="
-            python $script *> selftest.log
-            $code = $LASTEXITCODE
-            Get-Content selftest.log
-            if ($code -ne 0) {
-              $text = Get-Content -Raw -Encoding utf8 selftest.log
-              if ($text.Length -gt 3000) { $text = $text.Substring(0, 3000) }
-              $msg = $text -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A'
-              Write-Output "::error title=$script::$msg"
-              $failed += $script
-            }
-          }
-          if ($failed.Count -gt 0) { exit 1 }
+        run: node scripts/test-tasks.js --task bridge-selftests --report artifacts/test-tasks/bridge-selftests.json
 
       - name: 启动冒烟（--doctor）
         if: always()
-        run: node server.js --doctor
+        shell: pwsh
+        run: node scripts/test-tasks.js --task doctor --report artifacts/test-tasks/doctor.json
 
       - name: 启动器编译
         if: always()
-        run: dotnet build launcher/WhaleLauncher.csproj -c Release --nologo
+        shell: pwsh
+        run: node scripts/test-tasks.js --task launcher-build --report artifacts/test-tasks/launcher-build.json
 
       - name: 更新摘要解析与兼容回归
         if: always()
-        run: dotnet run --project tests/launcher/UpdateChecks/UpdateChecks.csproj -c Release --artifacts-path artifacts/update-checks
+        shell: pwsh
+        run: node scripts/test-tasks.js --task update-checks --report artifacts/test-tasks/update-checks.json
 
       - name: 语音实验开关与发送回归（模拟接口，不发消息）
         if: always()
+        shell: pwsh
         timeout-minutes: 3
-        run: dotnet run --project tests/voice-send/VoiceSendChecks.csproj -c Release
+        run: node scripts/test-tasks.js --task voice-send --report artifacts/test-tasks/voice-send.json
 
       - name: 插件安装与运行回归
         if: always()
         shell: pwsh
-        run: |
-          $node = Get-Command node -CommandType Application | Select-Object -First 1 -ExpandProperty Source
-          dotnet run --project tests/plugin-market/Checks.csproj -c Release -- "$node"
+        run: node scripts/test-tasks.js --task plugin-market --report artifacts/test-tasks/plugin-market.json
 
       - name: 启动器进程生命周期回归（模拟桥接）
         if: always()
         shell: pwsh
-        run: ./scripts/test-launcher.ps1
+        run: node scripts/test-tasks.js --task launcher-lifecycle --report artifacts/test-tasks/launcher-lifecycle.json
 
   # 必需检查名保持不变：分支保护引用的是「测试 / 分层 / 编译」，
   # 所以用这个只做汇总的 job 收口，子 job 的名字可以随便改。

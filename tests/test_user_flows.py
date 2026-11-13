@@ -100,7 +100,7 @@ class BridgeUserFlows(unittest.TestCase):
         function('on_message_inner', env)(msg, None)
         self.assertEqual(sent, ['回答'])
 
-    def test_garbled_gbk_text_is_restored_before_sending(self):
+    def test_garbled_gbk_text_is_restored_before_sending_preserved_case(self):
         # 0eba2cb：微信有的版本把正文按 GBK 存、却被当 Latin-1 读出来，
         # 用户看到的是「ÏÂÎçºÃÑ½」。修好以后正常文本原样返回，乱码还原成中文。
         env, _, sent, _, _ = self.env()

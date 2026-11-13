@@ -151,25 +151,34 @@ function scanBinaryBuffer(buffer, file = '') {
   return findings;
 }
 
-function walk(root, dir = root) {
+function walk(root, result, dir = root) {
   const out = [];
   let entries = [];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    // 临时目录可能正被别的进程删除/改 ACL；读不了就跳过，别让自检崩掉
+  } catch (error) {
+    result.errors.push({ file: path.relative(root, dir).split(path.sep).join('/') || '.',
+      operation: 'readdir', code: error.code || 'READ_ERROR' });
     return out;
   }
   for (const ent of entries) {
     const full = path.join(dir, ent.name);
     const rel = path.relative(root, full).split(path.sep).join('/');
     if (ent.isDirectory()) {
-      if (SKIP_DIRS.has(ent.name)) continue;
+      if (SKIP_DIRS.has(ent.name)) {
+        result.skipped.push({ file: rel, reason: 'excluded-directory' });
+        continue;
+      }
       // 中间产物整棵跳过：artifacts/ 下常有正在删的临时目录，walk 进去会 EPERM
-      if (SKIP_PREFIX.some((p) => (rel + '/').startsWith(p))) continue;
-      out.push(...walk(root, full));
+      if (SKIP_PREFIX.some((p) => (rel + '/').startsWith(p))) {
+        result.skipped.push({ file: rel, reason: 'excluded-prefix' });
+        continue;
+      }
+      out.push(...walk(root, result, full));
     } else if (!SKIP_FILES.test(rel)) {
       out.push(rel);
+    } else {
+      result.skipped.push({ file: rel, reason: 'excluded-file' });
     }
   }
   return out;
@@ -177,42 +186,62 @@ function walk(root, dir = root) {
 
 /**
  * @param {string} root 项目根目录
- * @returns {{findings: Array, files: number, binaries: number}}
+ * files/binaries 保留旧字段，但只计成功读完的文件。调用方须检查 complete；
+ * 发行检查可用 strict，让未读文件不能被 findings=[] 掩盖。
+ * @param {{strict?: boolean}} options
+ * @returns {{findings: Array, files: number, binaries: number, checked: Object, skipped: Array, errors: Array, complete: boolean}}
  */
-function scan(root) {
+function scan(root, { strict = false } = {}) {
   const findings = [];
+  const result = { findings, files: 0, binaries: 0, checked: { files: 0, binaries: 0 },
+    skipped: [], errors: [], complete: true };
   let files = 0;
   let binaries = 0;
-  for (const rel of walk(root)) {
+  for (const rel of walk(root, result)) {
     const full = path.join(root, rel);
     const norm = rel.split(path.sep).join('/');
-    if (SKIP_PREFIX.some((p) => norm.startsWith(p))) continue;
+    if (SKIP_PREFIX.some((p) => norm.startsWith(p))) {
+      result.skipped.push({ file: rel, reason: 'excluded-prefix' });
+      continue;
+    }
     try {
       if (TEXT_EXT.test(rel)) {
-        files += 1;
         findings.push(...scanText(fs.readFileSync(full, 'utf8'), rel));
+        files += 1;
       } else if (BINARY_EXT.test(rel)) {
-        binaries += 1;
         findings.push(...scanBinaryBuffer(fs.readFileSync(full), rel));
+        binaries += 1;
+      } else {
+        result.skipped.push({ file: rel, reason: 'unsupported-extension' });
       }
-    } catch {
-      // 读不了就跳过：权限问题不该让发布自检直接崩
+    } catch (error) {
+      result.errors.push({ file: rel, operation: 'read', code: error.code || 'READ_ERROR' });
     }
   }
-  return { findings, files, binaries };
+  Object.assign(result, { files, binaries, checked: { files, binaries }, complete: result.errors.length === 0 });
+  if (strict && !result.complete) {
+    const error = new Error(`隐私扫描未完成：${result.errors.length} 项读取失败`);
+    error.code = 'ERR_PRIVACY_SCAN_INCOMPLETE';
+    error.result = result;
+    throw error;
+  }
+  return result;
 }
 
 module.exports = { scan, scanText, scanBinaryBuffer, textRules, looksPlanted, mask };
 
 if (require.main === module) {
-  const root = path.resolve(process.argv[2] || path.join(__dirname, '..'));
-  const { findings, files, binaries } = scan(root);
-  console.log(`隐私扫描：${root}\n文本 ${files} 个，二进制 ${binaries} 个`);
-  if (!findings.length) {
+  const args = process.argv.slice(2).filter((arg) => arg !== '--strict');
+  const root = path.resolve(args[0] || path.join(__dirname, '..'));
+  const { findings, files, binaries, errors, complete } = scan(root);
+  console.log(`隐私扫描：${root}\n已检查文本 ${files} 个，二进制 ${binaries} 个`);
+  for (const error of errors) console.error(`✗ ${error.file}（${error.operation} ${error.code}）未检查`);
+  if (!complete) console.error(`隐私扫描未完成：${errors.length} 项读取失败`);
+  if (!findings.length && complete) {
     console.log('未发现个人信息');
-  } else {
+  } else if (findings.length) {
     for (const f of findings) console.log(`✗ ${f.file}（${f.rule}）${f.sample}`);
     console.error(`\n发现 ${findings.length} 处，先清理再提交/出包`);
-    process.exit(1);
   }
+  if (findings.length || !complete) process.exitCode = 1;
 }

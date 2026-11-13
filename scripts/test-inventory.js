@@ -9,11 +9,11 @@
  *   - #86 照着 #68 的既有写法填了目录 `tests/launcher/Checks`，被判红；而 #68 里那个目录从来
  *     没被校验过（同行还有 JS 测试兜底），绿得没有意义——白名单会把「合法」和「真的在跑」混为一谈。
  *
- * 现在改成：工作流 run 块里真正执行什么，清单就是什么；台账引用必须能归约到清单里的一项。
- * 只读文件、不跑测试、零依赖。
+ * 这里证明的是已声明入口与静态接线，不是 case 已执行。执行成功须另看 runner 回执；
+ * 尤其不能用注释里的 Run 文本冒充一次调用。只读文件、不跑测试、零依赖。
  *
  * 覆盖的调用形式（tests.yml 里出现的都在内）：
- *   - dotnet run/build --project <p>.csproj
+ *   - dotnet run --project <p>.csproj（单独 build 不算测试入口）
  *   - npm test → package.json 的 scripts.test（node --test "<glob>"）
  *   - python -m unittest discover -s <dir> -p '<pattern>'
  *   - python scripts/x.py / node scripts/x.js / ./scripts/x.ps1
@@ -44,7 +44,7 @@ function runCommandLines(text) {
     const indent = raw.match(/^\s*/)[0].length;
     if (blockIndent >= 0) {
       if (indent > blockIndent) {
-        out.push(raw);
+        if (!raw.trim().startsWith('#')) out.push(raw);
         continue;
       }
       blockIndent = -1;
@@ -106,10 +106,23 @@ function collect(root = ROOT) {
   const scripts = new Set();
   const files = new Set();
   const globs = [];
+  // CI 实际选中的 task 才能进入台账，不能把 JSON 里未接线的项目当作在跑。
+  const taskIds = commands.map(({ line }) => line.match(/\bnode scripts\/test-tasks\.js --task ([a-z0-9-]+)/))
+    .filter(Boolean).map((match) => match[1]);
+  if (taskIds.length) {
+    const plan = JSON.parse(fs.readFileSync(path.join(root, 'scripts/test-tasks.json'), 'utf8'));
+    for (const id of taskIds) {
+      const task = plan.tasks.find((entry) => entry.id === id);
+      if (!task) throw new Error(`CI 引用了未知测试任务 ${id}`);
+      for (const project of task.projects || []) projects.add(project);
+      for (const command of task.commands) commands.push({ workflow: 'test-tasks.json',
+        line: command.map((part) => part.replace(/\{node\}/g, 'node').replace(/\{python\}/g, 'python')).join(' ') });
+    }
+  }
 
   for (const { line } of commands) {
     for (const rel of pathsIn(line)) {
-      if (/\.csproj$/i.test(rel)) projects.add(rel);
+      if (/\.csproj$/i.test(rel) && /\bdotnet\s+run\b/.test(line)) projects.add(rel);
       else if (/^scripts\//.test(rel) && /\.(?:py|js|ps1)$/i.test(rel)) scripts.add(rel);
       else if (/^tests\//.test(rel) && /\.(?:py|js|cs)$/i.test(rel)) files.add(rel);
     }
@@ -135,7 +148,7 @@ function collect(root = ROOT) {
   }
 
   // 一层展开：CI 调用的 .ps1 里用 Join-Path 拼的 csproj 不会出现在工作流文本里，但确实在跑。
-  for (const rel of [...scripts]) {
+  for (const rel of taskIds.length ? [] : [...scripts]) {
     if (!/\.ps1$/i.test(rel)) continue;
     const abs = path.join(root, rel);
     if (!fs.existsSync(abs)) continue;
@@ -146,7 +159,83 @@ function collect(root = ROOT) {
     }
   }
 
-  return { globs, projects, scripts, files };
+  return { globs, projects, scripts, files, evidence: 'declared-plan', executionVerified: false };
+}
+
+// 保守的词法遮罩用于拒绝明显的伪接线；它不承担 C# 编译或运行证明。
+function csharpCode(source) {
+  let out = '', i = 0;
+  function hide(end) { out += source.slice(i, end).replace(/[^\r\n]/g, ' '); i = end; }
+  while (i < source.length) {
+    if (source.startsWith('//', i)) { const end = source.indexOf('\n', i); hide(end < 0 ? source.length : end); }
+    else if (source.startsWith('/*', i)) { const end = source.indexOf('*/', i + 2); hide(end < 0 ? source.length : end + 2); }
+    else if (source[i] === '"' || source[i] === "'") {
+      const quote = source[i], start = i;
+      const raw = quote === '"' && source.slice(i).match(/^"{3,}/);
+      if (raw) { const end = source.indexOf(raw[0], i + raw[0].length); hide(end < 0 ? source.length : end + raw[0].length); continue; }
+      const verbatim = quote === '"' && (source[i - 1] === '@' || source.slice(i - 2, i) === '@$');
+      let end = i + 1;
+      while (end < source.length) {
+        if (!verbatim && source[end] === '\\') { end += 2; continue; }
+        if (source[end] === quote) {
+          if (verbatim && source[end + 1] === quote) { end += 2; continue; }
+          end++; break;
+        }
+        end++;
+      }
+      i = start; hide(Math.min(end, source.length));
+    } else { out += source[i++]; }
+  }
+  let conditionalDepth = 0;
+  return out.split(/\r?\n/).map((line) => {
+    if (/^\s*#if\b/.test(line)) { conditionalDepth++; return ''; }
+    if (/^\s*#endif\b/.test(line)) { conditionalDepth = Math.max(0, conditionalDepth - 1); return ''; }
+    return conditionalDepth || /^\s*#/.test(line) ? '' : line;
+  }).join('\n');
+}
+
+function blockEnd(code, open) {
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    if (code[i] === '{') depth++;
+    if (code[i] === '}' && --depth === 0) return i + 1;
+  }
+  return code.length;
+}
+
+function entryCode(source) {
+  let code = csharpCode(source);
+  const main = /\bstatic\b[^;{}=]*\bMain\s*\([^)]*\)\s*\{/.exec(code);
+  if (main) {
+    const open = code.indexOf('{', main.index);
+    code = code.slice(open + 1, blockEnd(code, open) - 1);
+  }
+  // 顶层语句可作入口；类和未调用的局部函数/lambda 的正文不能冒充入口直连。
+  const declaration = /\b(?:class|struct|interface|record|namespace)\b[^;{]*\{|\b(?:static\s+)?(?:async\s+)?[\w<>]+\s+\w+\s*\([^)]*\)\s*\{|=>\s*\{/;
+  for (let match; (match = declaration.exec(code));) {
+    const open = code.indexOf('{', match.index);
+    code = code.slice(0, match.index) + ' '.repeat(blockEnd(code, open) - match.index) + code.slice(blockEnd(code, open));
+  }
+  for (let match; (match = /\b(?:if|while)\s*\(\s*false\s*\)\s*(\{|[^;]*;)/.exec(code));) {
+    const start = match.index;
+    const end = match[1] === '{' ? blockEnd(code, code.indexOf('{', start)) : start + match[0].length;
+    code = code.slice(0, start) + ' '.repeat(end - start) + code.slice(end);
+  }
+  return code;
+}
+
+function compiledSource(rel, project, root) {
+  const xml = fs.readFileSync(path.join(root, project), 'utf8');
+  const file = path.posix.relative(path.posix.dirname(project), rel);
+  let included = !/<EnableDefaultCompileItems>\s*false\s*<\/EnableDefaultCompileItems>/i.test(xml);
+  for (const item of xml.matchAll(/<Compile\b([^>]+)>/gi)) {
+    for (const attribute of item[1].matchAll(/\b(Include|Remove)\s*=\s*["']([^"']+)["']/gi)) {
+      if (attribute[2].split(';').some((pattern) => globToRegExp(normalize(pattern)).test(file))) {
+        included = attribute[1].toLowerCase() === 'include' && !/\bCondition\s*=/i.test(item[1]);
+      }
+    }
+  }
+  return included;
 }
 
 /**
@@ -163,7 +252,7 @@ function refsIn(text) {
 }
 
 /**
- * 判断一个台账引用是否「CI 真的会跑」。
+ * 判断台账引用是否归属于声明的 CI 入口；不把静态声明标为实际 case 执行。
  * 返回 { ok: true, kind, entry? } 或 { ok: false, reason }。
  */
 function resolveRef(token, inventory, root = ROOT) {
@@ -194,18 +283,17 @@ function resolveRef(token, inventory, root = ROOT) {
 
   if (/\.cs$/i.test(rel)) {
     const dir = path.posix.dirname(rel);
-    const project = [...inventory.projects].find((p) => path.posix.dirname(p) === dir);
-    if (!project) return { ok: false, reason: `${rel} 所在目录没有 CI 执行的 C# 项目` };
+    const project = [...inventory.projects].find((p) => path.posix.dirname(p) === dir && compiledSource(rel, p, root));
+    if (!project) return { ok: false, reason: `${rel} 不属于 CI 声明项目的编译源码` };
     const base = path.posix.basename(rel, '.cs');
     if (base !== 'Program') {
-      // 光有文件不算数：入口文件得真的调它的 Run(，否则这个检查根本没被执行。
-      const wired = fs
-        .readdirSync(path.join(root, dir))
-        .filter((f) => f.endsWith('.cs'))
-        .some((f) => fs.readFileSync(path.join(root, dir, f), 'utf8').includes(base + '.Run('));
-      if (!wired) return { ok: false, reason: `${rel} 的 ${base}.Run( 没被入口文件调用，等于没跑` };
+      const program = `${dir}/Program.cs`;
+      const wired = fs.existsSync(path.join(root, program)) && compiledSource(program, project, root) &&
+        new RegExp(`\\b${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\.\\s*Run\\s*\\(`)
+          .test(entryCode(fs.readFileSync(path.join(root, program), 'utf8')));
+      if (!wired) return { ok: false, reason: `${rel} 没有可识别的已编译入口直连接线；静态文本不证明 case 执行` };
     }
-    return { ok: true, kind: 'cs', entry: project };
+    return { ok: true, kind: 'cs', entry: project, evidence: 'declared-entry', executionVerified: false };
   }
 
   if (matchGlob(rel, inventory.globs)) return { ok: true, kind: 'glob' };
