@@ -5,6 +5,8 @@
 
 | # | 现象 | 根因 | 修复 | 版本 | 回归测试 |
 | --- | --- | --- | --- | --- | --- |
+| 88 | 文字能发，表情包却报窗口绑定错误；未确认发送后即使输入框清空也一直被隔离 | 随包 UIA 构造器只设置公开 hwnd，发送和恢复护栏却只读取私有 _pinned_hwnd；测试伪造了私有字段而遗漏真实驱动形态 | 统一兼容公开及旧私有绑定，有冲突或公开字段未绑定仍拒绝；保留实时账号、根窗口、会话和草稿核验，不自动重发旧任务 | 4.1.1 | `tests/test_sticker_transport.py` |
+| 87 | 旧配置缺字段时，新消息因数据库延迟约 13 秒而被全部跳过 | 桥接过期阈值默认为 4 秒，与内核和模板的 120 秒不一致 | 启动和热加载缺省值统一为 120 秒，保留显式阈值，旧历史仍跳过 | 4.1.1 | `tests/test_bridge_startup_ready.py` |
 | 86 | 内核和桥接已在后台运行，启动器仍显示未启动，点击启动时端口冲突 | 状态探测只识别本启动器创建的子进程 | 通过本地健康接口识别现有内核并读取微信状态，启动前检查端口上的实例 | 4.1.1 | `tests/launcher/Checks` |
 | 85 | 桥接意外退出，崩溃栈位于 Python 线程转储逻辑 | `faulthandler` 定时转储并发遍历其他线程，遇到已释放的帧会触发原生异常 | 移除定时转储，故障只记录当前线程，实际超时时由 Python 线程同步记录诊断 | 4.1.1 | `tests/bridge-crash.test.js` |
 | 84 | 多开时消息偶尔从另一个号发出去；UIA 已选中窗口却一直“树是空壳”；网关有时重复发气泡 | 账号目录用前缀匹配、自动选号跳过 `windowHwnd` 归属校验、`pick_account_window` 无锁；UIA 读写用了两个不同的 kernel32 句柄；`sendBubbles` 第一条带完整 `bubbles` 后又逐条重发 | 账号只认全等或哈希后相等，`windowHwnd` 必须有数据库归属证据，择窗加 `account_lock`，未确认账号不再按标题兜底；UIA 统一 kernel32 + HANDLE 并记录读写失败；网关每条请求只带当前气泡，补 `accountWxid`；faulthandler 不重复 dump | 4.1.0 | `tests/bridge-adaptive-encoding.test.js`、`tests/wechat-account.test.js`、`tests/core-modules.test.js` |
