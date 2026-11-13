@@ -13,13 +13,7 @@ const { ReminderService } = require('./reminderService');
 const { applyPersonaPatch } = require('./persona');
 const { DiaryService } = require('./diary');
 const { MomentsPublisher } = require('./momentsPublisher');
-
-function momentsSettings(config) {
-  const m = config.moments || {};
-  return { ok: true, autoLike: m.autoLike === true,
-    autoLikeMaxPerDay: Number(m.autoLikeMaxPerDay) || 0,
-    autoReadEveryHours: Number(m.autoReadEveryHours) || 0 };
-}
+const { prepareFeatureCommand, momentsSettings, prepareMomentsSettingsPatch, prepareMomentsPublishPatch } = require('./configCommands');
 
 async function saveLocalConfiguration(root, { path, body }, env = process.env) {
   const config = loadConfig({ root, env, readOnly: true });
@@ -28,7 +22,7 @@ async function saveLocalConfiguration(root, { path, body }, env = process.env) {
   // 离线保存只在本机估算人设长度，不调用模型服务。
   llm.countPromptTokens = undefined;
   const runtime = { config, llm, logger: { info() {}, warn() {} },
-    gateways: new Map(), store: { summary: () => ({}) }, startedAt: Date.now() };
+    gateways: new Map(), store: { summary: () => ({}) }, startedAt: Date.now(), offlineConfiguration: true };
   const save = patch => { applyConfigPatch(runtime, patch); return { ok: true, ...publicConfig(config) }; };
   switch (path) {
     case '/api/config': return save(body.patch);
@@ -44,25 +38,26 @@ async function saveLocalConfiguration(root, { path, body }, env = process.env) {
         : { ok: false, error: '没有可导入的人设预设' };
     }
     case '/api/features': {
-      const feature = features.REGISTRY.find(entry => entry.key === body.key);
-      if (!feature || typeof body.value !== 'boolean') return { ok: false, error: '无效的功能设置' };
-      save({ [feature.path]: body.value });
+      let command;
+      try { command = prepareFeatureCommand(body); }
+      catch { return { ok: false, error: '无效的功能设置' }; }
+      save(command.patch);
       return { ok: true, features: features.list(config) };
     }
     case '/api/moments/settings':
-      save({ 'moments.autoLike': body.autoLike, 'moments.autoLikeMaxPerDay': body.autoLikeMaxPerDay,
-        'moments.autoReadEveryHours': body.autoReadEveryHours });
+      save(prepareMomentsSettingsPatch(body));
       return momentsSettings(config);
     case '/api/moments/publish-settings': {
       const publisher = new MomentsPublisher({ config });
       const current = publisher.settings();
-      const enabled = body.featureEnabled === true && body.enabled === true;
-      if (enabled && !current.account) {
+      const patch = prepareMomentsPublishPatch(body, current);
+      const enabled = (patch['moments.publishFeatureEnabled'] ?? current.featureEnabled)
+        && (patch['moments.publishEnabled'] ?? current.enabled);
+      const changingEnablement = Object.hasOwn(patch, 'moments.publishFeatureEnabled') || Object.hasOwn(patch, 'moments.publishEnabled');
+      if (changingEnablement && enabled && !current.account) {
         return { ok: false, error: '首次开启定时发表需要启动桥接并确认微信账号；可先保存其他发表设置。' };
       }
-      save({ 'moments.publishFeatureEnabled': body.featureEnabled === true,
-        'moments.publishEnabled': enabled, 'moments.publishWithImage': body.withImage === true,
-        'moments.publishIntervalHours': body.interval, 'moments.publishMaxPerDay': body.maxPerDay });
+      save(patch);
       return { ok: true, ...publisher.settings(), ...publisher.status() };
     }
     default: return { ok: false, error: '此操作需要启动内核。' };

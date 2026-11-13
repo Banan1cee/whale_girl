@@ -5,6 +5,7 @@ const { EMOTIONS, safeDirectory } = require('../../adapters/stickers');
 const { json, readBody } = require('../util');
 const { isLoopbackRequest } = require('../security');
 const { applyConfigPatch } = require('../../infra/configPatch');
+const { prepareMomentsPublishPatch } = require('../../services/configCommands');
 
 module.exports = function register(router) {
   // 即使启用了远程控制，朋友圈隐私也不随管理接口暴露到局域网。
@@ -55,17 +56,24 @@ module.exports = function register(router) {
   router.post('/api/moments/publish-settings', async (runtime, req, res) => {
     local(req);
     const body = await readBody(req) || {};
-    const featureEnabled = body.featureEnabled === true;
-    const enabled = featureEnabled && body.enabled === true;
-    const account = enabled ? accountReady(runtime) : runtime.momentsPublisher.settings().account;
-    if (enabled && !account) {
-      return json(res, 400, { ok: false, error: '请启动桥接，等待微信账号确认后再开启定时发表' });
+    const current = runtime.momentsPublisher.settings();
+    const patch = prepareMomentsPublishPatch(body, current);
+    const enabled = (patch['moments.publishFeatureEnabled'] ?? current.featureEnabled)
+      && (patch['moments.publishEnabled'] ?? current.enabled);
+    const explicitlyConfirmedEnable = body.featureEnabled === true && body.enabled === true;
+    const wasEnabled = current.featureEnabled === true && current.enabled === true;
+    if ((body.enabled === true && !explicitlyConfirmedEnable)
+        || (enabled && !wasEnabled && !explicitlyConfirmedEnable)) {
+      return json(res, 400, { ok: false, error: '开启定时发表需要同时确认开启选项' });
     }
-    applyConfigPatch(runtime, {
-      'moments.publishFeatureEnabled': featureEnabled, 'moments.publishEnabled': enabled,
-      'moments.publishAccount': account, 'moments.publishWithImage': body.withImage === true,
-      'moments.publishIntervalHours': body.interval, 'moments.publishMaxPerDay': body.maxPerDay,
-    });
+    if (explicitlyConfirmedEnable) {
+      const account = accountReady(runtime);
+      if (!account) {
+        return json(res, 400, { ok: false, error: '请启动桥接，等待微信账号确认后再开启定时发表' });
+      }
+      patch['moments.publishAccount'] = account;
+    }
+    applyConfigPatch(runtime, patch);
     return json(res, 200, publishInfo(runtime));
   });
   router.post('/api/moments/publish-test', async (runtime, req, res) => {
