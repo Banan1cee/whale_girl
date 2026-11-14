@@ -48,6 +48,9 @@ namespace WhaleLauncher.Views
     {
         private readonly RuntimeSupervisor _sup;
         private readonly ConfigSaver _saver;
+        private readonly PageOperationLifetime _pageLifetime = new PageOperationLifetime();
+        private readonly List<Action> _refreshBudgetHints = new List<Action>();
+        private long _configurationRevision;
         private readonly Dictionary<string, Action<JsonElement>> _loaders = new Dictionary<string, Action<JsonElement>>();
         private Action<JsonElement, Dictionary<string, JsonElement>> _loadModel;
         private Action<JsonElement> _loadVision;
@@ -66,9 +69,14 @@ namespace WhaleLauncher.Views
             BuildOnce();
             Loaded += async (_, __) =>
             {
+                _pageLifetime.Activate();
+                var generation = _pageLifetime.Capture();
                 MainScroll.ScrollToTop();
                 await RefreshAsync();
+                if (_pageLifetime.IsCurrent(generation))
+                    foreach (var refresh in _refreshBudgetHints) refresh();
             };
+            Unloaded += (_, __) => _pageLifetime.Deactivate();
         }
 
         // ── 全部设置清单（启动器是唯一界面）────────────────────────
@@ -783,10 +791,30 @@ namespace WhaleLauncher.Views
                 case "secret":
                 {
                     var pwd = new PasswordBox();
+                    var secret = new ConfigurationSecretState();
+                    var clearing = false;
+                    var generation = _pageLifetime.Capture();
+                    var saves = new ConfigurationSaveState<ConfigurationSecretSnapshot>(
+                        () => { generation = _pageLifetime.Capture(); return secret.Capture(pwd.Password); },
+                        build => PatchResultAsync(f.Path, () => build().Value.Trim(), true),
+                        (snapshot, result) =>
+                        {
+                            if (!_pageLifetime.IsCurrent(generation) || !result.Ok || !secret.IsCurrent(snapshot, pwd.Password)) return;
+                            clearing = true;
+                            try { pwd.Password = ""; }
+                            finally { clearing = false; }
+                        });
+                    pwd.PasswordChanged += (s, e) =>
+                    {
+                        secret.Changed();
+                        if (_loading || clearing) return;
+                        _configurationRevision++;
+                        saves.MarkDesired();
+                    };
                     pwd.LostFocus += async (s, e) =>
                     {
                         if (_loading || pwd.Password.Length == 0) return;
-                        if (await PatchAsync(f.Path, pwd.Password.Trim())) pwd.Password = "";
+                        await saves.SaveAsync();
                     };
                     return Row(f.Label, pwd, f.Hint, false, labelWidth);
                 }
@@ -989,7 +1017,22 @@ namespace WhaleLauncher.Views
                     var saveTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(450) };
                     var hintTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
                     var syncing = false;
-                    var saved = double.NaN;
+                    var hintOperation = new PageOperation(_pageLifetime);
+                    var saveGeneration = _pageLifetime.Capture();
+                    ConfigurationSaveState<double> saves = null;
+                    saves = new ConfigurationSaveState<double>(() => { saveGeneration = _pageLifetime.Capture(); return Current(); },
+                        build => PatchResultAsync(f.Path, () => build()),
+                        (snapshot, result) =>
+                        {
+                            if (result.Ok && saves.HasPendingChanges && _pageLifetime.IsCurrent(saveGeneration))
+                                StatusText.Text = f.Path + " 正在保存新的修改…";
+                        });
+                    _refreshBudgetHints.Add(() =>
+                    {
+                        hintOperation.Invalidate();
+                        hintTimer.Stop();
+                        hintTimer.Start();
+                    });
 
                     // 四档快捷按钮：点一下跳到该档，滑块照旧可以拖任意值
                     var pills = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) };
@@ -1065,9 +1108,11 @@ namespace WhaleLauncher.Views
 
                     async void RefreshHint(double v)
                     {
+                        var ticket = hintOperation.Begin();
                         try
                         {
                             var res = await Api.Get(_sup.Url, "/api/budget/estimate?dialogueBudget=" + Math.Round(v));
+                            if (!hintOperation.IsCurrent(ticket)) return;
                             if (!res.Ok)
                             {
                                 line.Text = f.Hint;
@@ -1091,13 +1136,16 @@ namespace WhaleLauncher.Views
                         }
                         catch
                         {
-                            line.Text = f.Hint;
+                            if (hintOperation.IsCurrent(ticket)) line.Text = f.Hint;
                         }
                     }
 
                     void Schedule(bool refreshHint)
                     {
                         if (_loading) return;
+                        _configurationRevision++;
+                        saves.MarkDesired();
+                        hintOperation.Invalidate();
                         saveTimer.Stop();
                         saveTimer.Start();
                         if (!refreshHint) return;
@@ -1122,6 +1170,13 @@ namespace WhaleLauncher.Views
                         Show(v);
                         Schedule(true);
                     };
+                    box.TextChanged += (s, e) =>
+                    {
+                        if (syncing || _loading || !box.IsKeyboardFocusWithin) return;
+                        _configurationRevision++;
+                        saves.MarkDesired();
+                        hintOperation.Invalidate();
+                    };
                     box.KeyDown += (s, e) =>
                     {
                         if (e.Key == System.Windows.Input.Key.Enter) System.Windows.Input.Keyboard.ClearFocus();
@@ -1130,10 +1185,7 @@ namespace WhaleLauncher.Views
                     saveTimer.Tick += async (s, e) =>
                     {
                         saveTimer.Stop();
-                        var v = Current();
-                        if (v.Equals(saved)) return;
-                        saved = v;
-                        await PatchAsync(f.Path, v);
+                        await saves.SaveAsync();
                     };
 
                     hintTimer.Tick += (s, e) =>
@@ -1144,13 +1196,13 @@ namespace WhaleLauncher.Views
 
                     _loaders[f.Path] = v =>
                     {
-                        if (box.IsKeyboardFocusWithin) return;   // 正在编辑就不覆盖（M30）
+                        if (box.IsKeyboardFocusWithin || saves.HasPendingChanges) return;
                         _loading = true;
                         if (v.ValueKind == JsonValueKind.Number)
                         {
                             var n = v.GetDouble();
                             Show(n);
-                            saved = Math.Round(n);
+                            saves.Initialize(Math.Round(n));
                         }
                         _loading = false;
                         RefreshHint(Current());
@@ -1194,11 +1246,28 @@ namespace WhaleLauncher.Views
 
         private async Task<bool> PatchAsync(string path, object value)
         {
-            var res = await _saver.SaveAsync(() => new Dictionary<string, object> { [path] = value });
-            StatusText.Text = res.Ok
-                ? path + " 已保存 " + DateTime.Now.ToString("HH:mm:ss")
-                : path + " 保存失败：" + Api.Message(res);
+            var res = await PatchResultAsync(path, () => value);
             return res.Ok;
+        }
+
+        private async Task<ApiResult> PatchResultAsync(string path, Func<object> build, bool secret = false)
+        {
+            _configurationRevision++;
+            var generation = _pageLifetime.Capture();
+            var res = secret ? await _saver.SaveSecretAsync(path, () => (string)build())
+                : await _saver.SaveAsync(() => new Dictionary<string, object> { [path] = build() });
+            if (_pageLifetime.IsCurrent(generation))
+                StatusText.Text = res.Ok
+                    ? path + " 已保存 " + DateTime.Now.ToString("HH:mm:ss")
+                    : path + " 保存失败：" + Api.Message(res);
+            return res;
+        }
+
+        private sealed class ModelSaveSnapshot
+        {
+            public object Body;
+            public ConfigurationSecretSnapshot Secret;
+            public long PageGeneration;
         }
 
         /// <summary>
@@ -1324,7 +1393,10 @@ namespace WhaleLauncher.Views
 
             // 两组控件先都建出来：换聊天模型时要同步刷新看图的提示和角标
             var suppressAuto = false;           // 程序化改控件时别触发自动保存
-            var autoSaving = false;
+            ConfigurationSaveState<ModelSaveSnapshot> chatSaves = null;
+            ConfigurationSaveState<ModelSaveSnapshot> visionSaves = null;
+            var chatSecret = new ConfigurationSecretState();
+            var visionSecret = new ConfigurationSecretState();
             var cmb = new ComboBox { Height = 28, DisplayMemberPath = "Label", MinWidth = 320, HorizontalAlignment = HorizontalAlignment.Left };
             var baseUrl = new TextBox();
             var model = new ComboBox { Height = 28, IsEditable = true, MinWidth = 320, HorizontalAlignment = HorizontalAlignment.Left };
@@ -1673,37 +1745,72 @@ namespace WhaleLauncher.Views
                 return req;
             }
 
+            chatSaves = new ConfigurationSaveState<ModelSaveSnapshot>(
+                () => new ModelSaveSnapshot { Body = ModelRequest(), Secret = chatSecret.Capture(key.Password), PageGeneration = _pageLifetime.Capture() },
+                build => _saver.SaveSettingsAsync(() => build().Body),
+                (snapshot, result) =>
+                {
+                    if (!_pageLifetime.IsCurrent(snapshot.PageGeneration)) return;
+                    if (result.Ok && chatSecret.IsCurrent(snapshot.Secret, key.Password))
+                    {
+                        suppressAuto = true;
+                        try { key.Password = ""; }
+                        finally { suppressAuto = false; }
+                    }
+                    chatResult.Text = result.Ok
+                        ? (chatSaves.HasPendingChanges ? "正在保存新的修改…" : "已自动保存。")
+                        : "自动保存失败：" + Api.Message(result);
+                });
+            visionSaves = new ConfigurationSaveState<ModelSaveSnapshot>(
+                CaptureVisionSnapshot,
+                build => _saver.SaveSettingsAsync(() => build().Body),
+                (snapshot, result) =>
+                {
+                    if (!_pageLifetime.IsCurrent(snapshot.PageGeneration)) return;
+                    if (result.Ok && visionSecret.IsCurrent(snapshot.Secret, visionKey.Password))
+                    {
+                        suppressAuto = true;
+                        try { visionKey.Password = ""; }
+                        finally { suppressAuto = false; }
+                    }
+                    if (!result.Ok) visionResult.Text = "保存失败：" + Api.Message(result);
+                });
+            void Edited(bool vision)
+            {
+                if (suppressAuto || _loading || !_configLoaded) return;
+                _configurationRevision++;
+                if (vision) visionSaves.MarkDesired(); else chatSaves.MarkDesired();
+                foreach (var refresh in _refreshBudgetHints) refresh();
+            }
+            baseUrl.TextChanged += (s, e) => Edited(false);
+            model.AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((s, e) => Edited(false)));
+            key.PasswordChanged += (s, e) => { chatSecret.Changed(); Edited(false); };
+            visionUrl.TextChanged += (s, e) => Edited(true);
+            visionModel.AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((s, e) => Edited(true)));
+            visionKey.PasswordChanged += (s, e) => { visionSecret.Changed(); Edited(true); };
+
             // 自动保存：聊天/看图这些输入改完（失焦、换了选项、勾了开关）立刻写回，
             // 不用再记得点「保存」。手动按钮保留，老习惯照样能用。
             async Task AutoSaveChatAsync()
             {
-                if (suppressAuto || autoSaving || _loading || _loadingConfig || !_configLoaded) return;
-                autoSaving = true;
-                try
-                {
-                    var res = await _sup.SaveConfigurationAsync("/api/settings", ModelRequest());
-                    if (!res.Ok)
-                    {
-                        chatResult.Text = "自动保存失败：" + Api.Message(res);
-                        return;
-                    }
-                    key.Password = "";
-                    chatResult.Text = "已自动保存。";
-                }
-                finally { autoSaving = false; }
+                if (suppressAuto || _loading || !_configLoaded) return;
+                Edited(false);
+                await chatSaves.SaveAsync();
             }
 
             async Task AutoSaveVisionAsync()
             {
-                if (suppressAuto || _loading || _loadingConfig || !_configLoaded) return;
+                if (suppressAuto || _loading || !_configLoaded) return;
                 await SaveVisionAsync("");
             }
 
             save.Click += async (s, e) =>
             {
-                var res = await _sup.SaveConfigurationAsync("/api/settings", ModelRequest());
+                var generation = _pageLifetime.Capture();
+                Edited(false);
+                var res = await chatSaves.SaveAsync();
+                if (!_pageLifetime.IsCurrent(generation)) return;
                 if (!res.Ok) { chatResult.Text = "保存失败：" + Api.Message(res); return; }
-                key.Password = "";
                 chatResult.Text = "已保存。";
                 // 服务端可能顺手改了看图模型（跟随/解除跟随），必须重新拉一次，
                 // 否则「看图」页还显示保存前的旧模型。
@@ -1765,22 +1872,31 @@ namespace WhaleLauncher.Views
             // 保存这一页的全部内容：看图服务商 + 模型 + （自定义时的）接口地址 + 看图 Key。
             async Task<bool> SaveVisionAsync(string successText)
             {
-                var payload = "{\"visionProvider\":\"" + Api.Esc(VisionProviderValue()) + "\","
-                    + "\"visionModel\":\"" + Api.Esc(VisionValue()) + "\""
-                    + (VisionIsCustom() ? ",\"visionBaseUrl\":\"" + Api.Esc(visionUrl.Text.Trim()) + "\"" : "")
-                    + (visionKey.Password.Length > 0 ? ",\"visionApiKey\":\"" + Api.Esc(visionKey.Password.Trim()) + "\"" : "")
-                    + "}";
-                var res = await _sup.SaveConfigurationAsync("/api/settings", System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(payload));
+                var generation = _pageLifetime.Capture();
+                Edited(true);
+                var res = await visionSaves.SaveAsync();
+                if (!_pageLifetime.IsCurrent(generation)) return res.Ok;
                 if (!res.Ok)
                 {
                     visionResult.Text = "保存失败：" + Api.Message(res);
                     return false;
                 }
-                if (visionKey.Password.Length > 0) visionKey.Password = "";
                 if (successText.Length > 0) visionResult.Text = successText;
                 _lastLoad = DateTime.MinValue;
                 await LoadConfigAsync();
                 return true;
+            }
+
+            ModelSaveSnapshot CaptureVisionSnapshot()
+            {
+                var request = new Dictionary<string, object>
+                {
+                    ["visionProvider"] = VisionProviderValue(),
+                    ["visionModel"] = VisionValue(),
+                };
+                if (VisionIsCustom()) request["visionBaseUrl"] = visionUrl.Text.Trim();
+                if (visionKey.Password.Length > 0) request["visionApiKey"] = visionKey.Password.Trim();
+                return new ModelSaveSnapshot { Body = request, Secret = visionSecret.Capture(visionKey.Password), PageGeneration = _pageLifetime.Capture() };
             }
 
             vsave.Click += async (s, e) => await SaveVisionAsync("看图设置已保存。");
@@ -1789,7 +1905,9 @@ namespace WhaleLauncher.Views
             vcopy.Click += async (s, e) =>
             {
                 visionResult.Text = "正在从聊天复制…";
-                var res = await _sup.SaveConfigurationAsync("/api/settings", new { visionCopyFromChat = true });
+                var generation = _pageLifetime.Capture();
+                var res = await _saver.SaveSettingsAsync(() => new { visionCopyFromChat = true });
+                if (!_pageLifetime.IsCurrent(generation)) return;
                 if (!res.Ok)
                 {
                     visionResult.Text = "复制失败：" + Api.Message(res);
@@ -1828,6 +1946,7 @@ namespace WhaleLauncher.Views
             _loadModel = (set, provs) =>
             {
                 _providers = provs;
+                if (chatSaves.HasPendingChanges || visionSaves.HasPendingChanges) return;
                 _loading = true;
                 // 每次换一个新的 List 实例：WPF 会按「数据源实例」缓存默认视图，
                 // 对同一个 List 清空再填充后，下拉的 Items 还是旧的那批对象，
@@ -1945,11 +2064,19 @@ namespace WhaleLauncher.Views
             if (_loadingConfig) return;
             _loadingConfig = true;
             _lastLoad = DateTime.Now;
+            var generation = _pageLifetime.Capture();
+            var revision = _configurationRevision;
             try
             {
                 var cfg = await _sup.ReadConfigurationAsync("/api/config");
+                if (!_pageLifetime.IsCurrent(generation)) return;
                 if (!cfg.Ok) { KernelHint.Text = cfg.Error; return; }
                 var settings = await _sup.ReadConfigurationAsync("/api/settings");
+                if (!_pageLifetime.IsCurrent(generation) || revision != _configurationRevision)
+                {
+                    _lastLoad = DateTime.MinValue;
+                    return;
+                }
                 var config = cfg.Prop("config");
                 var secrets = cfg.Prop("secrets");
                 _adminSpellStatus.Text = secrets.ValueKind == JsonValueKind.Object &&

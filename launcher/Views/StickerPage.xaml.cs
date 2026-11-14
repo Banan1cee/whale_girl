@@ -951,17 +951,13 @@ namespace WhaleLauncher.Views
         };
 
         private static string Str(JsonElement e, string n)
-            => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String ? (v.GetString() ?? "") : "";
+            => JsonRead.Str(e, n);
 
         private static bool Bool(JsonElement e, string n)
-            => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.True;
+            => JsonRead.Bool(e, n);
 
         private static double NumProp(JsonElement e, double fallback)
-        {
-            if (e.ValueKind == JsonValueKind.Number && e.TryGetDouble(out var d)) return d;
-            if (e.ValueKind == JsonValueKind.String && double.TryParse(e.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var s)) return s;
-            return fallback;
-        }
+            => JsonRead.DoubleValue(e, fallback);
 
         private static bool BoolProp(JsonElement e)
         {
@@ -971,12 +967,7 @@ namespace WhaleLauncher.Views
         }
 
         private static double Num(JsonElement e, string n)
-        {
-            if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty(n, out var v)) return 0;
-            if (v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var d)) return d;
-            if (v.ValueKind == JsonValueKind.String && double.TryParse(v.GetString(), out var s)) return s;
-            return 0;
-        }
+            => JsonRead.Double(e, n, 0);
 
         private static string S(JsonElement e, string n) => Str(e, n);
     }

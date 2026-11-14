@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text.Json;
 
 namespace WhaleLauncher
@@ -20,24 +21,32 @@ namespace WhaleLauncher
             => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
 
         public static long Long(JsonElement e, string name)
+            => TryLong(e, name, out var value) ? value : 0;
+
+        public static bool TryLong(JsonElement e, string name, out long value)
         {
-            if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty(name, out var v)) return 0;
-            if (v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n)) return n;
-            if (v.ValueKind == JsonValueKind.String && long.TryParse(v.GetString(), out var s)) return s;
-            return 0;
+            value = 0;
+            var v = Prop(e, name);
+            if (v.ValueKind == JsonValueKind.Number) return v.TryGetInt64(out value);
+            return v.ValueKind == JsonValueKind.String
+                && long.TryParse(v.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
         }
 
         public static int Int(JsonElement e, string name, int fallback)
         {
-            var n = Long(e, name);
-            return n >= int.MinValue && n <= int.MaxValue ? (int)n : fallback;
+            return TryLong(e, name, out var n) && n >= int.MinValue && n <= int.MaxValue ? (int)n : fallback;
         }
 
         public static double Double(JsonElement e, string name, double fallback)
+            => DoubleValue(Prop(e, name), fallback);
+
+        public static double DoubleValue(JsonElement v, double fallback)
         {
-            if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty(name, out var v)) return fallback;
-            if (v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var n)) return n;
-            if (v.ValueKind == JsonValueKind.String && double.TryParse(v.GetString(), out var s)) return s;
+            double value;
+            var valid = v.ValueKind == JsonValueKind.Number ? v.TryGetDouble(out value)
+                : double.TryParse(v.ValueKind == JsonValueKind.String ? v.GetString() : null,
+                    NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+            if (valid && !double.IsNaN(value) && !double.IsInfinity(value)) return value;
             return fallback;
         }
 
