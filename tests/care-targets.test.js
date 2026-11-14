@@ -15,11 +15,15 @@ const { loadConfig } = require('../src/infra/config');
 const { ContactsCache, normalizeItem } = require('../src/services/contacts');
 const care = require('../src/services/care');
 
+// 默认夹具固定在 UTC 中午，避免实际执行时刻改变时间窗与目标断言。
+const FIXTURE_NOW = Date.UTC(2026, 0, 1, 12, 0, 0);
+
 function fixture(t, patch = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-care-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 6, retryDelay: 60 }));
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ server: { port: 0, openBrowser: false } }));
   const config = loadConfig({ root: dir, env: {} });
+  config.env = { ...config.env, timezone: 'UTC' };
   config.persona.master = { names: ['测试主人'], wxids: ['wxid_master'] };
   config.care = { ...config.care, enabled: true, windows: ['00:00-23:59'], everyMinutes: 1, jitterMinutes: 0, maxPerDay: 0, ...patch };
   const contacts = new ContactsCache(config);
@@ -36,7 +40,7 @@ function fixture(t, patch = {}) {
 }
 
 const decide = (config, contacts, opts = {}) => care.careDecide(config, {
-  contacts, lastSentTs: 0, sentToday: 0, now: Date.now(), ...opts,
+  contacts, lastSentTs: 0, sentToday: 0, now: FIXTURE_NOW, ...opts,
 });
 
 test('白名单默认只找主人，关掉限制才加入文件传输助手', () => {
@@ -84,6 +88,32 @@ test('时间段外不发（并给出 out_of_window）', (t) => {
   const out = decide(config, contacts);
   assert.equal(out.due, false);
   assert.equal(out.reason, 'out_of_window');
+});
+
+test('时间窗边界：窗前和窗后不发，起点到终点前可以发', (t) => {
+  const { config, contacts } = fixture(t, { windows: ['03:00-04:00'] });
+  for (const [hour, minute, due] of [[2, 59, false], [3, 0, true], [3, 30, true], [3, 59, true], [4, 0, false], [4, 1, false]]) {
+    const out = decide(config, contacts, { now: Date.UTC(2026, 0, 1, hour, minute) });
+    assert.equal(out.due, due, `${hour}:${minute} UTC`);
+    assert.equal(out.reason, due ? 'ok' : 'out_of_window');
+    assert.equal(out.target?.wxid || null, due ? 'wxid_master' : null);
+  }
+});
+
+test('显式时区：同一时刻按配置的本地时间窗判断', (t) => {
+  const { config, contacts } = fixture(t, { windows: ['03:00-04:00'] });
+  for (const [timezone, now, due] of [
+    ['UTC', Date.UTC(2026, 0, 1, 3, 30), true],
+    ['Asia/Shanghai', Date.UTC(2026, 0, 1, 3, 30), false],
+    ['Asia/Shanghai', Date.UTC(2026, 0, 1, 19, 30), true],
+    ['UTC', Date.UTC(2026, 0, 1, 19, 30), false],
+  ]) {
+    config.env.timezone = timezone;
+    const out = decide(config, contacts, { now });
+    assert.equal(out.due, due, `${timezone} at ${new Date(now).toISOString()}`);
+    assert.equal(out.reason, due ? 'ok' : 'out_of_window');
+    assert.equal(out.target?.wxid || null, due ? 'wxid_master' : null);
+  }
 });
 
 test('白名单里的人都在聊 → all_busy，不打扰', (t) => {
