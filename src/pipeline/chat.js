@@ -1482,8 +1482,10 @@ class Bot {
       this.logger && this.logger.info(`[admin] 群聊主动接话 ${on ? '开' : '关'}`);
       return say(on ? '群聊主动接话已打开（按概率接话，仍受冷却限制）。' : '群聊主动接话已关闭。');
     }
-    if (/^(?:改名|改名为|改名成|改名字|名字改成)\s*[:：]?\s*(.+)$/.test(text)) {
-      const raw = text.replace(/^(?:改名|改名为|改名成|改名字|名字改成)\s*[:：]?\s*/, '');
+    // 长别名先独立识别，后缀为空时也不能回退到短前缀。
+    const rename = text.match(/^(?:改名为|改名成|改名字|名字改成|改名)/);
+    if (rename) {
+      const raw = text.slice(rename[0].length).replace(/^\s*[:：]?\s*/, '');
       const name = String(raw).replace(/^[「『"'“”]+|[」』"'“”]+$/g, '').replace(/[。.!！~～\s]+$/, '').trim();
       if (!name || name.length > 20 || /[\r\n]/.test(name) || /^(?:了|吧|吗|呢|啊|呀|啦|嘛|哦|么)$/.test(name)) {
         return say('没听清新名字。直接发「改名 小鱼」这样，1~20 个字。', 'rename_invalid');
