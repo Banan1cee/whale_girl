@@ -98,21 +98,41 @@ class ProbeOwnershipTests(unittest.TestCase):
         clear.assert_called_once()
 
     def test_delayed_uia_probe_readback_is_retained(self):
-        values = iter(['', '', '', '', '', '鲸'])
+        state = {'value': '鲸', 'lag': 5, 'tick': 10}
         reads = []
 
         def read(_hwnd):
-            value = next(values)
+            value = state['value']
+            if state['lag']:
+                state['lag'] -= 1
+                value = ''
             reads.append(value)
             return {'value': value, 'edit': 'fixture-edit', 'chat': 'fixture-chat'}
 
+        def clear(_hwnd, _edit):
+            state['value'] = ''
+            return True
+
+        clear_spy = Mock(side_effect=clear)
         env = {'read_ui': read, 'time': SimpleNamespace(sleep=lambda _: None),
-               '_target_composer': lambda info, chat: info['chat'] == chat}
-        functions('bridge/bg_sender.py', ['_composer_text', '_read_typed_composer'], env)
+               '_target_composer': lambda info, chat: info['chat'] == chat,
+               '_last_input_tick': lambda: state['tick'],
+               'user32': SimpleNamespace(GetForegroundWindow=lambda: 4242),
+               '_clear_composer': clear_spy}
+        functions('bridge/bg_sender.py',
+                  ['_composer_text', '_read_typed_composer', '_input_snapshot',
+                   '_draft_may_have_changed', '_is_blank', '_reset_typed_composer'], env)
+        input_before = env['_input_snapshot']()
         _, value, stable = env['_read_typed_composer'](4242, 'fixture-chat', '鲸')
         self.assertEqual(value, '鲸')
         self.assertTrue(stable)
         self.assertEqual(len(reads), 6)
+        # 没有用户编辑时，延迟落入的自有探测字仍可清理，不能把所有探测都拦死。
+        self.assertFalse(env['_draft_may_have_changed'](4242, input_before))
+        self.assertTrue(env['_reset_typed_composer'](4242, 'fixture-chat', value, input_before))
+        clear_spy.assert_called_once_with(4242, 'fixture-edit')
+        self.assertEqual(state['value'], '')
+        self.assertEqual(env['_input_snapshot'](), input_before)
 
 
 class QuoteDiscriminationTests(unittest.TestCase):

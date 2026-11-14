@@ -250,13 +250,16 @@ class LiveEncodingTests(unittest.TestCase):
         self.assertEqual(self.state['sent'], ['鲸鲸测试'])
         self.assertEqual(self.state['text'], '')
 
-    def test_user_activity_during_probe_does_not_brick_sending(self):
-        # 探测字已经打进输入框，用户这时动了鼠标：框里只有探测字，不是他的草稿。
+    def test_user_activity_during_probe_preserves_ambiguous_draft(self):
+        # 检测到输入活动后，即使仍是探测字，也无法排除用户删掉后重打了相同文字。
         self.state.update(actual='utf16', touch_during_probe=True)
         with patch.object(bg, '_detect_char_mode_by_version', return_value='gbk'):
-            self.assertEqual(self.send(), (True, 'sent'))
-        self.assertEqual(self.state['sent'], ['鲸鲸测试'])
-        self.assertEqual(self.state['text'], '')
+            self.assertEqual(self.send(), (False, 'input_dirty'))
+        self.assertEqual(self.state['probes'], ['utf16'])
+        self.assertEqual(self.state['modes'], [])
+        self.assertEqual(self.state['clears'], 0)
+        self.assertEqual(self.state['sent'], [])
+        self.assertEqual(self.state['text'], '鲸')
 
     def test_probe_that_writes_nothing_still_sends_via_uia_setvalue(self):
         # 探测字没打进输入框（WM_CHAR 没落到控件里），用户这时又动了一下键鼠：
