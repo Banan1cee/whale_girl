@@ -28,11 +28,31 @@ def parse_quote_content(content):
     再回」时机器人像没收到。这里取 <refermsg> 里的昵称和原话，再取出引用者这次
     真正打的字：老版本在最后一个 </msg> 之后，微信 4.x 放在 <title> 里。
 
-    没有 <refermsg> 时返回 None，交给原来的类型分支处理。
+    没有完整引用结构或类型不符时返回 None，交给原来的类型分支处理。
     """
     if '<refermsg' not in str(content or ''):
         return None
     content = str(content)
+    # 字面标签和不完整 XML 都可能出现在普通正文里，不能仅凭子串判为引用。
+    import xml.etree.ElementTree as _et
+    end = content.rfind('</msg>')
+    if end < 0:
+        return None
+    try:
+        root = _et.fromstring(content[:end + len('</msg>')])
+    except _et.ParseError:
+        return None
+    if root.tag != 'msg':
+        return None
+    apps = root.findall('appmsg')
+    if len(apps) > 1:
+        return None
+    envelope = apps[0] if apps else root
+    if len(envelope.findall('refermsg')) != 1:
+        return None
+    quote_type = envelope.findtext('type')
+    if quote_type is not None and quote_type.strip() != '57':
+        return None
     quoted_by = quoted = ''
     block = re.search(r'<refermsg>.*?</refermsg>', content, re.S)
     if block:
@@ -433,7 +453,7 @@ class ReceiverMixin:
                 content = '（对方发了一条语音，说的是：%s）' % said
             # 引用回复：微信存的是 appmsg XML（类型名落到「文件/链接/卡片」），
             # 原来的分支找不到 <url> 就把整条丢掉。这里先拆出被引用原话和新打的字。
-            _quote_text = quote_content_text(content)
+            _quote_text = quote_content_text(content) if mtype not in ('文本', '语音', '图片', '表情', '动画表情') else None
             _quote_parsed = _quote_text is not None
             if _quote_parsed:
                 if not _quote_text:
@@ -466,7 +486,7 @@ class ReceiverMixin:
                 content = G.fix_garbled((msg.get('content') or '').strip())
                 if username.endswith('@chatroom'):
                     content = G._GROUP_SENDER_PREFIX_RE.sub('', content, count=1).strip()
-            if not content or content.startswith('<'):
+            if not content or (content.startswith('<') and mtype != '文本'):
                 return
             is_group = username.endswith('@chatroom')
             nickname = ''

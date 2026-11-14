@@ -878,9 +878,8 @@ def _reset_typed_composer(hwnd, chat, value, input_before):
         # 内容还在变（或用户又写了一截）：放弃清理，别覆盖用户的字。
         return False
     # 两次读到相同内容也可能是用户刚写完；发现可能操作过微信就放弃清理。
-    # 例外：框里就是我们刚打的探测字（三种可能形态之一）。探测前已确认空框，
-    # 用户随手动一下鼠标不该让这个字永久留在框里堵死后续发送。
-    if _draft_may_have_changed(hwnd, input_before) and _composer_text(now) not in _PROBE_TEXTS:
+    # 用户也可能删掉探测字后重打相同文字；内容相同不能证明仍由本次探测持有。
+    if _draft_may_have_changed(hwnd, input_before):
         return False
     if not _clear_composer(hwnd, current["edit"]):
         return False
