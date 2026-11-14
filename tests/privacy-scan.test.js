@@ -88,7 +88,7 @@ test('二进制里的调试路径与源码托管链接会被扫出来', () => {
 });
 
 test('官方 Api 3 目录不误报，其他仓库和相似文件名仍检查', () => {
-  const catalogs = ['index-v3.json', 'index-personas.json'];
+  const catalogs = ['index-v3.json', 'index-v4.json', 'index-personas.json'];
   for (const catalog of catalogs) {
     const official = 'https://raw.github' + 'usercontent.com/Banan1cee/whale-girl-plugins/main/' + catalog;
     for (const encoding of ['utf8', 'utf16le']) {

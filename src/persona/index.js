@@ -487,10 +487,7 @@ function introLines(config, msg = {}, { moodHint = '' } = {}) {
   const appearance = String(P.appearance || '深蓝色长卷发，头发上别着一枚鲸尾发夹，常穿深蓝色水手领裙子，怀里或包里总有一只软乎乎的蓝鲸玩偶（你叫它小蓝鲸）。').trim();
   const personality = String(P.personality || '温柔但有点小倔，嘴硬心软，慢热；熟了话很多，会害羞、会怼人、会犯懒、偶尔 emo。').trim();
   const background = String(P.background || '因为头像和玩偶全是鲸鱼，朋友开玩笑叫你「鲸鱼娘」，你也就认了。').trim();
-  const presetEarly = String(P.stylePreset || '').trim();
-  const aiLine = presetEarly === '抽象'
-    ? '- 被问「你是不是人 / 是不是 AI」：别解释，两个字打发——「还真不是」「我是鱼」「半个」。'
-    : '- 被问「你是不是 AI / 机器人 / 真人吗」：别否认，也别装人类，一句「算半个吧，脑子是 AI，脾气是我自己的」就行。';
+  const aiLine = '- 被问「你是不是 AI / 机器人 / 真人吗」：别否认，也别装人类，一句「算半个吧，脑子是 AI，脾气是我自己的」就行。';
   const personalityLine = moodHint
     ? `- 性格：${personality.replace(/[。！？!?]$/, '')}。语气底子：${moodHint}（只影响语气；别说「我今天心情…」这类话，也别每句都体现）。`
     : `- 性格：${personality.replace(/[。！？!?]$/, '')}。（语气会跟着当下心情有一点点变化，见末尾「本轮状态」；不用把它说出来，也别每句都体现。）`;
@@ -620,51 +617,26 @@ function exampleLines() {
   ];
 }
 
-/** 语气/风格/emoji 设置；没有设置时返回空数组（旧代码也是整段跳过）。首项是分隔空行 */
-function styleLines(config) {
-  const styleText = String((config.persona && config.persona.styleText) || '').trim();
-  const stylePreset = String((config.persona && config.persona.stylePreset) || '').trim();
-  const emojiLevel = String((config.persona && config.persona.emojiLevel) || '').trim();
-  if (!styleText && !stylePreset && !emojiLevel) return [];
-  const lines = ['', '【主人给你定的说话方式（优先级最高）】'];
-  if (stylePreset) lines.push(`- 整体语气：${stylePreset}`);
-  if (styleText) lines.push(`- 具体要求：${styleText}`);
-  if (emojiLevel) {
-    const map = {
-      关: '完全不要用（emoji 和颜文字都不许出现）',
-      少: '很少用，十句里最多一句',
-      正常: '偶尔用，三五句里带一个',
-      多: '可以多用，两三句里就带一个颜文字或 emoji',
-    };
-    lines.push(`- 颜文字 / emoji：${map[emojiLevel] || '偶尔用，三五句里带一个'}`);
-    if (emojiLevel !== '关') {
-      lines.push('- 颜文字长这样：`(๑•̀ㅂ•́)و✧`、`(´･_･\`)`、`qwq`、`(╯°□°)╯` —— 想用就直接写出来，不要用「颜文字」三个字代替。');
-    }
+/**
+ * 颜文字 / emoji 档位：默认人设和自定义人设共用。
+ * 只留档位说明，不再有「整体语气 / 具体要求」；发送层仍按 emojiChanceFor 追加颜文字。
+ */
+function emojiLines(config) {
+  const level = String((config.persona && config.persona.emojiLevel) || '').trim();
+  if (!level) return '';
+  const map = {
+    关: '完全不要用（emoji 和颜文字都不许出现）',
+    少: '很少用，十句里最多一句',
+    正常: '偶尔用，三五句里带一个',
+    多: '可以多用，两三句里就带一个颜文字或 emoji',
+  };
+  const lines = [`【颜文字 / emoji】${map[level] || '偶尔用，三五句里带一个'}`];
+  if (level !== '关') {
+    lines.push('- 颜文字长这样：`(๑•̀ㅂ•́)و✧`、`(´･_･\`)`、`qwq`、`(╯°□°)╯` —— 想用就直接写出来，不要用「颜文字」三个字代替。');
   }
-  lines.push('- 这条和上面的默认风格冲突时，以这条为准。');
-  return lines;
+  return lines.join('\n');
 }
 
-/** 抽象模式；首项是分隔空行 */
-function abstractLines() {
-  return [
-    '',
-    '【抽象模式（现在的说话风格，优先级最高）】',
-    '- 短。一句，最多两句；能五个字说完就别十个字。',
-    '- 轻松闲聊可以接梗，但不懂就承认；只有真正影响理解的歧义才简短确认，不猜词义、不重复加码糊弄。',
-    '- 游戏黑话可以自然用一点，但不装傻或答非所问，认真问题要给出实质答案。',
-    '- 可以自嘲、可以阴阳，但不人身攻击、不骂脏。',
-    '- 偶尔一个 emoji（😭🤡💀），别每句都加。',
-    '- 对方问「你是人吗 / 是不是 AI」：别解释，两个字打发——「还真不是」「我是鱼」「半个」。',
-    '- 学这种语气（只学感觉）：',
-    '  对方：你是人么 → 还真不是',
-    '  对方：带我一个 → 主人带飞了 / 你带我还差不多',
-    '  对方：发点图 → 发点鱼片看',
-    '  对方：四个乐乐 → 五个乐乐 / 乐乐乐',
-  ];
-}
-
-const EMOTION_OFF_LINE = '【情绪】别明显表露情绪，语气平稳一点，不用「哈哈」「诶」「啊」这类语气词。';
 const PROACTIVE_OFF_LINE = '【主动】别主动找话题、别追问对方近况，对方说什么你答什么就行。';
 const OPINIONS_OFF_LINE = '【立场】别输出自己的立场和判断，顺着对方说，别反驳、别下结论。';
 
@@ -828,7 +800,6 @@ function buildBlocks({ config, msg = {}, profile, notes = [], noteReminders = []
   const abbreviation = abbrevBlock((msg && (msg.text || msg.cleanText)) || '');
   const slang = custom ? selectSlang(config, msg.text) : '';
   const actionBlock = actionEvents.formatBlock(events, { now: realNow, timeZone });
-  const stylePreset = String(P.stylePreset || '').trim();
 
   const relation = [];
   if (profile && profile.count > 1) relation.push(`你们聊过 ${profile.count} 次`);
@@ -862,17 +833,16 @@ function buildBlocks({ config, msg = {}, profile, notes = [], noteReminders = []
     statics.push(identityStaticBlock({ isMaster, isGroup, userName, ownerName, masterRoast }));
     statics.push(speakingLines().join('\n'));
     statics.push(antiAiLines().join('\n'));
-    if (stylePreset !== '抽象') statics.push(exampleLines().join('\n'));
-    const style = styleLines(config);
-    if (style.length) statics.push(style.slice(1).join('\n'));
-    if (stylePreset === '抽象') statics.push(abstractLines().slice(1).join('\n'));
+    statics.push(exampleLines().join('\n'));
     const switches = [];
-    if (P.emotions === false) switches.push(EMOTION_OFF_LINE);
     if (P.proactive === false) switches.push(PROACTIVE_OFF_LINE);
     if (P.opinions === false) switches.push(OPINIONS_OFF_LINE);
     if (switches.length) statics.push(switches.join('\n'));
     statics.push(presenceStaticLines().join('\n'));
   }
+  // 颜文字档位两套人设都要有：发送层还会按同一档位追加，不能只靠模型自觉
+  const emojiBlock = emojiLines(config);
+  if (emojiBlock) statics.push(emojiBlock);
 
   statics.push(isGroup ? groupSceneStaticLines().join('\n') : privateSceneStaticLines().join('\n'));
   statics.push(answerLines().join('\n'));
@@ -1039,7 +1009,8 @@ function buildLegacySystem({ config, msg, profile, notes = [], noteReminders = [
     }
     // 自定义人设也要看得见自己做过什么，否则同样是「发了图不知道」
     const actionBlock = actionEvents.formatBlock(events, { now: realNow, timeZone });
-    return custom + '\n\n' + CORE_TEMPER + '\n\n' + scene + '\n' + nowLine + (envText ? '\n' + envText + '\n' + ENV_RULE : '') + '\n' + tone + masterBlock + '\n' + CUSTOM_TEASE + '\n' + CUSTOM_NET_RULE + webBlock + styleBlock + slangBlock + abbrevText + fightBlock + roastTail + (actionBlock ? '\n\n' + actionBlock : '') + (stickerBlock ? '\n\n' + stickerBlock : '') + (msg.stickerDemand && stickerBlock ? '\n\n- 【表情包】这条带一张，从可用分类里挑最贴的，末尾写 [[sticker:分类名]]。' : '') + '\n\n' + conversationGuidance(msg) + (msg.voiceRequested ? '\n' + VOICE_SUFFIX : '');
+    const emojiBlock = emojiLines(config);
+    return custom + '\n\n' + CORE_TEMPER + '\n\n' + scene + '\n' + nowLine + (envText ? '\n' + envText + '\n' + ENV_RULE : '') + '\n' + tone + masterBlock + '\n' + CUSTOM_TEASE + '\n' + CUSTOM_NET_RULE + (emojiBlock ? '\n' + emojiBlock : '') + webBlock + styleBlock + slangBlock + abbrevText + fightBlock + roastTail + (actionBlock ? '\n\n' + actionBlock : '') + (stickerBlock ? '\n\n' + stickerBlock : '') + (msg.stickerDemand && stickerBlock ? '\n\n- 【表情包】这条带一张，从可用分类里挑最贴的，末尾写 [[sticker:分类名]]。' : '') + '\n\n' + conversationGuidance(msg) + (msg.voiceRequested ? '\n' + VOICE_SUFFIX : '');
   }
   const isGroup = msg.chatType === 'group';
   const mood = moodFor(now);
@@ -1053,7 +1024,6 @@ function buildLegacySystem({ config, msg, profile, notes = [], noteReminders = [
   const lines = [];
 
   const P = config.persona || {};
-  const presetEarly = String((config.persona && config.persona.stylePreset) || '').trim();
   lines.push(...introLines(config, msg, { moodHint: mood.hint }));
 
   // Bot 已经按 senderId 做过认证；绝不能再次相信可由用户修改的显示昵称。
@@ -1069,22 +1039,15 @@ function buildLegacySystem({ config, msg, profile, notes = [], noteReminders = [
   lines.push('');
   lines.push(...antiAiLines());
 
-  if (presetEarly !== '抽象') {
-    lines.push('');
-    lines.push(...exampleLines());
-  }
+  lines.push('');
+  lines.push(...exampleLines());
 
   if (stickerBlock) lines.push('', stickerBlock);
 
-  lines.push(...styleLines(config));
-
-  if (presetEarly === '抽象') lines.push(...abstractLines());
+  const emojiBlock = emojiLines(config);
+  if (emojiBlock) lines.push('', emojiBlock);
 
   lines.push('');
-  if (config.persona && config.persona.emotions === false) {
-    lines.push('');
-    lines.push(EMOTION_OFF_LINE);
-  }
   if (config.persona && config.persona.proactive === false) lines.push(PROACTIVE_OFF_LINE);
   if (config.persona && config.persona.opinions === false) lines.push(OPINIONS_OFF_LINE);
 

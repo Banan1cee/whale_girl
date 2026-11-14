@@ -263,10 +263,21 @@ test('魔咒：主人输入才生效，其他人输入无效', async () => {
   const ok = await bot.decide(privateMsg('test-spell', { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' }));
   assert.equal(ok.action, 'command');
   assert.equal(ok.commandType, 'admin_spell');
-  assert.match(ok.text, /30 分钟.*禁言 群名/);
+  assert.match(ok.text, /管理员魔咒已生效（30 分钟内有效）/);
+  assert.match(ok.text, /改名 <新名字>/);
+  assert.match(ok.text, /禁言 群名/);
+  assert.match(ok.text, /重置记忆/);
+  assert.match(ok.text, /退出管理/);
   assert.ok(bot.store.getState(ok.key).adminUntil > Date.now());
   const texts = bot.store.messages(ok.key, 20).map((m) => m.text).join('|');
   assert.doesNotMatch(texts, /test-spell/, '魔咒不应留在记忆里');
+
+  // 「管理帮助」回同一份命令清单
+  const help = await bot.decide(privateMsg('管理帮助', { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' }));
+  assert.equal(help.commandType, 'admin');
+  assert.match(help.text, /改名 <新名字>/);
+  assert.match(help.text, /禁言 群名/);
+  assert.match(help.text, /退出管理/);
   cleanup();
 });
 
@@ -317,18 +328,10 @@ test('管理员权限过期会失效，非主人不能用管理命令', async ()
   cleanup();
 });
 
-test('管理员可以随时调语态 / 长度 / 能力，并写进提示词', async () => {
+test('管理员可以随时调长度 / 颜文字 / 能力，并写进提示词', async () => {
   const { bot, config, cleanup } = makeBot();
   const master = (text) => privateMsg(text, { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' });
   await bot.decide(master('test-spell'));
-
-  const tone = await bot.decide(master('语气 高冷'));
-  assert.match(tone.text, /高冷/);
-  assert.equal(config.persona.stylePreset, '高冷');
-
-  const style = await bot.decide(master('语态 回复别超过一句，别用省略号'));
-  assert.match(style.text, /记下了/);
-  assert.equal(config.persona.styleText, '回复别超过一句，别用省略号');
 
   const len = await bot.decide(master('长度 群聊 30'));
   assert.equal(config.chat.groupMaxChars, 30);
@@ -341,38 +344,33 @@ test('管理员可以随时调语态 / 长度 / 能力，并写进提示词', as
   const ab2 = await bot.decide(master('能力 主动接话 开'));
   assert.equal(config.group.freeChat, true);
 
-  // 下一句普通聊天，提示词里应带上刚定的人设
+  // 下一句普通聊天，提示词里应带上刚定的颜文字档位
   const next = await bot.decide(master('在干嘛'));
-  assert.match(next.system, /主人给你定的说话方式/);
-  assert.match(next.system, /高冷/);
-  assert.match(next.system, /回复别超过一句/);
+  assert.match(next.system, /【颜文字 \/ emoji】/);
+  assert.match(next.system, /完全不要用/);
 
   // 恢复默认
   const reset = await bot.decide(master('恢复默认'));
   assert.match(reset.text, /默认/);
-  assert.equal(config.persona.stylePreset, '');
+  assert.equal(config.persona.emojiLevel, '正常');
   assert.equal(config.chat.groupMaxChars, 70);
   assert.equal(config.links.enabled, true);
   cleanup();
 });
 
-test('主人的语态命令也要先验证魔咒', async () => {
+test('已移除的人设命令不再被识别，也不会提示要魔咒', async () => {
   const { bot, config, cleanup } = makeBot();
   const master = (text) => privateMsg(text, { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' });
 
-  // 只报主人身份、没发魔咒：不执行
-  const denied = await bot.decide(master('语态 说脏话'));
-  assert.equal(denied.commandType, 'admin_hint');
+  // 情绪开关、人味、语气/语态、抽象模式都已删除：发这些词按普通聊天处理
+  for (const text of ['情绪 关', '人味 高', '语气 抽象', '语态 说脏话']) {
+    const r = await bot.decide(master(text));
+    assert.notEqual(r.commandType, 'admin_hint', text + ' 不该再提示管理员魔咒');
+    assert.notEqual(r.commandType, 'admin', text + ' 不该再当管理命令执行');
+  }
+  assert.equal(config.persona.emotions, undefined);
   assert.equal(config.persona.styleText, undefined);
-
-  await bot.decide(master('test-spell'));
-  const r = await bot.decide(master('语态 说脏话'));
-  assert.equal(r.action, 'command');
-  assert.equal(config.persona.styleText, '说脏话');
-
-  // 普通人发同样的命令不生效
-  const other = await bot.decide(privateMsg('语态 说脏话', { senderName: '路人甲', senderId: 'u999' }));
-  assert.notEqual(other.commandType, 'admin');
+  assert.equal(config.persona.stylePreset, undefined);
   cleanup();
 });
 
@@ -394,6 +392,53 @@ test('管理员可以按群名禁言，禁言后那个群完全不说话', async
 
   const u = await bot.decide(master('解除禁言 鼠标'));
   assert.equal(config.group.mutedGroups.length, 0);
+  cleanup();
+});
+
+test('改名和记忆清理都要先过魔咒，改名后提示词用新名字', async () => {
+  const { bot, config, store, cleanup } = makeBot();
+  const master = (text) => privateMsg(text, { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' });
+
+  // 没验证魔咒：改名和清记忆都不执行
+  const denied = await bot.decide(master('改名 小鱼'));
+  assert.equal(denied.commandType, 'admin_hint');
+  assert.equal(config.persona.name, '鲸鲸');
+  await bot.decide(master('在吗'));
+  assert.ok(store.sessions.size > 0);
+  const deniedReset = await bot.decide(master('重置记忆'));
+  assert.equal(deniedReset.commandType, 'admin_hint');
+  assert.ok(store.sessions.size > 0, '没验证魔咒不能清记忆');
+
+  await bot.decide(master('test-spell'));
+  const renamed = await bot.decide(master('改名 小鱼'));
+  assert.equal(renamed.action, 'command');
+  assert.match(renamed.text, /小鱼/);
+  assert.equal(config.persona.name, '小鱼');
+  const next = await bot.decide(master('在吗'));
+  assert.match(next.system, /你现在的名字是「小鱼」/);
+
+  // 名字只是停用词/语气词时不乱改
+  const bad = await bot.decide(master('改名了'));
+  assert.equal(bad.commandType, 'rename_invalid');
+  assert.equal(config.persona.name, '小鱼');
+
+  // 非主人发同样命令不生效
+  const other = await bot.decide(privateMsg('改名 阿猫', { senderName: '路人甲', senderId: 'u999' }));
+  assert.notEqual(other.commandType, 'admin');
+  assert.equal(config.persona.name, '小鱼');
+
+  // 重置记忆只清当前会话，清空所有记忆清全部
+  await bot.decide(privateMsg('在吗', { chatId: 'c2', senderId: 'u2' }));
+  const before = store.sessions.size;
+  assert.ok(before >= 2);
+  const one = await bot.decide(master('重置记忆'));
+  assert.match(one.text, /这个聊天/);
+  assert.ok(store.sessions.size < before, '只清当前会话');
+  await bot.decide(privateMsg('在吗', { chatId: 'c3', senderId: 'u3' }));
+  assert.ok(store.sessions.size > 0);
+  const all = await bot.decide(master('清空所有记忆'));
+  assert.match(all.text, /所有聊天/);
+  assert.equal(store.sessions.size, 0);
   cleanup();
 });
 
@@ -454,7 +499,7 @@ test('讨论类问题会标记为 discussion，普通闲聊不会', async () => 
   cleanup();
 });
 
-test('管理员能调上下文长度和人味（情绪/主动/观点）', async () => {
+test('管理员能调上下文长度和主动/观点开关', async () => {
   const { bot, config, cleanup } = makeBot();
   const master = (text) => privateMsg(text, { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' });
   await bot.decide(master('test-spell'));
@@ -463,18 +508,19 @@ test('管理员能调上下文长度和人味（情绪/主动/观点）', async 
   assert.match(r1.text, /20/);
   assert.equal(config.chat.historyTurns, 20);
 
-  const r2 = await bot.decide(master('人味 低'));
-  assert.match(r2.text, /低/);
-  assert.equal(config.persona.emotions, false);
+  const r2 = await bot.decide(master('主动 关'));
   assert.equal(config.persona.proactive, false);
+  const r2b = await bot.decide(master('观点 关'));
   assert.equal(config.persona.opinions, false);
 
   const next = await bot.decide(master('在吗'));
-  assert.match(next.system, /别明显表露情绪/);
+  assert.match(next.system, /【主动】/);
+  assert.match(next.system, /【立场】/);
 
-  const r3 = await bot.decide(master('人味 高'));
-  assert.equal(config.persona.emotions, true);
+  const r3 = await bot.decide(master('主动 开'));
   assert.equal(config.persona.proactive, true);
+  const r3b = await bot.decide(master('观点 开'));
+  assert.equal(config.persona.opinions, true);
   cleanup();
 });
 

@@ -50,6 +50,25 @@ const { MessagePlugins } = require('../services/messagePlugins');
 const { JavaScriptPlugins, PluginRuntime } = require('../services/javascriptPlugins');
 const SEPARATE_REPLY_RE = /(?:^|[，。！？\s])(?:请|麻烦|能不能|可以|记得)?\s*你?\s*(?:要|给我)?\s*(?:分[条段开](?:来)?(?:发(?:送)?|回(?:复)?|说)|(?:一条一条|一句一句)地?[发回]|每(?:条|句|段)(?:话)?单独[发回]|分(?:成)?[两二三四五六七八九十\d]+[条段](?:气泡|发|回)?)(?:一下)?(?=$|[\s，。！？?!吧嘛哦啊,])/;
 
+/** 管理员能用的全部命令：魔咒验证成功后直接回这份清单，配「帮助」也用它 */
+function adminCommandList() {
+  return [
+    '状态',
+    '改名 <新名字>',
+    '上下文 20 / 上下文 短|中|长',
+    '主动 开|关 / 观点 开|关 / 互怼 开|关',
+    '长度 私聊 120 / 回复 短一点|长一点',
+    '颜文字 关|少|正常|多',
+    '能力 链接 开|关 / 能力 主动接话 开|关',
+    '禁言 群名 / 禁言列表 / 解除禁言 群名',
+    '改模型 <模型名>',
+    '演示模式 开|关',
+    '重置记忆 / 清空所有记忆',
+    '恢复默认',
+    '退出管理',
+  ];
+}
+
 // 主人私聊问起朋友圈时才注入快照；普通聊天和群聊都不带，避免第三方内容乱入。
 const MOMENTS_INTENT_RE = /朋友圈|动态|谁发了|发了(?:什么|啥)|最近发了|看看.*(?:朋友圈|动态)|点赞/;
 
@@ -197,6 +216,9 @@ class Bot {
     // handle() 的按会话串行队列：key → 上一条的收尾 promise（M21）
     this._handleChains = new Map();
     this._adminSpellGrants = new WeakMap();
+    // 清空记忆会删掉会话对象（连同它的 state），授权按会话 key 再记一份，
+    // 否则刚清完记忆，下一条管理命令就被要求重新发魔咒。
+    this._adminGrantsByKey = new Map();
     // 全局回复时间戳（跨会话共用），只留在内存里：重启后重新数
     this.globalReplyTimes = [];
     this.lastBudget = null;
@@ -1188,10 +1210,11 @@ class Bot {
     state.adminUser = msg.senderId;
     // 只认本次运行中真正验证过的口令，旧存档里的计时器不能恢复权限。
     this._adminSpellGrants.set(state, spell);
+    this._adminGrantsByKey.set(key, { spell, senderId: msg.senderId, until: state.adminUntil });
     this.store.markDirty(key);
     return {
       action: 'command', commandType: 'admin_spell', key, msg, atMe: true, reason: 'admin',
-      text: `管理员魔咒已生效，${minutes} 分钟内可在本私聊发送「禁言 群名」「解除禁言 群名」或「禁言列表」。发送「退出管理」可提前结束。`,
+      text: `管理员魔咒已生效（${minutes} 分钟内有效）。可以发送：\n` + adminCommandList().join('\n'),
     };
   }
 
@@ -1209,6 +1232,20 @@ class Bot {
       && this._adminSpellGrants.get(state) === spell;
   }
 
+  /** 清空记忆会重建会话 state；把仍在有效期内的授权接回新 state（用户主动退出/过期的不复活）。 */
+  restoreAdminGrant(key, state, msg, spell, nowMs) {
+    const grant = this._adminGrantsByKey.get(key);
+    if (!grant) return;
+    if (grant.until <= nowMs || grant.spell !== spell) {
+      this._adminGrantsByKey.delete(key);
+      return;
+    }
+    if (state.adminUser || grant.senderId !== msg.senderId) return;
+    state.adminUser = grant.senderId;
+    state.adminUntil = grant.until;
+    this._adminSpellGrants.set(state, spell);
+  }
+
   /** 管理员命令。返回 decision，或 null 表示继续走普通聊天流程。 */
   handleAdmin({ msg, clean, key, state, isMaster, nowMs }) {
     // 不接受昵称兜底或上游传来的 isMaster 标记作为管理凭据。
@@ -1216,6 +1253,7 @@ class Bot {
     const adminCfg = this.config.admin || {};
     const spell = String(adminCfg.spell || '').trim();
     const text = String((clean && clean.text) || '').trim();
+    this.restoreAdminGrant(key, state, msg, spell, nowMs);
     const say = (msgText, commandType = 'admin') => ({
       action: 'command', commandType, key, msg, atMe: true, reason: 'admin', text: msgText,
     });
@@ -1228,8 +1266,8 @@ class Bot {
         /(禁言|解禁|静音)/.test(text) ||
         /^(?:别|不要|停止)(?:再)?(?:在)?\s*.+?群/.test(text) ||
         /^让\s*.+?群\s*(?:闭嘴|安静)/.test(text) ||
-        /^(?:管理帮助|管理状态|查看状态|状态|重置记忆|清空所有记忆|恢复默认|重置语态|恢复人设|清空设定|退出管理|结束管理|关闭管理|收起魔咒)$/.test(text) ||
-        /^(?:语态|说话方式|风格|人设|语气|口吻|上下文|记忆长度|记忆条数|人味|情绪|心情|主动|主动关心|主动找话题|观点|立场|主见|互怼|骂主人|顶嘴|允许顶嘴|长度|字数|颜文字|能力|主动接话|群聊主动接话|演示模式|改模型|换模型|禁言列表|群聊禁言|禁言名单|黑名单)(?:\s|$|[:：])/.test(text);
+        /^(?:管理帮助|管理状态|查看状态|状态|重置记忆|清空所有记忆|恢复默认|恢复人设|清空设定|退出管理|结束管理|关闭管理|收起魔咒)$/.test(text) ||
+        /^(?:改名|改名为|改名成|改名字|名字改成|上下文|记忆长度|记忆条数|主动|主动关心|主动找话题|观点|立场|主见|互怼|骂主人|顶嘴|允许顶嘴|长度|字数|颜文字|能力|主动接话|群聊主动接话|演示模式|改模型|换模型|禁言列表|群聊禁言|禁言名单|黑名单)(?:\s|$|[:：])/.test(text);
       if (looksControl) {
         return say(spell
           ? '管理命令需要先在本微信私聊发送管理员魔咒。'
@@ -1302,7 +1340,7 @@ class Bot {
       return say(`好，「${g}」群恢复说话了。`);
     }
 
-    // —— 上下文长度 / 人味开关 ——
+    // —— 上下文长度 / 主动与观点开关 ——
     let mm2;
     if ((mm2 = text.match(/^(?:上下文|记忆长度|记忆条数)\s*(\d{1,3})$/))) {
       const n = Math.max(6, Math.min(120, Number(mm2[1])));
@@ -1316,11 +1354,6 @@ class Bot {
       const groupN = Math.min(n, 100);
       personaStore.save(this.config, { historyTurns: n, groupHistoryTurns: groupN });
       return say(`上下文调成「${mm2[1]}」：私聊 ${n} 条、群聊 ${groupN} 条。`);
-    }
-    if ((mm2 = text.match(/^(?:情绪|心情)\s*(开|打开|关|关闭)$/))) {
-      const on = /开/.test(mm2[1]);
-      personaStore.save(this.config, { emotions: on });
-      return say(on ? '好，会带情绪说话。' : '好，语气收平，不太表露情绪。');
     }
     if ((mm2 = text.match(/^(?:主动|主动关心|主动找话题)\s*(开|打开|关|关闭)$/))) {
       const on = /开/.test(mm2[1]);
@@ -1339,39 +1372,9 @@ class Bot {
         ? '行，那你骂我我就回嘴了，不带脏字那种。'
         : '好，那我挨骂就受着，不还口了。');
     }
-    if ((mm2 = text.match(/^人味\s*(高|中|低)$/))) {
-      const level = mm2[1];
-      const patch = level === '高'
-        ? { emotions: true, proactive: true, opinions: true }
-        : level === '中'
-          ? { emotions: true, proactive: false, opinions: true }
-          : { emotions: false, proactive: false, opinions: false };
-      personaStore.save(this.config, patch);
-      return say(`人味调到「${level}」：${level === '高' ? '有情绪、会主动、有自己观点' : level === '中' ? '有情绪和观点，但不主动找话' : '平铺直叙，不主动、不表态'}`);
-    }
 
-    // —— 语态 / 长短 / 颜文字 / 能力（微信里直接调，持久保存） ——
+    // —— 长短 / 颜文字 / 能力（微信里直接调，持久保存） ——
     let mm;
-    if ((mm = text.match(/^(?:语态|说话方式|风格|人设)\s*[:：]?\s*([\s\S]{1,120})$/))) {
-      const v = mm[1].trim();
-      personaStore.save(this.config, { text: v });
-      this.logger && this.logger.info('[admin] 语态调整：' + textMeta(v));
-      return say(`好，说话方式记下了：${v}（一直生效，重启也保留）`);
-    }
-    if ((mm = text.match(/^(?:语气|口吻)\s*(温柔|活泼|可爱|高冷|毒舌|正经|抽象)$/))) {
-      const map = {
-        温柔: '温柔软一点，句子短，别端着',
-        活泼: '活泼一点，多用语气词，可以开玩笑',
-        可爱: '可爱一点，稍微卖萌但不腻',
-        高冷: '高冷一点，话少、不主动卖萌、不撒娇',
-        毒舌: '嘴可以毒一点，吐槽犀利但不人身攻击',
-        正经: '正经一点，少用网络用语和颜文字',
-        抽象: '短句、玩梗、装傻、游戏黑话，能五个字说完就别十个字',
-      };
-      personaStore.save(this.config, { preset: mm[1], text: map[mm[1]] });
-      this.logger && this.logger.info('[admin] 语气切到 ' + mm[1]);
-      return say(`语气切成「${mm[1]}」了：${map[mm[1]]}`);
-    }
     if ((mm = text.match(/^(?:长度|字数)\s*(私聊|群聊)\s*([0-9]{2,4})$/))) {
       const n = Math.max(20, Math.min(600, Number(mm[2])));
       const patch = mm[1] === '私聊' ? { privateMaxChars: n } : { groupMaxChars: n };
@@ -1399,7 +1402,7 @@ class Bot {
       personaStore.save(this.config, { freeChat: on });
       return say(`群聊主动接话已${on ? '打开' : '关闭'}。`);
     }
-    if (/^(恢复默认|重置语态|恢复人设|清空设定)$/.test(text)) {
+    if (/^(恢复默认|恢复人设|清空设定)$/.test(text)) {
       personaStore.clear(this.config);
       this.logger && this.logger.info('[admin] 人设与能力恢复默认');
       return say('人设和能力的自定义都清空了，恢复默认。');
@@ -1413,15 +1416,14 @@ class Bot {
         `管理员在线（${remainingText}）｜模型：${mock ? '演示模式' : this.llm.providerLabel + ' · ' + this.llm.model}` +
         `｜记忆：${s.sessions} 个聊天 / ${s.messages} 条消息` +
         `｜上下文：${this.config.chat.historyTurns} 条` +
-        `｜语态：${this.config.persona.stylePreset || '默认'}${this.config.persona.styleText ? '（' + this.config.persona.styleText.slice(0, 12) + '）' : ''}` +
-        `｜人味：情绪${this.config.persona.emotions === false ? '关' : '开'}/主动${this.config.persona.proactive === false ? '关' : '开'}/观点${this.config.persona.opinions === false ? '关' : '开'}` +
+        `｜主动${this.config.persona.proactive === false ? '关' : '开'}/观点${this.config.persona.opinions === false ? '关' : '开'}` +
         `｜长短：私聊${this.config.chat.privateMaxChars}/群聊${this.config.chat.groupMaxChars}字` +
         `｜禁言群：${muted.length ? muted.map((x) => (x === '*' ? '所有群' : x)).join('、') : '无'}` +
         `｜链接：${!this.config.links || this.config.links.enabled !== false ? '开' : '关'}`
       );
     }
     if (/^(管理)?帮助$/.test(text)) {
-      return say('管理员命令：状态 / 上下文 20 / 人味 高|中|低 / 情绪 开|关 / 主动 开|关 / 观点 开|关 / 语态 <描述> / 语气 温柔|活泼|高冷|毒舌|正经 / 长度 私聊 120 / 回复 短一点 / 颜文字 少|多|关 / 能力 链接 开|关 / 能力 主动接话 开|关 / 改模型 <模型名> / 演示模式 开|关 / 重置记忆 / 清空所有记忆 / 恢复默认 / 退出管理');
+      return say('管理员命令：\n' + adminCommandList().join('\n'));
     }
     if (/^演示模式\s*(开|打开|关|关闭|关掉)$/.test(text)) {
       const on = /开/.test(text);
@@ -1480,6 +1482,16 @@ class Bot {
       this.logger && this.logger.info(`[admin] 群聊主动接话 ${on ? '开' : '关'}`);
       return say(on ? '群聊主动接话已打开（按概率接话，仍受冷却限制）。' : '群聊主动接话已关闭。');
     }
+    if (/^(?:改名|改名为|改名成|改名字|名字改成)\s*[:：]?\s*(.+)$/.test(text)) {
+      const raw = text.replace(/^(?:改名|改名为|改名成|改名字|名字改成)\s*[:：]?\s*/, '');
+      const name = String(raw).replace(/^[「『"'“”]+|[」』"'“”]+$/g, '').replace(/[。.!！~～\s]+$/, '').trim();
+      if (!name || name.length > 20 || /[\r\n]/.test(name) || /^(?:了|吧|吗|呢|啊|呀|啦|嘛|哦|么)$/.test(name)) {
+        return say('没听清新名字。直接发「改名 小鱼」这样，1~20 个字。', 'rename_invalid');
+      }
+      personaStore.save(this.config, { name });
+      this.logger && this.logger.info('[admin] 改名：' + textMeta(name));
+      return say(`好，以后我就叫「${name}」了。群里的 @ 判定会在配置热更新后跟上。`);
+    }
     if (/^重置记忆$/.test(text)) {
       if (!isMaster) return say('只有已绑定发送者 ID 的主人才能清空记忆。', 'permission_denied');
       const ok = this.store.resetSession(key);
@@ -1499,6 +1511,7 @@ class Bot {
     }
     if (/^(退出管理|结束管理|关闭管理|收起魔咒)$/.test(text)) {
       this._adminSpellGrants.delete(state);
+      this._adminGrantsByKey.delete(key);
       state.adminUntil = 0;
       state.adminUser = '';
       this.store.markDirty(key);

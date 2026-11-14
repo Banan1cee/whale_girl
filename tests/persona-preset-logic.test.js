@@ -38,12 +38,25 @@ test('清空自定义提示词能真的清掉（不会被空值清理吞掉）',
   assert.ok(!('customPrompt' in file) || file.customPrompt !== '', '文件里别留空字符串');
 });
 
-test('清空后能改回用控件（性格/语气重新生效）', () => {
+test('清空后能改回用控件（性格重新生效）', () => {
   const cfg = freshConfig();
   personaStore.save(cfg, { customPrompt: 'AAAA', personality: '很凶' });
   personaStore.save(cfg, { customPrompt: '' });
   assert.equal(cfg.persona.customPrompt, '');
   assert.equal(cfg.persona.personality, '很凶', '清空自定义提示词不该动别的字段');
+});
+
+test('改名会同步写进 config.json（桥接靠它更新群里 @ 称呼）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-persona-name-'));
+  const configFile = path.join(dir, 'config.json');
+  fs.writeFileSync(configFile, '{}');
+  const cfg = { paths: { dataDir: dir, configFile }, persona: {}, chat: {}, links: {}, group: {}, memory: {} };
+  personaStore.save(cfg, { name: '小鱼' });
+  assert.equal(cfg.persona.name, '小鱼');
+  assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).persona.name, '小鱼', 'config.json 要跟着改名');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'persona.json'), 'utf8')).name, '小鱼', '人设文件本身也要保留新名字');
+  personaStore.clear(cfg);
+  assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).persona.name, '鲸鲸', '恢复默认要把 config.json 的名字也还原');
 });
 
 test('导入预设会记下来源，保存接口也接受它', () => {
@@ -127,7 +140,7 @@ test('各版人设预设的差异确实在 customPrompt 上（都写了内容且
 test('恢复默认会清掉自定义提示词，回到正常人格', () => {
   // 出厂配置本身不该带自定义提示词
   assert.equal(String(DEFAULT_CONFIG.persona.customPrompt || ''), '', '出厂不该预设自定义提示词');
-  assert.equal(String(DEFAULT_CONFIG.persona.stylePreset || ''), '', '出厂不该预设整体语气');
+  assert.ok(!('emotions' in DEFAULT_CONFIG.persona), '情绪开关已移除，出厂配置不该再带');
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-reset-'));
   const cfg = { paths: { dataDir: dir }, persona: {}, chat: {}, links: {}, group: {}, memory: {} };
