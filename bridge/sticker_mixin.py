@@ -59,7 +59,7 @@ class StickerMixin:
 
     def sticker_activity_allowed(self, username=''):
         try:
-            return not (self.foreground_is_fullscreen() or (username and (username in self.dead_chats or not self.group_is_alive(username))))
+            return not (self.foreground_is_fullscreen() or (username and (self.chat_paused(username) or not self.group_is_alive(username))))
         except Exception:
             return False
 

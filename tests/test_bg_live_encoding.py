@@ -20,7 +20,8 @@ class LiveEncodingTests(unittest.TestCase):
                           unreadable=False, never_matches=False, clear_ok=True, switch_on_clear=False,
                           drop_linebreaks=False, short_first=False, stale_reads=0, replace_while_reading=False,
                           probes=[], input_tick=123, foreground=4242, manual_draft=False,
-                          other_app_input=False, raise_on_clear=False, switch_on_send=False)
+                          other_app_input=False, raise_on_clear=False, switch_on_send=False,
+                          probe_lag=0, probe_lost=False, uia_ok=False, touch_during_probe=False)
         state = self.state
 
         class Sender:
@@ -30,6 +31,13 @@ class LiveEncodingTests(unittest.TestCase):
             def type_text(self, text, char_gap=0, strip_unencodable=True, mode='gbk'):
                 (state['probes'] if text == '鲸' else state['modes']).append(mode)
                 skipped = []
+                if text == '鲸' and state['probe_lost']:
+                    # 探测字根本没落进输入框，但用户这时正好动了一下键鼠
+                    state['input_tick'] += 1
+                    return True, []
+                if text == '鲸' and state['touch_during_probe']:
+                    # 探测字打进去了，同时用户动了一下鼠标/键盘
+                    state['input_tick'] += 1
                 if mode == 'gbk':
                     payload, skipped = bg.encode_gbk(text, strip_unencodable)
                     if payload is None:
@@ -58,6 +66,10 @@ class LiveEncodingTests(unittest.TestCase):
 
         def read(hwnd):
             value = None if state['unreadable'] and state['modes'] else state['text']
+            if state['probe_lag'] and state['text'] == '鲸':
+                # WM_CHAR 已经投出去，但 UIA 还没把字同步进控件模型
+                state['probe_lag'] -= 1
+                value = ''
             if state['modes'] and state['stale_reads']:
                 state['stale_reads'] -= 1
                 value = ''
@@ -75,6 +87,12 @@ class LiveEncodingTests(unittest.TestCase):
                 state['chat'] = '另一个群'
             return state['clear_ok']
 
+        def uia_write(edit, text):
+            if not state['uia_ok']:
+                return False
+            state['text'] = text
+            return True
+
         for name, replacement in [
             ('user32', Mock(IsIconic=lambda h: False, GetForegroundWindow=lambda: state['foreground'])),
             ('WeChatSender', Sender),
@@ -82,6 +100,7 @@ class LiveEncodingTests(unittest.TestCase):
             ('open_chat', lambda *a, **k: True), ('_WriteGuard', nullcontext),
             ('_clear_composer', clear), ('_detect_char_mode_by_version', lambda h=0: 'utf16'),
             ('_last_input_tick', lambda: state['input_tick']),
+            ('_uia_write', uia_write),
         ]:
             p = patch.object(bg, name, replacement)
             p.start()
@@ -221,6 +240,33 @@ class LiveEncodingTests(unittest.TestCase):
         self.assertEqual(self.state['clears'], 0)
         self.assertEqual(self.state['sent'], [])
 
+    def test_probe_char_that_lands_late_is_still_cleared(self):
+        # 现场日志：探测后回读到空框，紧接着收尾时字才落进来 → 探测字残留在框里，
+        # 下一次发送直接 input_not_empty，这台机器就再也发不出去。
+        self.state.update(actual='utf16', probe_lag=5)
+        with patch.object(bg, '_detect_char_mode_by_version', return_value='gbk'):
+            self.assertEqual(self.send(), (True, 'sent'))
+        self.assertEqual(self.state['probes'], ['utf16'])
+        self.assertEqual(self.state['sent'], ['鲸鲸测试'])
+        self.assertEqual(self.state['text'], '')
+
+    def test_user_activity_during_probe_does_not_brick_sending(self):
+        # 探测字已经打进输入框，用户这时动了鼠标：框里只有探测字，不是他的草稿。
+        self.state.update(actual='utf16', touch_during_probe=True)
+        with patch.object(bg, '_detect_char_mode_by_version', return_value='gbk'):
+            self.assertEqual(self.send(), (True, 'sent'))
+        self.assertEqual(self.state['sent'], ['鲸鲸测试'])
+        self.assertEqual(self.state['text'], '')
+
+    def test_probe_that_writes_nothing_still_sends_via_uia_setvalue(self):
+        # 探测字没打进输入框（WM_CHAR 没落到控件里），用户这时又动了一下键鼠：
+        # 以前会被当成「探测留下的脏框」拦住所有发送；框是空的就该继续走。
+        self.state.update(actual='utf16', probe_lost=True, uia_ok=True)
+        with patch.object(bg, '_detect_char_mode_by_version', return_value='gbk'):
+            self.assertEqual(self.send(), (True, 'sent'))
+        self.assertEqual(self.state['sent'], ['鲸鲸测试'])
+        self.assertEqual(self.state['clears'], 0)
+
     def test_existing_draft_is_preserved(self):
         self.state['text'] = '用户正在编辑的草稿'
         self.assertEqual(self.send(), (False, 'input_not_empty'))
@@ -252,6 +298,36 @@ class LiveEncodingTests(unittest.TestCase):
         self.assertEqual(self.state['modes'], ['utf16'])
 
 
+class PausedChatTests(unittest.TestCase):
+    """连续发送失败只停一会儿，不再永久跳过会话。"""
+
+    def build(self):
+        from bridge_ast import init, load_function
+        clock = {'now': 1000.0}
+        env = dict(dead_chats=set(), dead_chat_until={}, log=Mock(),
+                   safe_name=lambda v: v,
+                   time=SimpleNamespace(time=lambda: clock['now']))
+        init(env)
+        load_function('chat_paused', env)
+        load_function('pause_chat', env)
+        return env, clock
+
+    def test_failed_chat_is_retried_after_cooldown(self):
+        env, clock = self.build()
+        env['pause_chat']('peer', 'Peer')
+        self.assertTrue(env['chat_paused']('peer'))
+        clock['now'] += 299
+        self.assertTrue(env['chat_paused']('peer'))
+        clock['now'] += 2
+        self.assertFalse(env['chat_paused']('peer'))
+
+    def test_removed_group_stays_stopped(self):
+        env, clock = self.build()
+        env['dead_chats'].add('group')
+        clock['now'] += 10 ** 6
+        self.assertTrue(env['chat_paused']('group'))
+
+
 class DirtyDraftPipelineTests(unittest.TestCase):
     def test_bridge_does_not_fall_back_or_disable_chat_after_dirty_draft(self):
         # 只提取发送闭包，避开 main 的真实微信连接；执行的仍是实际桥接代码。
@@ -264,7 +340,8 @@ class DirtyDraftPipelineTests(unittest.TestCase):
                     BG_STATS=dict(disabled=False, cooldownUntil=0, tried=0),
                     _bg_hwnd=lambda: 4242, log=Mock(), log_error=Mock(),
                     DraftDirtyError=draft_error, ChatIdentityError=type('ChatIdentityError', (RuntimeError,), {}),
-                    dead_chats=set(), fail_streak={}, account_send_allowed=lambda *a: True,
+                    dead_chats=set(), dead_chat_until={}, fail_streak={}, account_send_allowed=lambda *a: True,
+                    chat_paused=lambda u: u in env['dead_chats'],
                     send_policy_allows=lambda *a: True,
                     sticker_quarantine_allows=lambda *a: True, send_lock=nullcontext(),
                     _SendStateScope=lambda n: nullcontext(), STICKER_TEST_ON=False,

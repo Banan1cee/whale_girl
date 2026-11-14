@@ -1,6 +1,66 @@
 # -*- coding: utf-8 -*-
 """Bridge runtime mixin: ReceiverMixin."""
+import html
+import re
+
 import engine as G
+
+
+def _nested_quote_text(quoted):
+    """被引用的内容本身还是 XML（多层引用）时，往里剥最多两层拿纯文字。"""
+    for _ in range(2):
+        if quoted.startswith('<') and '<refermsg' in quoted:
+            inner = re.search(r'<refermsg>.*?</refermsg>', quoted, re.S)
+            if inner:
+                content = re.search(r'<content>(.*?)</content>', inner.group(0), re.S)
+                if content:
+                    quoted = html.unescape(content.group(1)).strip()
+                    continue
+        break
+    return quoted
+
+
+def parse_quote_content(content):
+    """把微信的引用消息 XML 拆成 (被引用者, 被引用正文, 这次新打的字)。
+
+    微信的引用回复是 appmsg（57<<32|49，类型名落到「文件/链接/卡片」），正文
+    是一条没有 <url> 的 XML，原来的处理找不到链接就把整条丢掉 —— 用户「引用一句
+    再回」时机器人像没收到。这里取 <refermsg> 里的昵称和原话，再取出引用者这次
+    真正打的字：老版本在最后一个 </msg> 之后，微信 4.x 放在 <title> 里。
+
+    没有 <refermsg> 时返回 None，交给原来的类型分支处理。
+    """
+    if '<refermsg' not in str(content or ''):
+        return None
+    content = str(content)
+    quoted_by = quoted = ''
+    block = re.search(r'<refermsg>.*?</refermsg>', content, re.S)
+    if block:
+        body = block.group(0)
+        name = re.search(r'<displayname>(.*?)</displayname>', body, re.S)
+        said = re.search(r'<content>(.*?)</content>', body, re.S)
+        quoted_by = html.unescape(name.group(1)).strip() if name else ''
+        quoted = html.unescape(said.group(1)).strip() if said else ''
+    quoted = _nested_quote_text(quoted)
+    tail = html.unescape(content.rsplit('</msg>', 1)[-1]).strip() if '</msg>' in content else ''
+    title = re.search(r'<title>(.*?)</title>', content, re.S)
+    reply = tail or (html.unescape(title.group(1)).strip() if title else '')
+    return quoted_by, quoted, reply
+
+
+def quote_content_text(content):
+    """引用消息转成给模型看的正文；没有可用的引用内容时返回空串。"""
+    parsed = parse_quote_content(content)
+    if parsed is None:
+        return None
+    quoted_by, quoted, reply = parsed
+    if not quoted and not reply:
+        return ''
+    if quoted and reply:
+        return ('（引用%s「%s」）%s' % (quoted_by or '对方', quoted, reply)).strip()
+    if reply:
+        return reply
+    return ('（引用%s「%s」）' % (quoted_by or '对方', quoted)).strip()
 
 
 class ReceiverMixin:
@@ -371,7 +431,15 @@ class ReceiverMixin:
                     media_failed('语音')
                     return
                 content = '（对方发了一条语音，说的是：%s）' % said
-            if mtype not in ('文本', '语音', '图片', '表情', '动画表情'):
+            # 引用回复：微信存的是 appmsg XML（类型名落到「文件/链接/卡片」），
+            # 原来的分支找不到 <url> 就把整条丢掉。这里先拆出被引用原话和新打的字。
+            _quote_text = quote_content_text(content)
+            _quote_parsed = _quote_text is not None
+            if _quote_parsed:
+                if not _quote_text:
+                    return
+                content = _quote_text
+            if not _quote_parsed and mtype not in ('文本', '语音', '图片', '表情', '动画表情'):
                 if '移出群聊' in content or '移出' in content:
                     self.dead_chats.add(username)
                     G.log('被移出群聊，停掉这个会话：', G.safe_name(self.display_name(username)))
@@ -394,7 +462,7 @@ class ReceiverMixin:
                         return
                 except Exception:
                     return
-            if mtype == '文本':
+            if mtype == '文本' and not _quote_parsed:
                 content = G.fix_garbled((msg.get('content') or '').strip())
                 if username.endswith('@chatroom'):
                     content = G._GROUP_SENDER_PREFIX_RE.sub('', content, count=1).strip()

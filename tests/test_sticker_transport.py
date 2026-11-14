@@ -779,6 +779,7 @@ class BridgeContractTest(unittest.TestCase):
                    sticker_draft_quarantine={'peer': {'hwnd': 100, 'aliases': {'Peer'},
                                                       'draft_observed': observed}},
                    acct_dirs=['test-account'], acct='test-account', WINDOW_HWND=0, dead_chats=set(),
+                   chat_paused=lambda username: username in env['dead_chats'],
                    sticker_account_evidence_ok=transport.account_evidence_allowed,
                    group_is_alive=lambda username: True, AWAY={'on': False}, away_active=lambda: False,
                    game_running=lambda: False, foreground_is_fullscreen=lambda: False)
