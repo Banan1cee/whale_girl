@@ -15,6 +15,7 @@ on:
       - 'scripts/build-website.js'
       - 'scripts/fetch-website-data.js'
       - 'scripts/wait-pages-artifact.js'
+      - 'scripts/website-support.js'
   release:
     types: [published, edited, unpublished, deleted]
   schedule:
@@ -73,6 +74,8 @@ jobs:
       - name: 校验并生成官网所有页面
         run: |
           node tests/website-hub.test.js
+          node tests/website-experience.test.js
+          node tests/website-polish.test.js
           node scripts/build-website.js "$RUNNER_TEMP/website-data.json" "$RUNNER_TEMP/site"
 
       - uses: actions/configure-pages@v5

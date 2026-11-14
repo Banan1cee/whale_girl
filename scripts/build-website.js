@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { render } = require('./render-website-releases');
 const { describeError } = require('../src/infra/errors');
+const { validateSupport } = require('./website-support');
 const APP = 'https://github.com/Banan1cee/whale_girl';
 const MARKET = 'https://github.com/Banan1cee/whale-girl-plugins';
 const ORIGIN = 'https://bot.zyyc.cc/';
@@ -45,6 +46,8 @@ function notes(body) {
   const lines = withoutComments(String(body || '此版本未提供更新说明，请查看 GitHub 发行页。')).split(/\r?\n/);
   let code = false;
   let list = false;
+  let headingIndex = 0;
+  const headings = [];
   const result = [];
   for (const line of lines) {
     if (/^\s*```/.test(line)) {
@@ -59,13 +62,17 @@ function notes(body) {
     }
     if (list) { result.push('</ul>'); list = false; }
     const heading = /^#{1,6}\s+(.*)$/.exec(line);
-    if (heading) result.push(`<h2>${e(heading[1])}</h2>`);
+    if (heading) {
+      const id = `note-${headingIndex++}`;
+      headings.push({ id, title: heading[1] });
+      result.push(`<h2 id="${id}">${e(heading[1])}</h2>`);
+    }
     else if (/^>/.test(line)) result.push(`<blockquote>${e(line.replace(/^>\s?/, ''))}</blockquote>`);
     else if (line.trim()) result.push(`<p>${e(line)}</p>`);
   }
   if (list) result.push('</ul>');
   if (code) result.push('</code></pre>');
-  return result.join('\n');
+  return { html: result.join('\n'), headings };
 }
 
 function header(prefix, current) {
@@ -74,7 +81,7 @@ function header(prefix, current) {
     <a class="brand" href="${prefix}" aria-label="鲸鲸首页"><img class="brand-icon" src="${prefix}images/launcher-icon.png" alt="" width="256" height="256"><span>鲸鲸 <span class="brand-en">Whale Girl</span></span></a>
     <button class="menu-toggle icon-button" aria-label="打开导航" aria-expanded="false" aria-controls="nav-links"><span></span><span></span></button>
     <div class="nav-links" id="nav-links">${nav.map(([route, text]) => `<a href="${prefix}${route}"${route === current ? ' aria-current="page"' : ''}>${text}</a>`).join('')}</div>
-    <div class="nav-actions"><button id="theme-toggle" class="icon-button" aria-label="切换明暗主题"><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z"/></svg></button><a class="button small" href="${prefix}downloads/">免费下载 <span aria-hidden="true">↗</span></a></div>
+    <div class="nav-actions"><button class="motion-control" data-motion-toggle aria-label="暂停动态效果" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 8c4-8 10 8 14 0M5 16c4-8 10 8 14 0"/></svg><span>动态效果</span></button><button id="theme-toggle" class="icon-button" aria-label="切换明暗主题"><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z"/></svg></button><a class="button small" href="${prefix}downloads/">免费下载 <span aria-hidden="true">↗</span></a></div>
   </nav></header>`;
 }
 
@@ -85,11 +92,21 @@ function footer(prefix) {
 function layout(route, title, description, content, current) {
   const depth = route.split('/').filter(Boolean).length;
   const prefix = depth ? '../'.repeat(depth) : './';
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#070b13"><meta name="description" content="${e(description)}"><title>${e(title)} — 鲸鲸 Whale Girl</title><link rel="canonical" href="${ORIGIN}${route}"><link rel="icon" href="${prefix}images/launcher-icon.png" type="image/png"><script src="${prefix}theme.js"></script><link rel="stylesheet" href="${prefix}style.css"><link rel="stylesheet" href="${prefix}pages.css"><script src="${prefix}site.js" defer></script></head><body class="content-page">${header(prefix, current)}<main id="main" class="wrap page-main">${content}</main>${footer(prefix)}</body></html>\n`;
+  const page = route.startsWith('downloads/') && depth > 1 ? 'release' : route.startsWith('plugins/') && depth > 1 ? 'plugin' : depth > 1 ? 'transparency' : route.split('/')[0];
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#191c1a"><meta name="description" content="${e(description)}"><title>${e(title)} — 鲸鲸 Whale Girl</title><link rel="canonical" href="${ORIGIN}${route}"><link rel="icon" href="${prefix}images/launcher-icon.png" type="image/png"><script src="${prefix}theme.js"></script><link rel="stylesheet" href="${prefix}style.css"><link rel="stylesheet" href="${prefix}pages.css"><link rel="stylesheet" href="${prefix}polish.css"><script src="${prefix}site-motion.js" defer></script><script src="${prefix}site.js" defer></script></head><body class="content-page page-${page}" data-page="${page}">${ambient()}${header(prefix, current)}<main id="main" class="wrap page-main">${pageBrand(prefix, page)}${content}</main>${footer(prefix)}</body></html>\n`;
+}
+
+function pageBrand(prefix, page) {
+  const labels = { downloads: '下载中心', release: '版本档案', plugins: '插件市场', plugin: '插件档案', support: '支持团队', transparency: '打赏公示', team: '团队与朋友' };
+  return `<div class="page-brand-line"><a class="whale-signature" data-whale-mark href="${prefix}" aria-label="鲸鲸 · 返回首页"><span class="signature-portrait"><img class="signature-avatar" src="${prefix}images/launcher-icon.png" alt="" width="40" height="40"></span><span class="signature-copy"><strong>鲸鲸</strong><span>Whale Girl</span></span></a><span class="page-brand-location">${labels[page] || 'Whale Girl'}</span></div>`;
+}
+
+function ambient() {
+  return '<div class="site-ambient" aria-hidden="true"><div class="ambient-glow"></div><svg viewBox="0 0 1400 700" preserveAspectRatio="none"><path class="current current-one" d="M-100 430C200 80 650 850 1500 150"/><path class="current current-two" d="M-100 500C350 150 800 780 1500 240"/><path class="current current-three" d="M-100 550C500 250 900 730 1500 340"/></svg><i class="ambient-dot dot-a"></i><i class="ambient-dot dot-b"></i><i class="ambient-dot dot-c"></i></div>';
 }
 
 function intro(kicker, title, description) {
-  return `<div class="page-intro"><p class="eyebrow">${e(kicker)}</p><h1>${title}</h1><p class="page-lead">${description}</p></div>`;
+  return `<div class="page-intro"><div><p class="eyebrow">${e(kicker)}</p><h1>${title}</h1></div><p class="page-lead">${description}</p></div>`;
 }
 
 function searchFilters(label, placeholder, selects = '') {
@@ -106,15 +123,16 @@ function teamCards(team, prefix, preview = false) {
 
 function downloads(releases, latest) {
   const years = [...new Set(releases.map(item => date(item.published_at).slice(0, 4)))].sort().reverse();
-  return intro('EVERY CHAPTER, KEPT.', '每一次成长，<br>都有迹可循。', '下载最新正式版，或回到鲸鲸的某一个历史版本。')
-    + `<section class="highlight-panel"><div><span class="tag">最新正式发行</span><h2>${e(releaseTitle(latest))}</h2><p>发布于 ${date(latest.published_at)} · Windows</p></div><a class="button" href="./${releaseSlug(latest.tag_name)}/">查看下载与更新说明 <span aria-hidden="true">↗</span></a></section>`
+  return intro('DOWNLOAD / RELEASE ARCHIVE', '把鲸鲸带回你的日常。', '最新正式版、完整更新记录与历史安装文件，都在这里。')
+    + `<div class="download-overview"><section class="highlight-panel"><div><span class="tag"><span class="live-dot"></span>最新正式发行</span><h2>${e(releaseTitle(latest))}</h2><p>发布于 ${date(latest.published_at)} · Windows · ${latest.assets?.length || 0} 个发行文件</p><a class="button" href="./${releaseSlug(latest.tag_name)}/">查看下载与更新说明 <span aria-hidden="true">↗</span></a></div><span class="release-mark" aria-hidden="true">${e(latest.tag_name.replace(/^v/, ''))}</span></section><aside class="install-brief info-panel"><p class="eyebrow">FIRST HELLO</p><h2>三步，开始相处。</h2><ol><li>下载对应版本的安装文件</li><li>准备微信账号与模型 API Key</li><li>在桌面启动器中配置并启动</li></ol>${link(`${APP}#install-and-first-run`, '阅读安装指南')}</aside></div>`
     + `<section class="page-section" aria-labelledby="history-heading"><div class="section-heading"><div><p class="eyebrow">RELEASE ARCHIVE</p><h2 id="history-heading">下载历史</h2></div>${link(`${APP}/releases`, 'GitHub 发行记录')}</div>`
     + searchFilters('搜索版本', '版本号或更新标题', selectFilter('发布年份', 'year', years.map(year => [year, year])) + selectFilter('发行类型', 'kind', [['stable', '正式版'], ['preview', '预览版']]))
-    + `<div class="archive-list">${releases.map(item => `<article class="archive-row" data-filter-item data-search="${e(item.tag_name + ' ' + releaseTitle(item))}" data-year="${date(item.published_at).slice(0, 4)}" data-kind="${item.prerelease ? 'preview' : 'stable'}"><div><span class="tag">${item.prerelease ? '预览版' : item.tag_name === latest.tag_name ? '最新正式版' : '历史正式版'}</span><h3><a href="./${releaseSlug(item.tag_name)}/">${e(releaseTitle(item))}</a></h3><time datetime="${date(item.published_at)}">${date(item.published_at)}</time></div><a class="text-link" href="./${releaseSlug(item.tag_name)}/" aria-label="查看 ${e(item.tag_name)} 下载页面">版本详情 <span aria-hidden="true">↗</span></a></article>`).join('')}</div><p class="empty-state" id="filter-empty" hidden>没有找到符合条件的版本，试试其他关键词。</p></section>`;
+    + `<div class="archive-list">${releases.map(item => `<article class="archive-row" data-filter-item data-search="${e(item.tag_name + ' ' + releaseTitle(item))}" data-year="${date(item.published_at).slice(0, 4)}" data-kind="${item.prerelease ? 'preview' : 'stable'}"><div class="archive-version"><span class="timeline-dot"></span><strong>${e(item.tag_name)}</strong><span>${item.prerelease ? '预览版' : item.tag_name === latest.tag_name ? '最新正式版' : '正式版'}</span></div><div class="archive-description"><h3><a href="./${releaseSlug(item.tag_name)}/">${e(releaseTitle(item))}</a></h3><span>${item.assets?.length || 0} 个发行文件</span></div><time datetime="${date(item.published_at)}">${date(item.published_at)}</time><a class="text-link" href="./${releaseSlug(item.tag_name)}/" aria-label="查看 ${e(item.tag_name)} 下载页面">版本详情 <span aria-hidden="true">↗</span></a></article>`).join('')}</div><p class="empty-state" id="filter-empty" hidden>没有找到符合条件的版本，试试其他关键词。</p></section>`;
 }
 
 function releasePage(item, latest) {
   const slug = releaseSlug(item.tag_name);
+  const renderedNotes = notes(item.body);
   const assets = (item.assets || []).filter(asset => {
     try {
       const url = new URL(asset.browser_download_url);
@@ -126,7 +144,11 @@ function releasePage(item, latest) {
   return `<a class="back-link" href="../">← 全部发行版本</a>`
     + intro(item.prerelease ? 'PREVIEW RELEASE' : 'WHALE GIRL / RELEASE', e(releaseTitle(item)), `<time datetime="${date(item.published_at)}">${date(item.published_at)}</time> · ${item.prerelease ? '预览版' : '正式版'}`)
     + (item.prerelease ? '<div class="notice">这是预览版本，可能存在不稳定行为。安装前请备份配置与数据。</div>' : item.tag_name !== latest.tag_name ? '<div class="notice">这是历史版本，可能缺少后续修复。回退前请备份配置与数据，并核对版本兼容性。</div>' : '')
-    + `<section class="page-section"><p class="eyebrow">DOWNLOAD FILES</p><h2>下载 ${e(slug)}</h2><p>以下文件来自这个版本的官方 GitHub Release。优先选择名称以 <code>-setup.exe</code> 结尾的 Windows 安装包；旧版发行的文件结构可能不同。</p><div class="asset-list">${assets.length ? assets.map(asset => `<article class="asset-row"><div><h3>${e(asset.name)}</h3><p>${size(asset.size)}</p>${/^sha256:[a-f0-9]{64}$/i.test(asset.digest || '') ? `<p class="hash">SHA-256 <code>${e(asset.digest.slice(7))}</code></p>` : ''}</div>${link(asset.browser_download_url, '下载文件', 'button secondary')}</article>`).join('') : '<p class="empty-state">此版本未附带可下载文件，请查看原始发行页。</p>'}</div><p>若发行文件中提供了 <code>SHA256SUMS.txt</code>，请一并下载，并按校验指南核对文件。</p><div class="inline-links">${link(`${APP}/releases/tag/${encodeURIComponent(slug)}`, '原始发行页')}${link(`${APP}/blob/main/docs/DOWNLOAD.md`, '下载与校验指南')}</div></section><section class="page-section release-notes"><p class="eyebrow">RELEASE NOTES</p><h2>完整更新说明</h2>${notes(item.body)}</section>`;
+    + `<div class="release-layout"><section class="release-notes"><p class="eyebrow">WHAT CHANGED</p><h2>完整更新说明</h2>${renderedNotes.html}</section>
+      <aside class="release-downloads info-panel"><p class="eyebrow">OFFICIAL RELEASE FILES</p><h2>下载 ${e(slug)}</h2><p>选择这个版本的官方发行文件。Windows 安装包通常以 <code>-setup.exe</code> 结尾。</p>
+      <div class="asset-list">${assets.length ? assets.map(asset => `<article class="asset-row"><div><h3>${e(asset.name)}</h3><p>${size(asset.size)}</p>${/^sha256:[a-f0-9]{64}$/i.test(asset.digest || '') ? `<p class="hash">SHA-256 <code>${e(asset.digest.slice(7))}</code></p>` : ''}</div>${link(asset.browser_download_url, '下载文件', 'button secondary')}</article>`).join('') : '<p class="empty-state">此版本未附带可下载文件，请查看原始发行页。</p>'}</div>
+      <p>如提供 <code>SHA256SUMS.txt</code>，请一并下载并核对。</p><div class="stack-links">${link(`${APP}/releases/tag/${encodeURIComponent(slug)}`, '原始发行页')}${link(`${APP}/blob/main/docs/DOWNLOAD.md`, '下载与校验指南')}</div>
+      <nav class="note-toc" aria-label="更新说明目录"><h3>本页目录</h3>${renderedNotes.headings.map(heading => `<a href="#${heading.id}">${e(heading.title)}</a>`).join('')}</nav></aside></div>`;
 }
 
 function pluginKind(item) { return item.Kind === 'persona' ? 'persona' : item.Kind === 'message' || item.Api === 3 ? 'message' : 'tool'; }
@@ -170,15 +192,16 @@ function validatePlugins(plugins, commit) {
 }
 
 function pluginCards(plugins, prefix = './') {
-  return `<div class="plugin-grid">${plugins.map(item => `<article class="plugin-card" data-filter-item data-kind="${pluginKind(item)}" data-search="${e([item.Name, item.Id, item.Author, item.Description].join(' '))}"><div class="card-top"><span class="tag">${kinds[pluginKind(item)]}</span><span class="plugin-api">API ${item.Api}</span></div><h${prefix === './' ? '2' : '3'}><a href="${prefix}${item.Id}/">${e(item.Name)}</a></h${prefix === './' ? '2' : '3'}><p class="plugin-id">${e(item.Id)}</p><p class="plugin-description">${e(item.Description)}</p><dl class="plugin-meta"><div><dt>作者</dt><dd>${e(item.Author)}</dd></div><div><dt>版本</dt><dd>${e(item.Version)}</dd></div><div><dt>最低客户端</dt><dd>${e(item.MinAppVersion)}</dd></div></dl><a class="text-link" href="${prefix}${item.Id}/">了解与下载 <span aria-hidden="true">↗</span></a></article>`).join('')}</div>`;
+  return `<div class="plugin-grid" data-motion-list>${plugins.map((item, index) => `<article class="plugin-card" data-filter-item data-order="${index}" data-name="${e(item.Name)}" data-author="${e(item.Author)}" data-kind="${pluginKind(item)}" data-search="${e([item.Name, item.Id, item.Author, item.Description].join(' '))}"><div class="card-top"><span class="plugin-emblem" aria-hidden="true">${pluginKind(item) === 'persona' ? 'P' : pluginKind(item) === 'message' ? 'M' : 'T'}<i></i></span><span class="tag">${kinds[pluginKind(item)]}</span><span class="plugin-api">API ${item.Api}</span></div><h${prefix === './' ? '2' : '3'}><a href="${prefix}${item.Id}/">${e(item.Name)}</a></h${prefix === './' ? '2' : '3'}><p class="plugin-id">${e(item.Id)}</p><p class="plugin-description">${e(item.Description)}</p><dl class="plugin-meta"><div><dt>作者</dt><dd>${e(item.Author)}</dd></div><div><dt>版本</dt><dd>${e(item.Version)}</dd></div><div><dt>最低客户端</dt><dd>${e(item.MinAppVersion)}</dd></div></dl><a class="text-link" href="${prefix}${item.Id}/">了解与下载 <span aria-hidden="true">↗</span></a></article>`).join('')}</div>`;
 }
 
 function pluginsPage(plugins, data) {
-  return intro('MORE WAYS TO BE HERSELF.', '给鲸鲸，<br>更多可能。', '发现社区创作的人设、工具与消息插件。先了解用途、来源和权限，再决定安装。')
-    + `<div class="catalog-summary"><span><strong>${plugins.length}</strong> 个已收录插件</span><span>来源可追溯</span><span>客户端内安装管理</span></div>`
-    + searchFilters('搜索插件', '名称、用途、作者或插件 ID', selectFilter('插件类型', 'kind', Object.entries(kinds)))
+  const categories = [['', '全部插件'], ...Object.entries(kinds)];
+  return intro('DISCOVER / COMMUNITY PLUGINS', '给鲸鲸，更多可能。', '人设、工具与消息扩展。找到适合自己的那一款，在桌面客户端中安装与管理。')
+    + `<div class="catalog-layout"><aside class="catalog-sidebar"><p class="eyebrow">EXPLORE</p><h2>插件市场 <span>${plugins.length}</span></h2><div class="category-choices">${categories.map(([key, label]) => `<button type="button" data-kind-choice="${key}" aria-pressed="${key === ''}"><span>${label}</span><span>${key ? plugins.filter(item => pluginKind(item) === key).length : plugins.length}</span></button>`).join('')}</div><div class="sidebar-note"><span class="live-dot"></span> 同一来源快照<p>版本、作者与下载包均可追溯；收录不等于安全保证。</p></div>${link(`${MARKET}/blob/main/README.md`, '提交你的插件')}</aside><section class="catalog-content" aria-label="插件目录">`
+    + searchFilters('搜索插件', '名称、用途、作者或插件 ID', selectFilter('插件类型', 'kind', Object.entries(kinds)) + '<label>排序<select data-sort><option value="catalog">目录顺序</option><option value="name">名称 A–Z</option><option value="author">作者 A–Z</option></select></label>')
     + (plugins.length ? pluginCards(plugins) : '<p class="empty-state">暂时没有已收录插件，欢迎提交你的作品。</p>')
-    + '<p class="empty-state" id="filter-empty" hidden>没有找到符合条件的插件，试试其他关键词或类型。</p>'
+    + '<p class="empty-state" id="filter-empty" hidden>没有找到符合条件的插件，试试其他关键词或类型。</p></section></div>'
     + `<section class="page-section split-panel"><div><p class="eyebrow">HOW IT WORKS</p><h2>先看清，再安装。</h2><ol class="steps"><li>打开插件详情，核对功能、权限和所需客户端版本。</li><li>在鲸鲸桌面启动器的「插件市场」安装；也可下载 ZIP，选择「从本地安装」。</li><li>在插件卡片中启用，并在「设置」内配置和使用。安装不等于授权。</li></ol></div><div class="info-panel"><h3>你的创意，也可以在这里。</h3><p>人设 ZIP 可以直接分享，无需 GitHub 账号。公开投稿通过市场仓库提交；没有账号也可请协作者代交。</p>${link(`${MARKET}/blob/main/README.md`, '阅读投稿指南')}${link(`${MARKET}/pulls`, '前往市场仓库')}</div></section>`
     + `<section class="page-section prose"><h2>收录不是安全保证。</h2><p>校验、模拟测试和 GitHub 签署不代表无毒保证，也不是现实实名认证。安装前请核对来源、权限与版本，备份数据并谨慎启用。</p><p>新安全门禁须先合并市场检测流程并设为必需检查后才生效，具体版本以 Actions 报告为准。客户端尚未自动验证 GitHub 签署证明或远程撤回名单。</p><p>API 3 Wasm 消息插件适用于 4.1.0 起的兼容客户端，不提供 Node.js、文件、网络或定时能力。JavaScript API 4 从 4.1.2 起支持，发布前仅供开发测试，以 GitHub Releases 为准；它不是沙箱，具有完整系统权限，实验总开关默认关闭，必须逐个确认后启用。更新后需要重新授权。</p><div class="inline-links">${link(`${MARKET}/tree/${data.sourceCommit}`, '查看本次目录快照')}${link(`${MARKET}/actions`, '检测记录')}${link(`${APP}/blob/main/docs/插件免责声明.md`, '第三方插件风险说明')}${link(`${APP}/blob/main/docs/插件JavaScriptApi4.md`, 'JavaScript 插件说明')}</div><p>目录同步时间：${date(data.fetchedAt)}</p></section>`;
 }
@@ -235,41 +258,45 @@ function validateTips(tips) {
     ids.add(item.id);
     if (!Number.isSafeInteger(item.amountMinor) || item.amountMinor <= 0 || item.currency !== 'CNY') throw new Error('打赏金额须为人民币整数分');
     if (item.consent !== true && (item.name || item.message)) throw new Error('未获同意的记录必须匿名且不含留言');
-    const allowed = new Set(['id', 'date', 'amountMinor', 'currency', 'name', 'message', 'consent']);
+    const allowed = new Set(['id', 'date', 'amountMinor', 'currency', 'name', 'message', 'consent', 'channel']);
     if (Object.keys(item).some(key => !allowed.has(key))) throw new Error('打赏公示含非公开字段');
+    if (item.channel !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(item.channel)) throw new Error('打赏公示渠道标识无效');
     if ((item.name && typeof item.name !== 'string') || (item.message && typeof item.message !== 'string')) throw new Error('打赏公示名称或留言格式无效');
   }
   if (!Number.isSafeInteger(tips.entries.reduce((sum, item) => sum + item.amountMinor, 0))) throw new Error('打赏金额汇总超出范围');
   return tips;
 }
 
-function supportPage() {
-  return intro('A LITTLE ENCOURAGEMENT.', '给鲸鲸，<br>也给创造她的人，<br>一点鼓励。', '鲸鲸由我们三人共同开发和维护。如果她给你的日常带来了快乐，欢迎通过爱发电支持我们的创作。')
-    + `<section class="support-panel"><div><span class="tag">团队创作打赏</span><h2>谢谢你，让创作继续。</h2><p>这份支持，是对团队投入时间、精力与创意的鼓励。量力而行，喜欢和使用鲸鲸，本身就已经是一份支持。</p><div class="inline-links">${link('https://afdian.com/a/Banan1ce', '通过爱发电支持团队', 'button')}<a class="text-link" href="./transparency/">查看打赏公示 <span aria-hidden="true">↗</span></a></div></div><div class="support-art" aria-hidden="true"><img src="../whale.svg" alt="" width="640" height="420"><span>A LITTLE SUPPORT.<br>A LONGER STORY.</span></div></section>`
-    + `<section class="page-section prose"><p class="eyebrow">A FEW THINGS TO KNOW</p><h2>关于这份支持</h2><details open><summary>打赏会用于哪里？</summary><p>这是团队创作打赏，用于支持成员持续投入创作与维护，不是限定用途的项目经费，也不承诺全部用于服务器或其他指定支出。</p></details><details><summary>打赏会获得额外权益吗？</summary><p>本页的打赏不是软件购买、功能订单或专属技术支持承诺；不影响你正常下载和使用开源项目。具体爱发电方案如另有约定，请先阅读其页面说明。</p></details><details><summary>为什么官网没有支付表单？</summary><p>付款在爱发电完成，官网不接收支付信息，也不自动获取到账记录。支付、取消或退款问题请通过爱发电订单与团队沟通，具体以平台规则及适用要求为准。</p></details><details><summary>会公开我的信息吗？</summary><p>公示记录由团队核对后更新。只有取得同意后才公开昵称与留言；否则匿名展示。不公开真实支付账号、完整订单号或原始付款截图。</p></details></section><section class="page-section info-panel"><h2>不止一种支持方式。</h2><p>分享使用体验、反馈问题、参与测试、完善文档，或提交你自己的插件，也能让鲸鲸变得更好。</p><div class="inline-links">${link(`${APP}/issues`, '反馈问题')}${link(`${APP}/blob/main/CONTRIBUTING.md`, '参与贡献')}<a class="text-link" href="../plugins/">探索插件市场 ↗</a></div></section>`;
+function supportPage(support) {
+  const channels = support.channels.filter(channel => channel.enabled);
+  const channelCards = channels.map((channel, index) => `<article class="support-channel" data-channel="${e(channel.id)}"><div class="channel-heading"><span class="channel-mark" aria-hidden="true">${String(index + 1).padStart(2, '0')}</span><span class="tag">${channel.type === 'qrcode' ? '扫码支持' : '平台支持'}</span></div><h2>${e(channel.name)}</h2><p>${e(channel.description)}</p>${channel.type === 'link' ? link(channel.url, channel.button, 'button') : `<details class="qr-details"><summary class="button secondary">${e(channel.button)} <span aria-hidden="true">＋</span></summary><div class="qr-content"><img src="../${e(channel.image)}" alt="${e(channel.name)}收款二维码" width="240" height="240" loading="lazy">${channel.url ? link(channel.url, '打开支持页面') : ''}</div></details>`}${channel.instructions ? `<p class="channel-instructions">${e(channel.instructions)}</p>` : ''}</article>`).join('');
+  return intro('SUPPORT / THE PEOPLE BEHIND IT', e(support.title), e(support.lead))
+    + `<div class="support-layout"><section class="support-story"><p class="eyebrow">A LITTLE SUPPORT. A LONGER STORY.</p><h2>谢谢你，<br>让创作继续。</h2><p>${e(support.message)}</p><div class="support-whale" aria-hidden="true"><span class="support-orbit"></span><img src="../whale.svg" alt="" width="640" height="420"><i></i><i></i></div><div class="support-story-bottom"><span class="tag">团队创作打赏</span><a class="text-link" href="./transparency/">查看打赏公示 <span aria-hidden="true">↗</span></a></div></section><section class="support-methods" aria-labelledby="support-methods-heading"><div class="section-heading"><div><p class="eyebrow">CHOOSE YOUR WAY</p><h2 id="support-methods-heading">用你喜欢的方式。</h2></div><span class="section-count">${channels.length} 个已开放渠道</span></div><div class="support-channels">${channelCards || '<p class="empty-state">暂未开放打赏渠道。反馈、测试和创作，也是一种支持。</p>'}</div><div class="support-assurance"><span class="live-dot"></span><p>官网不保存支付凭据，不会自动确认到账。请核对对应渠道的收款信息。</p></div></section></div>`
+    + `<section class="page-section"><div class="section-heading"><div><p class="eyebrow">GIVE TIME. SHARE IDEAS.</p><h2>支持，不止一种方式。</h2></div><p>你的时间、经验与创意，同样珍贵。</p></div><div class="contribution-grid">${support.contributions.map((item, index) => `<article class="contribution-card"><span class="contribution-number">0${index + 1}</span><h3>${e(item.title)}</h3><p>${e(item.description)}</p>${item.url.startsWith('https:') ? link(item.url, item.button) : `<a class="text-link" href="../${e(item.url)}">${e(item.button)} <span aria-hidden="true">↗</span></a>`}</article>`).join('')}</div></section>`
+    + `<section class="page-section faq-layout"><div><p class="eyebrow">BEFORE YOU SUPPORT</p><h2>关于这份支持</h2><p>量力而行，心意就很好。</p></div><div class="prose">${support.faq.map(item => `<details><summary>${e(item.question)}<span aria-hidden="true">＋</span></summary><p>${e(item.answer)}</p></details>`).join('')}</div></section>`;
 }
 
-function tipsPage(tips) {
+function tipsPage(tips, support) {
   const rows = [...tips.entries].sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
   const years = [...new Set(rows.map(item => item.date.slice(0, 4)))];
   const months = Array.from({ length: 12 }, (_, i) => [String(i + 1).padStart(2, '0'), `${i + 1} 月`]);
   const total = rows.reduce((sum, item) => sum + item.amountMinor, 0);
   const money = value => new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(value / 100);
   return '<a class="back-link" href="../">← 支持我们</a>'
-    + intro('EVERY KINDNESS, REMEMBERED.', '打赏公示', '记录通过爱发电给予团队的创作支持。谢谢每一份鼓励。')
-    + `<div class="stats-grid"><div><span>已公示金额</span><strong>${rows.length ? money(total) : '暂未公布'}</strong></div><div><span>已公示记录</span><strong>${rows.length ? `${rows.length} 笔` : '暂未公布'}</strong></div><div><span>最近更新</span><strong>${tips.updatedAt || '尚未公布'}</strong></div></div><p class="notice">公示仅包含已核对、已发布的记录，不代表爱发电实时余额或全部到账金额。金额按平台记录的打赏金额展示，未扣除平台手续费。这是团队创作打赏，不是限定用途的项目收支账本。</p>`
-    + searchFilters('查找支持者', '公开昵称或留言', selectFilter('年份', 'year', years.map(year => [year, year])) + selectFilter('月份', 'month', months))
+    + intro('TRANSPARENCY / EVERY KINDNESS', '每一份鼓励，都被记得。', '打赏公示 · 以下为团队核对后公布的支持记录，不代表渠道实时余额。')
+    + `<div class="stats-grid"><div><span>已公示金额</span><strong>${rows.length ? money(total) : '暂未公布'}</strong></div><div><span>已公示记录</span><strong>${rows.length ? `${rows.length} 笔` : '暂未公布'}</strong></div><div><span>最近更新</span><strong>${tips.updatedAt || '尚未公布'}</strong></div></div>`
+    + searchFilters('查找支持者', '公开昵称或留言', selectFilter('年份', 'year', years.map(year => [year, year])) + selectFilter('月份', 'month', months) + selectFilter('渠道', 'channel', support.channels.map(channel => [channel.id, channel.name])))
     + (rows.length ? `<p>当前筛选合计：<strong id="filtered-amount">${money(total)}</strong></p>` : '')
-    + `<div class="table-scroll" role="region" aria-label="打赏记录表，可横向滚动" tabindex="0"><table class="tips-table"><caption>爱发电 · 团队创作打赏记录（人民币）</caption><thead><tr><th scope="col">日期</th><th scope="col">支持者</th><th scope="col" class="number-cell">打赏金额</th><th scope="col">留言</th></tr></thead><tbody>${rows.length ? rows.map(item => `<tr data-filter-item data-year="${item.date.slice(0, 4)}" data-month="${item.date.slice(5, 7)}" data-search="${e((item.name || '匿名支持者') + ' ' + (item.message || ''))}" data-amount="${item.amountMinor}"><td><time datetime="${item.date}">${item.date}</time></td><td>${e(item.name || '匿名支持者')}</td><td class="number-cell">${money(item.amountMinor)}</td><td>${e(item.message || '—')}</td></tr>`).join('') : '<tr><td colspan="4" class="empty-state">尚未公布打赏记录。团队核对并更新后，会在这里展示。</td></tr>'}</tbody></table></div><p id="filter-empty" class="empty-state" hidden>没有找到符合条件的打赏记录。</p><section class="page-section prose"><h2>公开、克制，也尊重隐私。</h2><p>昵称和留言仅在获得同意后公开，其余记录匿名展示。不会公开支付账号、完整订单号或未脱敏凭证。如需更正、匿名或移除留言，请通过爱发电联系团队。</p>${link('https://afdian.com/a/Banan1ce', '在爱发电联系团队')}</section>`;
+    + `<div class="table-scroll" role="region" aria-label="打赏记录表，可横向滚动" tabindex="0"><table class="tips-table"><caption>团队创作打赏记录（人民币）</caption><thead><tr><th scope="col">日期</th><th scope="col">支持者</th><th scope="col">渠道</th><th scope="col" class="number-cell">打赏金额</th><th scope="col">留言</th></tr></thead><tbody>${rows.length ? rows.map(item => `<tr data-filter-item data-year="${item.date.slice(0, 4)}" data-month="${item.date.slice(5, 7)}" data-channel="${e(item.channel)}" data-search="${e((item.name || '匿名支持者') + ' ' + (item.message || ''))}" data-amount="${item.amountMinor}"><td><time datetime="${item.date}">${item.date}</time></td><td>${e(item.name || '匿名支持者')}</td><td>${e(support.channels.find(channel => channel.id === item.channel).name)}</td><td class="number-cell">${money(item.amountMinor)}</td><td>${e(item.message || '—')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-state">尚未公布打赏记录。团队核对并更新后，会在这里展示。</td></tr>'}</tbody></table></div><p id="filter-empty" class="empty-state" hidden>没有找到符合条件的打赏记录。</p><section class="ledger-footer"><div><h2>公开、克制，也尊重隐私。</h2><p>昵称和留言仅经同意后公开。不公开支付账号、完整订单号或原始凭证；需要更正或匿名时，请联系团队。</p></div><div><p>金额按各渠道记录的打赏金额展示，未扣除手续费。这是团队创作打赏，不是限定用途的项目收支账本。</p>${link(support.contactUrl, '联系团队')}</div></section>`;
 }
 
 function teamPage(team) {
-  return intro('THE PEOPLE BEHIND THE WHALE.', '一起，让鲸鲸<br>慢慢长大。', '不同的分工，同一个心愿：让陪伴更自然，让使用更自在。')
+  return intro('TEAM / BUILT WITH CARE', '一起，让鲸鲸慢慢长大。', '不同的分工，同一个心愿：让陪伴更自然，让使用更自在。')
     + `<section aria-labelledby="team-heading"><h2 class="section-title" id="team-heading">团队成员</h2>${teamCards(team, '../')}</section>`
     + `<section class="page-section" aria-labelledby="thanks-heading"><p class="eyebrow">WITH THANKS</p><h2 id="thanks-heading">致谢与贡献者</h2><div class="credits-grid">${team.contributors.map(member => `<article class="credit-card"><img class="person-avatar" src="../images/team/${e(member.login)}.png" alt="" width="64" height="64" loading="lazy"><h3>${e(member.login)}</h3><p>${e(member.contribution)}</p>${link(`https://github.com/${member.login}`, 'GitHub')}</article>`).join('')}<article class="credit-card"><h3>上善无形</h3><p>图标原创角色作者，本项目图标为二创作品。</p>${link(`${APP}/blob/main/docs/NOTICE.md`, '素材署名与使用说明')}</article><article class="credit-card"><h3>上游开源项目</h3><p>感谢 wechatauto-replica、wxauto 及项目使用的开源工具。</p>${link(`${APP}#acknowledgements`, '查看完整致谢')}</article></div><p class="thanks-line">${e(team.thanks)}</p></section>`;
 }
 
-function buildSite({ root = path.resolve(__dirname, '..'), output, data, tips: suppliedTips }) {
+function buildSite({ root = path.resolve(__dirname, '..'), output, data, tips: suppliedTips, support: suppliedSupport }) {
   const site = path.join(root, 'website');
   const target = path.resolve(output);
   if (target === root || target === site || root.startsWith(target + path.sep) || target.startsWith(site + path.sep)) throw new Error('官网输出目录不能覆盖源码');
@@ -281,7 +308,10 @@ function buildSite({ root = path.resolve(__dirname, '..'), output, data, tips: s
     tags.add(item.tag_name); return true;
   }).sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at));
   const plugins = validatePlugins(data.plugins, data.sourceCommit);
-  const tips = validateTips(suppliedTips || JSON.parse(fs.readFileSync(path.join(site, 'content/tips.json'), 'utf8')));
+  const support = validateSupport(suppliedSupport || JSON.parse(fs.readFileSync(path.join(site, 'content/support.json'), 'utf8')), site);
+  const rawTips = validateTips(suppliedTips || JSON.parse(fs.readFileSync(path.join(site, 'content/tips.json'), 'utf8')));
+  const tips = { ...rawTips, entries: rawTips.entries.map(item => ({ ...item, channel: item.channel || support.defaultChannel })) };
+  if (tips.entries.some(item => !support.channels.some(channel => channel.id === item.channel))) throw new Error('公示记录使用了未登记的支持渠道');
   const team = JSON.parse(fs.readFileSync(path.join(site, 'content/team.json'), 'utf8'));
   let home = render(fs.readFileSync(path.join(site, 'index.html'), 'utf8'), data.latest, releases, { localLinks: true });
   const fill = (name, content) => {
@@ -292,6 +322,7 @@ function buildSite({ root = path.resolve(__dirname, '..'), output, data, tips: s
   fill('team', teamCards(team, './', true));
   fill('plugins', plugins.length ? pluginCards(plugins.slice(0, 3), './plugins/') : '<p>社区创作正在生长，欢迎提交你的插件。</p>');
   fill('thanks', `<p class="thanks-line wrap">${e(team.thanks)}</p>`);
+  fill('overview', `<div class="overview-grid"><a href="./downloads/"><span>最新正式版</span><strong>${e(data.latest.tag_name)}</strong><span>下载与完整更新 ↗</span></a><a href="./plugins/"><span>社区插件</span><strong>${plugins.length}<em> 个</em></strong><span>发现新的可能 ↗</span></a><a href="./team/"><span>一起创造</span><strong>${team.members.length}<em> 位成员</em></strong><span>认识开发团队 ↗</span></a><a href="./support/"><span>持续的创作</span><strong>与你一起</strong><span>支持团队 ↗</span></a></div>`);
   fs.mkdirSync(target, { recursive: true });
   fs.cpSync(site, target, { recursive: true });
   function write(route, title, description, content, current) {
@@ -304,8 +335,8 @@ function buildSite({ root = path.resolve(__dirname, '..'), output, data, tips: s
   for (const item of releases) write(`downloads/${releaseSlug(item.tag_name)}/`, releaseTitle(item), '查看这个版本的更新说明与官方发行文件。', releasePage(item, data.latest), 'downloads/');
   write('plugins/', '插件市场', '浏览鲸鲸社区插件，了解来源、权限与兼容范围。', pluginsPage(plugins, data), 'plugins/');
   for (const item of plugins) write(`plugins/${item.Id}/`, item.Name, item.Description, pluginDetail(item, data), 'plugins/');
-  write('support/', '支持团队创作', '通过爱发电支持鲸鲸团队的创作。', supportPage(), 'support/');
-  write('support/transparency/', '打赏公示', '查看鲸鲸团队已核对发布的爱发电打赏记录。', tipsPage(tips), 'support/');
+  write('support/', '支持团队创作', support.lead, supportPage(support), 'support/');
+  write('support/transparency/', '打赏公示', '查看鲸鲸团队已核对发布的各渠道打赏记录。', tipsPage(tips, support), 'support/');
   write('team/', '团队成员与致谢', '认识鲸鲸背后的三位开发者与贡献者。', teamPage(team), 'team/');
   const routes = ['', 'downloads/', 'plugins/', 'support/', 'support/transparency/', 'team/', ...releases.map(item => `downloads/${releaseSlug(item.tag_name)}/`), ...plugins.map(item => `plugins/${item.Id}/`)];
   fs.writeFileSync(path.join(target, 'sitemap.xml'), `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${routes.map(route => `<url><loc>${e(ORIGIN + route)}</loc></url>`).join('')}</urlset>\n`);

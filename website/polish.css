@@ -1,0 +1,86 @@
+/* 主题与状态反馈单独收口：正文不靠半透明制造层级，装饰不参与文字着色。 */
+:root{--ease-enter:cubic-bezier(.16,1,.3,1);--ease-exit:cubic-bezier(.4,0,.8,.3);--duration-press:120ms;--duration-panel:280ms}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#191c1a;--surface:#242a27;--surface-raised:#303b35;
+  --text:#f2f5f2;--muted:#bec9c2;--accent:#a7ddc6;
+  --line:#46554b;--button:#bce9d6;--button-text:#162c22;
+  --header:rgba(25,28,26,.97);--glow:rgba(111,178,152,.075);--shadow:0 18px 50px #00000026;
+}
+[data-theme="dark"] .hero{background:radial-gradient(ellipse at 70% 60%,#24382d55,transparent 63%),var(--bg)}
+[data-theme="dark"] .hero-grid{opacity:.035}
+[data-theme="dark"] .gradient-text{background:none;color:var(--accent);-webkit-text-fill-color:currentColor}
+[data-theme="dark"] .floating-message{background:#28322c;border-color:#55665a;box-shadow:0 14px 40px #0002}
+[data-theme="dark"] .message-avatar,[data-theme="dark"] .memory-node,[data-theme="dark"] .tag{background:var(--surface-raised);color:var(--accent);border-color:var(--line)}
+[data-theme="dark"] .chat-user{background:#303b35;color:var(--text)}
+[data-theme="dark"] .chat-whale{background:#28362e;color:var(--text);border-color:#5a7364}
+[data-theme="dark"] .report-art,[data-theme="dark"] .feature-card{background:var(--surface)}
+[data-theme="dark"] .button:hover{filter:none;background:#d1f1e2;box-shadow:0 7px 22px #0003}
+[data-theme="dark"] .button.secondary:hover{background:var(--surface-raised);color:var(--text)}
+[data-theme="dark"] .site-ambient{opacity:.35}
+[data-theme="dark"] .ambient-glow{opacity:.65}
+[data-theme="dark"] .ocean-glow{background:#6baf8c;opacity:.12}
+[data-theme="dark"] .orbital{border-color:#92bba438;box-shadow:none}
+[data-theme="dark"] input,[data-theme="dark"] select{border-color:#728a7b;color:var(--text);background:var(--bg)}
+[data-theme="dark"] input::placeholder{color:var(--muted);opacity:1}
+[data-theme="dark"] .release-info small,[data-theme="dark"] .person-card blockquote,[data-theme="dark"] .plugin-description{color:var(--muted)}
+[data-theme="dark"] .sample-chat small,[data-theme="dark"] .art-caption,[data-theme="dark"] .card-footnote,[data-theme="dark"] .report-kicker,[data-theme="dark"] .overline,[data-theme="dark"] .hero-bottom,[data-theme="dark"] .brand-en{color:var(--muted)}
+.page-lead,.channel-instructions,.support-assurance p,.plugin-meta,.person-role,.credit-card p,.ledger-footer p{opacity:1}
+.nav-links,.filter-bar label,.filter-status,.plugin-meta,.person-role,.plugin-id,.plugin-api,.archive-row time,.archive-description>span,.channel-instructions,.support-assurance p,.release-row time{font-size:13px}
+.tag{font-size:12px}.plugin-card .tag{font-size:11px}.note-toc a{font-size:13px}.release-head>span,.download-meta,.download-notes,.card-footnote{font-size:12px}
+.release-mark{color:var(--accent)}
+.page-intro{padding-block:14px 24px}
+
+/* 每个页面的主内容区都有同一个鲸鲸身份，不新增第二套 Logo。 */
+.page-brand-line{display:flex;align-items:center;justify-content:space-between;gap:20px;padding-bottom:7px}
+.whale-signature{display:inline-flex;align-items:center;gap:10px;color:var(--text);min-height:44px;border-radius:14px}
+.signature-portrait{position:relative;display:grid;place-items:center;width:37px;height:37px;flex:none;border-radius:12px;background:var(--surface-raised);border:1px solid var(--line)}
+.signature-portrait::after{content:"";position:absolute;inset:-4px;border:1px solid var(--accent);border-radius:15px;opacity:0;transform:scale(.88);transition:transform .3s var(--ease-enter),opacity .3s}
+.signature-avatar{display:block;width:32px;height:32px;object-fit:contain;border-radius:9px;animation:signature-breathe 6s ease-in-out infinite}
+.signature-copy{display:flex;align-items:baseline;gap:8px}.signature-copy strong{font-size:14px;font-weight:500}.signature-copy>span{font-size:11px;letter-spacing:.05em;color:var(--muted)}
+.whale-signature:hover .signature-portrait::after,.whale-signature:focus-visible .signature-portrait::after{opacity:.6;transform:scale(1)}
+.page-brand-location{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:10px}.page-brand-location::before{content:"";display:block;width:30px;height:1px;background:var(--line)}
+.hero-whale-mark{display:inline-flex;align-items:center;gap:10px;color:var(--accent);letter-spacing:.1em}.hero-whale-mark img{width:32px;height:32px;object-fit:contain;border:1px solid var(--line);border-radius:10px;background:var(--surface);animation:signature-breathe 6s ease-in-out infinite}
+.hero-whale-mark strong{font-size:15px;font-weight:500;letter-spacing:.03em}.hero-whale-mark>span{font-size:10px}
+@keyframes signature-breathe{0%,100%{translate:0 1px}50%{translate:0 -2px}}
+
+/* 入场、离场、按压分别使用 translate/opacity/scale，避免互相覆盖。 */
+.site-motion-ready .motion-item{transition:box-shadow .25s,border-color .2s,background-color .2s}
+.site-motion-ready .motion-item:not(.is-visible){opacity:0;translate:none}
+.site-motion-ready .motion-item.is-visible{opacity:1;translate:none}
+.site-motion-ready .motion-item:focus-within{opacity:1;translate:none}
+.motion-ghost-layer{position:fixed;inset:0;z-index:15;pointer-events:none;overflow:hidden}
+.motion-ghost-layer>*{position:fixed!important;margin:0!important;pointer-events:none!important;translate:none;opacity:1}
+.motion-ghost-layer>*::after{display:none}
+.motion-feedback{position:relative}
+.button,.icon-button,.motion-control,.category-choices button,.overview-grid>a,.whale-signature,summary{transition:background-color .2s,border-color .2s,box-shadow .2s,color .16s,scale var(--duration-press) var(--ease-enter)}
+.button:active,.icon-button:active,.motion-control:active,.category-choices button:active{transform:none}
+.nav-links a,.text-link{position:relative;text-decoration-thickness:1px;text-underline-offset:5px;transition:color .18s,text-decoration-color .18s}
+.nav-links a::after{content:"";position:absolute;left:0;right:0;bottom:-6px;height:1px;background:var(--accent);scale:0 1;transform-origin:left;transition:scale .26s var(--ease-enter)}
+.nav-links a:hover::after,.nav-links a[aria-current="page"]::after,.nav-links a:focus-visible::after{scale:1 1}
+.text-link:hover{text-decoration:underline}
+.filter-bar input,.filter-bar select{transition:border-color .18s,box-shadow .18s,background-color .18s}
+.filter-bar:focus-within{border-color:var(--accent)}
+.filter-bar input:focus-visible,.filter-bar select:focus-visible{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}
+.archive-row,.tips-table tbody tr{transition:background-color .2s,border-color .2s}
+.archive-row:hover,.tips-table tbody tr:hover{background:color-mix(in srgb,var(--accent) 5%,var(--bg))}
+.nav-links[data-panel-state="closing"]{display:flex}
+.site-enhanced .nav-links.open{animation:none}
+.disclosure-body{display:flow-root;overflow:hidden;min-height:0}
+.disclosure-body[hidden]{display:none!important}
+.faq-layout details summary,.qr-details summary{position:relative}
+.faq-layout details[data-disclosure-state="closing"] summary span,.qr-details[data-disclosure-state="closing"] summary span{transform:none}
+.faq-layout details[data-disclosure-state="opening"] summary span,.qr-details[data-disclosure-state="opening"] summary span{transform:rotate(45deg)}
+.faq-layout details[open]{border-color:var(--accent)}
+dialog[data-dialog-state="opening"],dialog[data-dialog-state="closing"]{overflow:hidden}
+dialog::backdrop{background:#0009;backdrop-filter:blur(6px);animation:backdrop-enter .22s ease-out}
+dialog[data-dialog-state="closing"]::backdrop{animation:backdrop-exit .18s ease-in forwards}
+@keyframes backdrop-enter{from{opacity:0}to{opacity:1}}@keyframes backdrop-exit{to{opacity:0}}
+::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal}
+::view-transition-group(root){animation-duration:0s}
+::view-transition{pointer-events:none}
+@media(min-width:901px){.nav-links[data-panel-state="closing"]{display:flex}}
+@media(max-width:760px){.signature-copy>span{display:none}.page-brand-line{padding-bottom:3px}.page-brand-location{font-size:11px}.signature-portrait{width:33px;height:33px}.signature-avatar{width:29px;height:29px}.page-intro{padding-top:12px}.person-role,.plugin-meta,.plugin-id,.plugin-api,.filter-status{font-size:13px}.hero-whale-mark strong{font-size:14px}}
+html[data-motion="paused"] .signature-avatar,html[data-motion="paused"] .hero-whale-mark img{translate:none}
+html[data-motion="paused"] .motion-item{opacity:1!important;translate:none!important}
+@media(prefers-reduced-motion:reduce){.signature-avatar,.hero-whale-mark img{animation:none;translate:none}.button,.icon-button,.motion-control,summary{transition:none}dialog::backdrop{animation:none}::view-transition-old(root),::view-transition-new(root){animation:none}}
