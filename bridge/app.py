@@ -252,6 +252,7 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
         self.send_lock = G.threading.Lock()
         self.account_lock = G.threading.RLock()
         self.dead_chats = set()
+        self.dead_chat_until = {}
         self.fail_streak = {}
         self.self_wxid = self.db.wxid
         self.ACCOUNT = {'hwnd': 0, 'verified': False, 'why': '', 'label': ''}

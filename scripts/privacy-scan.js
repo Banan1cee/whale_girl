@@ -116,7 +116,7 @@ const BINARY_RULES = [
         .some(prefix => text.slice(index).toLowerCase().startsWith(prefix)) &&
       // .NET 字符串后的二进制长度标记不一定解码成空白或 NUL，所以带文件名的目录
       // 必须紧跟 URL 分隔符（或什么都没跟）才算官方路径。
-      !/^raw\.githubusercontent\.com\/banan1cee\/whale-girl-plugins\/main\/(?:index-v3|index-personas)\.json(?![a-z0-9._~:/?#%=&+\-])/i.test(text.slice(index)),
+      !/^raw\.githubusercontent\.com\/banan1cee\/whale-girl-plugins\/main\/(?:index-v3|index-v4|index-personas)\.json(?![a-z0-9._~:/?#%=&+\-])/i.test(text.slice(index)),
   },
 ];
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#070b13">
+  <meta name="theme-color" content="#191c1a">
   <meta name="description" content="认识鲸鲸 Whale Girl：有记忆、有个性的开源 AI 微信伙伴。下载 Windows 版与历史版本，探索社区插件，认识开发团队。">
   <title>鲸鲸 Whale Girl — 让陪伴，有了回响。</title>
   <link rel="canonical" href="https://bot.zyyc.cc/">
@@ -12,6 +12,8 @@
   <script src="./theme.js"></script>
   <link rel="stylesheet" href="./style.css">
   <link rel="stylesheet" href="./pages.css">
+  <link rel="stylesheet" href="./polish.css">
+  <script src="./site-motion.js" defer></script>
   <script src="./site.js" defer></script>
   <script src="./motion.js" defer></script>
   <script src="./app.js" defer></script>
@@ -23,7 +25,7 @@
       <a class="brand" href="#home" aria-label="鲸鲸首页"><img class="brand-icon" src="./images/launcher-icon.png" alt="" width="256" height="256"><span>鲸鲸 <span class="brand-en">Whale Girl</span></span></a>
       <button class="menu-toggle icon-button" aria-label="打开导航" aria-expanded="false" aria-controls="nav-links"><span></span><span></span></button>
       <div class="nav-links" id="nav-links"><a href="./" aria-current="page">首页</a><a href="./downloads/">下载中心</a><a href="./plugins/">插件市场</a><a href="./support/">支持我们</a><a href="./team/">团队</a></div>
-      <div class="nav-actions"><button id="theme-toggle" class="icon-button" aria-label="切换明暗主题"><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z"/></svg></button><a class="button small" href="#download">免费下载 <span aria-hidden="true">↗</span></a></div>
+      <div class="nav-actions"><button class="motion-control" data-motion-toggle aria-label="暂停动态效果" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 8c4-8 10 8 14 0M5 16c4-8 10 8 14 0"/></svg><span data-motion-label>动态效果</span></button><button id="theme-toggle" class="icon-button" aria-label="切换明暗主题"><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z"/></svg></button><a class="button small" href="./downloads/">免费下载 <span aria-hidden="true">↗</span></a></div>
     </nav>
   </header>
   <main id="main">
@@ -32,7 +34,7 @@
       <div class="hero-grid" aria-hidden="true"></div>
       <div class="hero-copy wrap">
         <a class="release-pill" href="#updates"><span class="status-dot"></span> <!-- release:hero -->探索最新版本<!-- /release:hero --> <span aria-hidden="true">↗</span></a>
-        <p class="eyebrow">A LITTLE WHALE. A REAL CONNECTION.</p>
+        <p class="eyebrow"><span class="hero-whale-mark" data-whale-mark><img src="./images/launcher-icon.png" alt="" width="40" height="40"><strong>鲸鲸</strong><span>A REAL CONNECTION.</span></span></p>
         <h1>让陪伴，<br class="mobile-break">有了<span class="gradient-text">回响。</span></h1>
         <p class="hero-description">不止回答你的问题。<br>记住你的日常，接住你的情绪，偶尔还会和你斗嘴。<br class="desktop-break">认识鲸鲸，你的开源 AI 微信伙伴。</p>
         <div class="hero-buttons"><a class="button" href="#download">遇见鲸鲸 <span aria-hidden="true">↓</span></a><a class="text-link" href="#features">看看她有什么不同 <span aria-hidden="true">↗</span></a></div>
@@ -48,6 +50,7 @@
       <div class="hero-bottom wrap"><span>开源。自由。带一点小脾气。</span><a href="#features">向下探索 <span aria-hidden="true">↓</span></a><button class="motion-toggle" id="motion-toggle" aria-pressed="false">暂停动画 <span aria-hidden="true">Ⅱ</span></button></div>
     </section>
 
+    <div class="home-overview wrap"><!-- hub:overview --><p>下载正式版，发现社区插件，认识开发团队。</p><!-- /hub:overview --></div>
     <div class="journey-handoff" aria-hidden="true"><span></span><p>从一个问候，到一段陪伴。</p><span></span></div>
     <section class="story-section" id="story" aria-label="从相遇到陪伴">
       <div class="story-stage wrap">
@@ -83,7 +86,7 @@
         <article class="feature-card compact-card reveal"><span class="feature-symbol" aria-hidden="true">◎</span><span class="overline">03 / 与世界保持连接</span><h3>聊今天，也懂当下。</h3><p>按需联网搜索，关注热榜与新鲜事。让话题从日常，延伸到更大的世界。</p></article>
         <article class="feature-card compact-card reveal"><span class="feature-symbol" aria-hidden="true">⌘</span><span class="overline">04 / 选择权交给你</span><h3>你的模型。你的节奏。</h3><p>支持 DeepSeek、GLM、Qwen 与本地 Ollama。通过桌面启动器，管理你的鲸鲸。</p></article>
       </div>
-      <div class="model-strip reveal"><span>一个伙伴，多种可能</span><div>DeepSeek <b>·</b> GLM <b>·</b> Qwen <b>·</b> Ollama <b>·</b> OpenAI-compatible</div></div>
+      <div class="model-strip reveal"><span>一个伙伴，多种可能</span><div>DeepSeek <b aria-hidden="true">·</b> GLM <b aria-hidden="true">·</b> Qwen <b aria-hidden="true">·</b> Ollama <b aria-hidden="true">·</b> OpenAI-compatible</div></div>
     </section>
 
     <section class="updates-section" id="updates"><div class="wrap">

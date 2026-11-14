@@ -395,10 +395,7 @@ test('人设调教接口：读、改、恢复默认', async () => {
       age: 20,
       job: '咖啡店店员',
       personality: '话少、冷静、偶尔毒舌',
-      preset: '高冷',
-      text: '别用省略号',
       historyTurns: 12,
-      emotions: false,
       proactive: false,
       opinions: true,
       links: false,
@@ -409,7 +406,6 @@ test('人设调教接口：读、改、恢复默认', async () => {
     assert.equal(r.persona.name, '小鲸');
     assert.equal(r.persona.job, '咖啡店店员');
     assert.equal(r.persona.historyTurns, 12);
-    assert.equal(r.persona.emotions, false);
     assert.equal(r.persona.links, false);
     assert.deepEqual(r.persona.mutedGroups, ['测试群']);
 

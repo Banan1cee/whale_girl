@@ -66,6 +66,14 @@ function configHasPath(config, dotted) {
   }
 }
 
+/**
+ * 只镜像到 config.json、在 persona.json 里也保留的键。
+ * 桥接进程只读 config.json：人设名不同步过去的话，改完名字群里 @ 新名字要等桥接重启。
+ */
+const MIRROR_PATHS = {
+  name: 'persona.name',
+};
+
 function save(config, patch) {
   const file = fileFor(config);
   const patchObj = patch || {};
@@ -75,6 +83,12 @@ function save(config, patch) {
     if (patchObj[key] === undefined) continue;
     const value = normalized(key, patchObj[key]);
     if (value === undefined) continue;
+    configPatch[dotted] = value;
+  }
+  for (const [key, dotted] of Object.entries(MIRROR_PATHS)) {
+    if (patchObj[key] === undefined) continue;
+    const value = String(patchObj[key] == null ? '' : patchObj[key]).trim();
+    if (!value) continue;
     configPatch[dotted] = value;
   }
   if (Object.keys(configPatch).length) {
@@ -97,10 +111,7 @@ function save(config, patch) {
   }
   // 以当前生效值为底，避免“只改了一半”把别的设置冲掉（也兼容没有写文件权限的环境）
   const base = {
-    preset: config.persona && config.persona.stylePreset,
-    text: config.persona && config.persona.styleText,
     emoji: config.persona && config.persona.emojiLevel,
-    emotions: config.persona ? config.persona.emotions !== false : undefined,
     proactive: config.persona ? config.persona.proactive !== false : undefined,
     opinions: config.persona ? config.persona.opinions !== false : undefined,
     masterRoast: config.persona ? Boolean(config.persona.masterRoast) : undefined,
@@ -153,8 +164,6 @@ function save(config, patch) {
 }
 
 const DEFAULTS = {
-  preset: '',
-  text: '',
   emoji: '正常',
   // 必须和 DEFAULT_CONFIG.chat 保持同一套值，否则「恢复默认」会写回另一套数。
   privateMaxChars: 100,
@@ -164,7 +173,6 @@ const DEFAULTS = {
   links: true,
   freeChat: false,
   mutedGroups: [],
-  emotions: true,
   proactive: true,
   opinions: true,
   name: '鲸鲸',
@@ -192,6 +200,9 @@ function clear(config) {
     const value = normalized(key, DEFAULTS[key]);
     if (value !== undefined) back[dotted] = value;
   }
+  for (const [key, dotted] of Object.entries(MIRROR_PATHS)) {
+    if (DEFAULTS[key] !== undefined) back[dotted] = DEFAULTS[key];
+  }
   try {
     const { saveConfigPatch } = require('../infra/configPatch');
     saveConfigPatch(config, back);
@@ -214,8 +225,6 @@ function clear(config) {
 function apply(config, data) {
   data = data || {};
   if (!config.persona) config.persona = {};
-  config.persona.stylePreset = data.preset || '';
-  config.persona.styleText = data.text || '';
   config.persona.emojiLevel = data.emoji || '';
 
   if (!config.group) config.group = {};
@@ -238,7 +247,8 @@ function apply(config, data) {
       } else saveConfigPatch(config, legacy);
     } catch { /* 写不了就按默认值跑 */ }
   }
-  config.persona.emotions = data.emotions !== false;
+  // 情绪开关已移除：旧配置里残留的 emotions 直接忽略，不再写回
+  delete config.persona.emotions;
   // 主人被骂时她能不能还嘴（默认关；开了就允许毒舌互怼，但不许真脏字）
   if (data.masterRoast !== undefined) config.persona.masterRoast = Boolean(data.masterRoast);
   config.persona.proactive = data.proactive !== false;
@@ -255,8 +265,6 @@ function apply(config, data) {
 
 function summary(config) {
   return {
-    preset: config.persona.stylePreset || '',
-    text: config.persona.styleText || '',
     emoji: config.persona.emojiLevel || '正常',
     privateMaxChars: config.chat.privateMaxChars,
     groupMaxChars: config.chat.groupMaxChars,
@@ -266,7 +274,6 @@ function summary(config) {
     mutedGroups: Array.isArray(config.group.mutedGroups) ? config.group.mutedGroups.slice() : [],
     historyTurns: config.chat.historyTurns,
     groupHistoryTurns: config.chat.groupHistoryTurns,
-    emotions: config.persona.emotions !== false,
     proactive: config.persona.proactive !== false,
     opinions: config.persona.opinions !== false,
     masterRoast: Boolean(config.persona.masterRoast),

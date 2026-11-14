@@ -324,7 +324,8 @@ class DefaultSafetyTests(unittest.TestCase):
     def assert_quote_path(self, scope, requested=True, allowed=True):
         runtime, window, events, snapshot = self.window(scope)
         runtime.__dict__.update(
-            dead_chats=set(), group_is_alive=Mock(return_value=True), is_self_chat=Mock(return_value=False),
+            dead_chats=set(), dead_chat_until={}, chat_paused=Mock(return_value=False),
+            group_is_alive=Mock(return_value=True), is_self_chat=Mock(return_value=False),
             ui_chat_name=Mock(return_value='fixture-chat'), account_send_allowed=Mock(return_value=allowed),
             send_lock=nullcontext(), gui_lock=nullcontext(), send_policy_allows=Mock(return_value=True),
             sticker_quarantine_allows=Mock(return_value=True), fail_streak={}, bg_send=Mock(return_value=False),

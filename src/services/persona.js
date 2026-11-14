@@ -23,14 +23,12 @@ async function applyPersonaPatch(runtime, body) {
   if (body.background !== undefined) patch.background = str(body.background, 500);
   if (body.customPrompt !== undefined) patch.customPrompt = String(body.customPrompt ?? '').trim();
   if (body.age !== undefined) patch.age = Math.max(1, Math.min(120, Number(body.age) || 23));
-  if (body.preset !== undefined) patch.preset = str(body.preset, 20);
-  if (body.text !== undefined) patch.text = str(body.text, 300);
   if (body.emoji !== undefined) patch.emoji = ['关', '少', '正常', '多'].includes(body.emoji) ? body.emoji : '正常';
   if (body.historyTurns !== undefined) patch.historyTurns = Math.max(4, Math.min(400, Number(body.historyTurns) || 200));
   if (body.groupHistoryTurns !== undefined) patch.groupHistoryTurns = Math.max(2, Math.min(300, Number(body.groupHistoryTurns) || 150));
   if (body.privateMaxChars !== undefined) patch.privateMaxChars = Math.max(40, Math.min(800, Number(body.privateMaxChars) || 140));
   if (body.groupMaxChars !== undefined) patch.groupMaxChars = Math.max(20, Math.min(300, Number(body.groupMaxChars) || 70));
-  for (const k of ['emotions', 'proactive', 'opinions', 'links', 'freeChat']) {
+  for (const k of ['proactive', 'opinions', 'links', 'freeChat']) {
     if (body[k] !== undefined) patch[k] = Boolean(body[k]);
   }
   if (Array.isArray(body.mutedGroups)) patch.mutedGroups = body.mutedGroups.map((x) => String(x).trim()).filter(Boolean).slice(0, 30);

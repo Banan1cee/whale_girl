@@ -3,16 +3,21 @@
 const root = document.documentElement;
 
 const dialog = document.querySelector('#article-dialog');
-document.querySelector('[data-article="report"]').addEventListener('click', () => dialog.showModal());
-document.querySelector('#close-dialog').addEventListener('click', () => dialog.close());
+function toggleReport(open) {
+  if (window.WhaleSiteMotion) window.WhaleSiteMotion.dialog(dialog, open);
+  else if (open) dialog.showModal();
+  else dialog.close();
+}
+document.querySelector('[data-article="report"]').addEventListener('click', () => toggleReport(true));
+document.querySelector('#close-dialog').addEventListener('click', () => toggleReport(false));
 dialog.addEventListener('click', event => {
   const rect = dialog.getBoundingClientRect();
-  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) toggleReport(false);
 });
 
 const motionMedia = matchMedia('(prefers-reduced-motion: reduce)');
 const motionButton = document.querySelector('#motion-toggle');
-let motionPaused = motionMedia.matches;
+let motionPaused = window.WhaleSiteMotion?.paused ?? motionMedia.matches;
 function updateMotion() {
   root.dataset.motion = motionPaused ? 'paused' : 'running';
   motionButton.setAttribute('aria-pressed', String(motionPaused));
@@ -22,8 +27,12 @@ function updateMotion() {
   // 下一帧重新计算当前位置，恢复动画时不会停留在暂停前的章节。
   requestAnimationFrame(() => updateProgress());
 }
-motionButton.addEventListener('click', () => { motionPaused = !motionPaused; updateMotion(); });
-motionMedia.addEventListener('change', event => { motionPaused = event.matches; updateMotion(); });
+if (window.WhaleSiteMotion) {
+  window.addEventListener('whale:motion-change', event => { motionPaused = event.detail.paused; updateMotion(); });
+} else {
+  motionButton.addEventListener('click', () => { motionPaused = !motionPaused; updateMotion(); });
+  motionMedia.addEventListener('change', event => { motionPaused = event.matches; updateMotion(); });
+}
 updateMotion();
 
 const revealElements = [...document.querySelectorAll('.reveal')];

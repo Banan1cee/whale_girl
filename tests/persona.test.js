@@ -41,7 +41,7 @@ test('私聊提示词要求短句、不用 Markdown', () => {
 });
 
 for (const [label, customPrompt] of [['默认', ''], ['自定义', '你是鲸鲸，保持一点俏皮。']]) {
-  const promptConfig = { ...config, persona: { ...config.persona, customPrompt, stylePreset: '抽象' } };
+  const promptConfig = { ...config, persona: { ...config.persona, customPrompt } };
   const build = (extra = {}) => assemblePrompt({
     config: promptConfig,
     msg: { chatType: 'group', senderName: '阿螈', chatTitle: '深海鱼塘', ...extra },
@@ -110,6 +110,38 @@ test('自定义人设按已认证关系轻调语气，不强制敷衍或撒娇',
       assert.doesNotMatch(sys, /当前发言者是已认证的主人/);
     }
   }
+});
+
+test('颜文字档位在默认人设和自定义人设里都进提示词', () => {
+  for (const customPrompt of ['', '你是鲸鲸。']) {
+    const sys = assemblePrompt({
+      config: { ...config, persona: { ...config.persona, customPrompt, emojiLevel: '关' } },
+      msg: { chatType: 'private', senderName: '小海' },
+      now: new Date('2024-05-01T14:30:00'),
+    }).prompt;
+    assert.match(sys, /【颜文字 \/ emoji】完全不要用/, customPrompt ? '自定义人设' : '默认人设');
+  }
+});
+
+test('已移除的抽象模式、情绪开关、整体语气不再影响提示词', () => {
+  const sys = assemblePrompt({
+    config: {
+      ...config,
+      persona: {
+        ...config.persona,
+        stylePreset: '抽象',
+        styleText: '每句都要带省略号',
+        emotions: false,
+      },
+    },
+    msg: { chatType: 'private', senderName: '小海' },
+    now: new Date('2024-05-01T14:30:00'),
+  }).prompt;
+  assert.doesNotMatch(sys, /抽象模式/);
+  assert.doesNotMatch(sys, /整体语气/);
+  assert.doesNotMatch(sys, /每句都要带省略号/);
+  assert.doesNotMatch(sys, /【情绪】/);
+  assert.match(sys, /【说话示例/, '普通模式仍然带说话示例');
 });
 
 test('深夜心情自动变困', () => {

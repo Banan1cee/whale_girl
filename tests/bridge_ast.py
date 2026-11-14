@@ -13,6 +13,7 @@
 import ast
 import copy
 import glob
+import html
 import os
 import re
 import sys
@@ -74,6 +75,19 @@ def init(env):
     return env
 
 
+# 从 mixin 旁边抽出来的模块级纯函数：执行 handle_message 这类方法时它们必须先在
+# env 里，否则会在调用处 NameError。按依赖顺序加载，已有的不覆盖。
+_MODULE_HELPERS = ('_nested_quote_text', 'parse_quote_content', 'quote_content_text')
+
+
+def _load_module_helpers(env):
+    env.setdefault('html', html)
+    env.setdefault('re', re)
+    for helper in _MODULE_HELPERS:
+        if helper not in env:
+            load_function(helper, env)
+
+
 def _functions(name):
     for path, tree in _TREES:
         for node in ast.walk(tree):
@@ -83,6 +97,8 @@ def _functions(name):
 
 def load_function(name, env):
     init(env)
+    if name not in _MODULE_HELPERS:
+        _load_module_helpers(env)
     for path, node in _functions(name):
         node = copy.deepcopy(node)
         # 类方法去掉 self；保留原参数表。

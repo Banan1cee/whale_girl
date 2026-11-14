@@ -142,7 +142,7 @@ namespace WhaleLauncher.Views
 
         private Border BuildAdminSpellSection()
         {
-            var card = Card("管理员魔咒", "主人在微信私聊发魔咒后，可在同一私聊发送「禁言 群名」或「解除禁言 群名」。默认有效 30 分钟。", out var body);
+            var card = Card("管理员魔咒", "主人在微信私聊发魔咒后，可在同一私聊发送管理命令：禁言 群名 / 解除禁言 群名 / 改名 新名字 / 重置记忆 / 清空所有记忆。默认有效 30 分钟。", out var body);
             _adminSpellStatus = new TextBlock { Style = (Style)FindResource("Small") };
             body.Children.Add(_adminSpellStatus);
             var password = new PasswordBox();

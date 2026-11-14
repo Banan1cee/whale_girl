@@ -1,0 +1,31 @@
+{
+  "title": "给鲸鲸，也给创造她的人，一点鼓励。",
+  "lead": "鲸鲸由我们三人共同开发和维护。如果她给你的日常带来了快乐，欢迎支持我们的创作。",
+  "message": "这份支持，是对团队投入时间、精力与创意的鼓励。量力而行，喜欢和使用鲸鲸，本身就已经是一份支持。",
+  "defaultChannel": "afdian",
+  "contactUrl": "https://afdian.com/a/Banan1ce",
+  "channels": [
+    {
+      "id": "afdian",
+      "name": "爱发电",
+      "type": "link",
+      "url": "https://afdian.com/a/Banan1ce",
+      "description": "在爱发电支持鲸鲸团队，给持续的开发与创作一点鼓励。",
+      "button": "通过爱发电支持团队",
+      "instructions": "点击后在爱发电完成操作，请先阅读对应方案说明。",
+      "enabled": true,
+      "order": 10
+    }
+  ],
+  "contributions": [
+    { "title": "让问题被看见", "description": "告诉我们哪里不顺手，附上可复现的步骤。每一次反馈，都能帮助下一次改进。", "button": "反馈问题", "url": "https://github.com/Banan1cee/whale_girl/issues" },
+    { "title": "把创意变成代码", "description": "参与测试、完善文档，或提交代码。你的经验，也可以成为鲸鲸的一部分。", "button": "参与贡献", "url": "https://github.com/Banan1cee/whale_girl/blob/main/CONTRIBUTING.md" },
+    { "title": "分享你的鲸鲸", "description": "创作一个人设或插件，让更多人遇见不同的可能。", "button": "探索插件市场", "url": "plugins/" }
+  ],
+  "faq": [
+    { "question": "打赏会用于哪里？", "answer": "这是团队创作打赏，用于支持成员持续投入创作与维护，不是限定用途的项目经费，也不承诺全部用于服务器或其他指定支出。" },
+    { "question": "打赏会获得额外权益吗？", "answer": "本页的打赏不是软件购买、功能订单或专属技术支持承诺，不影响你正常下载和使用开源项目。具体渠道方案如另有约定，请先阅读对应页面说明。" },
+    { "question": "付款在哪里完成？", "answer": "外部支持渠道在其平台完成付款，二维码渠道由相应支付应用处理。官网不接收支付凭据、不自动确认到账。支付、取消或退款问题请通过对应渠道联系团队。" },
+    { "question": "会公开我的信息吗？", "answer": "公示由团队核对后更新。只有取得同意后才公开昵称与留言，否则匿名展示；不公开支付账号、完整订单号或原始付款截图。" }
+  ]
+}

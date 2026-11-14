@@ -756,6 +756,10 @@ def _remember_char_mode(hwnd, mode, log):
 # 探测收尾没把输入框清干净时置真，send() 看到就按 input_dirty 返回，不再往脏框里打字
 _DETECT_DIRTY = []
 
+# 探测字「鲸」在两种编码语义下的三种可能形态：编码对 = 鲸；GBK 字节被当
+# UTF-16 码元 = ¾¨；UTF-16 码元被按 GBK 解 = 笢。收尾只对这三种内容下手。
+_PROBE_TEXTS = ("鲸", "¾¨", "笢")
+
 
 def _composer_value(hwnd):
     try:
@@ -830,12 +834,20 @@ def _target_composer(info, chat):
     return info.get("edit") is not None and (not chat or _chat_is_target(info.get("chat"), chat)[0])
 
 
-def _read_typed_composer(hwnd, chat, expected):
-    """UIA may lag behind posted WM_CHAR. A mismatch must settle before any rewrite."""
+def _read_typed_composer(hwnd, chat, expected, attempts=8, gap=0.15):
+    """UIA may lag behind posted WM_CHAR. A mismatch must settle before any rewrite.
+
+    以前只读 4 次（约 0.4 秒）：微信偶尔还没把 WM_CHAR 落进控件模型，回读到
+    空框且「稳定」，紧接着收尾时又读到刚掉进去的字。结果探测字留在输入框，
+    下一次发送直接报 input_not_empty，这台机器就再也发不出去。
+    现在多等一会儿，并且「期望有字却读到空」不算稳定 —— 空恰恰是延迟的形态。
+    """
     previous = None
-    for attempt in range(4):
+    observed = None
+    info = None
+    for attempt in range(attempts):
         if attempt:
-            time.sleep(0.12)
+            time.sleep(gap)
         info = read_ui(hwnd)
         if not _target_composer(info, chat):
             return info, None, False
@@ -843,24 +855,37 @@ def _read_typed_composer(hwnd, chat, expected):
         observed = _composer_text(value)
         if observed == expected:
             return info, observed, True
-        stable = observed is not None and value == previous
+        # 连续两次读到同一个值才算稳定；空框（期望非空）继续等。
+        if attempt >= 3 and value == previous and not (observed == "" and expected):
+            return info, observed, True
         previous = value
-    return info, observed, stable
+    return info, observed, False
 
 
 def _reset_typed_composer(hwnd, chat, value, input_before):
     """Only replace a stable draft we just typed into the same conversation."""
     current = read_ui(hwnd)
-    if not _target_composer(current, chat) or current.get("value") != value:
+    if not _target_composer(current, chat):
+        return False
+    now = current.get("value")
+    if now is None:
+        # 读不到就不敢动；交给上层按脏框处理（不盲清）。
+        return False
+    if _is_blank(now):
+        # 框已经是空的：没有草稿要清，也不必管用户刚才动没动键鼠。
+        return True
+    if now != value:
+        # 内容还在变（或用户又写了一截）：放弃清理，别覆盖用户的字。
         return False
     # 两次读到相同内容也可能是用户刚写完；发现可能操作过微信就放弃清理。
-    if _draft_may_have_changed(hwnd, input_before):
+    # 例外：框里就是我们刚打的探测字（三种可能形态之一）。探测前已确认空框，
+    # 用户随手动一下鼠标不该让这个字永久留在框里堵死后续发送。
+    if _draft_may_have_changed(hwnd, input_before) and _composer_text(now) not in _PROBE_TEXTS:
         return False
-    if not _is_blank(value) and not _clear_composer(hwnd, current["edit"]):
+    if not _clear_composer(hwnd, current["edit"]):
         return False
     current = read_ui(hwnd)
-    return (_target_composer(current, chat) and _is_blank(current.get("value"))
-            and not _draft_may_have_changed(hwnd, input_before))
+    return _target_composer(current, chat) and _is_blank(current.get("value"))
 
 
 def _calibrate_char_mode(sender, chat, modes, log):
@@ -868,7 +893,8 @@ def _calibrate_char_mode(sender, chat, modes, log):
     for mode in modes:
         info = read_ui(sender.hwnd)
         if not _target_composer(info, chat) or not _is_blank(info.get("value")):
-            return "", False
+            # 会话切走了 / 框里本来就有草稿：这次一个字都没写，不算探测留下的脏框。
+            return "", True
         try:
             input_before = _input_snapshot()
             try:
@@ -877,11 +903,13 @@ def _calibrate_char_mode(sender, chat, modes, log):
                 info, got, stable = _read_typed_composer(sender.hwnd, chat, "鲸")
             finally:
                 sender.end_input()
-            if not stable or not _reset_typed_composer(sender.hwnd, chat, info.get("value"), input_before):
-                log("后台通道：编码探测后无法确认输入框已空，停止发送")
-                return "", False
+            clean = _reset_typed_composer(sender.hwnd, chat, info.get("value"), input_before)
         except Exception as err:
             log("后台通道：编码探测中断（%s），停止发送" % type(err).__name__)
+            return "", False
+        if not clean:
+            log("后台通道：编码探测后无法确认输入框已空（编码=%s，回读长度=%s，稳定=%s），停止发送"
+                % (mode, len(got) if got is not None else "未知", "是" if stable else "否"))
             return "", False
         if got == "鲸":
             log("后台通道：编码实测 → %s" % mode)
@@ -1432,6 +1460,8 @@ def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
             # 空框 UIA 读出来是 '\n'，按真值判会误报 input_not_empty（M1）；
             # 读不到（None）维持原语义：当作没草稿，继续发。
             if info["value"] is not None and not _is_blank(info["value"]):
+                if _composer_text(info["value"]) in _PROBE_TEXTS:
+                    log("后台通道：输入框里是编码探测留下的「鲸」，删掉后再发（不是用户草稿）")
                 return False, "input_not_empty"
             if info["value"] is None:
                 # 还没输入时可以安全退回 Unicode 剪贴板通道；输入之后则不能盲目重发。

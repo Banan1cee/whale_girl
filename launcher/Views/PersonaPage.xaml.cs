@@ -107,7 +107,6 @@ namespace WhaleLauncher.Views
                     SldEmoji.Value = EmojiPercent(cfg, _loadedEmoji);
                     UpdateEmojiHint();
 
-                    ChkEmotions.IsChecked = B(p, "emotions");
                     ChkProactive.IsChecked = B(p, "proactive");
                     ChkOpinions.IsChecked = B(p, "opinions");
                     ChkLinks.IsChecked = B(p, "links");
@@ -612,7 +611,6 @@ namespace WhaleLauncher.Views
                 historyTurns = turns,
                 groupHistoryTurns = gturns,
                 emoji,
-                emotions = ChkEmotions.IsChecked == true,
                 proactive = ChkProactive.IsChecked == true,
                 opinions = ChkOpinions.IsChecked == true,
                 links = ChkLinks.IsChecked == true
