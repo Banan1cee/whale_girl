@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 
@@ -181,10 +182,19 @@ test('安装包只在第二位版本号增加（新增功能）时构建', () =>
 });
 
 test('引用回复默认关闭（开着的话每条要多走一遍 UI，回复明显变慢）', () => {
-  const bridge = require('./helpers/bridge-source');
-  assert.match(bridge, /QUOTE_REPLY = _as_bool\(_wechat\.get\(['"]quoteReply['"], False\), False\)/, '启动读配置时默认必须是 False');
-  assert.match(bridge, /QUOTE_REPLY = _as_bool\(w\.get\(['"]quoteReply['"], False\), False\)/, '热重载时默认也必须是 False');
-  assert.doesNotMatch(bridge, /get\(['"]quoteReply['"], True\)/, '不能有人再写回 True');
+  const bundled = path.join(root, 'runtime/python/python.exe');
+  const python = process.env.WHALE_TEST_PYTHON || (fs.existsSync(bundled) ? bundled : 'python');
+  const behavior = spawnSync(python, ['-B', path.join(root, 'tests/test_refactor_t13_runtime.py'),
+    'DefaultSafetyTests.test_quote_reply_default_configured_and_reload',
+    'DefaultSafetyTests.test_quote_request_and_identity_gate_remain_required'], {
+    cwd: root, encoding: 'utf8', timeout: 30000,
+    env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.ifError(behavior.error);
+  assert.equal(behavior.status, 0, behavior.stdout + behavior.stderr);
+  assert.match(behavior.stderr, /Ran 2 tests/, '必须实际执行启动、热重载、配置覆盖和引用发送闸回归');
+  assert.match(behavior.stderr, /(?:^|\r?\n)OK(?:\r?\n|$)/);
   const example = JSON.parse(fs.readFileSync(path.join(root, 'config', 'config.example.json'), 'utf8').replace(/^\uFEFF/, ''));
   assert.equal(example.wechat.quoteReply, false, 'config.example 里也应该是 false');
 });

@@ -106,6 +106,9 @@ ACCOUNT_GUARD = True
 WINDOW_HWND = 0
 LOW_BATTERY_PCT = 5.0
 GOODNIGHT_TEXT = '晚安，电量快没了，我先睡啦，明天见～'
+CURRENT_CONFIG = {}
+CONFIG_SNAPSHOT = None
+_BOOT_CONFIG_VALID = False
 _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config.json')
 if not os.path.exists(_cfg_path):
     _example = os.path.join(os.path.dirname(_cfg_path), 'config', 'config.example.json')
@@ -119,56 +122,15 @@ if not os.path.exists(_cfg_path):
 try:
     with open(_cfg_path, 'r', encoding='utf-8-sig') as _f:
         _cfg = json.load(_f)
-    try:
-        _lv = str((_cfg.get('log') or {}).get('level') or 'info').strip().lower()
-        LOG_LEVEL = _lv if _lv in ('debug', 'info', 'error') else 'info'
-        bridge_log.set_level(LOG_LEVEL)
-    except Exception:
-        pass
     _stale = (_cfg.get('wechat') or {}).get('staleAfterSec')
     if isinstance(_stale, (int, float)) and _stale > 0:
         STALE_AFTER = float(_stale)
-    _wechat = _cfg.get('wechat') or {}
-    QUOTE_REPLY = _as_bool(_wechat.get('quoteReply', False), False)
-    KEYBOARD_FALLBACK = _as_bool(_wechat.get('keyboardFallback', True), True)
-    BACKGROUND_SEND = _as_bool(_wechat.get('backgroundSend', True), True)
-    try:
-        BG_SEND = _parse_bg_send(_wechat)
-    except Exception:
-        pass
-    try:
-        PIPELINE_WORKERS = max(1, min(16, int(_wechat.get('pipelineWorkers', 4) or 4)))
-        PIPELINE_QUEUE_LIMIT = max(1, min(32, int(_wechat.get('pipelineQueueLimit', 8) or 8)))
-    except Exception:
-        pass
-    try:
-        _pw = os.environ.get('WHALE_PIPELINE_WORKERS')
-        if _pw:
-            PIPELINE_WORKERS = max(1, min(16, int(_pw)))
-    except Exception:
-        pass
-    ACCOUNT_GUARD = _as_bool(_wechat.get('accountGuard', True), True)
-    WINDOW_HWND = _as_int(_wechat.get('windowHwnd'), 0)
-    LOW_BATTERY_PCT = _as_float(_wechat.get('lowBatteryPercent', 5), 5)
-    GOODNIGHT_TEXT = str(_wechat.get('goodnightText', '晚安，电量快没了，我先睡啦，明天见～'))
-    _care = _cfg.get('care') or {}
-    CARE_ENABLED = _as_bool(_care.get('enabled', True), True)
-    CARE_ALLOW_GROUPS = _as_bool(_care.get('allowGroups', False), False)
-    CARE_ONLY_MASTER = _as_bool(_care.get('onlyMaster', True), True)
-    CARE_ALLOW_OTHERS = _as_bool(_care.get('allowOthers', False), False)
-    CARE_QUIET_MIN = _as_float(_care.get('quietAfterMinutes', 20) or 0, 20.0)
-    STICKER_TEST_ON = _as_bool((_cfg.get('features') or {}).get('stickers', False), False)
-    STICKER_COLLECT = _as_bool((_cfg.get('sticker') or {}).get('collectReceived', False), False)
-    MASTER_WXID = (((_cfg.get('persona') or {}).get('master') or {}).get('wxids') or [''])[0]
+    _BOOT_CONFIG_VALID = True
 except Exception as _boot_cfg_err:
     try:
         log('启动配置解析中断：', repr(_boot_cfg_err))
     except Exception:
         print('[启动配置解析中断]', repr(_boot_cfg_err))
-try:
-    ACCOUNT_WANTED = str((_cfg.get('wechat') or {}).get('account') or '').strip()
-except Exception:
-    ACCOUNT_WANTED = ''
 START_TS = time.time()
 from http_client import ThreadLocalHTTP as _ThreadLocalHTTP
 LOCAL_HTTP = _ThreadLocalHTTP()
@@ -204,24 +166,42 @@ def fix_garbled(text):
     return text
 
 def log_throttled(key, *args, ttl=600, emit=None):
-    now = time.time()
-    last = _THROTTLE_LOG.get(key) or 0
-    if now - last < ttl:
-        _THROTTLE_LOG['__skip_' + key] = _THROTTLE_LOG.get('__skip_' + key, 0) + 1
-        return
-    skipped = _THROTTLE_LOG.pop('__skip_' + key, 0)
-    if skipped:
-        log(f'（上面这类日志还有 {skipped} 条被折叠了）')
-    _THROTTLE_LOG[key] = now
-    (emit or log)(*args)
+    from runtime_log_throttle import log_throttled as bounded_log
+    bounded_log(_THROTTLE_LOG, key, *args, ttl=ttl, emit=emit or log,
+                folded=log, clock=getattr(time, 'monotonic', time.time))
 
-def reload_config(path=None):
+def _publish_runtime_config(cfg, snapshot):
+    global CURRENT_CONFIG, CONFIG_SNAPSHOT
+    values = dict(snapshot['values'])
+    VOICE_BASE_URL = values['VOICE_BASE_URL']
+    values['VOICE_API_KEY'] = _resolve_voice_key(cfg, VOICE_BASE_URL, ROOT)
+    values['SYSTEM_SENDER_NAMES'] = set(BASE_SYSTEM_SENDERS) | set(snapshot['ignoreSenders'])
+    # Resolve all derived values before publishing: a failed read/parse keeps
+    # the previous coherent configuration rather than half-updated globals.
+    globals().update(values)
+    set_system_senders(SYSTEM_SENDER_NAMES)
+    bridge_log.set_level(LOG_LEVEL)
+    CURRENT_CONFIG, CONFIG_SNAPSHOT = cfg, snapshot
+
+
+def restart_for_config_change():
+    log('桥接配置需要重启，等待在途发送结束（最多 15 秒）…')
+    time.sleep(3)
+    deadline = time.monotonic() + 15
+    while SEND_STATE.get('active') and time.monotonic() < deadline:
+        time.sleep(1)
+    if SEND_STATE.get('active'):
+        log('⚠️ 仍有发送未结束就重启了，输入框可能留有半截草稿，请手动清一下')
+    os._exit(7)
+
+
+def reload_config(path=None, *, config=None):
     """把 config.json 重新读一遍，覆盖上面这些「启动时定型」的开关。
 
     为什么需要：启动器改的是 config.json，但桥接以前只在启动时读一次，
     用户在启动器里关掉「主动搭话」、改「忽略名单」、调「群聊开关」……全都没反应，
     只能在启动器里手动重启桥接，表现出来就是「调了没用，还是默认」。
-    现在 config.json 一变，5 秒内自动生效。
+    可热更字段在 5 秒内生效；连接、账号和线程池参数变更需安全重启。
 
     返回是否真的重新加载了。
     """
@@ -231,94 +211,27 @@ def reload_config(path=None):
     global CARE_ENABLED, CARE_QUIET_MIN
     global STALE_AFTER, SYSTEM_SENDER_NAMES, BASE_SYSTEM_SENDERS, MASTER_WXID
     global VOICE_ENABLED, VOICE_BASE_URL, VOICE_MODEL, VOICE_API_KEY, VOICE_TIMEOUT, VOICE_MAX_SECONDS
-    target = path or CONFIG_PATH
-    try:
-        with open(target, 'r', encoding='utf-8-sig') as f:
-            cfg = json.load(f)
-    except Exception as e:
-        log('重读配置失败（继续用旧值）：', repr(e))
-        return False
-    try:
-        STICKER_TEST_ON = _as_bool((cfg.get('features') or {}).get('stickers', False), False)
-        STICKER_COLLECT = _as_bool((cfg.get('sticker') or {}).get('collectReceived', False), False)
-    except Exception:
-        pass
-    w = cfg.get('wechat') or {}
-    try:
-        STALE_AFTER = float(w.get('staleAfterSec') or STALE_AFTER or 120)
-    except Exception:
-        pass
-    try:
-        LOW_BATTERY_PCT = float(w.get('lowBatteryPercent', 5))
-    except Exception:
-        pass
-    QUOTE_REPLY = _as_bool(w.get('quoteReply', False), False)
-    KEYBOARD_FALLBACK = _as_bool(w.get('keyboardFallback', True), True)
-    BACKGROUND_SEND = _as_bool(w.get('backgroundSend', True), True)
-    try:
-        BG_SEND = _parse_bg_send(w)
-    except Exception:
-        pass
-    try:
-        PIPELINE_WORKERS = max(1, min(16, int(w.get('pipelineWorkers', PIPELINE_WORKERS) or 4)))
-        PIPELINE_QUEUE_LIMIT = max(1, min(32, int(w.get('pipelineQueueLimit', PIPELINE_QUEUE_LIMIT) or 8)))
-    except Exception:
-        pass
-    ACCOUNT_GUARD = _as_bool(w.get('accountGuard', True), True)
-    try:
-        WINDOW_HWND = int(w.get('windowHwnd') or 0)
-    except Exception:
-        WINDOW_HWND = 0
-    wanted_now = str(w.get('account') or '').strip()
-    if wanted_now != ACCOUNT_WANTED:
-        log('账号设置变了（%s → %s），3 秒后自动重启桥接…' % (safe_id(ACCOUNT_WANTED), safe_id(wanted_now)))
-        time.sleep(3)
-        _restart_deadline = time.time() + 15
-        while SEND_STATE.get('active') and time.time() < _restart_deadline:
-            log('等待在途发送结束再重启（最多 15 秒）…')
-            time.sleep(1)
-        if SEND_STATE.get('active'):
-            log('⚠️ 仍有发送未结束就重启了，输入框可能留有半截草稿，请手动清一下')
-        os._exit(7)
-    GOODNIGHT_TEXT = str(w.get('goodnightText') or GOODNIGHT_TEXT)
-    SYSTEM_SENDER_NAMES = set(BASE_SYSTEM_SENDERS)
-    SYSTEM_SENDER_NAMES |= {str(x).strip() for x in w.get('ignoreSenders') or [] if str(x).strip()}
-    set_system_senders(SYSTEM_SENDER_NAMES)
-    ca = cfg.get('care') or {}
     global CARE_ENABLED, CARE_ALLOW_GROUPS, CARE_ONLY_MASTER, CARE_ALLOW_OTHERS
-    CARE_ENABLED = _as_bool(ca.get('enabled', True), True)
-    CARE_ALLOW_GROUPS = _as_bool(ca.get('allowGroups', False), False)
-    CARE_ONLY_MASTER = _as_bool(ca.get('onlyMaster', True), True)
-    CARE_ALLOW_OTHERS = _as_bool(ca.get('allowOthers', False), False)
     try:
-        CARE_QUIET_MIN = float(ca.get('quietAfterMinutes', 20) or 0)
-    except Exception:
-        CARE_QUIET_MIN = 20.0
-    vo = cfg.get('voice') or {}
-    if 'enabled' in vo:
-        VOICE_ENABLED = _as_bool(vo.get('enabled'), False)
-    if vo.get('baseUrl'):
-        VOICE_BASE_URL = str(vo.get('baseUrl'))
-    if vo.get('model'):
-        VOICE_MODEL = str(vo.get('model'))
-    try:
-        if vo.get('timeoutMs') is not None:
-            VOICE_TIMEOUT = float(vo.get('timeoutMs')) / 1000.0
-        if vo.get('maxSeconds') is not None:
-            VOICE_MAX_SECONDS = float(vo.get('maxSeconds'))
-    except Exception:
-        pass
-    VOICE_API_KEY = _resolve_voice_key(cfg, VOICE_BASE_URL, ROOT)
-    wxids = ((cfg.get('persona') or {}).get('master') or {}).get('wxids') or []
-    if wxids:
-        MASTER_WXID = wxids[0]
+        if config is None:
+            with open(path or CONFIG_PATH, 'r', encoding='utf-8-sig') as f:
+                cfg = json.load(f)
+        else:
+            cfg = config
+        snapshot = bridge_config.runtime_snapshot(cfg)
+        if CONFIG_SNAPSHOT is not None and bridge_config.restart_fields(CONFIG_SNAPSHOT, snapshot):
+            restart_for_config_change()
+            return False
+        _publish_runtime_config(cfg, snapshot)
+    except Exception as exc:
+        log('重读配置失败（继续用旧值）：', type(exc).__name__)
+        return False
+    # Keep the compatibility assignment fed by the normalized snapshot.
+    w = {'staleAfterSec': snapshot['values']['STALE_AFTER']}
+    STALE_AFTER = float(w.get('staleAfterSec') or STALE_AFTER or 120)
     return True
 SYSTEM_SENDER_NAMES = {'微信团队', '微信支付', '服务通知', '订阅号消息', '文件传输助手', '微信运动', '微信公众平台', '腾讯客服', '微信安全中心', '微信广告'}
 BASE_SYSTEM_SENDERS = set(SYSTEM_SENDER_NAMES)
-try:
-    SYSTEM_SENDER_NAMES |= {str(x).strip() for x in _wechat.get('ignoreSenders') or [] if str(x).strip()}
-except Exception:
-    pass
 set_system_senders(SYSTEM_SENDER_NAMES)
 
 def looks_like_db_root(p):
@@ -346,7 +259,7 @@ def list_accounts_cli():
     db_dir = resolve_db_dir()
     rows = []
     names = find_account_dirs(db_dir) if db_dir else []
-    deadline = time.time() + 20
+    deadline = time.monotonic() + 20
     try:
         from wechatauto import WeChatDB
     except Exception as e:
@@ -364,7 +277,7 @@ def list_accounts_cli():
             item['lastActive'] = int(newest * 1000)
         except Exception:
             pass
-        if WeChatDB is not None and time.time() < deadline:
+        if WeChatDB is not None and time.monotonic() < deadline:
             try:
                 probe = WeChatDB(db_dir=db_dir, account=n)
                 if probe.account == n:
@@ -377,9 +290,8 @@ def list_accounts_cli():
     payload = {'dbDir': db_dir or '', 'generatedAt': int(time.time() * 1000), 'accounts': rows}
     path = os.path.join(ROOT, 'data', 'accounts.json')
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        from runtime_json import atomic_write_json
+        atomic_write_json(path, payload, indent=2)
         log('列账号完成：%d 个（%s）' % (len(rows), '、'.join((safe_id(r['account']) for r in rows)) or '无'))
     except Exception as e:
         log('列账号：写 %s 失败：%r' % (safe_path(path), e))
@@ -407,7 +319,7 @@ def write_accounts_cache(db_dir, account='', nick='', probe_others=True, deadlin
                 from wechatauto import WeChatDB as wechat_db
             except Exception:
                 wechat_db = None
-        deadline = time.time() + max(1, deadline_sec)
+        deadline = time.monotonic() + max(1, deadline_sec)
         rows = []
         for n in names:
             item = {'account': n, 'wxid': account_wxid(n), 'nick': '', 'lastActive': 0}
@@ -422,7 +334,7 @@ def write_accounts_cache(db_dir, account='', nick='', probe_others=True, deadlin
             except Exception:
                 pass
             item['lastActive'] = int(newest * 1000)
-            if not item['nick'] and wechat_db is not None and (time.time() < deadline):
+            if not item['nick'] and wechat_db is not None and (time.monotonic() < deadline):
                 try:
                     probe = wechat_db(db_dir=db_dir, account=n)
                     if probe.account == n:
@@ -434,9 +346,8 @@ def write_accounts_cache(db_dir, account='', nick='', probe_others=True, deadlin
         rows.sort(key=lambda x: -x['lastActive'])
         payload = {'dbDir': db_dir, 'generatedAt': int(time.time() * 1000), 'accounts': rows}
         path = os.path.join(ROOT, 'data', 'accounts.json')
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        from runtime_json import atomic_write_json
+        atomic_write_json(path, payload, indent=2)
         log('账号缓存已补写：%d 个号（%s）' % (len(rows), '、'.join((safe_name(r['nick']) if r['nick'] else safe_id(r['account']) for r in rows))))
         return True
     except Exception as e:
@@ -450,16 +361,11 @@ VOICE_API_KEY = ''
 VOICE_TIMEOUT = 90
 VOICE_MAX_SECONDS = 120
 VOICE_SAMPLE_RATE = 16000
-try:
-    _voice_cfg = _cfg.get('voice') or {}
-    VOICE_ENABLED = _as_bool(_voice_cfg.get('enabled', True), True)
-    VOICE_BASE_URL = str(_voice_cfg.get('baseUrl') or VOICE_BASE_URL)
-    VOICE_MODEL = str(_voice_cfg.get('model') or VOICE_MODEL)
-    VOICE_TIMEOUT = float(_voice_cfg.get('timeoutMs', 90000)) / 1000.0
-    VOICE_MAX_SECONDS = float(_voice_cfg.get('maxSeconds', 120))
-    VOICE_API_KEY = _resolve_voice_key(_cfg, VOICE_BASE_URL, ROOT)
-except Exception:
-    pass
+if _BOOT_CONFIG_VALID:
+    try:
+        _publish_runtime_config(_cfg, bridge_config.runtime_snapshot(_cfg))
+    except Exception as exc:
+        log('启动配置解析中断：', type(exc).__name__)
 MOCK_NOTICED = {'done': False}
 boot('脚本开始执行')
 

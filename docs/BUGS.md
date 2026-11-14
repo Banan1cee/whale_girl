@@ -5,6 +5,10 @@
 
 | # | 现象 | 根因 | 修复 | 版本 | 回归测试 |
 | --- | --- | --- | --- | --- | --- |
+| 102 | 主动搭话状态或账号缓存写入失败损坏旧件，固定临时名可能冲突 | 直接打开目标写入或复用同一临时文件 | 使用同目录唯一临时文件并原子替换，失败保留旧件且只清理本次临时文件；保留调用方 best-effort 与独占标记协议 | 4.1.3 | `tests/test_refactor_t13_atomic_json.py` |
+| 101 | 桥接日志节流键长期增长，并发首错与折叠计数不一致 | 多套无界字典使用不同时间窗口 | 共享容量、TTL 和并发抑制，保留首错、折叠计数及旧入口 None 返回 | 4.1.3 | `tests/test_refactor_t13_runtime.py` |
+| 100 | 缺省 token 或坏配置触发误重启，热改线程池参数后记录与实际不符 | 启动、重载和监视器各自读取并使用不同默认值 | 共用有效配置快照，坏 JSON 保留旧值并允许同 mtime 重读；需重启参数在安全重启前保留实际运行值 | 4.1.3 | `tests/test_refactor_t13_runtime.py` |
+| 99 | 提醒丢群 @、空目标仍发送，HTTP 或业务失败混同无任务及成功回执 | 生产提醒接线与受测工厂重复，工厂不匹配实际 get/post 客户端 | 真实装配委托统一适配器并校验目标和响应，保留插件授权、语音取消及关闭生命周期；未知结果不自动重试 | 4.1.3 | `tests/test_engine_reminder_wiring.py`、`tests/test_reminder_watch.py`、`tests/bridge-reminder-wiring.test.js` |
 | 98 | Python 同名测试被覆盖，桥接配置与目录回归在 CI 有可用解释器时仍被跳过 | 重复方法名只收集最后一个用例，测试只检查固定便携解释器路径 | 审计同名声明并保留两份原测试体，验证实际可用解释器；桥接回归使用隔离副本并禁止真实进程、磁盘和用户配置探测 | 4.1.3 | `tests/refactor-t23-python-audit.test.js`、`tests/refactor-t23-python-entry.test.js`、`tests/bridge-globals.test.js`、`tests/db-dir.test.js` |
 | 97 | 隐私扫描未读取文件或目录时仍可能报告干净 | 扫描计数与读取成功脱钩，读取异常未作为不完整结果传播 | 区分已读、主动排除和读取错误，严格 API 与命令行拒绝不完整结果；发布自检调用者的严格结果接线另行完成 | 4.1.3 | `tests/refactor-t23-privacy-scan.test.js`、`tests/privacy-scan.test.js` |
 | 96 | 本地与 CI 任务不一致，早先失败被后续成功覆盖，C# 静态文本被误记为执行证据 | 测试入口与退出码分别维护，库存未严格区分编译入口、调用声明和实际执行 | 共用有序任务清单并保留每个失败，校验嵌套项目的真实选中入口；静态声明明确不代表 case 已执行 | 4.1.3 | `tests/refactor-t23-test-tasks.test.js`、`tests/refactor-t23-inventory.test.js`、`tests/ci-test-order.test.js` |

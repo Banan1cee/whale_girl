@@ -25,11 +25,8 @@ class LoopMixin:
 
         def save_state(st):
             try:
-                G.os.makedirs(G.os.path.dirname(state_file), exist_ok=True)
-                tmp = state_file + '.tmp'
-                with open(tmp, 'w', encoding='utf-8') as f:
-                    G.json.dump(st, f, ensure_ascii=False)
-                G.os.replace(tmp, state_file)
+                from runtime_json import atomic_write_json
+                atomic_write_json(state_file, st)
             except Exception as e:
                 G.log_warn('主动搭话状态保存失败：', repr(e))
         while True:
@@ -393,12 +390,21 @@ class LoopMixin:
                 continue
             if mt == last:
                 continue
-            last = mt
-            current = G.read_config()
-            if str(((current.get('gateway') or {}).get('wechat') or {}).get('inboundToken') or '') != str(self.token or '') or str((current.get('wechat') or {}).get('dbDir') or '') != str((self.cfg.get('wechat') or {}).get('dbDir') or '') or G.build_bot_url(current) != self.bot_url:
-                G.log('桥接连接设置变了，重新连接微信与内核…')
-                G.os._exit(7)
-            if G.reload_config():
+            try:
+                current = G.read_config(strict=True)
+                before = getattr(G, 'CONFIG_SNAPSHOT', None) or G.bridge_config.runtime_snapshot(self.cfg)
+                after = G.bridge_config.runtime_snapshot(current)
+                current_url = G.build_bot_url(current)
+            except Exception as exc:
+                G.log('重读配置失败（继续用旧值）：', type(exc).__name__)
+                continue
+            changed = G.bridge_config.restart_fields(before, after)
+            if changed or current_url != self.bot_url:
+                G.log('桥接连接或调度设置变了，重新连接微信与内核…')
+                G.restart_for_config_change()
+                return
+            if G.reload_config(config=current):
+                last = mt
                 # 人设名/别名也可能刚被改过；同步给群聊 @ 判定，并清掉 60 秒缓存，
                 # 否则用户改完称呼还要等下一轮刷新才生效。
                 self.cfg = current
@@ -435,48 +441,16 @@ class LoopMixin:
 
         ReminderRunner（bridge/reminder_watch.py）依赖全部注入：
           fetch → GET  /api/reminders/due（到点的 + 下一条时间）
-          send  → send_text 发到提醒所属会话
+          send  → 共享适配器保留群 @、会话身份、插件授权和语音取消复核
           ack   → POST /api/reminders/ack（回执；失败由服务端 5 分钟后重试）
         实例存模块级 REMINDER_RUNNER，退出分支（KeyboardInterrupt）能拿到它。
         """
         try:
-            try:
-                from reminder_watch import ReminderRunner
-            except Exception:
-                from .reminder_watch import ReminderRunner
             base = self.bot_url.rsplit('/webhook', 1)[0]
-            headers = {'x-whale-bridge': '1'}
-            if self.token:
-                headers['x-bot-token'] = self.token
-
-            def _fetch_due():
-                r = G.LOCAL_HTTP.get(base + '/api/reminders/due', headers=headers, timeout=10)
-                return r.json() if getattr(r, 'status_code', 0) == 200 else {}
-
-            def _send_due(item, text):
-                wxid = str(item.get('wxid') or '').strip()
-                name = str(item.get('name') or '').strip() or self.display_name(wxid)
-                if item.get('kind') == 'plugin':
-                    def allowed():
-                        try:
-                            response = G.LOCAL_HTTP.post(base + '/api/reminders/permission',
-                                json={'id': item.get('id')}, headers=headers, timeout=3)
-                            return response.status_code == 200 and response.json().get('ok') is True
-                        except Exception:
-                            return False
-                    if not allowed():
-                        return False
-                    if item.get('delivery') == 'voice':
-                        return bool(self.send_voice_reply(text, name, wxid, cancelled=lambda: not allowed()))
-                return bool(self.send_text(text, name, wxid))
-
-            def _ack_due(item, ok, err):
-                try:
-                    G.LOCAL_HTTP.post(base + '/api/reminders/ack', json={'id': item.get('id'), 'ok': bool(ok), 'error': str(err or '')}, headers=headers, timeout=10)
-                except Exception as e:
-                    G.log('提醒回执没送到（服务端会自己重试）：', repr(e))
-            G.REMINDER_RUNNER = ReminderRunner(fetch=_fetch_due, send=_send_due, ack=_ack_due, log=G.log)
-            G.threading.Thread(target=G.REMINDER_RUNNER.run, daemon=True, name='reminder-watch').start()
+            G.REMINDER_RUNNER = G.start_reminder_watch(
+                http=G.LOCAL_HTTP, base=base, token=self.token,
+                send_text=self.send_text, send_at=self.send_at,
+                send_voice=self.send_voice_reply, display_name=self.display_name, log=G.log)
             G.log('提醒调度已启动（到点准点发）')
             return G.REMINDER_RUNNER
         except Exception as e:

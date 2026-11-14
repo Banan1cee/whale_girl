@@ -150,7 +150,7 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
                 G.log('源码运行：先装 bridge/requirements.txt 里的依赖，并把 vendor/wechatauto 加进 PYTHONPATH；')
                 G.log('用启动器时它会自动从 runtime/python 加载，不用手动装包。')
             return 1
-        self.cfg = G.read_config()
+        self.cfg = G.CURRENT_CONFIG
         self.token = G.bridge_config.wechat_token(self.cfg)
         self.bot_url = G.build_bot_url(self.cfg)
         self.aliases = ((self.cfg.get('persona') or {}).get('aliases') or []) + [(self.cfg.get('persona') or {}).get('name') or '鲸鲸']

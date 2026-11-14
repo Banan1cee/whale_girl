@@ -14,6 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const bridge = require('./helpers/bridge-source');
@@ -95,7 +96,19 @@ test('UIA 彻底不行时有键盘兜底通道（Ctrl+F 搜索会话 → 粘贴 
  * 所以「必须占前台」是我们自己的 with_window_on_top 造成的，不是 UIA 的要求。
  */
 test('默认后台发送，发完把窗口状态还原（电脑可以正常用）', () => {
-  assert.match(bridge, /BACKGROUND_SEND\s*=\s*_as_bool\(_wechat\.get\(['"]backgroundSend['"], True\), True\)/, '默认要开着');
+  const bundled = path.join(root, 'runtime/python/python.exe');
+  const python = process.env.WHALE_TEST_PYTHON || (fs.existsSync(bundled) ? bundled : 'python');
+  const behavior = spawnSync(python, ['-B', path.join(root, 'tests/test_refactor_t13_runtime.py'),
+    'DefaultSafetyTests.test_background_default_configured_and_restore',
+    'DefaultSafetyTests.test_background_restore_on_error_and_identity_failure'], {
+    cwd: root, encoding: 'utf8', timeout: 30000,
+    env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.ifError(behavior.error);
+  assert.equal(behavior.status, 0, behavior.stdout + behavior.stderr);
+  assert.match(behavior.stderr, /Ran 2 tests/, '必须实际执行默认值、显式开关和还原行为回归');
+  assert.match(behavior.stderr, /(?:^|\r?\n)OK(?:\r?\n|$)/);
   assert.match(bridge, /def force_send_foreground/, '抢前台要单独抽出来，只在兜底时用');
   assert.match(bridge, /def snapshot_win_state/, '发送前要记下窗口状态');
   assert.match(bridge, /def restore_win_state/, '发完要还原');

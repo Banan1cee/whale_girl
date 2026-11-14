@@ -13,35 +13,45 @@ try:
     from bridge_log import safe_text
 except ImportError:  # 测试里按 `bridge.reminder_watch` 导入时走包内相对路径
     from .bridge_log import safe_text
+try:
+    from runtime_kernel_api import KernelApi
+except ImportError:
+    from .runtime_kernel_api import KernelApi
 
 
-def start_reminder_watch(*, http, base, token, send_text, send_at, log):
+def start_reminder_watch(*, http, base, token, send_text, send_at, log,
+                         send_voice=None, display_name=None):
     """连接实际桥接发送通道；所有 HTTP 回应都必须成功才能继续。"""
-    headers = {"x-whale-bridge": "1", "x-bot-token": token}
-
-    def request(method, endpoint, **kwargs):
-        response = http.request(method, base + endpoint, headers=headers, timeout=10, **kwargs)
-        response.raise_for_status()
-        data = response.json()
-        if not isinstance(data, dict) or data.get("ok") is not True:
-            raise RuntimeError("提醒接口返回失败：" + str(data))
-        return data
+    api = KernelApi(http, base, token)
 
     def send(item, text):
         wxid = str(item.get("wxid") or "").strip()
         if not wxid:
             raise ValueError("提醒缺少会话 ID，拒绝发送")
-        name = str(item.get("name") or wxid)
+        name = str(item.get("name") or '').strip() or (display_name(wxid) if display_name else wxid)
+        if item.get('kind') == 'plugin':
+            def allowed():
+                try:
+                    return api.post('/api/reminders/permission', timeout=3,
+                                    require_ok=False, json={'id': item.get('id')}).get('ok') is True
+                except Exception:
+                    return False
+            if not allowed():
+                return False
+            if item.get('delivery') == 'voice':
+                if send_voice is None:
+                    raise RuntimeError('提醒语音通道未装配')
+                return bool(send_voice(text, name, wxid, cancelled=lambda: not allowed()))
         member = str(item.get("atName") or "").strip()
         if item.get("chatType") == "group" and member:
             return send_at(member, text, name, wxid)
         return send_text(text, name, wxid)
 
     runner = ReminderRunner(
-        fetch=lambda: request("GET", "/api/reminders/due"),
+        fetch=lambda: api.get('/api/reminders/due'),
         send=send,
-        ack=lambda item, ok, error: request("POST", "/api/reminders/ack",
-                                          json={"id": item["id"], "ok": ok, "error": error}),
+        ack=lambda item, ok, error: api.post('/api/reminders/ack',
+                                           json={'id': item.get('id'), 'ok': bool(ok), 'error': str(error or '')}),
         log=log,
     )
     threading.Thread(target=runner.run, daemon=True, name="reminder-watch").start()
