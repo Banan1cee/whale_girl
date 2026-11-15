@@ -269,7 +269,28 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
         G.log('开始监听新消息…（Ctrl+C 退出）')
         self.pipeline = G.MessagePipeline(workers=G.PIPELINE_WORKERS, per_chat_limit=G.PIPELINE_QUEUE_LIMIT, log=G.log)
         self.batches = G.MessageBatches(limit=max(4, G.PIPELINE_QUEUE_LIMIT * 2), log=G.log)
-        G.log('消息调度：%d 个 worker（同一会话串行、跨会话并发，连发的几条合并成一次）' % G.PIPELINE_WORKERS)
+
+        def flush_due(chat):
+            try:
+                queued = self.pipeline.submit(chat, self.flush_chat, chat, self.listener)
+            except Exception as exc:  # noqa: BLE001
+                queued = False
+                G.log('消息批次入队失败：', repr(exc))
+            if not queued:
+                self.batches.release(chat)
+                G.log_throttled(
+                    'settle-queue-closed:%s' % chat,
+                    '消息批次没能排上队（调度已关闭）：会话=%s' % G.safe_id(chat),
+                    ttl=60,
+                )
+
+        self.settle = G.SettleScheduler(
+            flush_due,
+            get_wait=lambda: (G.MESSAGE_SETTLE_MS, G.GROUP_MAX_BATCH_WAIT_MS),
+            log=G.log,
+        )
+        G.log('消息调度：%d 个 worker（同一会话串行、跨会话并发；私信安静 %.0fms、群聊最多 %.0fms 后合并）'
+              % (G.PIPELINE_WORKERS, G.MESSAGE_SETTLE_MS, G.GROUP_MAX_BATCH_WAIT_MS))
         G.threading.Thread(target=self.sticker_test_loop, daemon=True).start()
         G.threading.Thread(target=self.voice_test_loop, daemon=True, name='voice-send-test').start()
         self.listener = Listener(self.db, interval=0.4)
@@ -344,6 +365,10 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
                     G.REMINDER_RUNNER.stop()
                 except Exception:
                     pass
+            try:
+                self.settle.close()
+            except Exception:
+                pass
             try:
                 self.pipeline.close(wait=False)
             except Exception:

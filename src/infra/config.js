@@ -173,7 +173,12 @@ const DEFAULT_CONFIG = {
     // 主人骂她时能不能还嘴（默认关：只许委屈不许骂回去）
     masterRoast: false,
   },
-  chat: { privateMaxChars: 100, groupMaxChars: 70, historyTurns: 120, groupHistoryTurns: 100, maxBubbles: 2, discussionMaxChars: 400, emojiChance: 0 },
+  chat: {
+    privateMaxChars: 100, groupMaxChars: 70, historyTurns: 120, groupHistoryTurns: 100,
+    maxBubbles: 2, discussionMaxChars: 400, emojiChance: 0,
+    // 连续消息收集：最后一条后安静多久再处理；群聊另有从首条开始的最大等待。
+    messageSettleMs: 1500, groupMaxBatchWaitMs: 5000,
+  },
   // 联网：问天气/新闻这类实时问题时现搜。city 用来把「今天天气怎么样」补成「上海 天气」，
   // 搜到的结果准得多；留空就按对方原话搜（也能用，但经常搜到别的城市）。
   // enabled 是内部/测试用闸门：设置页不提供，加载配置时强制 true。API 搜索另有总开关。

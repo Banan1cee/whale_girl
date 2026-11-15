@@ -60,14 +60,16 @@
     "masterRoast": false
   },
   "chat": {
-    "_说明": "回复长度与上下文：privateMaxChars 私聊每条最多几个字，groupMaxChars 群聊每条，maxBubbles 一次最多连发几条，historyTurns 带多少轮历史",
+    "_说明": "回复长度与上下文：privateMaxChars 私聊每条最多几个字，groupMaxChars 群聊每条，maxBubbles 一次最多连发几条，historyTurns 带多少轮历史；messageSettleMs 是最后一条消息后的安静等待，groupMaxBatchWaitMs 是群聊从首条开始的最大等待",
     "privateMaxChars": 140,
     "groupMaxChars": 70,
     "maxBubbles": 2,
     "historyTurns": 200,
     "groupHistoryTurns": 150,
     "discussionMaxChars": 600,
-    "emojiChance": 0
+    "emojiChance": 0,
+    "messageSettleMs": 1500,
+    "groupMaxBatchWaitMs": 5000
   },
   "group": {
     "_说明": "群聊行为：requireAt=只有 @ 她/叫她名字才回；freeChat=允许她偶尔主动接话（概率 freeChatChance）；cooldownSec 两次回复最少隔几秒；silentMinutes 冷场多久算这个话题结束；engagedMinutes 接话后保持参与多少分钟；muteDefaultMinutes 免打扰默认时长",

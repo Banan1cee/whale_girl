@@ -328,6 +328,18 @@ function prepareConfigPatch(config, patch) {
       pending.push([p, next]);
     } catch (err) { errors.push(p + '：' + err.message); }
   }
+  // 群聊最大等待不能小于安静窗口，否则后者永远等不到。
+  const touchesSettle = pending.some(([p]) => p === 'chat.messageSettleMs' || p === 'chat.groupMaxBatchWaitMs');
+  if (touchesSettle) {
+    const effective = (dotted, fallback) => {
+      const hit = pending.find(([p]) => p === dotted);
+      const value = getByPath(config, dotted);
+      return hit ? hit[1] : (value === undefined ? fallback : value);
+    };
+    const settleMs = Number(effective('chat.messageSettleMs', DEFAULT_CONFIG.chat.messageSettleMs));
+    const maxWaitMs = Number(effective('chat.groupMaxBatchWaitMs', DEFAULT_CONFIG.chat.groupMaxBatchWaitMs));
+    if (maxWaitMs < settleMs) errors.push('chat.groupMaxBatchWaitMs：群聊最大等待不能小于连续消息等待');
+  }
   // 校验先于落盘：填错了就整批拒绝，别出现「改了一半」的状态
   if (errors.length) {
     throw Object.assign(new Error('配置没保存：' + errors.join('；')), { statusCode: 400 });

@@ -93,6 +93,8 @@ namespace WhaleLauncher.Views
                 new FieldSpec { Path = "group.engagedMinutes", Label = "接话后保持参与(分钟)", Kind = "num", Min = 1, Max = 1440 },
                 new FieldSpec { Path = "group.silentMinutes", Label = "冷场多久算结束(分钟)", Kind = "num", Min = 1, Max = 10080 },
                 new FieldSpec { Path = "group.muteDefaultMinutes", Label = "免打扰默认时长(分钟)", Kind = "num", Min = 1, Max = 1440 },
+                new FieldSpec { Path = "chat.messageSettleMs", Label = "连续消息等待(毫秒)", Kind = "num", Min = 0, Max = 10000, Hint = "私信和群聊共用：最后一条消息后安静这么久再统一处理；默认 1500" },
+                new FieldSpec { Path = "chat.groupMaxBatchWaitMs", Label = "群聊最多等待(毫秒)", Kind = "num", Min = 0, Max = 60000, Hint = "群聊从批次第一条开始计时，到点强制处理；不能被后续消息无限重置；默认 5000" },
             }},
             new SectionSpec { Title = "微信 · 数据与管道", Fields =
             {

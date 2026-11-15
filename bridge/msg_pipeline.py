@@ -137,6 +137,102 @@ class MessageBatches:
             )
 
 
+class SettleScheduler:
+    """按会话等一小段安静时间再提交 flush。
+
+    MessageBatches 只负责「攒什么」；这里负责「什么时候交给 pipeline」。
+    私信用安静窗口；群聊额外有从首条开始计算的最大等待，不能被续句重置，
+    否则群里一直有人说话就永远不回复。
+    """
+
+    def __init__(self, on_flush, get_wait=None, log=None, clock=None):
+        self.on_flush = on_flush
+        self.get_wait = get_wait or (lambda: (1500, 5000))
+        self.log = log or (lambda *a: None)
+        self.clock = clock or time.monotonic
+        self._cond = threading.Condition()
+        self._entries = {}   # chat -> {first,last,group,due}
+        self._closed = False
+        threading.Thread(target=self._run, daemon=True, name="msg-settle").start()
+
+    def _wait_ms(self):
+        try:
+            settle, maximum = self.get_wait()
+            settle = max(0, int(settle or 0))
+            maximum = max(settle, int(maximum or 0))
+            return settle, maximum
+        except Exception:
+            return 1500, 5000
+
+    def touch(self, chat, group=False):
+        """收到新消息：更新末条时间；群聊首条时间不动。"""
+        settle, maximum = self._wait_ms()
+        if settle <= 0:
+            self._fire(chat)
+            return
+        now = self.clock()
+        with self._cond:
+            entry = self._entries.get(chat)
+            if entry is None:
+                entry = {"first": now, "last": now, "group": bool(group), "due": now}
+                self._entries[chat] = entry
+            entry["last"] = now
+            entry["group"] = bool(group)
+            entry["due"] = min(now + settle / 1000.0,
+                               entry["first"] + maximum / 1000.0 if group else float("inf"))
+            self._cond.notify_all()
+
+    def reconcile(self):
+        """配置热更新后，按原来的 first/last 重新计算，不把起点改到现在。"""
+        settle, maximum = self._wait_ms()
+        now = self.clock()
+        with self._cond:
+            for entry in self._entries.values():
+                if settle <= 0:
+                    entry["due"] = now
+                else:
+                    entry["due"] = min(entry["last"] + settle / 1000.0,
+                                       entry["first"] + maximum / 1000.0 if entry["group"] else float("inf"))
+            self._cond.notify_all()
+
+    def _fire(self, chat):
+        try:
+            self.on_flush(chat)
+        except Exception as exc:  # noqa: BLE001 - 一次投递失败不能拖死调度线程
+            self.log("消息批次投递失败：", repr(exc))
+
+    def _run(self):
+        while True:
+            due = []
+            with self._cond:
+                if self._closed:
+                    return
+                if not self._entries:
+                    self._cond.wait()
+                    continue
+                now = self.clock()
+                for chat, entry in list(self._entries.items()):
+                    if entry["due"] <= now:
+                        due.append(chat)
+                        del self._entries[chat]
+                if not due:
+                    delay = min(entry["due"] for entry in self._entries.values()) - now
+                    self._cond.wait(max(0.001, delay))
+                    continue
+            for chat in due:
+                self._fire(chat)
+
+    def status(self):
+        with self._cond:
+            return {"chats": len(self._entries), "closed": self._closed}
+
+    def close(self):
+        with self._cond:
+            self._closed = True
+            self._entries.clear()
+            self._cond.notify_all()
+
+
 class MessagePipeline:
     def __init__(self, workers=4, per_chat_limit=8, log=None, name="whale-decider",
                  drop_log_interval=10.0):

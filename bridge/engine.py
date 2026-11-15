@@ -94,6 +94,8 @@ from send_state import SEND_STATE, ChatIdentityError, DraftDirtyError, _chat_ide
 BG_SEND = {'enabled': True, 'charGap': 0.04, 'verify': True, 'charMode': 'auto', 'fallback': True, 'strip': True, 'unhide': True}
 PIPELINE_WORKERS = 4
 PIPELINE_QUEUE_LIMIT = 8
+MESSAGE_SETTLE_MS = 1500
+GROUP_MAX_BATCH_WAIT_MS = 5000
 # 下面这 7 个开关必须在**读配置之前**就有默认值：config.json 解析失败时
 # （手填 Windows 路径写了单反斜杠就是典型），上面那个 try 会在 json.load 处
 # 整段中断，后面所有赋值一个都执行不到。以前没有默认值，main() 里一读
@@ -206,7 +208,7 @@ def reload_config(path=None, *, config=None):
     返回是否真的重新加载了。
     """
     global QUOTE_REPLY, KEYBOARD_FALLBACK, BACKGROUND_SEND, LOW_BATTERY_PCT, GOODNIGHT_TEXT
-    global BG_SEND, PIPELINE_WORKERS, PIPELINE_QUEUE_LIMIT
+    global BG_SEND, PIPELINE_WORKERS, PIPELINE_QUEUE_LIMIT, MESSAGE_SETTLE_MS, GROUP_MAX_BATCH_WAIT_MS
     global ACCOUNT_GUARD, WINDOW_HWND, STICKER_TEST_ON, STICKER_COLLECT
     global CARE_ENABLED, CARE_QUIET_MIN
     global STALE_AFTER, SYSTEM_SENDER_NAMES, BASE_SYSTEM_SENDERS, MASTER_WXID
@@ -378,9 +380,9 @@ def ensure_ffmpeg_env():
     """兼容旧调用：实现在 config.py。"""
     return _ensure_ffmpeg_env()
 try:
-    from .msg_pipeline import MessagePipeline, MessageBatches, split_runs, mergeable
+    from .msg_pipeline import MessagePipeline, MessageBatches, SettleScheduler, split_runs, mergeable
 except ImportError:
-    from msg_pipeline import MessagePipeline, MessageBatches, split_runs, mergeable
+    from msg_pipeline import MessagePipeline, MessageBatches, SettleScheduler, split_runs, mergeable
 
 def _bg_cli(argv=None):
     """零焦点通道的命令行自检 / 发送。

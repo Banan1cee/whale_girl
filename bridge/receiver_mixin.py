@@ -938,12 +938,35 @@ class ReceiverMixin:
                 G.log('跳过过期消息（%.0fs 前）：%s' % (G.time.time() - create_time, G.safe_text(msg.get('content') or '')))
                 return
             chat = username or 'unknown'
-            if self.batches.push(chat, msg):
+            pushed = self.batches.push(chat, msg)
+            # 纯文本走安静窗口。注意：第一条把 chat 标成 queued 后，后续 push 返回
+            # False，所以不能拿 pushed 当“要不要重置计时”的条件。
+            if (msg.get('type') or '') == '文本':
+                try:
+                    self.settle.touch(chat, username.endswith('@chatroom'))
+                except Exception as e:
+                    # 收集器异常时退回旧行为：立刻提交一次，别把消息闷在 batches 里。
+                    G.log('消息收集失败，改为立即处理：', repr(e))
+                    try:
+                        queued = self.pipeline.submit(chat, self.flush_chat, chat, listener)
+                    except Exception as inner:
+                        queued = False
+                        G.log('消息入队失败：', repr(inner))
+                    if not queued:
+                        self.batches.release(chat)
+                        G.log_throttled(
+                            'queue-closed:%s' % chat,
+                            '消息没能排上队（调度已关闭）：会话=%s 消息id=%s:%s'
+                            % (G.safe_id(chat), msg.get('shard') or '', msg.get('local_id')),
+                            ttl=60,
+                        )
+            elif pushed:
+                # 图片/语音/卡片等不合并，仍立即走旧流程。
                 try:
                     queued = self.pipeline.submit(chat, self.flush_chat, chat, listener)
-                except Exception as e:
+                except Exception as inner:
                     queued = False
-                    G.log('消息入队失败：', repr(e))
+                    G.log('消息入队失败：', repr(inner))
                 if not queued:
                     self.batches.release(chat)
                     G.log_throttled(

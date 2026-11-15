@@ -37,6 +37,9 @@ const FIELDS = {
   'chat.privateMaxChars': { type: 'int', min: 20, max: 4000 },
   'chat.groupMaxChars': { type: 'int', min: 20, max: 4000 },
   'chat.maxBubbles': { type: 'int', min: 1, max: 12 },
+  // 连续消息收集：私信和群聊共用安静窗口；群聊另有从首条开始的最大等待。
+  'chat.messageSettleMs': { type: 'int', min: 0, max: 10000 },
+  'chat.groupMaxBatchWaitMs': { type: 'int', min: 0, max: 60000 },
 
   // ---- 采样参数 ----
   'deepseek.temperature': { type: 'float', min: 0, max: 2 },

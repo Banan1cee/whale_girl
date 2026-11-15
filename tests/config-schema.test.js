@@ -45,6 +45,18 @@ test('类型错（把「很多」填进轮数）会被指出来', () => {
   assert.match(errors[0].message, /整数/);
 });
 
+test('群聊最大等待不能小于连续消息安静等待', () => {
+  const { runtime, cleanup } = makeRuntime();
+  try {
+    assert.throws(() => applyConfigPatch(runtime, {
+      'chat.messageSettleMs': 5000,
+      'chat.groupMaxBatchWaitMs': 1000,
+    }), /群聊最大等待不能小于/);
+  } finally {
+    cleanup();
+  }
+});
+
 test('字符串形式的布尔老配置仍然算合法', () => {
   assert.equal(checkValue('false', { type: 'bool' }), null);
   assert.equal(checkValue('开', { type: 'bool' }), null);

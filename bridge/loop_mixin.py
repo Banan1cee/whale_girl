@@ -411,6 +411,11 @@ class LoopMixin:
                 persona = (current.get('persona') or {})
                 self.aliases = list(persona.get('aliases') or []) + [persona.get('name') or '鲸鲸']
                 self._mention_cache = None
+                # 新时间设置要作用到已经攒着的批次；不能等它们按旧值到点。
+                try:
+                    self.settle.reconcile()
+                except Exception:
+                    pass
                 G.log('配置已热更新（启动器改完即时生效，不用重启桥接）')
 
     def contacts_sync_once(self):

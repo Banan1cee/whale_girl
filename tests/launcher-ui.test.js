@@ -251,6 +251,9 @@ test('设置页去掉侧栏和标题，单列铺开，模型/高级模式/外观
 
   // 语音不再单独占一个 Specs 分区
   const specs = code.slice(code.indexOf('private static List<SectionSpec> Specs()'), code.indexOf('private void BuildOnce'));
+  // 连续消息收集的两个时间在群聊分组里，保存后由内核热更新
+  assert.ok(specs.includes('chat.messageSettleMs'), '缺少连续消息等待设置');
+  assert.ok(specs.includes('chat.groupMaxBatchWaitMs'), '缺少群聊最大等待设置');
   const titles = [...specs.matchAll(/Title = "([^"]+)"/g)].map((m) => m[1]);
   assert.ok(titles.length >= 4, `Specs 里应该有多个分组，实际 ${titles.length} 个`);
   assert.ok(!titles.includes('语音'), '语音已并进模型卡，不该再占 Specs 分组');
