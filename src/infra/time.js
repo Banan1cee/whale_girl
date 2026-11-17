@@ -154,10 +154,12 @@ function parseWindow(text) {
   const cleaned = raw
     .replace(/[~～—–－到至]/g, '-')
     .replace(/\s+/g, '');
-  const m = cleaned.match(/^(.+?)-(.+)$/);
-  if (!m) return null;
-  const start = parseClock(m[1]);
-  const end = parseClock(m[2], { allow24: true });
+  // 只在第一个 `-` 处切分；用 /^(.+?)-(.+)$/ 时，`a-a-a-…` 这类输入会让
+  // 惰性量词逐个位置回溯，耗时随长度平方增长（CodeQL js/polynomial-redos）。
+  const dash = cleaned.indexOf('-');
+  if (dash <= 0 || dash === cleaned.length - 1) return null;
+  const start = parseClock(cleaned.slice(0, dash));
+  const end = parseClock(cleaned.slice(dash + 1), { allow24: true });
   if (start === null || end === null) return null;
   return { start, end, raw };
 }

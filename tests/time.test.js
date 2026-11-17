@@ -44,6 +44,9 @@ test('时间段解析：统一分隔符、跨零点、24:00、错误返回 null'
   assert.equal(time.parseWindow('09:70-10:00'), null);
   assert.deepEqual(time.normalizeWindows(['09:00~12:00', '14:00到23:00']), ['09:00-12:00', '14:00-23:00']);
   assert.deepEqual(time.invalidWindows(['09:00-12:00', '写错']), ['写错']);
+  // 长串多段横线不能触发多项式回溯（CodeQL js/polynomial-redos）。
+  assert.equal(time.parseWindow('a-'.repeat(20000) + 'a'), null);
+  assert.equal(time.parseWindow('09:00-12:00-13:00'), null);
 });
 
 test('时间窗判断：左闭右开、跨零点、空列表退回默认', () => {
