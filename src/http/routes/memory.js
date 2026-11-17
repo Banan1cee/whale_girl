@@ -88,7 +88,8 @@ module.exports = function register(router) {
     try {
       return json(res, 200, { ok: true, ...migrate.ackImportNotice(memoryDirOf(runtime)) });
     } catch (err) {
-      return json(res, 500, { ok: false, error: (err && err.message) || String(err) });
+      // 不要 String(err)：异常对象可能把堆栈带进响应（CodeQL js/stack-trace-exposure）。
+      return json(res, 500, { ok: false, error: errorMessage(err, '确认旧记忆提示失败') });
     }
   });
 

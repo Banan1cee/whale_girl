@@ -94,6 +94,26 @@ test('启动时自动迁移旧 store.json，并留下待确认报告', async () 
   }
 });
 
+test('旧记忆确认失败只回一行文案，不把异常堆栈带进响应', async () => {
+  const migrate = require('../src/memory/migrate');
+  const original = migrate.ackImportNotice;
+  // 没有 message、只有堆栈的异常：旧代码的 String(err) 会把它原样返回给启动器。
+  migrate.ackImportNotice = () => {
+    throw { toString: () => 'Error: 磁盘坏了\n    at secret /internal/path.js:1:1' };
+  };
+  const app = await boot();
+  try {
+    const res = await postJson(app.url + '/api/memory/import/ack');
+    assert.equal(res.status, 500);
+    assert.equal(res.body.error, '确认旧记忆提示失败');
+    assert.doesNotMatch(JSON.stringify(res.body), /internal\/path|at secret/, '响应不能包含堆栈');
+  } finally {
+    migrate.ackImportNotice = original;
+    await app.close();
+    fs.rmSync(app.root, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 });
+  }
+});
+
 test('运行中拖进旧 store.json：一键转换能合并，第二次调用是空操作', async () => {
   const app = await boot();
   try {
