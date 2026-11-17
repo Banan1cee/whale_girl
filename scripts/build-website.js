@@ -92,7 +92,7 @@ function header(prefix, current) {
     <a class="brand" href="${prefix}" aria-label="鲸鲸首页"><img class="brand-icon" src="${prefix}images/launcher-icon.png" alt="" width="256" height="256"><span>鲸鲸 <span class="brand-en">Whale Girl</span></span></a>
     <button class="menu-toggle icon-button" aria-label="打开导航" aria-expanded="false" aria-controls="nav-links"><span></span><span></span></button>
     <div class="nav-links" id="nav-links">${nav.map(([route, text]) => `<a href="${prefix}${route}"${route === current ? ' aria-current="page"' : ''}>${text}</a>`).join('')}</div>
-    <div class="nav-actions"><button class="motion-control" data-motion-toggle aria-label="暂停动态效果" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 8c4-8 10 8 14 0M5 16c4-8 10 8 14 0"/></svg><span>动态效果</span></button><button id="theme-toggle" class="icon-button" aria-label="切换明暗主题"><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z"/></svg></button><a class="button small" href="${prefix}downloads/">免费下载 <span aria-hidden="true">↗</span></a></div>
+    <div class="nav-actions"><button id="theme-toggle" class="icon-button" aria-label="切换明暗主题"><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z"/></svg></button><a class="button small" href="${prefix}downloads/">免费下载 <span aria-hidden="true">↗</span></a></div>
   </nav></header>`;
 }
 
@@ -107,9 +107,8 @@ function layout(route, title, description, content, current) {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#191c1a"><meta name="description" content="${e(description)}"><title>${e(title)} — 鲸鲸 Whale Girl</title><link rel="canonical" href="${ORIGIN}${route}"><link rel="icon" href="${prefix}images/launcher-icon.png" type="image/png"><script src="${prefix}theme.js"></script><link rel="stylesheet" href="${prefix}style.css"><link rel="stylesheet" href="${prefix}pages.css"><link rel="stylesheet" href="${prefix}polish.css"><script src="${prefix}site-motion.js" defer></script><script src="${prefix}site.js" defer></script></head><body class="content-page page-${page}" data-page="${page}">${ambient()}${header(prefix, current)}<main id="main" class="wrap page-main">${pageBrand(prefix, page)}${content}</main>${footer(prefix)}</body></html>\n`;
 }
 
-function pageBrand(prefix, page) {
-  const labels = { downloads: '下载中心', release: '版本档案', plugins: '插件市场', plugin: '插件档案', support: '支持团队', transparency: '打赏公示', team: '团队与朋友' };
-  return `<div class="page-brand-line"><a class="whale-signature" data-whale-mark href="${prefix}" aria-label="鲸鲸 · 返回首页"><span class="signature-portrait"><img class="signature-avatar" src="${prefix}images/launcher-icon.png" alt="" width="40" height="40"></span><span class="signature-copy"><strong>鲸鲸</strong><span>Whale Girl</span></span></a><span class="page-brand-location">${labels[page] || 'Whale Girl'}</span></div>`;
+function pageBrand() {
+  return '';
 }
 
 function ambient() {

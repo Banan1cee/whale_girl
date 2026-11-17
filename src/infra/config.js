@@ -706,8 +706,9 @@ function resolveRuntime(cfg) {
 
 function maskKey(key) {
   if (!key) return '';
-  if (key.length <= 10) return key.slice(0, 2) + '****';
-  return `${key.slice(0, 5)}****${key.slice(-4)}`;
+  const value = String(key);
+  if (value.length <= 4) return '****';
+  return `${value.slice(0, 2)}********${value.slice(-2)}`;
 }
 
 function resolveVoiceConfig(cfg) {

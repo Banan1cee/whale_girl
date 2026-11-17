@@ -54,6 +54,9 @@ namespace WhaleLauncher.Views
         private readonly Dictionary<string, Action<JsonElement>> _loaders = new Dictionary<string, Action<JsonElement>>();
         private readonly Dictionary<string, Func<Task<bool>>> _apiFieldSaves = new Dictionary<string, Func<Task<bool>>>();
         private readonly HashSet<string> _dirtyFields = new HashSet<string>();
+        private readonly Dictionary<string, Action<string>> _secretMaskLoaders = new Dictionary<string, Action<string>>();
+        private static string MaskApiKey(string value)
+            => string.IsNullOrEmpty(value) ? "" : value.Length <= 4 ? "****" : value.Substring(0, 2) + "********" + value.Substring(value.Length - 2);
         private Action<JsonElement, Dictionary<string, JsonElement>> _loadModel;
         private Action<JsonElement> _loadVision;
         private TextBlock _adminSpellStatus;
@@ -797,6 +800,10 @@ namespace WhaleLauncher.Views
                 case "secret":
                 {
                     var pwd = new PasswordBox();
+                    var savedKey = new TextBlock { Style = (Style)FindResource("Small") };
+                    var secretPanel = new StackPanel();
+                    secretPanel.Children.Add(pwd);
+                    secretPanel.Children.Add(savedKey);
                     var secret = new ConfigurationSecretState();
                     var clearing = false;
                     var generation = _pageLifetime.Capture();
@@ -807,7 +814,7 @@ namespace WhaleLauncher.Views
                         {
                             if (!_pageLifetime.IsCurrent(generation) || !result.Ok || !secret.IsCurrent(snapshot, pwd.Password)) return;
                             clearing = true;
-                            try { pwd.Password = ""; }
+                            try { savedKey.Text = MaskApiKey(snapshot.Value); pwd.Password = ""; }
                             finally { clearing = false; }
                         });
                     pwd.PasswordChanged += (s, e) =>
@@ -823,7 +830,8 @@ namespace WhaleLauncher.Views
                         await saves.SaveAsync();
                     };
                     _apiFieldSaves[f.Path] = async () => pwd.Password.Length == 0 || (await saves.SaveAsync()).Ok;
-                    return Row(f.Label, pwd, f.Hint, false, labelWidth);
+                    _secretMaskLoaders[f.Path] = value => { if (pwd.Password.Length == 0) savedKey.Text = value; };
+                    return Row(f.Label, secretPanel, f.Hint, false, labelWidth);
                 }
                 case "multiline":
                 {
@@ -1479,6 +1487,10 @@ namespace WhaleLauncher.Views
             var baseUrl = new TextBox();
             var model = new ComboBox { Height = 28, IsEditable = true, MinWidth = 320, HorizontalAlignment = HorizontalAlignment.Left };
             var key = new PasswordBox();
+            var chatKeyMask = new TextBlock { Style = (Style)FindResource("Small") };
+            var chatKeyPanel = new StackPanel();
+            chatKeyPanel.Children.Add(key);
+            chatKeyPanel.Children.Add(chatKeyMask);
             // 深度思考：和 /api/settings 共用 data/settings.json 的 thinking（保存走 ModelRequest）。
             // 只在这里声明，Click 处理器等 AutoSaveChatAsync 定义好之后再挂（否则编译器会报
             // 「未赋值的局部变量」——那个函数捕获了后面才声明的控件）。
@@ -1500,6 +1512,10 @@ namespace WhaleLauncher.Views
             visionBox.Children.Add(visionModel);
             visionBox.Children.Add(visionTip);
             var visionKey = new PasswordBox();
+            var visionKeyMask = new TextBlock { Style = (Style)FindResource("Small") };
+            var visionKeyPanel = new StackPanel();
+            visionKeyPanel.Children.Add(visionKey);
+            visionKeyPanel.Children.Add(visionKeyMask);
             var visionHint = new TextBlock { Style = (Style)FindResource("Small"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) };
             var visionEndpoint = new TextBlock { Style = (Style)FindResource("Small"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) };
             var visionResult = new TextBlock { Style = (Style)FindResource("Small"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) };
@@ -1744,7 +1760,7 @@ namespace WhaleLauncher.Views
             chatPanel.Children.Add(Row("模型服务", cmb, "", false, ModelLabel));
             chatPanel.Children.Add(Row("接口地址", baseUrl, "", false, ModelLabel));
             chatPanel.Children.Add(Row("模型名", model, "点下拉直接选；没有的型号也可以自己输入", false, ModelLabel));
-            chatPanel.Children.Add(Row("API Key", key, "留空表示不改；已存的这里不会显示", false, ModelLabel));
+            chatPanel.Children.Add(Row("API Key", chatKeyPanel, "留空表示不改；已保存的 Key 以首尾各两位显示", false, ModelLabel));
             var connectionNote = new Border { CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 10, 12, 10),
                 Margin = new Thickness(0, 0, 0, 12), BorderThickness = new Thickness(1) };
             connectionNote.SetResourceReference(Border.BackgroundProperty, "Hover");
@@ -1832,7 +1848,7 @@ namespace WhaleLauncher.Views
                     if (result.Ok && chatSecret.IsCurrent(snapshot.Secret, key.Password))
                     {
                         suppressAuto = true;
-                        try { key.Password = ""; }
+                        try { if (snapshot.Secret.Value.Length > 0) chatKeyMask.Text = MaskApiKey(snapshot.Secret.Value); key.Password = ""; }
                         finally { suppressAuto = false; }
                     }
                     chatResult.Text = result.Ok
@@ -1848,7 +1864,7 @@ namespace WhaleLauncher.Views
                     if (result.Ok && visionSecret.IsCurrent(snapshot.Secret, visionKey.Password))
                     {
                         suppressAuto = true;
-                        try { visionKey.Password = ""; }
+                        try { if (snapshot.Secret.Value.Length > 0) visionKeyMask.Text = MaskApiKey(snapshot.Secret.Value); visionKey.Password = ""; }
                         finally { suppressAuto = false; }
                     }
                     if (!result.Ok) visionResult.Text = "保存失败：" + Api.Message(result);
@@ -1917,7 +1933,7 @@ namespace WhaleLauncher.Views
             visionModelRow = Row("模型", visionBox, "", false, ModelLabel);
             visionUrlRow = Row("接口地址", visionUrl, "自定义接口就填这里（例如 https://api.example.com/v1）；和聊天一样时直接复用聊天那把 Key", false, ModelLabel);
             visionTimeoutRow = BuildField(new FieldSpec { Path = "vision.timeoutMs", Label = "超时(毫秒)", Kind = "num", Min = 1000, Max = 300000 }, false, ModelLabel);
-            visionKeyRow = Row("看图 Key", visionKey, "留空表示不改；和聊天同一地址会自动复用聊天 Key；本机 / 内网服务可以留空", false, ModelLabel);
+            visionKeyRow = Row("看图 Key", visionKeyPanel, "留空表示不改；和聊天同一地址会自动复用聊天 Key；本机 / 内网服务可以留空", false, ModelLabel);
             visionPanel.Children.Add(visionHint);
             visionPanel.Children.Add(visionProviderRow);
             visionPanel.Children.Add(visionUrlRow);
@@ -2021,7 +2037,6 @@ namespace WhaleLauncher.Views
                 Margin = new Thickness(0, 0, 0, 8),
                 Text = "接收微信语音并识别成文字；默认跟随聊天服务和 Key，按服务商音频用量计费。发送语音请使用工作台「语音发送」。",
             };
-            voicePanel.Children.Add(voiceHint);
 
             var voiceBody = new StackPanel { Visibility = Visibility.Collapsed };
             var voiceSwitch = new CheckBox { VerticalAlignment = VerticalAlignment.Center };
@@ -2065,6 +2080,7 @@ namespace WhaleLauncher.Views
             voicePanel.Children.Add(Row("启用语音识别", voiceSwitch,
                 "关闭后不下载语音、不请求 ASR，并删除专用语音 Key；不会删除聊天 Key。", false, ModelLabel));
             voicePanel.Children.Add(voiceBody);
+            voiceBody.Children.Add(voiceHint);
 
             var voiceProvider = new ComboBox { Height = 28, DisplayMemberPath = "Label", MinWidth = 320, HorizontalAlignment = HorizontalAlignment.Left };
             var voiceModeHint = new TextBlock { Style = (Style)FindResource("Small"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 6) };
@@ -2159,6 +2175,7 @@ namespace WhaleLauncher.Views
 
             var apiAdd = new ComboBox { Height = 26, DisplayMemberPath = "Label", MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Left };
             var apiAddButton = new Button { Content = "添加", Style = (Style)FindResource("Ghost"), Margin = new Thickness(8, 0, 0, 0) };
+            apiAddButton.Visibility = Visibility.Collapsed;
             var apiAddRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
             apiAddRow.Children.Add(apiAdd);
             apiAddRow.Children.Add(apiAddButton);
@@ -2231,13 +2248,11 @@ namespace WhaleLauncher.Views
                 var on = apiEnabled.IsChecked == true;
                 var manual = searchFollow.IsChecked != true;
                 apiBody.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
-                apiDeepseekRow.Visibility = on && manual && apiProviders.Contains("deepseek") ? Visibility.Visible : Visibility.Collapsed;
-                apiZhihuRow.Visibility = on && manual && apiProviders.Contains("zhihu") ? Visibility.Visible : Visibility.Collapsed;
-                var available = apiChoices.Where(x => !apiProviders.Contains(x.Key)).ToList();
-                apiAdd.ItemsSource = available;
-                apiAdd.SelectedIndex = available.Count > 0 ? 0 : -1;
-                apiAddButton.IsEnabled = available.Count > 0;
-                apiAddRow.Visibility = on && manual && available.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+                var selected = (apiAdd.SelectedItem as ProviderItem)?.Key ?? apiProviders.FirstOrDefault();
+                apiDeepseekRow.Visibility = on && manual && selected == "deepseek" ? Visibility.Visible : Visibility.Collapsed;
+                apiZhihuRow.Visibility = on && manual && selected == "zhihu" ? Visibility.Visible : Visibility.Collapsed;
+                if (apiAdd.ItemsSource == null) apiAdd.ItemsSource = apiChoices;
+                apiAddRow.Visibility = on && manual ? Visibility.Visible : Visibility.Collapsed;
             }
 
             searchFollow.Click += async (s, e) =>
@@ -2335,16 +2350,31 @@ namespace WhaleLauncher.Views
                     foreach (var item in v.EnumerateArray())
                         if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
                             apiProviders.Add(item.GetString());
+                apiAdd.ItemsSource = apiChoices;
+                apiAdd.SelectedItem = apiChoices.FirstOrDefault(x => apiProviders.Contains(x.Key));
                 _loading = false;
                 RefreshApiUi();
             };
             refreshApi = RefreshApiUi;
+            apiAdd.SelectionChanged += async (_, __) => {
+                if (_loading || apiAdd.SelectedItem is not ProviderItem picked) return;
+                var previous = apiProviders.ToArray();
+                apiProviders.Clear();
+                apiProviders.Add(picked.Key);
+                if (!await SaveApiProvidersAsync())
+                {
+                    apiProviders.Clear();
+                    foreach (var item in previous) apiProviders.Add(item);
+                }
+                RefreshApiUi();
+            };
             RefreshApiUi();
 
             // 「深度思考」已经挪到聊天页签（和 /api/settings 共用 thinking），这里不再重复放一个配置项。
 
             _loadModel = (set, provs) =>
             {
+                if (key.Password.Length == 0) chatKeyMask.Text = JsonRead.Str(set, "keyMasked");
                 _providers = provs;
                 if (chatSaves.HasPendingChanges || visionSaves.HasPendingChanges) return;
                 _loading = true;
@@ -2431,6 +2461,7 @@ namespace WhaleLauncher.Views
                 var manual = v.ValueKind == JsonValueKind.Object && v.TryGetProperty("manual", out var mf) && mf.ValueKind == JsonValueKind.True;
                 if (v.ValueKind == JsonValueKind.Object)
                 {
+                    if (visionKey.Password.Length == 0) visionKeyMask.Text = JsonRead.Str(v, "keyMasked");
                     var configured = v.TryGetProperty("configured", out var c) && c.ValueKind == JsonValueKind.True;
                     var masked = v.TryGetProperty("keyMasked", out var km) && km.ValueKind == JsonValueKind.String ? km.GetString() : "";
                     var follow = manual ? "" : "（自动）";
@@ -2492,6 +2523,9 @@ namespace WhaleLauncher.Views
                 }
                 var config = cfg.Prop("config");
                 var secrets = cfg.Prop("secrets");
+                var secretMasks = cfg.Prop("secretMasks");
+                foreach (var loader in _secretMaskLoaders)
+                    loader.Value(JsonRead.Str(secretMasks, loader.Key));
                 _adminSpellStatus.Text = secrets.ValueKind == JsonValueKind.Object &&
                     secrets.TryGetProperty("admin.spell", out var spell) && spell.ValueKind == JsonValueKind.True
                     ? "已设置" : "未设置";

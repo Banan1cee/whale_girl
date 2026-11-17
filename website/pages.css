@@ -1,6 +1,22 @@
 /* 基础信息组件；桌面内容组织与公共动效见文件下半部。 */
 [hidden]{display:none!important}
 .nav-links [aria-current="page"]{color:var(--accent)}
+/* 导航不随正文限宽；等宽两侧轨道保证链接相对窗口居中。 */
+.header .nav.wrap{width:100%;max-width:none;padding-inline:32px}
+@media(min-width:901px){
+  .header .nav{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)}
+  .header .brand{justify-self:start}
+  .header .nav-links{grid-column:2;justify-self:center}
+  .header .nav-actions{grid-column:3;justify-self:end}
+}
+@media(max-width:600px){.header .nav.wrap{padding-inline:16px}}
+/* 三段文案始终可读，不再用长滚动区逐段切换。 */
+.scroll-enhanced .story-section{height:auto;padding-block:64px}
+.scroll-enhanced .story-stage{position:relative;top:auto;height:auto;min-height:0;padding-top:0;align-items:center}
+.scroll-enhanced .story-captions{display:block}
+.scroll-enhanced .story-caption{margin:0;opacity:1;visibility:visible;transform:none;transition:none}
+.scroll-enhanced .story-caption+.story-caption{margin-top:28px}
+.story-caption h2{font-size:clamp(26px,2.5vw,36px);margin-bottom:12px}
 .page-main{padding-block:42px 80px;min-height:65vh}
 .page-intro{padding-block:45px 48px;max-width:850px}
 .page-intro h1{font-size:clamp(38px,5.5vw,68px);line-height:1.32;margin-bottom:25px;overflow-wrap:anywhere}

@@ -71,6 +71,7 @@ module.exports = function register(router) {
     const id = String(body.id || '').trim().slice(0, 100);
     const msgId = id ? 'care:' + id : '';
     try {
+      runtime.store.ensureSession(key, { platform: 'wechat', chatType: body.group === true ? 'group' : 'private' });
       if (msgId && runtime.store.isDuplicate(key, msgId)) return json(res, 200, { ok: true, duplicate: true });
       runtime.store.appendMessage(key, { role: 'assistant', name: runtime.config.persona.name, text, ts: Date.now(), ...(msgId ? { msgId } : {}) });
       return json(res, 200, { ok: true });

@@ -25,7 +25,7 @@ for (const background of ['bg', 'surface', 'surface-raised']) {
 }
 assert.ok(contrast(colors['button-text'], colors.button) >= 4.5);
 assert.match(home, /data-whale-mark/);
-assert.match(build, /data-whale-mark/);
+assert.doesNotMatch(build, /data-whale-mark/, '子页面不再重复输出品牌标识');
 assert.match(home, /polish\.css/);
 assert.match(build, /polish\.css/);
 assert.match(motion, /disclosureState/);

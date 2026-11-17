@@ -97,10 +97,16 @@ def publish_flow(screen, text, image='', *, pause=time.sleep):
             return 'failed', 'job_cancelled'
         screen.remember_existing_inputs(timeline)
         screen.click(timeline, camera, right=True)
-        pause(0.5)
         report('menu')
-        menu = screen.capture_menu()
-        action = screen.menu_action(menu, bool(image))
+        action = None
+        for _ in range(8):
+            pause(0.25)
+            if not screen.allowed():
+                return 'failed', 'job_cancelled'
+            menu = screen.capture_menu()
+            action = screen.menu_action(menu, bool(image))
+            if action:
+                break
         if not action:
             # OCR 可能把背景里的朋友圈正文一起读进来，只记行数，不记文字。
             _note('朋友圈发表：右键菜单未识别（OCR 行数=%d）' % len(menu.lines))
@@ -263,9 +269,11 @@ class WeChatPostScreen:
             raise RuntimeError('focus changed')
         candidates = []
         for hwnd in self.visible_windows():
-            if hwnd in self.before_menu_windows:
-                continue
             rect = self.win.GetWindowRect(hwnd)
+            # Qt 复用已有隐藏菜单窗口，不能仅按“新创建 hwnd”识别悬浮菜单。
+            cls = str(self.win.GetClassName(hwnd) or '').lower()
+            if hwnd in self.before_menu_windows and not any(k in cls for k in ('menu', 'popup')):
+                continue
             if 60 <= rect[2] - rect[0] <= 700 and 20 <= rect[3] - rect[1] <= 700:
                 candidates.append((hwnd, rect))
         # Qt 的菜单可能是独立弹窗，前台句柄却仍是微信主窗。

@@ -91,7 +91,7 @@ class PublishFlowTest(unittest.TestCase):
                          ('unconfirmed', ''))
         screen.select_image.assert_called_once()
         screen.cancel_pending.assert_not_called()
-        screen = self.screen([frame(), frame('其他按钮')])
+        screen = self.screen([frame()] + [frame('其他按钮') for _ in range(8)])
         self.assertEqual(publish_flow(screen, '测试文案', 'fixture.png', pause=lambda _: None),
                          ('failed', 'image_menu_not_recognized'))
         screen.cancel_pending.assert_called_once()

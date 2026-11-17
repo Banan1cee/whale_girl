@@ -16,13 +16,9 @@ dialog.addEventListener('click', event => {
 });
 
 const motionMedia = matchMedia('(prefers-reduced-motion: reduce)');
-const motionButton = document.querySelector('#motion-toggle');
 let motionPaused = window.WhaleSiteMotion?.paused ?? motionMedia.matches;
 function updateMotion() {
   root.dataset.motion = motionPaused ? 'paused' : 'running';
-  motionButton.setAttribute('aria-pressed', String(motionPaused));
-  motionButton.disabled = motionMedia.matches;
-  motionButton.textContent = motionMedia.matches ? '静态模式' : motionPaused ? '开启动画 ▷' : '暂停动画 Ⅱ';
   root.classList.toggle('scroll-enhanced', !motionPaused);
   // 下一帧重新计算当前位置，恢复动画时不会停留在暂停前的章节。
   requestAnimationFrame(() => updateProgress());
@@ -30,7 +26,6 @@ function updateMotion() {
 if (window.WhaleSiteMotion) {
   window.addEventListener('whale:motion-change', event => { motionPaused = event.detail.paused; updateMotion(); });
 } else {
-  motionButton.addEventListener('click', () => { motionPaused = !motionPaused; updateMotion(); });
   motionMedia.addEventListener('change', event => { motionPaused = event.matches; updateMotion(); });
 }
 updateMotion();
@@ -78,26 +73,12 @@ function updateProgress() {
       for (let parent = element; parent; parent = parent.offsetParent) top += parent.offsetTop;
       return { element, rect: { top: top - scrollY, height: element.offsetHeight } };
     });
-    const storyRect = storySection.getBoundingClientRect();
     for (const { element, rect } of measurements) {
       const state = WhaleMotion.reveal(rect.top, rect.height, innerHeight);
       element.style.setProperty('--reveal-opacity', state.opacity);
       element.style.setProperty('--reveal-y', `${state.y}px`);
       element.style.setProperty('--reveal-scale', state.scale);
     }
-    const state = WhaleMotion.story(storyRect.top, storyRect.height, innerHeight);
-    journey.style.setProperty('--handoff', state.entrance);
-    storySection.dataset.stage = String(state.stage);
-    storySection.style.setProperty('--story-progress', state.progress);
-    storySection.style.setProperty('--story-x', `${state.x}px`);
-    storySection.style.setProperty('--story-y', `${state.y}px`);
-    storySection.style.setProperty('--story-rotate', `${state.rotate}deg`);
-    storySection.style.setProperty('--story-scale', state.scale);
-    storyCaptions.forEach((caption, index) => {
-      caption.classList.toggle('is-current', state.stage === index);
-    });
-    characterPoses.forEach((pose, index) => pose.classList.toggle('is-current', state.stage === index));
-    characterScenes.forEach((scene, index) => scene.classList.toggle('is-current', state.stage === index));
   }
   scrollFrame = 0;
 }

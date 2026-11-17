@@ -29,10 +29,14 @@
                     <StackPanel>
                         <TextBlock Text="人设与预设" Style="{StaticResource H2}" />
                         <TextBlock x:Name="CurrentPreset" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,12" />
-                        <ComboBox x:Name="CmbPreset" MinWidth="200" HorizontalAlignment="Stretch" SelectionChanged="OnPresetChanged" AutomationProperties.Name="选择人设预设" />
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <Button x:Name="BtnPersonaTitle" Content="点击编辑人设名称" Style="{StaticResource Ghost}" Click="OnEditPersonaTitle" HorizontalContentAlignment="Left" Margin="0,0,12,0" />
+                            <ComboBox x:Name="CmbPreset" Grid.Column="1" MinWidth="200" HorizontalAlignment="Stretch" SelectionChanged="OnPresetChanged" AutomationProperties.Name="选择人设预设" />
+                        </Grid>
                         <WrapPanel Margin="0,10,0,0">
                             <Button Content="应用选中预设" Style="{StaticResource Ghost}" Click="OnImportPreset" Margin="0,0,8,8" />
-                            <Button x:Name="BtnSavePreset" Content="另存为预设" Style="{StaticResource Ghost}" Click="OnSavePreset" Margin="0,0,8,8" />
+                            <Button x:Name="BtnSavePreset" Content="创建自定义人设" Style="{StaticResource Ghost}" Click="OnSavePreset" Margin="0,0,8,8" />
                             <Button Content="打包分享" Style="{StaticResource Ghost}" Click="OnExportPersona" Margin="0,0,8,8" />
                             <Button Content="仅分享提示词" Style="{StaticResource Ghost}" Click="OnExportPrompt" Margin="0,0,8,8" />
                             <Button x:Name="BtnCopyPreset" Content="复制为自建预设" Style="{StaticResource Ghost}" Click="OnCopyPreset" Visibility="Collapsed" Margin="0,0,8,8" />
@@ -43,7 +47,7 @@
                             <TextBlock x:Name="PresetSaved" Style="{StaticResource Small}" VerticalAlignment="Center" />
                         </WrapPanel>
                         <TextBlock x:Name="PresetLockHint" Style="{StaticResource Small}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,4,0,12"
-                                   Text="内置预设只读，复制为自建预设后可编辑。安装的人设可直接修改，修改仅保存在本地。" />
+                                   Text="所有人设均可编辑；创建自定义人设可另存当前内容，原始内置文件不变。" />
                         <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Margin="0,8,0,16" />
                         <TextBlock Text="内在性格" Style="{StaticResource H2}" />
                         <TextBlock Text="这些基础字段定义她是谁。自定义内容用于补充，冲突时以当前基础字段为准。" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,12" />

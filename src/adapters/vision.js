@@ -26,8 +26,8 @@ const TEST_IMAGE = 'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAeklEQVR4nO3P
 function maskKey(key) {
   const s = String(key || '');
   if (!s) return '';
-  if (s.length <= 10) return s.slice(0, 2) + '****';
-  return s.slice(0, 5) + '****' + s.slice(-4);
+  if (s.length <= 4) return '****';
+  return s.slice(0, 2) + '********' + s.slice(-2);
 }
 
 /** 读 data/settings.json 里可能存 Key 的几个地方 */

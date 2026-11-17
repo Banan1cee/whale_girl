@@ -55,6 +55,14 @@ function fixture(t) {
   return { dir, config, store, llm, calls, logs, queued, service, make, setNow: (v) => { now = v; }, advance: (v) => { now += v; } };
 }
 
+test('日记：旧微信 key 的 web 元数据仍按主人 ID 识别，不接纳陌生人', t => {
+  const f = fixture(t);
+  for (const session of f.store.sessions.values()) session.platform = 'web';
+  assert.equal(f.service.ownerTarget().wxid, 'wxid_master');
+  f.config.persona.master.wxids = ['wxid_no_match'];
+  assert.equal(f.service.ownerTarget(), null);
+});
+
 test('日记：默认关闭；按本地时间生成，重启去重，第二天独立文件', async (t) => {
   const f = fixture(t);
   await f.service.tick();

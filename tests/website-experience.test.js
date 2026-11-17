@@ -28,9 +28,13 @@ try {
   assert.doesNotMatch(read('support/transparency/index.html'), /爱发电 · 团队创作打赏记录/);
   for (const page of ['index.html', 'downloads/index.html', 'plugins/index.html', 'support/index.html', 'support/transparency/index.html', 'team/index.html']) {
     assert.match(read(page), /site-motion\.js/, `${page} 加载公共动效`);
-    assert.match(read(page), /data-motion-toggle/, `${page} 可以暂停动态效果`);
+    assert.doesNotMatch(read(page), /data-motion-toggle|id="motion-toggle"/, `${page} 不再显示暂停动画按钮`);
   }
   assert.match(read('plugins/index.html'), /catalog-sidebar/);
+  assert.match(read('team/index.html'), /Xiaokun2233/);
+  assert.doesNotMatch(read('index.html'), /class="story-track"/);
+  assert.doesNotMatch(read('app.js'), /WhaleMotion\.story\(/);
+  assert.equal((read('index.html').match(/class="story-caption"/g) || []).length, 3);
   assert.match(read('downloads/v4.1.0/index.html'), /release-layout/);
   assert.match(read('support/index.html'), /support-layout/);
   buildSite({ root, output, data, support: { ...configured, channels: configured.channels.map(item => ({ ...item, enabled: false })) } });

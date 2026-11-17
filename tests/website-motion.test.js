@@ -53,15 +53,9 @@ function page(reduced = false, fine = true) {
 }
 
 const normal = page();
-const toggle = normal.nodes.get('#motion-toggle');
 assert.equal(normal.root.dataset.motion, 'running');
-toggle.events.click();
-assert.equal(normal.root.dataset.motion, 'paused');
-assert.equal(toggle.attributes['aria-pressed'], 'true');
+assert.equal(normal.nodes.has('#motion-toggle'), false, '页面已移除暂停按钮，脚本不再查找它');
 const art = normal.nodes.get('.hero-art');
-art.events.pointermove({ clientX: 600, clientY: 400 });
-assert.equal(art.properties['--tilt-x'], undefined, '暂停后不响应指针');
-toggle.events.click();
 art.events.pointermove({ clientX: 600, clientY: 400 });
 assert.equal(art.properties['--tilt-x'], '5deg');
 art.events.pointerleave();
@@ -70,12 +64,15 @@ assert.equal(normal.root.properties['--page-progress'], 0.5, '阅读进度按可
 
 const reduced = page(true);
 assert.equal(reduced.root.dataset.motion, 'paused', '系统减少动态效果优先');
-assert.equal(reduced.nodes.get('#motion-toggle').disabled, true);
+const reducedArt = reduced.nodes.get('.hero-art');
+reducedArt.events.pointermove({ clientX: 600, clientY: 400 });
+assert.equal(reducedArt.properties['--tilt-x'], undefined, '暂停后不响应指针');
 const preference = reduced.media.get('(prefers-reduced-motion: reduce)');
 preference.matches = false;
 preference.change({ matches: false });
 assert.equal(reduced.root.dataset.motion, 'running', '实时跟随系统偏好变化');
-assert.equal(reduced.nodes.get('#motion-toggle').disabled, false);
+reducedArt.events.pointermove({ clientX: 600, clientY: 400 });
+assert.equal(reducedArt.properties['--tilt-x'], '5deg', '恢复动态后重新响应指针');
 
 const touch = page(false, false);
 touch.nodes.get('.hero-art').events.pointermove({ clientX: 600, clientY: 400 });

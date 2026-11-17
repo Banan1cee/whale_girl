@@ -271,6 +271,11 @@ class ChatStore {
     const id = String(chatId || '').slice(0, 240);
     const found = this.chats.get(id);
     if (found) {
+      if (meta.platform === 'wechat' && /^wechat:[ug]:/.test(id) && found.platform !== 'wechat') {
+        found.platform = 'wechat';
+        found.chatType = /^wechat:g:/.test(id) ? 'group' : 'private';
+        this.saveMeta(found, { immediate: true });
+      }
       if (meta.title && !found.title) {
         found.title = String(meta.title).slice(0, 60);
         this.saveMeta(found, { immediate: true });

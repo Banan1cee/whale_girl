@@ -175,7 +175,7 @@ namespace WhaleLauncher.Views
         /** 内置只读；市场人设直接编辑，但不会改写原始插件包。 */
         private void ApplyPersonaEditState()
         {
-            _locked = string.Equals(_presetSource, "builtin", StringComparison.OrdinalIgnoreCase);
+            _locked = false;
             foreach (var field in new Control[]
             {
                 TxtName, TxtAge, TxtJob, TxtLook, TxtPerson, TxtBack, TxtPrompt,
@@ -184,7 +184,7 @@ namespace WhaleLauncher.Views
                 field.IsEnabled = !_locked;
             }
             PresetLockHint.Visibility = _locked ? Visibility.Visible : Visibility.Collapsed;
-            BtnCopyPreset.Visibility = _locked ? Visibility.Visible : Visibility.Collapsed;
+            BtnCopyPreset.Visibility = Visibility.Collapsed;
             BtnSavePreset.Visibility = _locked ? Visibility.Collapsed : Visibility.Visible;
             UpdateHints();
         }
@@ -731,7 +731,30 @@ namespace WhaleLauncher.Views
             }
         }
 
-        private void OnPresetChanged(object sender, SelectionChangedEventArgs e) => UpdatePresetButtons();
+        private void OnPresetChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (BtnPersonaTitle != null)
+                BtnPersonaTitle.Content = CmbPreset.SelectedItem is PresetItem p ? p.Name : "点击编辑人设名称";
+            UpdatePresetButtons();
+        }
+
+        private async void OnEditPersonaTitle(object sender, RoutedEventArgs e)
+        {
+            if (!_loaded || _applyingPreset) return;
+            if (CmbPreset.SelectedItem is PresetItem p && p.IsUser)
+            {
+                OnRenamePreset(sender, e);
+                return;
+            }
+            if (CmbPreset.SelectedItem is PresetItem selected &&
+                !string.Equals(selected.Id, _currentPresetId, StringComparison.OrdinalIgnoreCase))
+            {
+                SaveState.Text = "先应用选中的人设，再创建自定义名称。";
+                return;
+            }
+            if (!await FlushEditsAsync()) return;
+            OnSavePreset(sender, e);
+        }
 
         private async Task<bool> FlushEditsAsync()
         {

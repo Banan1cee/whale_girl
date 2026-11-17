@@ -240,7 +240,7 @@ public sealed class VoiceSendPage : UserControl
             var caption=new TextBlock{Text=label,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,4)};
             caption.SetResourceReference(StyleProperty,"Small");box.Children.Add(caption);
             // Explicitly retain the application's input styles for code-built controls.
-            control.SetResourceReference(StyleProperty,control.GetType());
+            control.SetResourceReference(StyleProperty,control is TextBox ? typeof(TextBox) : control is ComboBox ? typeof(ComboBox) : control.GetType());
             box.Children.Add(control);
             return box;
         }
@@ -346,10 +346,19 @@ public sealed class VoiceSendPage : UserControl
     void RefreshDevices()
     {
         if(experimental.IsChecked!=true)return;
+        try
+        {
         var selected=(devices.SelectedItem as Device)?.Id;
         using var e=new MMDeviceEnumerator();
         devices.ItemsSource=e.EnumerateAudioEndPoints(DataFlow.Render,DeviceState.Active).Select(d=>{var item=new Device(d.ID,d.FriendlyName);d.Dispose();return item;}).ToArray();
         devices.SelectedItem=devices.Items.Cast<Device>().FirstOrDefault(d=>d.Id==selected);
+        if(devices.Items.Count==0)status.Text="未找到可用播放设备，请安装并启用 VB-CABLE，再点击刷新声卡；语音开关已保存。";
+        }
+        catch(Exception ex)
+        {
+            devices.ItemsSource=Array.Empty<Device>();
+            status.Text="语音开关已保存，但声卡读取失败："+ex.Message+"。请检查 Windows 音频服务及虚拟声卡驱动后刷新。";
+        }
     }
     void Load()
     {

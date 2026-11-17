@@ -86,7 +86,7 @@ function readSnapshot(root, env = process.env) {
     '/api/diary': { ok: true, ...new DiaryService(config, {}).status(), message: '启动内核后可生成日记' },
     '/api/moments/settings': momentsSettings(config),
     '/api/moments/publish-settings': { ok: true, ...publisher.settings(), ...publisher.status() },
-    '/api/config': { ok: true, config: pub.config, secrets: pub.secrets },
+    '/api/config': { ok: true, config: pub.config, secrets: pub.secrets, secretMasks: pub.secretMasks },
     '/api/settings': getSettings(runtime),
     '/api/persona': (() => {
       const p = persona.summary(config);

@@ -165,12 +165,14 @@ function publicConfig(config) {
     autoDetect: envCfg.autoDetect !== false,
   };
   const secrets = {};
+  const secretMasks = {};
   for (const p of SECRET_PATHS) {
     const v = getByPath(config, p);
     secrets[p] = Boolean(v && String(v).trim());
+    secretMasks[p] = require('./config').maskKey(v);
     try { setByPath(out, p, ''); } catch { /* 没有这段就算了 */ }
   }
-  return { config: out, secrets };
+  return { config: out, secrets, secretMasks };
 }
 
 /** 把 settings.json 里会「盖住」刚改的字段清掉，否则界面上改了 config.json 却不生效 */

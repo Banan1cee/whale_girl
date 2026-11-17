@@ -190,20 +190,23 @@ test('全屏判定不能把「最大化窗口」误判成全屏', () => {
  * 桥接启动时微信恰好在托盘里（主窗隐藏）→ gui 一直定位不到主窗，
  * 之后把微信拉出来也不会自愈，心跳永远 uia:false（3.3.2 实测：预热报
  * 「未找到微信主窗口」，60 秒后心跳仍是 false）。
- * 现在连续 3 次拿不到就重建窗口驱动。
+ * 4.1.8 起后台巡检只读 UIA 缓存：连续 3 次拿不到就暂停自动探测，等实际发送
+ * 或重连桥接再恢复；巡检本身不再重建窗口驱动，避免把最小化的微信拉起来卡死。
  */
-test('UIA 连续拿不到会重建窗口驱动（微信在托盘里启动也能自愈）', () => {
+test('心跳只读 UIA 缓存，连续失败只暂停后台探测而不重建驱动', () => {
   const hb = bridge.slice(bridge.indexOf('def bridge_heartbeat'));
   const body = hb.slice(0, hb.indexOf('\n    def ', 10));
-  assert.match(body, /gui = new_window_driver\(\)/, '要能按已选窗口重建并写回 gui');
+  assert.match(body, /getattr\(gui, '_uia', None\)/, '心跳要读窗口驱动上的 UIA 缓存');
+  assert.doesNotMatch(body, /_get_uia\(\)/, '不能调用 _get_uia()，它会热激活微信并重建控件树');
+  assert.doesNotMatch(body, /new_window_driver\(\)/, '后台巡检不再强制重建窗口驱动');
   assert.match(body, /misses/, '要有连续失败计数');
-  assert.match(body, /重建窗口驱动/, '要给出日志，别静默');
+  assert.match(body, /暂停后台预热和重建/, '要给出日志，别静默');
   // 心跳只检查能力，不替用户把微信弹出来：wake=False 安静待命。
   // 真发送时 _ensure_tree 才会按 Ctrl+Alt+W 唤醒；叫不醒再走「连续 3 次」兜底。
   assert.match(body, /ensure_uia_ready\(force=True, wake=False\)/, '心跳不能弹微信窗口');
   assert.ok(body.indexOf('ensure_uia_ready(force=True, wake=False)') < body.indexOf('misses >= 3'),
     '先检查，再攒失败次数兜底');
-  assert.match(body, /misses >= 3/, '老兜底不能丢');
+  assert.match(body, /misses >= 3/, '暂停后台探测的兜底不能丢');
 });
 /**
  * 键盘兜底是「Ctrl+F 搜索 → 回车 → 粘贴正文 → 回车」，中间不确认打开的是谁。

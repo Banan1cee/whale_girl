@@ -17,7 +17,8 @@
     }
   ],
   "contributors": [
-    { "login": "lx-1203", "contribution": "代码贡献" }
+    { "login": "lx-1203", "contribution": "代码贡献" },
+    { "login": "Xiaokun2233", "contribution": "群聊连续消息合并，先攒后回（PR #157）" }
   ],
   "thanks": "感谢每一位为鲸鲸贡献代码、提交问题、分享建议、参与测试和完善文档的朋友。"
 }

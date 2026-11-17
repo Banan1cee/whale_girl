@@ -42,6 +42,11 @@ async function main() {
     const home = read('index.html');
     const archive = read('downloads/index.html');
     const oldPage = read('downloads/v3.60/index.html');
+    for (const file of ['downloads/index.html', 'downloads/v3.60/index.html', 'plugins/index.html',
+      'plugins/text-counter/index.html', 'support/index.html', 'support/transparency/index.html', 'team/index.html']) {
+      assert.doesNotMatch(read(file), /class="page-brand-line"|class="page-brand-location"/,
+        '子页面不再显示重复的品牌及页面名称横栏');
+    }
     for (const page of [home, archive, oldPage, read('team/index.html')]) {
       assert.match(page, /class="github-button"[^>]+href="https:\/\/github.com\/Banan1cee\/whale_girl"/);
       assert.match(page, /1,234 Stars，随官网部署更新/);

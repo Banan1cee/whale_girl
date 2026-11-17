@@ -216,7 +216,7 @@ test('人设预设可打包分享，内置只读，安装人设可直接修改',
   const xaml = readLauncher('Views/PersonaPage.xaml');
   const code = readLauncher('Views/PersonaPage.xaml.cs');
   const dialog = readLauncher('AppDialog.cs');
-  for (const text of ['另存为预设', '复制为自建预设', '更新此预设', '重命名', '删除预设']) {
+  for (const text of ['创建自定义人设', '更新此预设', '重命名', '删除预设']) {
     assert.ok(xaml.includes(text), '预设区缺少按钮：' + text);
   }
   for (const handler of ['OnSavePreset', 'OnCopyPreset', 'OnUpdatePreset', 'OnRenamePreset', 'OnDeletePreset']) {
@@ -228,6 +228,7 @@ test('人设预设可打包分享，内置只读，安装人设可直接修改',
   assert.match(code, /\/api\/persona\/preset\/delete/, '删除要走预设删除接口');
   assert.match(code, /presetSource/, '要用服务端返回的预设来源决定是否锁定');
   assert.match(code, /ApplyPersonaEditState/, '要有人设锁定/解锁逻辑');
+  assert.match(code, /_locked = false;/, '所有来源均允许编辑');
   const lockBody = code.slice(code.indexOf('private void ApplyPersonaEditState()'), code.indexOf('private sealed class MemoryChatItem'));
   assert.doesNotMatch(lockBody, /string\.Equals\(_presetSource, "market"/);
   assert.match(xaml, /Content="打包分享".*Click="OnExportPersona"/);

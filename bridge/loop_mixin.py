@@ -349,27 +349,20 @@ class LoopMixin:
                                 gate_logged = True
                         else:
                             with self.gui_lock:
-                                _u = self.gui._get_uia() if self.gui is not None else None
+                                # 心跳只读缓存，_get_uia 可能热激活微信内存并重建控件树。
+                                _u = getattr(self.gui, '_uia', None) if self.gui is not None else None
                             if _u is None:
                                 # 心跳只检查能力，不替用户把微信窗口弹出来。
                                 _ready = self.ensure_uia_ready(force=True, wake=False)
-                                if _ready.get('ok'):
+                                if _ready.get('ok') and self.gui is not None:
                                     with self.gui_lock:
-                                        self.gui = self.new_window_driver()
-                                        _u = self.gui._get_uia()
+                                        _u = getattr(self.gui, '_uia', None)
                                     if _u is not None:
                                         misses = 0
                                         gate_logged = False
                                 if _u is None:
                                     misses += 1
-                                if _u is None and misses >= 3:
-                                    background_uia_paused = True
-                                    G.log_warn('[!] UIA 连续 %d 次拿不到，重建窗口驱动再试…' % misses)
-                                    with self.gui_lock:
-                                        self.gui = self.new_window_driver()
-                                        _u = self.gui._get_uia()
-                                    if _u is not None:
-                                        misses = 0
+                                # 无实际发送任务时不强制重建驱动，避免巡检把最小化微信卡死。
                             else:
                                 misses = 0
                                 gate_logged = False

@@ -12,6 +12,7 @@ module.exports = function register(router) {
       ok: true,
       config: pub.config,
       secrets: pub.secrets,
+      secretMasks: pub.secretMasks,
       configFile: runtime.config.paths.configFile,
       settingsFile: runtime.config.paths.settingsFile,
     });
