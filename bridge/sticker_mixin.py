@@ -82,20 +82,28 @@ class StickerMixin:
                 desktop = G.WindowsDesktop()
                 if not desktop.foreground(hwnd):
                     snap = self.snapshot_win_state()
-                    if not self.force_foreground(hwnd) or not desktop.foreground(hwnd):
-                        try:
-                            self.restore_win_state(snap)
-                        except Exception:
-                            pass
-                        snap = None
+                    from moments_window import activate_verified_window
+
+                    def activation_allowed():
+                        return (bool(self.ACCOUNT.get('verified'))
+                                and int(self.ACCOUNT.get('hwnd') or 0) == hwnd
+                                and self.sticker_config_now() is not None
+                                and self.sticker_activity_allowed(chat_username))
+
+                    evidence = {}
+                    ready = activate_verified_window(
+                        self, hwnd, int(self.ACCOUNT.get('pid') or 0), activation_allowed,
+                        pause=G.time.sleep, probe=evidence.update)
+                    if not ready or not desktop.foreground(hwnd):
+                        G.log_throttled('sticker-window-not-ready',
+                                        '[sticker] stage=foreground result=failed reason=window_not_ready'
+                                        ' attempts=%d visible=%d iconic=%d same_process=%d'
+                                        % (evidence.get('attempts', 0), evidence.get('visible', False),
+                                           evidence.get('iconic', False), evidence.get('sameProcess', False)),
+                                        ttl=60)
                         return G.sticker_result('failed', 'could not bring the WeChat window to the foreground')
                     G.log_throttled('sticker-foreground', '表情包：微信不在前台，先切过去（发完会把窗口还原）', ttl=120)
             except Exception:
-                try:
-                    self.restore_win_state(snap)
-                except Exception:
-                    pass
-                snap = None
                 return G.sticker_result('failed', 'foreground safety checks are unavailable')
             try:
                 with self.gui_lock:
@@ -174,7 +182,9 @@ class StickerMixin:
             finally:
                 if snap:
                     try:
-                        self.restore_win_state(snap)
+                        # 用户切走之后，仍去还原会再次抢焦点。
+                        if desktop.foreground(hwnd):
+                            self.restore_win_state(snap)
                     except Exception:
                         pass
 

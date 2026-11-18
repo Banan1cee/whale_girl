@@ -107,6 +107,17 @@ test('任务原子领取，仅一次；失败/未确认状态不伪装成成功�
   assert.deepEqual(service.pending(), []);
 });
 
+test('WeChat 前台切换错误记为窗口故障，不误判为会话校验失败', (t) => {
+  const { root, cfg } = fixture(t);
+  upload(cfg, root);
+  const logger = loggerStub();
+  const service = new StickerService(cfg, { logger });
+  const job = service.enqueue('other', '文件传输助手');
+  service.claim(job.id);
+  service.ack(job.id, 'failed', 'could not bring the WeChat window to the foreground');
+  assert.match(logger.lines.find(line => line.includes('stage=ack')), /reason=window_not_ready$/);
+});
+
 test('没有冷却：私聊也能连续发；同一会话同时只排一个任务', (t) => {
   const { root, cfg } = fixture(t);
   upload(cfg, root);
