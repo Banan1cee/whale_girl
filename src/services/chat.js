@@ -1,7 +1,6 @@
 'use strict';
 
 const { json, readBody, sseInit, sseSend, sanitizeId } = require('../http/protocol');
-const { LlmError } = require('../llm/client');
 const { describeError } = require('../infra/errors');
 
 /* ---------------- 本机聊天口（SSE 流式，只认桥接 token） ---------------- */
@@ -44,66 +43,61 @@ async function handleChat(runtime, req, res) {
 
   let decision;
   try {
-    decision = await bot.decide(msg);
-  } catch (err) {
-    logger.error('decide 失败：' + (err && err.stack ? err.stack : err));
-    return json(res, 500, { ok: false, error: '鲸鲸打了个结，稍后再试' });
-  }
-
-  // 被忽略（群聊里没被叫到）
-  if (decision.action === 'ignore') {
-    return json(res, 200, { ok: true, action: 'ignore', reason: decision.reason });
-  }
-
-  sseInit(res);
-  sseSend(res, {
-    type: 'meta',
-    action: decision.action,
-    mock: Boolean(decision.mock),
-    reason: decision.reason,
-    mode,
-    senderName,
-    commandType: decision.commandType || '',
-  });
-
-  // 命令 / 只被 @ 一下：直接回复固定台词
-  if (decision.action === 'command' || decision.canned) {
-    const full = decision.text || decision.canned || '';
-    for (let i = 0; i < full.length; i += 3) {
+    try {
+      decision = await bot.decide(msg, { signal: abort.signal });
+    } catch (err) {
+      logger.error('decide 失败：' + (err && err.stack ? err.stack : err));
       if (closed) return res.end();
-      sseSend(res, { type: 'delta', text: full.slice(i, i + 3) });
+      return json(res, 500, { ok: false, error: '鲸鲸打了个结，稍后再试' });
     }
-    const bubbles = bot.finalize(decision, full);
-    sseSend(res, { type: 'done', text: full, bubbles, reason: decision.reason, commandType: decision.commandType || '' });
-    return res.end();
-  }
-
-  let full = '';
-  let failed = null;
-  try {
-    for await (const piece of bot.generate(decision, { signal: abort.signal })) {
-      if (closed) break;
-      full += piece;
-      sseSend(res, { type: 'delta', text: piece });
+    if (closed) return res.end();
+    if (decision.action === 'ignore') {
+      return json(res, 200, { ok: true, action: 'ignore', reason: decision.reason });
     }
-  } catch (err) {
-    failed = err;
-  }
-  if (closed) return res.end();
 
-  if (failed) {
-    const friendly = failed instanceof LlmError ? failed.userMessage : '呜…深海线路打结了，等会儿再来找人家嘛 (｡•́︿•̀｡)';
-    logger.error('生成失败：' + describeError(failed));
-    bot.finalize(decision, friendly, { error: true });
-    sseSend(res, { type: 'delta', text: full ? '\n' + friendly : friendly });
-    sseSend(res, { type: 'done', text: (full + (full ? '\n' : '') + friendly).trim(), bubbles: [friendly], error: true, reason: 'llm_error' });
-    return res.end();
-  }
+    sseInit(res);
+    sseSend(res, {
+      type: 'meta', action: decision.action, mock: Boolean(decision.mock),
+      reason: decision.reason, mode, senderName, commandType: decision.commandType || '',
+    });
 
-  const clean = await bot.transformPluginReply(decision, String(full || '').trim());
-  const bubbles = bot.finalize(decision, clean);
-  sseSend(res, { type: 'done', text: clean, bubbles, reason: decision.reason, mock: Boolean(decision.mock) });
-  res.end();
+    let result;
+    try {
+      // 保留真实上游流和取消；先定稿再发正文，避免插件改写或控制标记已经外泄。
+      let full = '';
+      for await (const piece of bot.generate(decision, { signal: abort.signal })) {
+        if (closed) break;
+        const text = String(piece == null ? '' : piece);
+        bot.checkReplyLength(full.length + text.length);
+        full += text;
+      }
+      if (closed) return res.end();
+      if (decision.action !== 'command') full = await bot.transformPluginReply(decision, full.trim());
+      if (closed) return res.end();
+      result = bot.finalizeReply(decision, full);
+    } catch (err) {
+      if (closed) return res.end();
+      logger.error('生成失败：' + describeError(err));
+      result = bot.finalizeReply(decision, bot.failureReplyText(err), { error: true });
+    }
+
+    // 首个 text delta 延迟至定稿；meta 仍先发，不增加 reset/retraction 事件。
+    for (let i = 0; i < result.text.length; i += 3) {
+      if (closed) return res.end();
+      sseSend(res, { type: 'delta', text: result.text.slice(i, i + 3) });
+    }
+    if (closed) return res.end();
+    sseSend(res, { type: 'done', text: result.text, bubbles: [...result.bubbles],
+      reason: result.reason, mock: Boolean(decision.mock),
+      ...(decision.action === 'command' || decision.canned ? { commandType: decision.commandType || '' } : {}),
+      ...(result.error ? { error: true } : {}),
+      ...(result.stickerCategory ? { stickerCategory: result.stickerCategory } : {}),
+      ...(result.separateText ? { separateText: true } : {}),
+    });
+    res.end();
+  } finally {
+    bot.releaseReply(decision);
+  }
 }
 
 module.exports = { handleChat };

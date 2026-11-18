@@ -36,6 +36,9 @@ const trigger = require('../core/trigger');
 const { INSULT_RE, INSULT_LOOSE_RE } = require('../core/trigger');
 const addressing = require('../core/addressing');
 const sessionState = require('../core/sessionState');
+const { ReplyQuota, recentReplyCount } = require('../core/replyQuota');
+const replyDecision = require('../core/replyDecision');
+const { stripSilenceMark, stripStickerMarks } = require('../core/replyMarks');
 const context = require('../core/context');
 const { isEcho } = require('../core/echo');
 const { extractMentionNames } = require('../core/mentions');
@@ -73,97 +76,8 @@ function adminCommandList() {
 // 主人私聊问起朋友圈时才注入快照；普通聊天和群聊都不带，避免第三方内容乱入。
 const MOMENTS_INTENT_RE = /朋友圈|动态|谁发了|发了(?:什么|啥)|最近发了|看看.*(?:朋友圈|动态)|点赞/;
 
-/**
- * 把模型写的 ((silence:分钟)) 标记抠出来，返回 { text, minutes }。
- * 标记只用于「群里被赶走」：宿主校验会话和时长后才落盘，正文里绝不外泄。
- *
- * 用圆括号而不是方括号：表情包的 [[sticker:分类]] 也用 [[]]，两套语法必须分开。
- * 只认 ((silence))，不保留旧的 [[silence:]] 写法 —— 4.1.0 还没发布，没有历史用户，
- * 同时认两种只会让弱模型更爱写错。
- * 不用一条大正则：模型常见的写法（少一边括号、写「10分钟」、没有冒号）都要能认，
- * 没闭合时只删到这一行末尾，不吞后面的段落。
- */
-function stripSilenceMark(input) {
-  let text = String(input == null ? '' : input);
-  let minutes = 0;
-  let from = 0;
-  while (from <= text.length) {
-    const lower = text.toLowerCase();
-    const open = lower.indexOf('((', from);
-    if (open < 0) break;
-    let i = open + 2;
-    while (i < lower.length && (lower[i] === ' ' || lower[i] === '\t')) i++;
-    if (lower.slice(i, i + 7) !== 'silence') { from = open + 2; continue; }
-    const bodyStart = i + 7;
-    const close = text.indexOf('))', bodyStart);
-    const lineEnd = text.indexOf('\n', bodyStart);
-    const hasClose = close >= 0 && (lineEnd < 0 || close < lineEnd);
-    const stop = hasClose ? close + 2 : (lineEnd < 0 ? text.length : lineEnd);
-    const body = text.slice(bodyStart, hasClose ? close : (lineEnd < 0 ? text.length : lineEnd));
-    const m = body.match(/(\d{1,3})/);
-    if (!minutes && m) {
-      const v = Number(m[1]);
-      if (Number.isFinite(v) && v > 0) minutes = v;
-    }
-    text = text.slice(0, open) + text.slice(stop);
-    from = open;
-  }
-  return { text: text.trim(), minutes };
-}
-
 function momentsIntent(text) {
   return MOMENTS_INTENT_RE.test(String(text == null ? '' : text));
-}
-
-/**
- * 把正文里的 [[sticker:分类]] 标记抠干净，返回 { text, category }。
- *
- * 不用正则：模型有时把标记写在开头还没闭合，`[[sticker[\s\S]*$` 这类贪心写法
- * 会把整条回复吃光（用户那边就是「她突然不说话」）。这里逐个字符扫描：
- *   1. 小写副本里找 '[['，位置与原串一一对应（ASCII 大小写同长度）；
- *   2. 跳过空白后必须是 'sticker'（兼容 "[[ sticker : 炸毛"），再跳到分隔符；
- *   3. 有 ':' / '：' 才算给了分类，分类名去空白后 1~40 字且不含换行；
- *   4. 有 ']]' 删到 ']]'；没闭合就删到这一行末尾（不吞后面的段落）；
- *      没有分隔符只删标记本身。
- * 最多处理 3 个，全部删掉但只取第一个分类名。
- */
-function stripStickerMarks(input) {
-  let text = String(input == null ? '' : input);
-  let category = '';
-  let count = 0;
-  let from = 0;
-  while (count < 3) {
-    const lower = text.toLowerCase();
-    const open = lower.indexOf('[[', from);
-    if (open < 0) break;
-    let i = open + 2;
-    while (i < lower.length && (lower[i] === ' ' || lower[i] === '\t')) i++;
-    if (lower.slice(i, i + 7) !== 'sticker') { from = open + 2; continue; }
-    let j = i + 7;
-    while (j < lower.length && (lower[j] === ' ' || lower[j] === '\t')) j++;
-    const hasDelimiter = lower[j] === ':' || lower[j] === '：';
-    const start = hasDelimiter ? j + 1 : j;
-    const close = text.indexOf(']]', start);
-    let stop;
-    if (close >= 0) {
-      stop = close + 2;
-      if (hasDelimiter && !category) category = text.slice(start, close);
-    } else if (hasDelimiter) {
-      // 没闭合：删到行尾，后面的段落不动；分类名最多取到行尾
-      const lineEnd = text.indexOf('\n', start);
-      stop = lineEnd < 0 ? text.length : lineEnd;
-      if (!category) category = text.slice(start, stop);
-    } else {
-      stop = close === start ? close + 2 : start;
-    }
-    if (stop <= open) stop = Math.min(text.length, open + 9);
-    text = text.slice(0, open) + text.slice(stop);
-    count++;
-    from = open;
-  }
-  category = String(category).split('\r').join('').split('\n').join('').trim();
-  if (category.length < 1 || category.length > 40) category = '';
-  return { text: text.trim(), category };
 }
 
 /**
@@ -184,6 +98,8 @@ function isContextLengthError(err) {
 // 单会话上限（group.maxRepliesPerMinute，5–30）防的是「一个群里爆刷」，
 // 这个是防「同时开了几十个群，每个都没超但加起来停不下来」。固定 30，不给配。
 const GLOBAL_REPLY_CAP_PER_MINUTE = 30;
+// 管线原始流缓存有界，不替换当前服务商或整轮输出预算。
+const MAX_REPLY_BUFFER_CHARS = LIMITS.hardTotalTokens * 4;
 const memoryBudget = require('../memory/budget');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -223,6 +139,11 @@ class Bot {
     this._adminGrantsByKey = new Map();
     // 全局回复时间戳（跨会话共用），只留在内存里：重启后重新数
     this.globalReplyTimes = [];
+    this._replyTurns = new WeakMap();
+    this._finalReplies = new WeakMap();
+    this._replyQuota = new ReplyQuota({ now: () => this.now().getTime(),
+      getGlobal: () => this.globalReplyTimes, setGlobal: values => { this.globalReplyTimes = values; },
+      globalCap: GLOBAL_REPLY_CAP_PER_MINUTE });
     this.lastBudget = null;
     this.lastUsage = null;
     const pluginOptions = { dataDir: config.paths?.dataDir || path.join(process.cwd(), 'data'), logger };
@@ -457,17 +378,39 @@ class Bot {
   /**
    * 判断并准备好这次回复（不调用模型）。返回 decision。
    */
-  async decide(rawMsg) {
-    const decision = await this._decide(rawMsg);
-    if (decision.action === 'reply') {
-      const output = await this.messagePlugins.run('chat.prompt', this.pluginContext(decision, { system: decision.system }));
-      decision.system = output.system;
-      const generated = await this.messagePlugins.run('chat.generate', this.pluginContext(decision));
-      if (generated.text !== undefined) {
-        decision.canned = generated.text;
-        decision.text = generated.text;
-        if (!generated.text.trim()) { decision.action = 'ignore'; decision.reason = 'plugin_empty'; }
+  async decide(rawMsg, { signal } = {}) {
+    if (signal?.aborted) return { action: 'ignore', reason: 'cancelled' };
+    const turn = { signal, cancelled: false, lease: null };
+    const abort = () => { turn.cancelled = true; this._replyQuota.release(turn.lease); };
+    signal?.addEventListener('abort', abort, { once: true });
+    turn.detach = () => signal?.removeEventListener('abort', abort);
+    let decision;
+    try {
+      decision = await this._decide(rawMsg, turn);
+      this._replyTurns.set(decision, turn);
+      if (decision.action === 'reply' && !turn.cancelled) {
+        const output = await this.messagePlugins.run('chat.prompt', this.pluginContext(decision, { system: decision.system }));
+        decision.system = output.system;
+        const generated = await this.messagePlugins.run('chat.generate', this.pluginContext(decision));
+        if (generated.text !== undefined) {
+          decision.canned = generated.text;
+          decision.text = generated.text;
+          if (!generated.text.trim()) { decision.action = 'ignore'; decision.reason = 'plugin_empty'; }
+        }
       }
+      if (turn.cancelled) { decision.action = 'ignore'; decision.reason = 'cancelled'; }
+      if (decision.action === 'ignore') this.releaseReply(decision);
+      else {
+        if (turn.draft) {
+          const plan = replyDecision.replyPlan(decision.action, decision.reason, turn.before, turn.draft);
+          replyDecision.applyReplyPlan(turn.state, plan);
+        }
+        this._replyQuota.idle(turn.lease);
+      }
+    } catch (err) {
+      this._replyQuota.release(turn.lease);
+      turn.detach();
+      throw err;
     }
     // 判定链：为什么回 / 为什么不回。只记原因、长度和状态，正文交给 trace 的短期原文副本
     // （默认不进导出包）。追踪本身出错也绝不能影响回消息。
@@ -483,7 +426,7 @@ class Bot {
     return decision;
   }
 
-  async _decide(rawMsg) {
+  async _decide(rawMsg, turn = {}) {
     const msg = this.normalize(rawMsg);
     const modernPersona = usesNewPersona(this.config);
     msg.newPersonaBehavior = modernPersona;
@@ -650,7 +593,7 @@ class Bot {
     // 自述 / 纠正 / 手动记住的抽取在 Store.appendMessage 里同步完成：
     // 只写「当前 chat + 当前说话人」的卡，跨 chat 写入会直接抛错。
     // 回填的旧问题（recycled）在上面的 appendMessage 处整体跳过，不会重复抽事实。
-    const state = session.state;
+    let state = session.state;
     const muted = sessionState.isMuted(state, nowMs);
 
     // 识别「唯一的主人」（配置里 master.names / master.wxids）
@@ -728,6 +671,11 @@ class Bot {
     await this.messagePlugins.run('chat.received', pluginInput);
     const pluginTrigger = await this.messagePlugins.run('chat.pre_reply', pluginInput);
     if (pluginTrigger.action === 'skip') return { action: 'ignore', reason: 'plugin_skip', key, msg, atMe };
+    // 普通回复的状态变更先作为计划，最终闸门和后置插件拒绝时不写回。
+    turn.state = state;
+    const staged = replyDecision.draftReplyState(state);
+    turn.before = staged.before;
+    turn.draft = state = staged.draft;
     const triggerResult = this.computeTrigger({ msg, atMe, clean, isGroup, state, nowMs, isMaster, muted });
     if (pluginTrigger.action === 'wake' && !['silent', 'minute_cap', 'no_text'].includes(triggerResult.reason)) {
       triggerResult.wake = true;
@@ -779,29 +727,14 @@ class Bot {
       sessionState.touchEngagement(
         state, msg.senderId, nowMs, this.config.group.engagedMinutes);
     }
-    // 同一个会话一分钟内已经回了太多条 → 先停一下，别越聊越乱。
-    // 阈值跟「每分钟最多回几条」共用（原来这里硬编码 10，跟配置里的每分钟上限打架）。
-    // state.replyTimes 在会话状态被重建时会丢条目（CHANGELOG 实测 1/4 漏拦），
-    // 所以照搬 trigger.js 的兜底：再数一遍存储里真正落盘的助手消息，取两边较大的（M20）。
-    const minuteAgo = nowMs - 60000;
-    const recentList = Array.isArray(state.replyTimes) ? state.replyTimes.filter((t) => Number(t) > minuteAgo) : [];
-    let recentCount = recentList.length;
-    try {
-      const stored = this.store
-        .messages(key, 200)
-        .filter((m) => m.role === 'assistant' && Number(m.ts) > minuteAgo).length;
-      if (stored > recentCount) recentCount = stored;
-    } catch { /* 读不到就按内存里的算 */ }
+    // 两层限制共用计数事实，准入在任何后续 await 之前同步预留。
+    if (turn.cancelled) return { action: 'ignore', reason: 'cancelled', key, msg, atMe };
     const minuteCap = Number(this.config.group.maxRepliesPerMinute);
-    if (minuteCap > 0 && recentCount >= minuteCap) {
-      return { action: 'ignore', reason: 'burst_limit', key, msg, atMe };
-    }
-    // 全局闸门：所有会话合计每分钟最多 30 条（单会话都没超也可能整体刷起来）
-    const globalNow = this.now().getTime();
-    this.globalReplyTimes = (this.globalReplyTimes || []).filter((t) => globalNow - Number(t) < 60000);
-    if (this.globalReplyTimes.length >= GLOBAL_REPLY_CAP_PER_MINUTE) {
-      return { action: 'ignore', reason: 'global_minute_cap', key, msg, atMe };
-    }
+    const recentCount = recentReplyCount(this, { key, state, nowMs });
+    const admission = this._replyQuota.reserve(key, recentCount, minuteCap);
+    if (admission.reason) return { action: 'ignore', reason: admission.reason, key, msg, atMe };
+    turn.lease = admission.lease;
+    turn.key = key;
 
     // 固定话术：查自己的号 / 同意被损 / 主人点名吐槽（canned.js）。
     // 以前这些排在所有闸门前面（M19）：mute、禁言群、静默期、burst_limit 全挡不住；
@@ -1201,9 +1134,81 @@ class Bot {
   }
 
   async transformPluginReply(decision, text) {
+    if (!this.activateReply(decision)) return '';
+    this.checkReplyLength(String(text || '').length);
     const output = await this.messagePlugins.run('chat.reply', this.pluginContext(decision, { text }));
+    if (!this.activateReply(decision)) return '';
+    this.checkReplyLength(String(output.text || '').length);
     const beforeSend = await this.messagePlugins.run('chat.before_send', this.pluginContext(decision, { text: output.text }));
+    this.checkReplyLength(String(beforeSend.text || '').length);
     return beforeSend.text;
+  }
+
+  checkReplyLength(length) {
+    if (length > MAX_REPLY_BUFFER_CHARS) throw new LlmError('回复太长了，换个说法再试试', { code: 'reply_too_long' });
+  }
+
+  failureReplyText(err) {
+    const message = String(err?.message || '');
+    if (/敏感|不安全|安全|内容/.test(message) && /400/.test(message)) return '这话我不敢接，换个说法';
+    return err instanceof LlmError ? err.userMessage : '呜…深海线路打结了，等会儿再来找人家嘛';
+  }
+
+  activateReply(decision) {
+    const turn = this._replyTurns.get(decision);
+    if (!turn) return true; // 兼容手工构造 decision 的既有 finalize 调用。
+    if (turn.cancelled || turn.signal?.aborted) {
+      decision.action = 'ignore'; decision.reason = 'cancelled';
+      this.releaseReply(decision);
+      return false;
+    }
+    if (turn.lease && !this._replyQuota.activate(turn.lease)) {
+      const nowMs = this.now().getTime();
+      const recent = recentReplyCount(this, { key: turn.key, state: turn.state, nowMs });
+      const admission = this._replyQuota.reserve(turn.key, recent, Number(this.config.group.maxRepliesPerMinute));
+      if (admission.reason) {
+        decision.action = 'ignore'; decision.reason = admission.reason;
+        this.releaseReply(decision);
+        return false;
+      }
+      turn.lease = admission.lease;
+    }
+    return true;
+  }
+
+  releaseReply(decision) {
+    if (!decision || this._finalReplies.has(decision)) return;
+    const turn = this._replyTurns.get(decision);
+    if (turn) {
+      turn.cancelled = true;
+      this._replyQuota.release(turn.lease);
+      turn.detach();
+    }
+  }
+
+  finalizeReply(decision, text, options = {}) {
+    if (!decision || !decision.key) return { action: 'ignore', text: '', bubbles: [], reason: 'empty_reply' };
+    const previous = this._finalReplies.get(decision);
+    if (previous) return previous;
+    let bubbles = [];
+    if (this.activateReply(decision)) bubbles = this._finalizeOnce(decision, text, options);
+    const turn = this._replyTurns.get(decision);
+    if (bubbles.length) {
+      this._replyQuota.commit(turn?.lease, decision.key);
+      turn?.detach();
+    } else this.releaseReply(decision);
+    const result = Object.freeze({ action: bubbles.length ? 'reply' : 'ignore',
+      text: bubbles.length ? String(decision.finalText || '') : '', bubbles: Object.freeze([...bubbles]),
+      reason: options.error ? 'llm_error' : bubbles.length ? decision.reason : decision.action === 'ignore' ? decision.reason : 'empty_reply',
+      mock: Boolean(decision.mock), ...(options.error ? { error: true } : {}),
+      ...(decision.stickerCategory ? { stickerCategory: decision.stickerCategory } : {}),
+      ...(decision.separateText ? { separateText: true } : {}) });
+    this._finalReplies.set(decision, result);
+    return result;
+  }
+
+  finalize(decision, text, options = {}) {
+    return [...this.finalizeReply(decision, text, options).bubbles];
   }
 
   unlockAdminSpell(msg, key, state, spell, nowMs) {
@@ -1581,6 +1586,8 @@ class Bot {
    * 流式生成回复文本片段（含演示模式）。
    */
   async *generate(decision, { signal } = {}) {
+    if (!this.activateReply(decision) || signal?.aborted) { this.releaseReply(decision); return; }
+    try {
     if (decision.action === 'command') {
       yield decision.text;
       return;
@@ -1606,7 +1613,7 @@ class Bot {
     // 已经吐过字就不能重试，否则用户会看到两段拼接的回复。
     while (true) {
       try {
-        for await (const piece of this.llm.stream({ system: decision.system, turns: decision.turns, signal })) {
+        for await (const piece of this.llm.stream({ system: decision.system, turns: decision.turns, signal, purpose: 'chat' })) {
           sent = true;
           yield piece;
         }
@@ -1620,6 +1627,10 @@ class Bot {
       }
     }
     this.recordUsage(decision, this.usageSince(usageMark));
+    } finally {
+      if (signal?.aborted) this.releaseReply(decision);
+      else this._replyQuota.idle(this._replyTurns.get(decision)?.lease);
+    }
   }
 
   /** 偶尔在句尾补一个 emoji 或颜文字（由「颜文字用量」档位决定概率） */
@@ -1781,7 +1792,9 @@ class Bot {
     return true;
   }
 
-  finalize(decision, text, { error = false } = {}) {
+  _finalizeOnce(decision, text, { error = false } = {}) {
+    decision.finalText = '';
+    if (error) decision.error = true;
     const modernPersona = decision?.msg?.newPersonaBehavior ?? usesNewPersona(this.config);
     text = stripInternalTimestamps(text);
     // 模型主动退场标记 [[silence:分钟]]：先解析并从正文剥掉，再走后面的格式清理。
@@ -1903,15 +1916,22 @@ class Bot {
         decision.finalText = text;
       }
     }
-    // 记一笔全局回复时间（跨会话共用），_decide 的全局闸门读它
-    this.globalReplyTimes.push(this.now().getTime());
-    if (this.globalReplyTimes.length > 600) this.globalReplyTimes = this.globalReplyTimes.slice(-300);
     // 写库失败照常返回 bubbles：话已经生成了，不能因为落库失败把回复丢了。
     // 日记标记只存占位符，避免把整篇日记又写进聊天记忆。
     const hasDiaryMark = /\[\[diary:[^\]]{1,32}\]\]/i.test(text);
     const storeText = hasDiaryMark
       ? text.replace(/\[\[diary:[^\]]{1,32}\]\]/gi, '（读取日记）')
       : text;
+    if (hasDiaryMark) {
+      const expanded = this.expandDiaryMark(decision, text);
+      if (expanded !== text) {
+        text = expanded;
+        decision.finalText = text;
+        decision.diaryExpanded = Boolean(msg.isMaster && msg.chatType === 'private');
+      }
+    }
+    if (!text) return [];
+    const persist = () => {
     try {
       this.store.appendMessage(decision.key, {
         role: 'assistant',
@@ -1930,17 +1950,10 @@ class Bot {
     } catch (err) {
       this.logger && this.logger.error('写 checkpoint 失败（照常发送）：' + describeError(err));
     }
-    if (hasDiaryMark) {
-      const expanded = this.expandDiaryMark(decision, text);
-      if (expanded !== text) {
-        text = expanded;
-        decision.finalText = text;
-        decision.diaryExpanded = Boolean(msg.isMaster && msg.chatType === 'private');
-      }
-    }
+    };
     const isGroup = msg.chatType === 'group';
     // 命令路径以前在这里直接 return [text]，刚剥出来的 foundEmoji（🫧 这种）直接丢了（M28）
-    if (decision.action === 'command') return foundEmoji ? [text, foundEmoji] : [text];
+    if (decision.action === 'command') { persist(); return foundEmoji ? [text, foundEmoji] : [text]; }
     const maxBubbles = Math.max(1, Number(this.config.chat.maxBubbles) || 2);
     const hard = LIMITS.maxOutputHard || 4000;
     const normalMaxChars = Math.max(20, Math.min(Number(isGroup ? this.config.chat.groupMaxChars : this.config.chat.privateMaxChars) || LIMITS.maxOutputNormal, hard));
@@ -1997,6 +2010,7 @@ class Bot {
       if (bubbles.length < maxBubbles) bubbles.push(extra);
       else if (bubbles.length) bubbles[bubbles.length - 1] = (bubbles[bubbles.length - 1] + ' ' + extra).trim();
     }
+    if (bubbles.length) persist();
     return bubbles;
   }
 
@@ -2059,7 +2073,8 @@ class Bot {
   async _handleOnce(rawMsg, { signal, localWechat } = {}) {
     let decision;
     try {
-      decision = await this.decide(rawMsg);
+    try {
+      decision = await this.decide(rawMsg, { signal });
     } catch (err) {
       // 结构证据 + 堆栈：光看 stack 只能知道哪一行，不知道是配额、磁盘还是网络
       this.logger && this.logger.error('处理消息出错：' + describeError(err) + '\n' + ((err && err.stack) || ''));
@@ -2070,9 +2085,10 @@ class Bot {
       try { this.store.checkpoint(decision.key); } catch { /* 忽略的消息也要留断点 */ }
       return { action: 'ignore', reason: decision.reason };
     }
+    if (!this.activateReply(decision)) return { action: 'ignore', reason: decision.reason };
     if (decision.action === 'command') {
-      const bubbles = this.finalize(decision, decision.text);
-      return { action: 'reply', reply: decision.text, bubbles, reason: 'command', commandType: decision.commandType };
+      const result = this.finalizeReply(decision, decision.text);
+      return { action: result.action, reply: result.text, bubbles: [...result.bubbles], reason: 'command', commandType: decision.commandType };
     }
     // 私聊的直接请求由程序处理，避免模型漏写标记或误报已送达。
     const msg = decision.msg;
@@ -2096,6 +2112,8 @@ class Bot {
         text = decision.text;
       } else {
         text = await this.llm.complete({ system: decision.system, turns: decision.turns, signal, purpose: 'chat' });
+        if (signal?.aborted) return { action: 'ignore', reason: 'cancelled' };
+        this.checkReplyLength(String(text || '').length);
         // 模型有时候只会把别人说过的话复读一遍，或者重复自己上一句，这种重写一次
         const heardList = this.recentHeard(decision);
         const ownList = this.recentOwn(decision);
@@ -2121,6 +2139,7 @@ class Bot {
         }
       }
     } catch (err) {
+      if (signal?.aborted) return { action: 'ignore', reason: 'cancelled' };
       // （errText 以前叫 rawMsg，把 handle 的入参 rawMsg 遮蔽了（L12），改个名）
       const errText = String((err && err.message) || '');
       const blocked = /敏感|不安全|安全|内容/.test(errText) && /400/.test(errText);
@@ -2168,20 +2187,26 @@ class Bot {
       if (retried) {
         text = retried;
       } else {
-        const friendly = blocked
-          ? '这话我不敢接，换个说法'
-          : (err instanceof LlmError ? err.userMessage : '呜…深海线路打结了，等会儿再来找人家嘛');
-        this.finalize(decision, friendly, { error: true });
-        return { action: 'reply', reply: friendly, bubbles: [friendly], reason: 'llm_error', error: true };
+        const result = this.finalizeReply(decision, this.failureReplyText(err), { error: true });
+        return { action: result.action, reply: result.text, bubbles: [...result.bubbles], reason: result.reason, error: true };
       }
     }
+    if (signal?.aborted) return { action: 'ignore', reason: 'cancelled' };
     text = String(text == null ? '' : text).trim();
     this.recordUsage(decision, this.usageSince(usageMark));
-    text = await this.transformPluginReply(decision, text);
-    const bubbles = this.finalize(decision, text);
-    if (!bubbles.length) return { action: 'ignore', reason: 'empty_reply' };
+    try {
+      text = await this.transformPluginReply(decision, text);
+    } catch (err) {
+      if (signal?.aborted) return { action: 'ignore', reason: 'cancelled' };
+      this.logger?.error('回复插件失败：' + describeError(err));
+      const result = this.finalizeReply(decision, this.failureReplyText(err), { error: true });
+      return { action: result.action, reply: result.text, bubbles: [...result.bubbles], reason: result.reason, error: true };
+    }
+    const result = this.finalizeReply(decision, text);
+    const bubbles = [...result.bubbles];
+    if (result.action === 'ignore') return { action: 'ignore', reason: result.reason };
     // 群里骂人时要真 @ 到对方：优先用靶子，其次看正文开头有没有 @名字
-    const finalText = decision.finalText || text;
+    const finalText = result.text;
     const atMatch = finalText.match(/^@\s*([^\s，,：:！!？?。]+)/);
     const mention = (decision.msg && decision.msg.fightTarget && decision.msg.fightTarget.name)
       || (atMatch ? atMatch[1] : '');
@@ -2198,6 +2223,9 @@ class Bot {
       // 这一轮是否命中“提醒带一张”；网关用它决定 ensureSend 要不要补图
       ...(decision.msg && decision.msg.stickerDemand ? { stickerDemand: true } : {}),
     };
+    } finally {
+      this.releaseReply(decision);
+    }
   }
 
   /**
