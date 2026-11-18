@@ -224,7 +224,12 @@ function load(config, id) {
   const dir = item.source === 'user' ? userDir(config) : dirFor(config);
   const data = readFile(path.join(dir, item.file));
   if (!data) return null;
-  return { ...data, id: item.id, file: item.file, source: item.source };
+  const override = item.source === 'builtin'
+    ? readFile(path.join(userDir(config), 'builtin-overrides', item.id + '.json')) : null;
+  const fields = override?.schemaVersion === 1 ? {
+    ...override, name: data.name, description: data.description, version: data.version,
+  } : data;
+  return { ...fields, id: item.id, file: item.file, source: item.source };
 }
 
 /** 当前配置快照：只拿身份、提示词和长度，不含模型/Key/群配置/记忆 */
@@ -315,7 +320,7 @@ function saveUser(config, { id = '', name = '', description = '' } = {}) {
   return { ok: true, preset: { ...preset, file: path.basename(file), mtimeMs: now } };
 }
 
-/** 保存人设后，如果来源是自建预设就把最新内容写回去（返回是否更新） */
+/** 保存人设后同步对应的本地预设，内置和市场原件保留用于升级。 */
 function updateFromConfig(config, id) {
   const key = String(id || '').trim();
   if (/^market-[a-z][a-z0-9-]{0,47}$/.test(key)) {
@@ -324,7 +329,12 @@ function updateFromConfig(config, id) {
     writeFileAtomic(path.join(userDir(config), key + '.json'), JSON.stringify(fromConfig(config), null, 2) + '\n');
     return true;
   }
-  if (!key.toLowerCase().startsWith(USER_PREFIX)) return false;
+  if (!key.toLowerCase().startsWith(USER_PREFIX)) {
+    if (!ID_RE.test(key) || !list(config).some(item => item.id === key && item.source === 'builtin')) return false;
+    const file = path.join(userDir(config), 'builtin-overrides', key + '.json');
+    writeFileAtomic(file, JSON.stringify(fromConfig(config), null, 2) + '\n');
+    return true;
+  }
   const file = path.join(userDir(config), key + '.json');
   const previous = readFile(file);
   if (!previous) return false;

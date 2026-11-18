@@ -212,41 +212,30 @@ test('实现开关唯一收纳到设置高级组，已有专页能力不再重�
   assert.doesNotMatch(settings, /Path = "features\.(stickers|javascriptPlugins)"/);
 });
 
-test('人设预设可打包分享，内置只读，安装人设可直接修改', () => {
+test('所有人设可编辑和打包分享，新版开关默认打开，说明默认折叠', () => {
   const xaml = readLauncher('Views/PersonaPage.xaml');
   const code = readLauncher('Views/PersonaPage.xaml.cs');
   const dialog = readLauncher('AppDialog.cs');
   for (const text of ['创建自定义人设', '更新此预设', '重命名', '删除预设']) {
     assert.ok(xaml.includes(text), '预设区缺少按钮：' + text);
   }
-  for (const handler of ['OnSavePreset', 'OnCopyPreset', 'OnUpdatePreset', 'OnRenamePreset', 'OnDeletePreset']) {
+  for (const handler of ['OnSavePreset', 'OnUpdatePreset', 'OnRenamePreset', 'OnDeletePreset']) {
     assert.ok(xaml.includes('Click="' + handler + '"'), '按钮没接事件：' + handler);
     assert.ok(code.includes(handler), '代码里没有处理函数：' + handler);
   }
   assert.match(code, /\/api\/persona\/preset\/save/, '另存/复制要走预设保存接口');
   assert.match(code, /\/api\/persona\/preset\/rename/, '改名要走预设重命名接口');
   assert.match(code, /\/api\/persona\/preset\/delete/, '删除要走预设删除接口');
-  assert.match(code, /presetSource/, '要用服务端返回的预设来源决定是否锁定');
-  assert.match(code, /ApplyPersonaEditState/, '要有人设锁定/解锁逻辑');
-  assert.match(code, /_locked = false;/, '所有来源均允许编辑');
-  const lockBody = code.slice(code.indexOf('private void ApplyPersonaEditState()'), code.indexOf('private sealed class MemoryChatItem'));
-  assert.doesNotMatch(lockBody, /string\.Equals\(_presetSource, "market"/);
+  assert.doesNotMatch(code, /_locked|ApplyPersonaEditState/);
+  assert.match(xaml, /x:Name="ChkNewBehavior"[^>]*IsChecked="True"/);
+  assert.match(xaml, /小贴士 · 新旧版区别" IsExpanded="False"/);
+  assert.match(code, /newBehavior = ChkNewBehavior\.IsChecked == true/);
   assert.match(xaml, /Content="打包分享".*Click="OnExportPersona"/);
   assert.match(xaml, /Content="仅分享提示词".*Click="OnExportPrompt"/);
   assert.match(code, /OnExportPrompt[\s\S]*ExportPersonaAsync\(true\)/);
   assert.match(code, /\/api\/persona\/export/);
   assert.match(code, /PersonaPackage\.Export/);
   assert.match(code, /if \(!await SaveAllAsync/);
-  const lockStart = code.indexOf('var field in new Control[]');
-  const lockEnd = code.indexOf('}', lockStart);
-  assert.ok(lockStart >= 0 && lockEnd > lockStart, '找不到锁定字段列表');
-  const locked = code.slice(lockStart, lockEnd);
-  for (const name of ['TxtName', 'TxtAge', 'TxtJob', 'TxtLook', 'TxtPerson', 'TxtBack', 'TxtPrompt']) {
-    assert.ok(locked.includes(name), '身份/提示词字段应被锁定：' + name);
-  }
-  for (const name of ['TxtPrivate', 'TxtGroup', 'TxtTurns', 'TxtGroupTurns', 'TxtBubbles', 'SldEmoji', 'ChkProactive', 'ChkLinks', 'ChkOpinions']) {
-    assert.ok(!locked.includes(name), '长度/颜文字/开关不能被锁：' + name);
-  }
   assert.match(dialog, /public static string Prompt\(/, '另存和改名需要输入框');
   assert.doesNotMatch(xaml, /全部保存/, '人设改为热保存后不该再有保存按钮');
 });

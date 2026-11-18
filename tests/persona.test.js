@@ -9,7 +9,7 @@ const { assemblePrompt } = require('./support/prompt');
 
 const config = {
   ...DEFAULT_CONFIG,
-  persona: { ...DEFAULT_CONFIG.persona, name: '鲸鲸', aliases: ['鲸鲸', '鲸娘', '小鲸'], ownerName: '主人', master: { names: ['Master'], wxids: ['wxid_test_master'] } },
+  persona: { ...DEFAULT_CONFIG.persona, newBehavior: false, name: '鲸鲸', aliases: ['鲸鲸', '鲸娘', '小鲸'], ownerName: '主人', master: { names: ['Master'], wxids: ['wxid_test_master'] } },
   chat: { ...DEFAULT_CONFIG.chat },
 };
 

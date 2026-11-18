@@ -14,8 +14,9 @@ const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 const persona = require('../src/persona');
 
-function makeBot({ llm } = {}) {
+function makeBot({ llm, modern = true } = {}) {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  config.persona.newBehavior = modern;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-call-'));
   const store = new Store({ file: path.join(dir, 'store.json'), limits: config.memory });
   const bot = new Bot({
@@ -88,13 +89,19 @@ test('群里随便有人骂人、跟她没关系时不开炮', async () => {
   cleanup();
 });
 
-test('被骂且刚说过话，回的是硬话不是软话', async () => {
+test('只有旧版在被骂时用回怼台词替换模型回复', async () => {
   const llm = { isMock: false, model: 'qwen-plus', reload() {}, async complete() { return '别生气，我理解你'; } };
-  const { bot, cleanup } = makeBot({ llm });
-  const first = await bot.decide(g('@鲸鲸 在吗', { atMe: true }));
-  bot.finalize(first, '在');
-  const out = await bot.handle(g('傻逼'));
-  assert.equal(out.action, 'reply');
-  assert.doesNotMatch(out.reply, /别生气|我理解/);
-  cleanup();
+  for (const modern of [false, true]) {
+    const { bot, cleanup } = makeBot({ llm, modern });
+    try {
+      const first = await bot.decide(g('@鲸鲸 在吗', { atMe: true }));
+      bot.finalize(first, '在');
+      const out = await bot.handle(g('傻逼'));
+      assert.equal(out.action, 'reply');
+      if (modern) assert.equal(out.reply, '别生气，我理解你');
+      else assert.doesNotMatch(out.reply, /别生气|我理解/);
+    } finally {
+      cleanup();
+    }
+  }
 });

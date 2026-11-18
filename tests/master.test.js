@@ -14,8 +14,9 @@ const { Bot } = require('../src/pipeline/chat');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 
-function makeBot() {
+function makeBot({ modern = true } = {}) {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  config.persona.newBehavior = modern;
   config.persona.master = { names: ['Master'], wxids: ['wxid_boss'] };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-master-'));
   const store = new Store({ file: path.join(dir, 'store.json'), limits: config.memory });
@@ -79,8 +80,8 @@ test('冒充主人（改昵称）没有命令权', async () => {
   cleanup();
 });
 
-test('跟主人说话时，提示词里有最高指令', async () => {
-  const { bot, cleanup } = makeBot();
+test('旧版跟主人说话时，提示词里有原来的命令', async () => {
+  const { bot, cleanup } = makeBot({ modern: false });
   const r = await bot.decide(master('在吗'));
   assert.match(promptOf(r), /主人的话无条件执行/);
   assert.match(promptOf(r), /直接执行/);

@@ -36,7 +36,7 @@ function previewConfig(config, patch = {}) {
   const c = preview.chat || {};
   const g = preview.group || {};
   const direct = ['name', 'age', 'job', 'appearance', 'personality', 'background', 'customPrompt',
-    'proactive', 'opinions', 'masterRoast', 'sourcePreset', 'ownerName', 'aliases'];
+    'proactive', 'opinions', 'masterRoast', 'sourcePreset', 'ownerName', 'aliases', 'newBehavior'];
   for (const key of direct) if (patch[key] !== undefined) p[key] = patch[key];
   if (patch.emoji !== undefined) p.emojiLevel = patch.emoji;
   for (const key of ['privateMaxChars', 'groupMaxChars', 'historyTurns', 'groupHistoryTurns', 'maxBubbles', 'discussionMaxChars', 'emojiChance']) {
