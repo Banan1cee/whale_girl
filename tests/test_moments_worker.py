@@ -63,6 +63,20 @@ class WorkerTests(unittest.TestCase):
         self.assertIn('fields=1 buttons=1 controls=EditControl:1148,ButtonControl:1', str(log.mock_calls))
         self.assertNotIn('private', str(log.mock_calls))
 
+    def test_foreground_probe_logs_only_bounded_attempts_and_booleans(self):
+        log = Mock()
+        spawn = self.process([
+            {'event': 'stage', 'stage': 'foreground'},
+            {'event': 'window_probe', 'attempts': 999, 'ready': False, 'sameProcess': True,
+             'visible': True, 'iconic': False, 'caption': 'private-caption', 'path': 'private-path'},
+            {'event': 'result', 'status': 'failed', 'error': 'wechat_not_foreground'}])
+        self.assertEqual(run_worker({}, lambda: True, log, spawn=spawn),
+                         ('failed', 'wechat_not_foreground'))
+        output = str(log.mock_calls)
+        self.assertIn('stage=foreground', output)
+        self.assertIn('attempts=2 ready=False sameProcess=True visible=True iconic=False', output)
+        self.assertNotIn('private', output)
+
     def test_crash_after_submit_is_uncertain_and_never_retried(self):
         spawn = self.process([{'event': 'stage', 'stage': 'submit'}], code=-1073741819)
         self.assertEqual(run_worker({}, lambda: True, Mock(), spawn=spawn),

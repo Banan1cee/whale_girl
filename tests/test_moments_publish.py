@@ -84,6 +84,20 @@ class PublishFlowTest(unittest.TestCase):
         self.assertEqual(screen.image_visible.call_count, 2)
         self.assertEqual(screen.click.call_count, 3)
 
+    def test_image_preview_does_not_require_an_unrelated_ocr_pass(self):
+        from moments_ocr import MomentsOCRError
+        screen = self.screen([])
+        frames = iter([frame(), frame(hwnd=200, cls='#32770'), frame(), frame(), frame()])
+        def capture(**options):
+            if options.get('recognize', True):
+                raise MomentsOCRError('OCR unavailable')
+            return next(frames)
+        screen.capture = Mock(side_effect=capture)
+        screen.capture_menu = Mock(return_value=frame('选照片或视频'))
+        self.assertEqual(publish_flow(screen, '测试图片预览文案', 'fixture.png', pause=lambda _: None),
+                         ('unconfirmed', ''))
+        self.assertTrue(all(c.kwargs.get('recognize') is False for c in screen.capture.call_args_list))
+
     def test_photo_video_menu_label_and_unrecognized_menu_cleanup(self):
         screen = self.screen([frame(), frame('发表图片和视频'), frame(hwnd=200, cls='#32770'),
                               frame('发表'), frame('发表'), frame('发表')])
@@ -129,6 +143,36 @@ class PublishFlowTest(unittest.TestCase):
         self.assertEqual(menu_action(frame('选照片或视频', '发表文字').lines, True), (30, 6))
         self.assertEqual(menu_action(frame('选照片或视频', '发表文字').lines, False), (30, 18))
 
+    def test_native_menu_uses_verified_uia_when_windows_ocr_is_unavailable(self):
+        from moments_ocr import MomentsOCRError
+        from PIL import Image
+        screen = WeChatPostScreen.__new__(WeChatPostScreen)
+        screen.pid, screen.before_menu_windows = 42, {100}
+        rects = {100: (0, 0, 800, 600), 200: (500, 20, 702, 112)}
+        screen.win = SimpleNamespace(GetForegroundWindow=lambda: 100,
+                                     GetWindowRect=lambda hwnd: rects[hwnd],
+                                     GetClassName=lambda hwnd: 'QtPopup' if hwnd == 200 else 'mmui::MainWindow')
+        screen.process = SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 42))
+        screen.visible_windows = lambda: [100, 200]
+        screen.verify = Mock()
+        screen.grab = Mock(return_value=Image.new('RGB', (202, 92)))
+        screen.ocr = SimpleNamespace(recognize=Mock(side_effect=MomentsOCRError('language unavailable')))
+        root = SimpleNamespace(ProcessId=42)
+        item = SimpleNamespace(ControlTypeName='MenuItemControl', IsOffscreen=False,
+                               Name='选照片或视频', BoundingRectangle=SimpleNamespace(
+                                   left=510, top=25, right=690, bottom=55))
+        screen.uia = SimpleNamespace(ControlFromHandle=Mock(return_value=root))
+        screen._controls = lambda node: [item]
+        menu = screen.capture_menu()
+        self.assertEqual(screen.menu_action(menu, True), (100, 20))
+        root.ProcessId = 99
+        with self.assertRaises(MomentsOCRError):
+            screen.menu_action(menu, True)
+        root.ProcessId = 42
+        screen._controls = lambda node: [item, item]
+        with self.assertRaises(MomentsOCRError):
+            screen.menu_action(menu, True)
+
     def test_ocr_failure_is_not_reported_as_file_dialog_timeout(self):
         from moments_ocr import MomentsOCRError
         screen = self.screen([frame()])
@@ -146,7 +190,8 @@ class PublishFlowTest(unittest.TestCase):
         modules = {
             'sticker_transport': SimpleNamespace(validate_path=Mock()),
             'moments': SimpleNamespace(collect=Mock()),
-            'win32gui': SimpleNamespace(IsWindow=lambda hwnd: True, GetForegroundWindow=lambda: 100),
+            'win32gui': SimpleNamespace(IsWindow=lambda hwnd: True, GetForegroundWindow=lambda: 100,
+                                       IsWindowVisible=lambda hwnd: True, IsIconic=lambda hwnd: False),
             'win32process': SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 42)),
         }
         with patch.dict(sys.modules, modules):
@@ -162,6 +207,45 @@ class PublishFlowTest(unittest.TestCase):
             self.assertEqual(publish(runtime, moment, {'text': '这是一条有效的朋友圈文案'}, lambda: False),
                              ('failed', 'account_not_verified'))
             moment._wx.SwitchToMoments.assert_not_called()
+
+    def test_already_foreground_does_not_depend_on_activation_return_value(self):
+        from moments_publish import publish
+        runtime = SimpleNamespace(ACCOUNT={'hwnd': 100, 'pid': 42, 'verified': True},
+                                  force_foreground=Mock(return_value=False))
+        moment = SimpleNamespace(_wx=SimpleNamespace(SwitchToMoments=Mock(return_value=False)),
+                                 _find_sns_window=Mock(return_value=None))
+        modules = {
+            'sticker_transport': SimpleNamespace(validate_path=Mock()),
+            'moments': SimpleNamespace(collect=Mock()),
+            'win32gui': SimpleNamespace(IsWindow=lambda hwnd: True, GetForegroundWindow=lambda: 100,
+                                       IsWindowVisible=lambda hwnd: True, IsIconic=lambda hwnd: False),
+            'win32process': SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 42)),
+        }
+        with patch.dict(sys.modules, modules):
+            self.assertEqual(publish(runtime, moment, {'text': '这是一条有效的朋友圈文案'}, lambda: True),
+                             ('failed', 'timeline_not_recognized'))
+        runtime.force_foreground.assert_not_called()
+
+    def test_visible_timeline_is_used_when_navigation_reports_false(self):
+        from moments_publish import publish
+        timeline = SimpleNamespace(ProcessId=42, GetTopLevelControl=lambda: SimpleNamespace(NativeWindowHandle=100))
+        runtime = SimpleNamespace(ACCOUNT={'hwnd': 100, 'pid': 42, 'verified': True},
+                                  gui=object(), force_foreground=Mock(return_value=True))
+        moment = SimpleNamespace(_wx=SimpleNamespace(SwitchToMoments=Mock(return_value=False)),
+                                 _find_sns_window=Mock(return_value=timeline))
+        modules = {
+            'sticker_transport': SimpleNamespace(validate_path=Mock()),
+            'moments': SimpleNamespace(collect=Mock()),
+            'win32gui': SimpleNamespace(IsWindow=lambda hwnd: True, GetForegroundWindow=lambda: 100,
+                                       IsWindowVisible=lambda hwnd: True, IsIconic=lambda hwnd: False),
+            'win32process': SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 42)),
+        }
+        with patch.dict(sys.modules, modules), patch('moments_publish.WeChatPostScreen') as screen, \
+                patch('moments_publish.publish_flow', return_value=('unconfirmed', '')) as flow:
+            self.assertEqual(publish(runtime, moment, {'text': '这是一条有效的朋友圈文案'}, lambda: True,
+                                     confirm=False), ('unconfirmed', ''))
+            flow.assert_called_once_with(screen.return_value, '这是一条有效的朋友圈文案', '')
+        moment._find_sns_window.assert_called_once()
 
     def test_manual_publish_bypasses_fullscreen_avoidance_but_not_account_check(self):
         from bridge_ast import load_function
@@ -249,6 +333,7 @@ class PublishFlowTest(unittest.TestCase):
         screen.pid = 42
         screen.verify = Mock()
         screen.allowed = Mock(return_value=True)
+        screen.capture = Mock(return_value=frame(hwnd=200, cls='#32770'))
         screen.click = Mock(side_effect=AssertionError('选图不应走坐标点击'))
         screen.uia = SimpleNamespace(ControlFromHandle=lambda hwnd: root)
         screen.gui = SimpleNamespace(set_clipboard=Mock(return_value=True), _input=SimpleNamespace(key=Mock()))
@@ -276,6 +361,55 @@ class PublishFlowTest(unittest.TestCase):
             self.assertTrue(screen.select_image(frame(hwnd=200, cls='#32770'), None, 'fixture.png'))
         self.assertEqual(screen._picker_elements.call_count, 2)
         invoke.assert_called_once()
+
+    def test_picker_rebinds_geometry_after_native_dialog_resizes(self):
+        screen, field, value, invoke = self.picker()
+        current = frame(hwnd=200, cls='#32770')
+        current.rect = (30, 40, 930, 740)
+        screen.capture.return_value = current
+        def verify(candidate):
+            if candidate.rect != current.rect:
+                raise RuntimeError('focus or geometry changed')
+        screen.verify.side_effect = verify
+        self.assertTrue(screen.select_image(frame(hwnd=200, cls='#32770'), None, 'fixture.png'))
+        self.assertEqual(value.Value, 'fixture.png')
+        invoke.assert_called_once()
+
+    def test_picker_retries_transient_uia_provider_failure_before_input(self):
+        screen, field, value, invoke = self.picker()
+        button = screen.uia.ControlFromHandle(200).GetChildren()[-1]
+        screen._picker_elements = Mock(side_effect=[RuntimeError('provider rebuilding'), ([field], [button])])
+        with patch('moments_publish.time.sleep'):
+            self.assertTrue(screen.select_image(frame(hwnd=200, cls='#32770'), None, 'fixture.png'))
+        self.assertEqual(screen._picker_elements.call_count, 2)
+        value.SetValue.assert_called_once_with('fixture.png')
+        invoke.assert_called_once()
+
+    def test_picker_rechecks_current_geometry_after_setting_filename(self):
+        screen, field, value, invoke = self.picker()
+        state = {'rect': (0, 0, 800, 600)}
+        def current_frame(**options):
+            candidate = frame(hwnd=200, cls='#32770')
+            candidate.rect = state['rect']
+            return candidate
+        def verify(candidate):
+            if candidate.rect != state['rect']:
+                raise RuntimeError('geometry changed')
+        def set_value(text):
+            value.Value = text
+            state['rect'] = (20, 30, 920, 730)
+        screen.capture.side_effect = current_frame
+        screen.verify.side_effect = verify
+        value.SetValue.side_effect = set_value
+        self.assertTrue(screen.select_image(frame(hwnd=200, cls='#32770'), None, 'fixture.png'))
+        invoke.assert_called_once()
+
+    def test_picker_aborts_when_fresh_capture_is_a_different_dialog(self):
+        screen, field, value, invoke = self.picker()
+        screen.capture.return_value = frame(hwnd=201, cls='#32770')
+        self.assertFalse(screen.select_image(frame(hwnd=200, cls='#32770'), None, 'fixture.png'))
+        value.SetValue.assert_not_called()
+        invoke.assert_not_called()
 
     def test_uia_picker_can_focus_and_paste_if_value_pattern_cannot_write(self):
         screen, field, value, invoke = self.picker()
