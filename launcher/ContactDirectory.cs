@@ -25,6 +25,8 @@ namespace WhaleLauncher
         public string Error = "";
         public long UpdatedAt;
         public string Account = "";
+        public long Generation;
+        public bool Stale;
         public List<ContactInfo> Items = new List<ContactInfo>();
     }
 
@@ -42,6 +44,10 @@ namespace WhaleLauncher
         private List<ContactInfo> _items = new List<ContactInfo>();
         private long _updatedAt;
         private DateTime _loadedAt = DateTime.MinValue;
+        private string _account = "";
+        private string _expectedAccount = "";
+        private long _generation;
+        private long _loadingGeneration;
         private bool _loaded;
         private Task<ContactSnapshot> _loading;
 
@@ -55,29 +61,47 @@ namespace WhaleLauncher
         {
             lock (_gate)
             {
-                if (_loading != null && !_loading.IsCompleted) return _loading;
+                if (_loading != null && !_loading.IsCompleted && _loadingGeneration == _generation) return _loading;
                 if (!force && _loaded && (DateTime.UtcNow - _loadedAt).TotalSeconds < CacheSeconds)
                     return Task.FromResult(Snapshot(true, ""));
-                _loading = FetchAsync();
+                _loadingGeneration = _generation;
+                _loading = FetchAsync(_generation);
                 return _loading;
             }
         }
 
         public Task<ContactSnapshot> RefreshAsync() => LoadAsync(true);
 
-        private async Task<ContactSnapshot> FetchAsync()
+        public void InvalidateForAccountChange(string account = "")
+        {
+            lock (_gate)
+            {
+                _generation++;
+                _expectedAccount = account ?? "";
+                _loaded = false;
+                _loading = null;
+                // 旧页面可能只看Items而不读Account；切号后不能把A的候选项交给B。
+                _items = new List<ContactInfo>();
+                _account = "";
+                _updatedAt = 0;
+            }
+        }
+
+        private async Task<ContactSnapshot> FetchAsync(long generation)
         {
             var res = await Api.Get(_sup.Url, "/api/wechat/contacts?type=all");
             if (!res.Ok)
             {
                 lock (_gate)
                 {
+                    if (generation != _generation) return Snapshot(false, "账号已切换，已忽略旧联系人响应");
                     // 失败不覆盖旧缓存：页面至少还能把已经选中的联系人画出来。
                     _loaded = false;
                     return Snapshot(false, Api.Message(res));
                 }
             }
 
+            var account = JsonRead.Str(res.Root, "account");
             var items = new List<ContactInfo>();
             var arr = res.Prop("items");
             if (arr.ValueKind == JsonValueKind.Array)
@@ -99,7 +123,14 @@ namespace WhaleLauncher
 
             lock (_gate)
             {
+                if (generation != _generation) return Snapshot(false, "账号已切换，已忽略旧联系人响应");
+                if (_expectedAccount.Length > 0 && !string.Equals(account, _expectedAccount, StringComparison.Ordinal))
+                {
+                    _loaded = false;
+                    return Snapshot(false, "联系人尚未同步到当前账号");
+                }
                 _items = items;
+                _account = account;
                 _updatedAt = res.Long("updatedAt");
                 _loaded = true;
                 _loadedAt = DateTime.UtcNow;
@@ -113,6 +144,9 @@ namespace WhaleLauncher
             {
                 Ok = ok,
                 Error = error,
+                Account = _account,
+                Generation = _generation,
+                Stale = !ok || !_loaded,
                 UpdatedAt = _updatedAt,
                 Items = new List<ContactInfo>(_items)
             };

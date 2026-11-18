@@ -2,7 +2,6 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Threading;
 using System.Threading;
@@ -138,6 +137,7 @@ namespace WhaleLauncher
                 var sb = new StringBuilder();
                 sb.AppendLine("==== " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  [" + where + "] ====");
                 // 异常正文可能带 wxid/账号路径/手机号；崩溃日志也会被诊断包带走，先打码。
+                SecretRedactor.Refresh(AppContext.BaseDirectory, force: true);
                 sb.AppendLine(MaskSensitive(ex?.ToString() ?? "（没有异常对象）"));
                 sb.AppendLine();
                 File.AppendAllText(Path.Combine(dir, "crash.log"), sb.ToString(), Encoding.UTF8);
@@ -146,21 +146,6 @@ namespace WhaleLauncher
         }
 
         private static string MaskSensitive(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return text;
-            try
-            {
-                var s = Regex.Replace(text, @"\bwxid_[A-Za-z0-9_\-]{4,}", "wxid_***");
-                s = Regex.Replace(s, @"\b\d{9,}@chatroom\b", "***@chatroom");
-                s = Regex.Replace(s, @"(?<!\d)1[3-9]\d{9}(?!\d)", "1**********");
-                s = Regex.Replace(s, @"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "***@***");
-                s = Regex.Replace(s, @"([A-Za-z]:\\Users\\)[^\\\s""']+", "$1***", RegexOptions.IgnoreCase);
-                s = Regex.Replace(s, @"(Bearer\s+)[A-Za-z0-9._\-]{12,}", "$1***");
-                s = Regex.Replace(s, @"([?&](?:token|key|secret|signature|password|api_key)=)[^&\s]+", "$1***", RegexOptions.IgnoreCase);
-                s = Regex.Replace(s, @"\b(?:sk|oc_sk|ak|ghp|xox[baprs]|brz)[-_][A-Za-z0-9_\-]{8,}", "***");
-                return s;
-            }
-            catch { return text; }
-        }
+            => LogSanitizer.SanitizeCrash(text, SecretRedactor.Redact);
     }
 }
