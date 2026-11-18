@@ -930,23 +930,8 @@ namespace WhaleLauncher.Views
         }
 
         private string LauncherVersion()        {
-            // 和 MainWindow 读版本的方式一致：优先 package.json，没有再退回程序集版本
-            try
-            {
-                var vp = Path.Combine(_sup.BaseDir, "package.json");
-                if (File.Exists(vp))
-                {
-                    var m = Regex.Match(File.ReadAllText(vp), "\"version\"\\s*:\\s*\"([^\"]+)\"");
-                    if (m.Success) return "v" + m.Groups[1].Value + "-alpha";
-                }
-            }
-            catch { }
-            try
-            {
-                var v = typeof(DiagPage).Assembly.GetName().Version;
-                return v != null ? v.ToString() : "未知";
-            }
-            catch { return "未知"; }
+            var version = UpdateManifestService.LocalVersion(_sup.BaseDir);
+            return version.Length > 0 ? "v" + version : "v?";
         }
 
         private static string SafeOsText()

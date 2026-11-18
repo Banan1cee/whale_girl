@@ -33,6 +33,10 @@ if ($LASTEXITCODE -ne 0) { Pop-Location; throw '测试没通过，不出包' }
 Step '2/5 暂存（排除 data / config.json / runtime / 日志）'
 # 包名带完整版本号：以前写死 whale-girl-3.0，解压后谁也分不清 3.0.9 和 3.0.16，混用就把新修复盖掉了
 $ver = (Get-Content (Join-Path $root 'package.json') -Encoding UTF8 -Raw | ConvertFrom-Json).version
+$metaJson = & $node (Join-Path $root 'scripts\version-policy.js') $ver
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw '版本映射失败，不出包' }
+$meta = $metaJson | ConvertFrom-Json
+$ver = $meta.version
 $pkgName = "whale-girl-$ver"
 $pkgNameFull = "$pkgName-full"
 Write-Host "  版本：$ver（包名 $pkgName）"
@@ -47,8 +51,8 @@ if ($LASTEXITCODE -ge 8) { Pop-Location; throw "robocopy 失败 $LASTEXITCODE" }
 
 # 普通图片仍排除，但随包预设是程序资源，不能被全局 *.png / *.jpg 规则漏掉。
 $presetSource = Join-Path $root 'assets\stickers'
-robocopy $presetSource (Join-Path $stage 'assets\stickers') /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
-if ($LASTEXITCODE -ge 8) { Pop-Location; throw "预设表情包复制失败 $LASTEXITCODE" }
+if (-not (Test-Path -LiteralPath (Join-Path $presetSource 'manifest.json'))) { Pop-Location; throw '缺少程序预设资源清单' }
+# 下方restore-source按声明逐项复制，避免通配符把用户放入该目录的图片一起带出。
 
 # 使用已发布的启动器，避免根目录正在运行的旧 exe 被打入新包。
 $publishedLauncher = Join-Path $root 'launcher\publish\WhaleLauncher.exe'
@@ -66,6 +70,12 @@ foreach ($rel in $localOnly) {
   }
 }
 
+# 只恢复声明的程序资源；不放开全局用户图片排除，也不改变API/代码目录的复制规则。
+& $node 'scripts\release-resources.js' restore-source $stage $root
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw '程序资源恢复/校验失败，不出包' }
+& $node 'scripts\release-resources.js' verify-tree source $stage $root
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw '源码stage资源不完整，不出包' }
+
 Step '3/5 发布自检（--release）'
 Push-Location $stage
 & $node 'scripts\release-check.js' --release 2>&1 | Select-Object -Last 4 | ForEach-Object { Write-Host "  $_" }
@@ -74,7 +84,7 @@ Pop-Location
 
 Step '4/5 打包'
 New-Item -ItemType Directory $OutDir -Force | Out-Null
-$srcZip = Join-Path $OutDir ($pkgName + '.zip')
+$srcZip = Join-Path $OutDir $meta.sourceName
 if (Test-Path $srcZip) { Remove-Item $srcZip -Force }
 Compress-Archive -Path $stage -DestinationPath $srcZip -CompressionLevel Optimal
 Write-Host ("  源码包：{0:N0} KB  →  {1}" -f ((Get-Item $srcZip).Length / 1KB), (Split-Path $srcZip -Leaf))
@@ -90,8 +100,10 @@ if (-not $SkipFull) {
     Remove-Item $fullVendor -Recurse -Force
     Write-Host '  已从完整包排除 vendor/（runtime 里已有同一份）'
   }
+  & $node 'scripts\release-resources.js' verify-tree full $fullDir $root
+  if ($LASTEXITCODE -ne 0) { Pop-Location; throw '完整包stage资源不完整，不出包' }
   # 首次运行会从示例生成配置；发行包不包含 config.json，覆盖更新不会重置用户设置。
-  $fullZip = Join-Path $OutDir ($pkgNameFull + '.zip')
+  $fullZip = Join-Path $OutDir $meta.fullName
   if (Test-Path $fullZip) { Remove-Item $fullZip -Force }
   & tar -a -cf $fullZip -C $build $pkgNameFull
   if ($LASTEXITCODE -ne 0) { Pop-Location; throw "tar 打包失败 $LASTEXITCODE" }
@@ -116,27 +128,51 @@ $checks = @(
   @{ entry = 'src/core/master.js'; needle = 'matchMaster'; label = '主人判定' },
   @{ entry = 'scripts/tools/uia-diag.py'; needle = 'QACCESSIBLE_ACTIVE_RVA_BY_VERSION'; label = 'UIA 诊断工具' }
 )
-$presetManifest = Get-Content (Join-Path $root 'assets\stickers\manifest.json') -Encoding UTF8 -Raw | ConvertFrom-Json
 foreach ($zipPath in @($srcZip, $fullZip) | Where-Object { $_ }) {
+  $role = if ($zipPath -eq $srcZip) { 'source' } else { 'full' }
+  $archiveRoot = if ($role -eq 'source') { $pkgName } else { $pkgNameFull }
+  $resourcePlanJson = & $node 'scripts\release-resources.js' plan $role $root
+  if ($LASTEXITCODE -ne 0) { throw '资源目录构造失败' }
+  $resourcePlan = $resourcePlanJson | ConvertFrom-Json
   $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
-  foreach ($c in $checks) {
-    $e = $zip.Entries | Where-Object { $_.FullName -replace '\\', '/' -match ("/" + [regex]::Escape($c.entry) + '$') } | Select-Object -First 1
-    if (-not $e) { throw "$(Split-Path $zipPath -Leaf) 里缺 $($c.entry)" }
-    $sr = New-Object System.IO.StreamReader($e.Open()); $txt = $sr.ReadToEnd(); $sr.Close()
-    if (-not $txt.Contains($c.needle)) { throw "$(Split-Path $zipPath -Leaf) 的 $($c.entry) 不含「$($c.label)」" }
-  }
-  foreach ($image in $presetManifest.files) {
-    $entryName = 'assets/stickers/' + $image.file
-    $entry = $zip.Entries | Where-Object { $_.FullName.Replace('\', '/').EndsWith('/' + $entryName) } | Select-Object -First 1
-    if (-not $entry) { throw "$(Split-Path $zipPath -Leaf) 里缺预设图片 $entryName" }
-    $stream = $entry.Open()
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try { $digest = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
-    finally { $sha.Dispose(); $stream.Dispose() }
-    if ($digest -ne $image.sha256) { throw "$(Split-Path $zipPath -Leaf) 的预设图片校验失败：$entryName" }
-  }
-  $zip.Dispose()
-  Write-Host "  ✓ $(Split-Path $zipPath -Leaf) 通过 $($checks.Count) 项内容检查"
+  try {
+    $duplicates = @($zip.Entries | Group-Object { $_.FullName.Replace('\', '/').ToLowerInvariant() } | Where-Object Count -gt 1)
+    if ($duplicates.Count) { throw 'ZIP包含重复/冲突路径' }
+    foreach ($c in $checks) {
+      $e = $zip.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq ($archiveRoot + '/' + $c.entry) } | Select-Object -First 1
+      if (-not $e) { throw "ZIP里缺 $($c.entry)" }
+      $sr = New-Object System.IO.StreamReader($e.Open())
+      try { $txt = $sr.ReadToEnd() } finally { $sr.Dispose() }
+      if (-not $txt.Contains($c.needle)) { throw "ZIP的 $($c.entry) 不含 $($c.label)" }
+    }
+    foreach ($item in @($resourcePlan.files) + @($resourcePlan.metadata)) {
+      $name = $archiveRoot + '/' + $item.path
+      $entry = $zip.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq $name } | Select-Object -First 1
+      if (-not $entry) { throw "ZIP缺程序资源 $($item.path)" }
+      $stream = $entry.Open()
+      try {
+        if ($item.sha256) {
+          $sha = [System.Security.Cryptography.SHA256]::Create()
+          try { $digest = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+          if ($digest -ne $item.sha256) { throw "ZIP资源hash校验失败：$($item.path)" }
+        } else {
+          $reader = New-Object System.IO.StreamReader($stream)
+          try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
+          if (-not $text.Contains($item.contains)) { throw "ZIP资源来源指纹不一致：$($item.path)" }
+        }
+      } finally { $stream.Dispose() }
+    }
+    foreach ($forbidden in $resourcePlan.forbiddenRoots) {
+      $prefix = $archiveRoot + '/' + $forbidden
+      if (@($zip.Entries | Where-Object { $name = $_.FullName.Replace('\', '/'); $name -eq $prefix -or $name.StartsWith($prefix + '/') }).Count) { throw "ZIP包含禁止发行内容：$forbidden" }
+    }
+    if ($resourcePlan.vendorPrefix) {
+      $expected = @($resourcePlan.files | Where-Object kind -eq 'vendor' | ForEach-Object { $archiveRoot + '/' + $_.path } | Sort-Object)
+      $actual = @($zip.Entries | Where-Object { $_.FullName.Replace('\', '/').StartsWith($archiveRoot + '/' + $resourcePlan.vendorPrefix) -and -not $_.FullName.EndsWith('/') } | ForEach-Object { $_.FullName.Replace('\', '/') } | Sort-Object)
+      if (Compare-Object $expected $actual) { throw 'ZIP vendor文件集合与MANIFEST不一致' }
+    }
+  } finally { $zip.Dispose() }
+  Write-Host "  ✓ ZIP程序资源与内容校验通过（$role）"
 }
 
 Remove-Item $build -Recurse -Force -ErrorAction SilentlyContinue

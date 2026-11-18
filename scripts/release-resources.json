@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "vendorManifest": "vendor/MANIFEST.sha256",
+  "presetsManifest": "assets/stickers/manifest.json",
+  "forbiddenRoots": ["data", "config.json", "wechatauto_db", "wechatauto_logs", "backup", "鲸鲸表情包"],
+  "roles": {
+    "source": { "vendorRoot": "vendor", "forbiddenRoots": ["runtime"] },
+    "full": { "runtimePackage": "runtime/python/Lib/site-packages/wechatauto", "forbiddenRoots": ["vendor"] },
+    "installer": { "runtimePackage": "runtime/python/Lib/site-packages/wechatauto", "forbiddenRoots": ["vendor"] }
+  }
+}
