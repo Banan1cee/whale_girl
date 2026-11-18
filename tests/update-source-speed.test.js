@@ -1,0 +1,18 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const source = fs.readFileSync(path.join(__dirname, '../launcher/UpdateService.cs'), 'utf8');
+assert.match(source, /Task\.WhenAll\(bases\.Select/);
+assert.match(source, /RangeHeaderValue\(0, 262143\)/);
+assert.match(source, /received == 262144/);
+assert.match(source, /OrderBy\(s => s\.score\)/);
+assert.match(source, /foreach \(var baseUrl in rankedBases\)/);
+assert.equal((source.match(/while \(\(n = await ReadDownloadAsync\(src, buffer, startup\)\)/g) || []).length, 2);
+assert.match(source, /CancellationTokenSource\(TimeSpan\.FromSeconds\(45\)\)/);
+assert.match(source, /CreateLinkedTokenSource\(startup\.Token\)/);
+assert.equal((source.match(/startup\.Received\(\)/g) || []).length, 2);
+assert.match(source, /ReadAsync\(buffer\.AsMemory\(\), cts\.Token\)/);
+assert.match(source, /TimeSpan\.FromSeconds\(15\)/);
+assert.match(source, /HashAsync\(setup\)/);
+console.log('update source speed: parallel samples, ranked fallback, idle timeout and hash checks passed');

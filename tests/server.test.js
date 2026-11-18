@@ -379,8 +379,9 @@ test('诊断接口：未绑定 ID 的同名昵称不能借魔咒取得管理员�
     assert.doesNotMatch(s.admin.spellMasked, /test-spell/);
 
     const attempt = await fetch(app.url + '/api/chat', {method:'POST',headers:{'content-type':'application/json','x-bot-token':TOKEN},body:JSON.stringify({ text: 'test-spell', mode: 'private', sessionId: 'adm', senderName: 'Master' })});
-    const denied = await attempt.json();
-    assert.equal(denied.reason, 'not_owner');
+    const raw = await attempt.text();
+    assert.doesNotMatch(raw, /admin_spell/, '非主人魔咒不能激活管理权限，应按普通对话处理');
+    assert.match(raw, /"type":"meta"/, '应按普通回复流返回');
     const d = await (await fetch(app.url + '/api/debug/sessions')).json();
     const sess = d.sessions.find((x) => x.key.includes('adm'));
     assert.ok(sess, '应能找到这个会话');

@@ -510,7 +510,8 @@ class Bot {
     // 改成 \s+ 就够了（H8）。
     const rawText = String(msg.text || '').replace(/^[A-Za-z0-9_\-]{4,}:\s+/, '');
     const spell = String(this.config.admin?.spell || '').trim();
-    const isAdminSpell = Boolean(spell && rawText.trim() === spell);
+    const isAdminSpell = Boolean(spell && rawText.trim() === spell && msg.platform === 'wechat'
+      && msg.chatType === 'private' && isVerifiedOwner(this.config, msg));
     if (isAdminSpell) msg.text = '（已隐藏：管理员魔咒）';
     const selfNames = addressing.herNames(this, msg);
     const clean = persona.cleanIncomingForPersona(isAdminSpell ? msg.text : rawText, this.config, selfNames);

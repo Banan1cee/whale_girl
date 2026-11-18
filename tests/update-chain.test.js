@@ -190,7 +190,7 @@ test('UpdateService：安装包最多 32 段并发，服务端不支持 Range �
 });
 
 test('UpdateService：单个源失败不影响整体——换源，并把每个源的原因汇总报出来', () => {
-  assert.match(service, /foreach \(var baseUrl in assetBases\)/, '没有逐源尝试');
+  assert.match(service, /foreach \(var baseUrl in (?:assetBases|rankedBases)\)/, '没有逐源尝试');
   assert.match(service, /tried\.Add\(/, '没有记录每个源的失败原因');
   assert.ok(service.includes('的 SHA256 对不上'), '哈希不符时直接判死，没有换下一个源');
   assert.match(service, /string\.Join\("；", tried\)/, '全部失败时没有把原因汇总给用户');
