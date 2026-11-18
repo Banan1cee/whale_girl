@@ -18,6 +18,20 @@ def _note(message):
             pass
 
 
+def _report_exception(screen, exc):
+    # COM/Win32 异常正文可能含文件路径；只回传类型与代码位置。
+    try:
+        trace = exc.__traceback__
+        while trace and trace.tb_next:
+            trace = trace.tb_next
+        getattr(screen, 'probe', lambda details: None)({
+            'exception': True, 'type': type(exc).__name__, 'module': '',
+            'file': os.path.basename(trace.tb_frame.f_code.co_filename) if trace else '',
+            'line': trace.tb_lineno if trace else 0})
+    except Exception:
+        pass
+
+
 def _norm(value):
     # OCR 会把菜单文字识别成「发表文字(C)」「发表文字…」或带全角括号；
     # 去掉空白和标点后再比，别因为一个括号整条菜单都认不出来。
@@ -84,6 +98,7 @@ def find_camera_icon(image, dpi):
 def publish_flow(screen, text, image='', *, pause=time.sleep):
     """All input is scoped to the verified WeChat process by the adapter."""
     clicked = False
+    in_picker = False
     report = getattr(screen, 'report', lambda stage: None)
     try:
         # UIA already identified the timeline. The integrated header may only
@@ -114,6 +129,7 @@ def publish_flow(screen, text, image='', *, pause=time.sleep):
         _note('朋友圈发表：右键菜单已识别')
         screen.click(menu, action)
         if image:
+            in_picker = True
             report('image_dialog')
             for _ in range(24):
                 pause(0.25)
@@ -135,6 +151,7 @@ def publish_flow(screen, text, image='', *, pause=time.sleep):
             else:
                 return 'failed', 'image_picker_still_open'
             report('image_selected')
+            in_picker = False
         report('editor')
         for _ in range(16):
             pause(0.35)
@@ -147,7 +164,7 @@ def publish_flow(screen, text, image='', *, pause=time.sleep):
             report('image_preview')
             for _ in range(8):
                 pause(0.25)
-                editor = screen.capture()
+                editor = screen.capture(recognize=False, pixels=True)
                 if screen.image_visible(editor, image):
                     break
                 if not screen.allowed():
@@ -204,8 +221,10 @@ def publish_flow(screen, text, image='', *, pause=time.sleep):
         return ('unconfirmed' if clicked else 'failed'), 'ocr_transport_error'
     except TimeoutError:
         return ('unconfirmed' if clicked else 'failed'), 'image_dialog_timeout'
-    except Exception:
-        return ('unconfirmed' if clicked else 'failed'), 'ocr_transport_error'
+    except Exception as exc:
+        _report_exception(screen, exc)
+        return ('unconfirmed' if clicked else 'failed'), (
+            'image_dialog_not_recognized' if in_picker else 'ocr_transport_error')
     finally:
         if not clicked:
             screen.cancel_pending()
@@ -278,13 +297,19 @@ class WeChatPostScreen:
                 candidates.append((hwnd, rect))
         # Qt 的菜单可能是独立弹窗，前台句柄却仍是微信主窗。
         if len(candidates) != 1:
-            return self.capture()
-        hwnd, rect = candidates[0]
-        image = self.grab(bbox=rect, all_screens=True)
-        return SimpleNamespace(hwnd=foreground, rect=rect, scope_hwnd=hwnd,
-                               window_rect=self.win.GetWindowRect(foreground),
-                               cls=self.win.GetClassName(hwnd), image=image,
-                               lines=self.ocr.recognize(image))
+            frame = self.capture(recognize=False, pixels=True)
+        else:
+            hwnd, rect = candidates[0]
+            image = self.grab(bbox=rect, all_screens=True)
+            frame = SimpleNamespace(hwnd=foreground, rect=rect, scope_hwnd=hwnd,
+                                    window_rect=self.win.GetWindowRect(foreground),
+                                    cls=self.win.GetClassName(hwnd), image=image)
+        try:
+            frame.lines = self.ocr.recognize(frame.image)
+        except MomentsOCRError:
+            # Windows OCR 缺语言/初始化失败时，仍可使用当前菜单的精确 UIA 标签。
+            frame.lines, frame.ocr_failed = [], True
+        return frame
 
     def verify(self, frame, x=None, y=None):
         if (self.win.GetForegroundWindow() != frame.hwnd
@@ -391,26 +416,39 @@ class WeChatPostScreen:
         recognized = menu_action(frame.lines, image)
         if recognized:
             return recognized
-        if frame.image is not None and frame.image.width <= 700 and frame.image.height <= 700:
+        ocr_failed = getattr(frame, 'ocr_failed', False)
+        if (not ocr_failed and frame.image is not None
+                and frame.image.width <= 700 and frame.image.height <= 700):
             # 小字号会漏掉菜单末尾的「视频」。只对已核实的菜单重做两倍 OCR，
             # 仍要求完整文字精确命中，再把坐标换回原图，不能按半句猜入口。
             from PIL import Image
             enlarged = frame.image.resize((frame.image.width * 2, frame.image.height * 2),
                                           Image.Resampling.LANCZOS)
-            recognized = menu_action(self.ocr.recognize(enlarged), image)
+            try:
+                recognized = menu_action(self.ocr.recognize(enlarged), image)
+            except MomentsOCRError:
+                recognized, ocr_failed = None, True
             if recognized:
                 self.verify(frame)
                 return recognized[0] // 2, recognized[1] // 2
-        root = self.uia.ControlFromHandle(getattr(frame, 'scope_hwnd', frame.hwnd))
         points = []
-        if root is not None:
-            for control in self._controls(root):
-                if control.ControlTypeName not in ('MenuItemControl', 'ButtonControl') or control.IsOffscreen:
-                    continue
-                point = self._point(frame, control)
-                if point and menu_action([(control.Name or '', *point, 0, 0)], image):
-                    points.append(point)
-        return points[0] if len(points) == 1 else menu_action(frame.lines, image)
+        try:
+            root = self.uia.ControlFromHandle(getattr(frame, 'scope_hwnd', frame.hwnd))
+            if root is not None and root.ProcessId == self.pid:
+                for control in self._controls(root):
+                    if control.ControlTypeName not in ('MenuItemControl', 'ButtonControl') or control.IsOffscreen:
+                        continue
+                    point = self._point(frame, control)
+                    if point and menu_action([(control.Name or '', *point, 0, 0)], image):
+                        points.append(point)
+        except Exception:
+            pass
+        if len(points) == 1:
+            self.verify(frame)
+            return points[0]
+        if ocr_failed:
+            raise MomentsOCRError('No verified menu action available')
+        return None
 
     @staticmethod
     def _filename_field(control):
@@ -506,26 +544,49 @@ class WeChatPostScreen:
         probe({'fields': len(fields), 'buttons': len(buttons), 'controls': description})
         return fields, buttons
 
+    def _picker_frame(self, dialog):
+        current = self.capture(recognize=False)
+        if current.hwnd != dialog.hwnd or current.cls != '#32770' or not self.allowed():
+            return None
+        self.verify(current)
+        return current
+
     def select_image(self, dialog, open_button, image):
-        self.verify(dialog)
         if dialog.cls != '#32770' or not self.allowed():
             return False
         self.picker_hwnd = dialog.hwnd
         report = getattr(self, 'report', lambda stage: None)
         report('file_field')
-        for attempt in range(3):
-            self.verify(dialog)
+        reported = False
+        for attempt in range(8):
             if not self.allowed():
                 return False
-            fields, buttons = self._picker_elements(dialog)
-            if len(fields) == 1 and len(buttons) == 1:
-                break
-            if attempt < 2:
-                time.sleep(0.5)
+            try:
+                # 原生选图框会在出现后恢复上次尺寸，旧矩形不能用于后续核验。
+                current = self._picker_frame(dialog)
+                if current is None:
+                    return False
+                fields, buttons = self._picker_elements(current)
+                fresh = self._picker_frame(current)
+                if fresh is None:
+                    return False
+                if (fresh.rect == current.rect and len(fields) == 1 and len(buttons) == 1
+                        and fields[0].IsEnabled and not fields[0].IsOffscreen and buttons[0].IsEnabled):
+                    dialog = fresh
+                    break
+            except Exception as exc:
+                # UIA provider 刚建立时可能短暂抛 COMError；输入前可以重新获取，不能直接 Esc 退出。
+                if not reported:
+                    _report_exception(self, exc)
+                    reported = True
+            if attempt < 7:
+                time.sleep(0.3)
         else:
             return False
         field, button = fields[0], buttons[0]
-        self.verify(dialog)
+        dialog = self._picker_frame(dialog)
+        if dialog is None:
+            return False
         if not self.allowed():
             return False
         report('file_path')
@@ -535,7 +596,9 @@ class WeChatPostScreen:
         except Exception:
             # 不支持 ValuePattern 时仍通过控件取得焦点，不再按坐标点击文件名框。
             field.SetFocus()
-            self.verify(dialog)
+            dialog = self._picker_frame(dialog)
+            if dialog is None:
+                return False
             if not field.HasKeyboardFocus or not self.allowed():
                 return False
             if self.gui.set_clipboard(image) is False:
@@ -544,14 +607,18 @@ class WeChatPostScreen:
             self.gui._input.key(0x56, ctrl=True)
         for _ in range(4):
             time.sleep(0.1)
-            self.verify(dialog)
+            dialog = self._picker_frame(dialog)
+            if dialog is None:
+                return False
             if self._edit_value(field) == image:
                 break
         else:
             return False
         if not self.allowed():
             return False
-        self.verify(dialog)
+        dialog = self._picker_frame(dialog)
+        if dialog is None:
+            return False
         report('file_open')
         if not button.IsEnabled:
             return False
@@ -856,11 +923,15 @@ def publish(runtime, moment, query, allowed, *, report=lambda stage: None, probe
                 return 'failed', 'invalid_image'
         except Exception:
             return 'failed', 'invalid_image'
-    if not runtime.force_foreground(hwnd):
-        return 'failed', 'wechat_not_foreground'
+    from moments_window import activate_for_publish
+    report('foreground')
+    if not activate_for_publish(runtime, hwnd, pid, allowed, probe=probe):
+        return 'failed', 'wechat_not_foreground' if allowed() else 'job_cancelled'
+    if not allowed():
+        return 'failed', 'job_cancelled'
     started = time.time()
     report('timeline')
-    switched = moment._wx.SwitchToMoments()
+    moment._wx.SwitchToMoments()
     # Older WeChat can open a separate SNS window, which the merged-layout
     # locator does not scan. Only accept the foreground window of this PID.
     foreground = win32gui.GetForegroundWindow()
@@ -870,10 +941,15 @@ def publish(runtime, moment, query, allowed, *, report=lambda stage: None, probe
         import uiautomation
         timeline = uiautomation.ControlFromHandle(foreground)
     else:
-        timeline = moment._find_sns_window() if switched else None
+        # 导航返回值不是页面状态；微信异步切页后要重新定位当前时间线。
+        timeline = getattr(moment, '_find_sns_window', lambda: None)()
     if timeline is None:
         return 'failed', 'timeline_not_recognized'
     try:
+        timeline_hwnd = timeline.GetTopLevelControl().NativeWindowHandle
+        if (timeline.ProcessId != pid or timeline_hwnd not in (hwnd, foreground)
+                or win32process.GetWindowThreadProcessId(timeline_hwnd)[1] != pid):
+            return 'failed', 'timeline_not_recognized'
         screen = WeChatPostScreen(runtime.gui, hwnd, pid, timeline, allowed, runtime.force_foreground)
         screen.report = report
         screen.probe = probe

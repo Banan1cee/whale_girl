@@ -8,7 +8,7 @@ import threading
 import time
 
 
-STAGES = ('starting', 'timeline', 'camera', 'menu', 'image_dialog', 'file_field', 'file_path', 'file_open', 'image_selected',
+STAGES = ('starting', 'foreground', 'timeline', 'camera', 'menu', 'image_dialog', 'file_field', 'file_path', 'file_open', 'image_selected',
           'editor', 'image_preview', 'draft', 'submit', 'submitted')
 
 
@@ -110,7 +110,13 @@ def run_worker(payload, allowed, log, *, spawn=subprocess.Popen, timeout=90):
                 if all(re.fullmatch(r'[A-Za-z0-9_.]{0,100}', field) for field in fields):
                     line = event.get('line')
                     if isinstance(line, int) and 0 < line < 100000:
-                        log('朋友圈发表启动诊断 type=%s module=%s file=%s line=%d' % (*fields, line))
+                        log('朋友圈发表诊断 type=%s module=%s file=%s line=%d' % (*fields, line))
+            elif event.get('event') == 'window_probe':
+                attempts = event.get('attempts', 0)
+                attempts = max(0, min(2, attempts)) if type(attempts) is int else 0
+                log('朋友圈前台核验 attempts=%d ready=%s sameProcess=%s visible=%s iconic=%s'
+                    % (attempts, event.get('ready') is True, event.get('sameProcess') is True,
+                       event.get('visible') is True, event.get('iconic') is True))
             elif event.get('event') == 'picker_probe':
                 import re
                 fields, buttons = event.get('fields'), event.get('buttons')
@@ -220,7 +226,9 @@ def worker_main(input_stream, protocol):
         runtime = SimpleNamespace(ACCOUNT=account, gui=gui)
         runtime.force_foreground = lambda hwnd: WindowMixin.force_foreground(runtime, hwnd)
         report = lambda stage: emit({'event': 'stage', 'stage': stage})
-        probe = lambda details: emit({'event': ('submit_probe' if details.get('submit') else
+        probe = lambda details: emit({'event': ('diagnostic' if details.get('exception') else
+            'window_probe' if details.get('window') else
+            'submit_probe' if details.get('submit') else
             'draft_probe' if details.get('draft') else 'picker_probe'), **details})
         # 子进程只操作已钉住的 UI；数据库读取和最终确认仍由主桥接负责。
         ui_only_db = SimpleNamespace(get_self_info=lambda: {})

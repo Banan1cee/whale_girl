@@ -199,6 +199,35 @@ jobs:
         shell: pwsh
         run: node scripts/test-tasks.js --task launcher-dialog-smoke --report artifacts/test-tasks/launcher-dialog-smoke.json
 
+      - name: 打包朋友圈覆盖测试补丁（4.1.7）
+        if: success() && startsWith(github.head_ref, 'fix/moments-')
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'whale-girl-moments-patch'
+          $bridge = Join-Path $stage 'bridge'
+          New-Item -ItemType Directory -Path $bridge -Force | Out-Null
+          $files = @('moments_publish.py', 'moments_worker.py', 'moments_window.py')
+          foreach ($file in $files) {
+            Copy-Item -LiteralPath (Join-Path 'bridge' $file) -Destination (Join-Path $bridge $file)
+          }
+          Copy-Item -LiteralPath 'docs/朋友圈覆盖补丁.md' -Destination (Join-Path $stage '使用说明.md')
+          $names = @($files | ForEach-Object { 'bridge/' + $_ }) + @('使用说明.md')
+          $sums = foreach ($name in $names) {
+            $hash = (Get-FileHash -LiteralPath (Join-Path $stage $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $name"
+          }
+          [IO.File]::WriteAllLines((Join-Path $stage 'SHA256SUMS.txt'), $sums, [Text.UTF8Encoding]::new($false))
+          "MOMENTS_PATCH_DIR=$stage" >> $env:GITHUB_ENV
+
+      - name: 上传朋友圈覆盖测试补丁
+        if: success() && startsWith(github.head_ref, 'fix/moments-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: whale-girl-moments-patch-for-4.1.7
+          path: ${{ env.MOMENTS_PATCH_DIR }}/
+          if-no-files-found: error
+          retention-days: 90
+
   # 必需检查名保持不变：分支保护引用的是「测试 / 分层 / 编译」，
   # 所以用这个只做汇总的 job 收口，子 job 的名字可以随便改。
   gate:
