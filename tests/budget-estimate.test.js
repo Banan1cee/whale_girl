@@ -56,13 +56,16 @@ test('真实输入估算：buildBudget 用 system + turns，不拿预算上限�
   assert.equal(buildBudget(system).estimatedPromptTokens, estimatePrompt(system, []));
 });
 
-test('价格：首次全按未命中，稳定期按前缀缓存计费（命中 ≥65%）', () => {
+test('价格：首次全按未命中，稳定期按前缀缓存计费', () => {
   const r = estimate(defaults(), { dialogueBudget: 5500, outputTokens: 100 });
+  const legacyConfig = defaults();
+  legacyConfig.persona.newBehavior = false;
+  const legacy = estimate(legacyConfig, { dialogueBudget: 5500, outputTokens: 100 });
   const p = r.cache.promptTokens;
   const hit = r.cache.hitTokens;
-  // staticSystem 之后 system 变短了（每轮会变的内容挪进尾部），同样预算下 system 在总量里占比更小，
-  // 命中率从 70% 降到 68% 是预期内的：真正的收益是 system 字节稳定（以前每轮都变 = 实际命中接近 0）。
-  assert.ok(r.cache.hitRate >= 0.65, '稳定期命中率应该 ≥65%：' + r.cache.hitRate.toFixed(3));
+  assert.ok(legacy.cache.hitRate >= 0.65, '旧版保持原有前缀缓存比例');
+  assert.ok(r.systemTokens < legacy.systemTokens, '新版缩短固定提示词');
+  assert.ok(r.cost.idle.cached <= legacy.cost.idle.cached, '缩短提示词后命中成本不能上升');
   assert.ok(hit > r.systemTokens, '整个静态 system 都要落在缓存前缀里');
   assert.equal(p, r.systemTokens + r.plan.memory + r.plan.summary + r.plan.recent);
   assert.equal(hit, r.systemTokens + (r.plan.recent - r.cache.tailRefresh));

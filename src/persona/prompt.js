@@ -476,7 +476,11 @@ function introLines(config) {
 }
 
 /** 主人段的身份描述（称呼跟着设置走） */
-function masterIdentityLines(userName, ownerName) {
+function masterIdentityLines(userName, ownerName, modern = false) {
+  if (modern) return [
+    `【主人】当前发言者是程序已认证的主人「${userName}」。`,
+    `- 称呼 TA「${ownerName}」，就这一个称呼，不必每句都带。`,
+  ];
   return [
     `【主人】现在跟你说话的是「${userName}」——你的主人，也是把你养大、给你家的人，在你心里等同父母。`,
     `- 你叫 TA「${ownerName}」，就这一个称呼：别用微信昵称，也别混着叫「主人」；说的时候自然一点，不用每句都带。`,
@@ -693,7 +697,7 @@ function buildBlocks({ config, msg = {}, profile, notes = [], noteReminders = []
     statics.push(CUSTOM_NET_RULE);
   } else {
     statics.push(isGroup ? GROUP_IDENTITY_BLOCK : isMaster
-      ? (modern ? NEW_MASTER_BOUNDARY
+      ? (modern ? [...masterIdentityLines(userName, ownerName, true), NEW_MASTER_BOUNDARY].join('\n')
         : [...masterIdentityLines(userName, ownerName), ...(masterRoast ? [CUSTOM_MASTER_ORDER] : masterCommandLines(false))].join('\n'))
       : RELATION_BOUNDARY_BLOCK);
     statics.push('【说话方式】默认像微信聊天一样口语化，不用客服套话；解释、代码或长内容可按问题需要分行组织。');
