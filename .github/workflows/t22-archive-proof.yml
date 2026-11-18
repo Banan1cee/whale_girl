@@ -1,0 +1,77 @@
+name: T22 archive validation
+on:
+  push:
+    branches: [validate/whale-t22-zip-56fdfc]
+permissions:
+  contents: read
+jobs:
+  archive:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    env:
+      CANDIDATE_HEAD: 56fdfcae3724eed56e8140dd05d3d4f1fcbe860f
+      CANDIDATE_TREE: c72acc14083a8525cdad36711861bf51b1a3f8b6
+      NODE_OPTIONS: --test-reporter=tap
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 56fdfcae3724eed56e8140dd05d3d4f1fcbe860f
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            runtime/python
+            runtime/node.exe
+            runtime/manifest.json
+            runtime/.built
+          key: whale-runtime-v2
+          restore-keys: whale-runtime-v2
+      - name: Verify the source and prepare genuine build inputs
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD) -ne $env:CANDIDATE_HEAD -or (git rev-parse 'HEAD^{tree}') -ne $env:CANDIDATE_TREE) {
+            throw 'Unexpected candidate commit or tree'
+          }
+          "Commit $env:CANDIDATE_HEAD, tree $env:CANDIDATE_TREE"
+          python -m pip install --disable-pip-version-check --quiet pillow cryptography requests
+          if ($LASTEXITCODE -ne 0) { throw 'Test dependencies failed' }
+          pwsh -NoProfile -File scripts/build-runtime.ps1 -Mirror https://pypi.org/simple
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime build failed' }
+          pwsh -NoProfile -File scripts/fetch-dotnet-runtime.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop runtime preparation failed' }
+          $version = (Get-Content package.json -Raw -Encoding utf8 | ConvertFrom-Json).version
+          $metadata = node scripts/version-policy.js $version | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Version metadata invalid' }
+          dotnet publish launcher/WhaleLauncher.csproj -c Release -r win-x64 --self-contained false `
+            -p:PublishSingleFile=true "-p:Version=$($metadata.version)" "-p:FileVersion=$($metadata.fileVersion)" `
+            "-p:AssemblyVersion=$($metadata.fileVersion)" "-p:ProductVersion=$($metadata.productVersion)" `
+            -o launcher/publish --nologo
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher build failed' }
+          $launcher = Get-Item launcher/publish/WhaleLauncher.exe
+          if ($launcher.Length -lt 200KB -or $launcher.VersionInfo.FileVersion -ne $metadata.fileVersion) { throw 'Launcher metadata invalid' }
+          "Launcher SHA256: $((Get-FileHash -LiteralPath $launcher.FullName).Hash)"
+          "Runtime stamp SHA256: $((Get-FileHash -LiteralPath runtime/.built).Hash)"
+          "Packaging Node: $(& runtime/node.exe --version)"
+      - name: Build and inspect the source and full ZIPs
+        shell: pwsh
+        run: |
+          $archiveDir = Join-Path $env:RUNNER_TEMP 'whale-archive-proof'
+          pwsh -NoProfile -NonInteractive -File scripts/build-release.ps1 -OutDir $archiveDir
+          if ($LASTEXITCODE -ne 0) { throw 'Original packaging script did not pass' }
+          $version = (Get-Content package.json -Raw -Encoding utf8 | ConvertFrom-Json).version
+          $metadata = node scripts/version-policy.js $version | ConvertFrom-Json
+          $files = @(Get-ChildItem -LiteralPath $archiveDir -Filter '*.zip' -File)
+          if ($files.Count -ne 2) { throw 'Expected exactly two actual ZIPs' }
+          foreach ($name in @($metadata.sourceName, $metadata.fullName)) {
+            $file = Get-Item -LiteralPath (Join-Path $archiveDir $name)
+            "ZIP $($file.Name): $($file.Length) bytes, SHA256 $((Get-FileHash -LiteralPath $file.FullName).Hash)"
+          }
