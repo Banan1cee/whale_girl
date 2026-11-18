@@ -28,6 +28,7 @@ const NOW = new Date(2026, 10, 3, 15, 48, 7); // 2026-11-03 周二（本地时�
 
 function config(patch = {}) {
   const base = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  base.persona.newBehavior = false;
   base.root = path.join(os.tmpdir(), 'whale-prompt-layout');
   base.paths = { ...base.paths, root: base.root, dataDir: path.join(base.root, 'data') };
   const cfg = { ...base, ...patch };

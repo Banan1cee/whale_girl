@@ -147,6 +147,7 @@ test('取台词能按多个类别兜底，取不到也返回台词', () => {
 
 function makeBot({ rng = () => 0, llm } = {}) {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  config.persona.newBehavior = false;
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'whale-fight-'));
   const store = new Store({ file: path.join(dir, 'store.json'), limits: config.memory });
   const bot = new Bot({

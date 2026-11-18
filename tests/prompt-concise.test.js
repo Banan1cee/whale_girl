@@ -11,6 +11,16 @@ function parts(persona = {}, msg = {}, now = new Date(2026, 10, 15, 23)) {
   return buildPromptParts({ config, msg: { chatType: 'private', text: '今天怎么样', ...msg }, now });
 }
 
+test('缺少模式配置时走新版，切到旧版恢复主人命令和讨论提示', () => {
+  const message = { isMaster: true, discussion: true };
+  const p = parts({ newBehavior: undefined }, message);
+  assert.match(p.system, /主人认证只说明身份/);
+  assert.doesNotMatch(p.system + p.tail, /这条消息就是主人的命令|认真讨论模式/);
+  const legacy = parts({ newBehavior: false }, message);
+  assert.match(legacy.system, /这条消息就是主人的命令/);
+  assert.match(legacy.tail, /认真讨论模式/);
+});
+
 test('普通聊天不注入随机心情、生活状态或无关纠错', () => {
   const p = parts({}, { isMaster: true });
   assert.doesNotMatch(p.tail, /语气底子|此刻：|有点困|本条不是挑衅|身份纠错/);

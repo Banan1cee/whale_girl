@@ -13,6 +13,7 @@ const { DEFAULT_CONFIG } = require('../src/infra/config');
 
 function makeConfig(overrides = {}) {
   const cfg = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  cfg.persona.newBehavior = false;
   if (overrides.group) Object.assign(cfg.group, overrides.group);
   if (overrides.chat) Object.assign(cfg.chat, overrides.chat);
   if (overrides.memory) cfg.memory = { ...(cfg.memory || {}), ...overrides.memory };

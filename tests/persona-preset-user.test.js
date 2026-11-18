@@ -11,7 +11,7 @@ const path = require('node:path');
 
 const { startServer } = require('../server');
 const presets = require('../src/persona/presets');
-const { saveLocalConfiguration } = require('../src/services/launcherSnapshot');
+const { saveLocalConfiguration, readSnapshot } = require('../src/services/launcherSnapshot');
 
 const rootRepo = path.resolve(__dirname, '..');
 
@@ -40,6 +40,29 @@ const post = async (app, route, body) => {
   return { status: res.status, ...(await res.json()) };
 };
 const get = async (app, route) => (await fetch(app.url + route)).json();
+
+test('人设模式默认开启，关闭后离线重读和切换预设都保留；内置人设可原位修改', async (t) => {
+  const app = await boot(t);
+  const route = '/api/persona';
+  const first = await get(app, route);
+  assert.equal(first.persona.newBehavior, true);
+  const builtins = (await get(app, '/api/persona/presets')).presets.filter(x => x.source === 'builtin');
+  assert.ok(builtins.length >= 2);
+  const originalFile = path.join(app.root, 'assets', 'personas', builtins[0].file);
+  const original = fs.readFileSync(originalFile, 'utf8');
+  assert.equal((await post(app, '/api/persona/preset', { id: builtins[0].id })).ok, true);
+  const edited = await post(app, route, { newBehavior: false, customPrompt: '用更平静的方式说话。' });
+  assert.equal(edited.ok, true, edited.error);
+  assert.equal(edited.persona.newBehavior, false);
+  assert.deepEqual(edited.warnings, []);
+  assert.equal(readSnapshot(app.root, {})[route].persona.newBehavior, false);
+  assert.equal((await post(app, '/api/persona/preset', { id: builtins[1].id })).ok, true);
+  assert.equal((await post(app, '/api/persona/preset', { id: builtins[0].id })).ok, true);
+  const reapplied = (await get(app, route)).persona;
+  assert.equal(reapplied.customPrompt, '用更平静的方式说话。');
+  assert.equal(reapplied.newBehavior, false);
+  assert.equal(fs.readFileSync(originalFile, 'utf8'), original);
+});
 
 test('在线：另存为预设 → 自动回写 → 当前预设不能删 → 删除别的自建预设', async (t) => {
   const app = await boot(t);
