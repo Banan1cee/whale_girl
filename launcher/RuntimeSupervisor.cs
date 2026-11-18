@@ -82,15 +82,27 @@ namespace WhaleLauncher
         private ContactDirectory _contacts;
         /// <summary>联系人缓存 / 搜索的统一入口，各页面共用，避免重复请求和搜索规则漂移。</summary>
         public ContactDirectory Contacts => _contacts ??= new ContactDirectory(this);
-        public Task<ApiResult> ReadConfigurationAsync(string path)
-            => NodeRunning ? Api.Get(Url, path) : (_localConfiguration ??= new LocalConfiguration(BaseDir)).ReadAsync(path);
+        private async Task<string> ConfigurationServiceUrlAsync()
+        {
+            var port = Port;
+            return NodeRunning || await ReadHealthyNodePidAsync(port) > 0
+                ? $"http://127.0.0.1:{port}" : null;
+        }
+
+        public async Task<ApiResult> ReadConfigurationAsync(string path)
+        {
+            var url = await ConfigurationServiceUrlAsync();
+            return url != null ? await Api.Get(url, path)
+                : await (_localConfiguration ??= new LocalConfiguration(BaseDir)).ReadAsync(path);
+        }
 
         public async Task<ApiResult> SaveConfigurationAsync(string path, object body)
         {
             await _configurationWrites.WaitAsync();
             try
             {
-                return NodeRunning ? await Api.PostJson(Url, path, body)
+                var url = await ConfigurationServiceUrlAsync();
+                return url != null ? await Api.PostJson(url, path, body)
                     : await (_localConfiguration ??= new LocalConfiguration(BaseDir)).SaveAsync(path, body);
             }
             finally { _configurationWrites.Release(); }
@@ -203,7 +215,7 @@ namespace WhaleLauncher
         private void Emit(string src, string raw, char? forced = null)
         {
             SecretRedactor.Refresh(BaseDir);
-            var text = SecretRedactor.Redact(raw);
+            var text = LogSanitizer.SanitizeLog(raw, SecretRedactor.Redact);
             var at = DateTime.Now;
             var m = TimePrefix.Match(text);
             if (m.Success)

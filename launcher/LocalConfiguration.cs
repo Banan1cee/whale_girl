@@ -46,23 +46,9 @@ namespace WhaleLauncher
                         info.StandardInputEncoding = new UTF8Encoding(false);
                         _snapshot = default;
                     }
-                    using var process = Process.Start(info);
-                    var stdout = process.StandardOutput.ReadToEndAsync();
-                    var stderr = process.StandardError.ReadToEndAsync();
-                    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-                    try
-                    {
-                        if (request != null)
-                        {
-                            await process.StandardInput.WriteAsync(request.AsMemory(), deadline.Token);
-                            process.StandardInput.Close();
-                        }
-                        await process.WaitForExitAsync(deadline.Token);
-                    }
-                    catch (OperationCanceledException) { try { process.Kill(true); } catch { } throw; }
-                    var text = await stdout;
-                    await stderr;
-                    if (process.ExitCode != 0) throw new IOException("无法读取本地配置，请检查配置文件格式与目录权限。");
+                    var command = await ProcessRunner.RunAsync(info, request, TimeSpan.FromSeconds(8));
+                    if (!command.Success) throw new IOException("无法读取本地配置，请检查配置文件格式与目录权限。");
+                    var text = command.Output;
                     using var doc = JsonDocument.Parse(text);
                     if (request != null)
                     {
