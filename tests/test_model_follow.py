@@ -107,7 +107,7 @@ class FollowTests(unittest.TestCase):
 
 class DecoderBuildTests(unittest.TestCase):
     def test_both_build_entry_points_install_and_check_decoder(self):
-        requirements = (ROOT / 'bridge/requirements.txt').read_text()
+        requirements = (ROOT / 'bridge/requirements.txt').read_text(encoding='utf-8')
         builder = (ROOT / 'scripts/build-runtime.ps1').read_text(encoding='utf-8-sig')
         self.assertIn('silk-python==0.2.9', requirements)
         self.assertIn("'silk-python==0.2.9'", builder)

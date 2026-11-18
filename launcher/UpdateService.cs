@@ -105,11 +105,15 @@ namespace WhaleLauncher
                 var expected = sums.Hash;
                 var ok = false;
                 var tried = new List<string>();
-                foreach (var baseUrl in assetBases)
+                progress?.Report(new Progress { Text = "并行测速下载源…", Percent = -1 });
+                var rankedBases = await RankSourcesAsync(assetBases, name);
+                using var startup = new DownloadStartup();
+                foreach (var baseUrl in rankedBases)
                 {
+                    if (startup.Token.IsCancellationRequested) break;
                     var label = LabelOf(baseUrl);
                     progress?.Report(new Progress { Text = "下载安装包…（源：" + label + "）", Percent = 0 });
-                    if (!await DownloadAsync(baseUrl + "/" + name, setup, progress, label))
+                    if (!await DownloadAsync(baseUrl + "/" + name, setup, progress, label, startup))
                     {
                         tried.Add(label + " 连不上");
                         continue;
@@ -227,7 +231,7 @@ namespace WhaleLauncher
         {
             try
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 var text = await Http.GetStringAsync(baseUrl + "/SHA256SUMS.txt", cts.Token);
                 var hash = FindHashIn(text, fileName);
                 return hash.Length == 64 ? hash : null;   // 只认 64 位十六进制，别把错误页当哈希
@@ -265,14 +269,75 @@ namespace WhaleLauncher
         /// 不支持或任何一段失败就退回单连接——宁可慢一点，不要卡在半截。
         /// 失败时删掉半截文件，别让下次误判「已下好」。
         /// </summary>
-        private static async Task<bool> DownloadAsync(string url, string path, IProgress<Progress> progress, string label)
+        private static async Task<string[]> RankSourcesAsync(string[] bases, string name)
+        {
+            var samples = await Task.WhenAll(bases.Select(async (source, index) =>
+            {
+                var score = double.PositiveInfinity;
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                    using var request = new HttpRequestMessage(HttpMethod.Get, source + "/" + name);
+                    request.Headers.Range = new RangeHeaderValue(0, 262143);
+                    var watch = Stopwatch.StartNew();
+                    using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+                    response.EnsureSuccessStatusCode();
+                    await using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
+                    var buffer = new byte[32768];
+                    var received = 0;
+                    while (received < 262144)
+                    {
+                        var count = await stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, 262144 - received)), cts.Token);
+                        if (count == 0) break;
+                        received += count;
+                    }
+                    // 不用首字节代替测速，也不把短错误页当成高速源。
+                    if (received == 262144) score = watch.Elapsed.TotalSeconds;
+                }
+                catch { /* 不可达源排最后，仍保留下载兜底。 */ }
+                return (source, index, score);
+            }));
+            return samples.OrderBy(s => s.score).ThenBy(s => s.index).Select(s => s.source).ToArray();
+        }
+
+        private sealed class DownloadStartup : IDisposable
+        {
+            private readonly CancellationTokenSource deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            public CancellationToken Token => deadline.Token;
+            private int started;
+            public void Received()
+            {
+                // 四源共用启动预算；收到真实数据后改由逐次读取停滞超时保护。
+                if (Interlocked.Exchange(ref started, 1) == 0)
+                    deadline.CancelAfter(Timeout.InfiniteTimeSpan);
+            }
+            public void Dispose() => deadline.Dispose();
+        }
+
+        private static async Task<HttpResponseMessage> SendDownloadAsync(HttpRequestMessage request, DownloadStartup startup)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(startup.Token);
+            cts.CancelAfter(TimeSpan.FromSeconds(5));
+            return await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        }
+
+        private static async Task<int> ReadDownloadAsync(Stream stream, byte[] buffer, DownloadStartup startup)
+        {
+            // ResponseHeadersRead 后 HttpClient.Timeout 不再保护流读取，必须另设停滞超时。
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(startup.Token);
+            cts.CancelAfter(TimeSpan.FromSeconds(15));
+            return await stream.ReadAsync(buffer.AsMemory(), cts.Token);
+        }
+
+        private static async Task<bool> DownloadAsync(string url, string path, IProgress<Progress> progress, string label, DownloadStartup startup)
         {
             try
             {
-                var total = await ProbeLengthAsync(url);
-                if (total >= SegmentMinBytes && await DownloadSegmentsAsync(url, path, total, progress, label))
+                var total = await ProbeLengthAsync(url, startup);
+                if (total >= SegmentMinBytes && await DownloadSegmentsAsync(url, path, total, progress, label, startup))
                     return true;
-                return await DownloadSingleAsync(url, path, progress, label);
+                startup.Token.ThrowIfCancellationRequested();
+                return await DownloadSingleAsync(url, path, progress, label, startup);
             }
             catch
             {
@@ -282,13 +347,13 @@ namespace WhaleLauncher
         }
 
         /// <summary>用 Range: bytes=0-0 探总长度；只有 206 + Content-Range 才算支持分段。</summary>
-        private static async Task<long> ProbeLengthAsync(string url)
+        private static async Task<long> ProbeLengthAsync(string url, DownloadStartup startup)
         {
             try
             {
                 using var req = new HttpRequestMessage(HttpMethod.Get, url);
                 req.Headers.Range = new RangeHeaderValue(0, 0);
-                using var res = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+                using var res = await SendDownloadAsync(req, startup);
                 if (res.StatusCode != HttpStatusCode.PartialContent) return -1;
                 var range = res.Content.Headers.ContentRange;
                 if (range == null || !range.HasLength) return -1;
@@ -298,7 +363,7 @@ namespace WhaleLauncher
         }
 
         private static async Task<bool> DownloadSegmentsAsync(string url, string path, long total,
-            IProgress<Progress> progress, string label)
+            IProgress<Progress> progress, string label, DownloadStartup startup)
         {
             var segments = (int)Math.Min(SegmentCount, Math.Max(1, total / SegmentChunkBytes));
             var chunk = (total + segments - 1) / segments;
@@ -316,7 +381,7 @@ namespace WhaleLauncher
                 {
                     var start = i * chunk;
                     var end = i == segments - 1 ? total - 1 : Math.Min(total - 1, start + chunk - 1);
-                    tasks[i] = DownloadSegmentAsync(url, path, start, end, done, lastPct, total, progress, label);
+                    tasks[i] = DownloadSegmentAsync(url, path, start, end, done, lastPct, total, progress, label, startup);
                 }
                 await Task.WhenAll(tasks);
 
@@ -331,11 +396,11 @@ namespace WhaleLauncher
         }
 
         private static async Task DownloadSegmentAsync(string url, string path, long start, long end,
-            long[] done, int[] lastPct, long total, IProgress<Progress> progress, string label)
+            long[] done, int[] lastPct, long total, IProgress<Progress> progress, string label, DownloadStartup startup)
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.Range = new RangeHeaderValue(start, end);
-            using var res = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+            using var res = await SendDownloadAsync(req, startup);
             if (res.StatusCode != HttpStatusCode.PartialContent)
                 throw new InvalidOperationException("服务端不支持分段下载");
 
@@ -346,9 +411,10 @@ namespace WhaleLauncher
 
             var buffer = new byte[81920];
             int n;
-            while ((n = await src.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            while ((n = await ReadDownloadAsync(src, buffer, startup)) > 0)
             {
                 await fs.WriteAsync(buffer, 0, n);
+                startup.Received();
                 var all = Interlocked.Add(ref done[0], n);
                 if (progress == null || total <= 0) continue;
                 var pct = (int)(all * 100L / total);
@@ -359,11 +425,12 @@ namespace WhaleLauncher
         }
 
         private static async Task<bool> DownloadSingleAsync(string url, string path,
-            IProgress<Progress> progress, string label)
+            IProgress<Progress> progress, string label, DownloadStartup startup)
         {
             try
             {
-                using var res = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                using var res = await SendDownloadAsync(request, startup);
                 if (!res.IsSuccessStatusCode) return false;
                 var total = res.Content.Headers.ContentLength ?? -1;
                 await using var src = await res.Content.ReadAsStreamAsync();
@@ -372,11 +439,17 @@ namespace WhaleLauncher
                 long done = 0;
                 var lastPct = -1;
                 int n;
-                while ((n = await src.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                while ((n = await ReadDownloadAsync(src, buffer, startup)) > 0)
                 {
                     await dst.WriteAsync(buffer, 0, n);
+                    startup.Received();
                     done += n;
-                    if (progress == null || total <= 0) continue;
+                    if (progress == null) continue;
+                    if (total <= 0)
+                    {
+                        progress.Report(new Progress { Text = "下载中 " + (done / 1048576.0).ToString("F1") + " MB · " + label, Percent = -1 });
+                        continue;
+                    }
                     var pct = (int)(done * 100L / total);
                     if (pct == lastPct) continue;
                     lastPct = pct;
