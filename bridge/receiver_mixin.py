@@ -329,8 +329,7 @@ class ReceiverMixin:
                     _key_note = '密钥状态未知'
                 G.log_throttled('img-keys:' + _key_note,
                                 '图片密钥状态：%s；消息id=%s' % (_key_note, lid))
-                # 磁盘这条路走不通（多半是密钥取不到）：退到界面兜底，让微信自己
-                # 把画出来的图交出来（导出明文 / 截预览窗）。失败只是这一条不回话。
+                # 磁盘取图失败后直接读取已核对的微信预览，不重复等待原图落盘。
                 fallback = getattr(self, 'image_ui_fallback', None)
                 raw = fallback(msg) if callable(fallback) else b''
                 if not raw:
@@ -423,44 +422,60 @@ class ReceiverMixin:
             return ''
 
     def image_ui_fallback(self, msg):
-        """磁盘图片解不开时的界面兜底：让微信导出明文，或截预览窗。
-
-        只在 ``describe_image`` 确认本地取不到图 / 解不开图之后调用；所有副作用
-        （点气泡、开预览窗、保存对话框）都在 ``image_ui_fallback`` 模块里，并且
-        整段有时间上限。失败返回 ``b''``，按「这条不回话」处理。
-        """
+        """核实当前账号后，在限时子进程内读取目标消息的微信预览。"""
+        account = self.ACCOUNT
+        hwnd = int(account.get('hwnd') or 0)
+        if not hwnd or not account.get('verified'):
+            G.log('图片预览兜底跳过 reason=account_unverified')
+            return b''
         try:
-            from image_ui_fallback import read_image_via_ui
-            media = self._get_media()
+            import win32gui
+            import win32process
+            from image_ui_fallback import build_preview_request, read_image_via_ui
+
+            db = self.db
+            pid = win32process.GetWindowThreadProcessId(hwnd)[1] if win32gui.IsWindow(hwnd) else 0
+
+            def account_matches():
+                current = self.ACCOUNT
+                return (pid and self.db is db and current.get('verified')
+                        and current.get('hwnd') == hwnd and current.get('pid') in (None, 0, pid)
+                        and self.configured_account_dir() in ('', db.account)
+                        and win32gui.IsWindow(hwnd)
+                        and win32process.GetWindowThreadProcessId(hwnd)[1] == pid)
+
+            if not account_matches() or win32gui.GetForegroundWindow() != hwnd:
+                G.log('图片预览兜底跳过 reason=account_or_foreground_changed')
+                return b''
+            chat_name = self.display_name(msg.get('username') or '')
+            request = build_preview_request(db, msg, chat_name, hwnd, pid)
+            if request is None:
+                G.log('图片预览兜底跳过 reason=message_not_unique')
+                return b''
+
+            # 先占发送锁再占界面锁，与朋友圈/发送一致。子进程退出后立即释放。
+            if not self.send_lock.acquire(timeout=1.0):
+                G.log('图片预览兜底跳过 reason=send_busy')
+                return b''
             try:
-                chat_name = self.display_name(msg.get('username') or '')
-            except Exception:
-                chat_name = ''
-            # 界面兜底真的会点鼠标/开预览窗：必须和发送串行，否则两条消息同时
-            # 操作微信窗口会把点击落到别人的会话上。
-            lock = getattr(self, 'send_lock', None)
-            acquired = False
-            try:
-                if lock is not None:
-                    acquired = lock.acquire(timeout=5)
-                    if not acquired:
-                        G.log('界面兜底：发送还在进行，这次先跳过（不抢窗口）')
+                if not self.gui_lock.acquire(timeout=1.0):
+                    G.log('图片预览兜底跳过 reason=gui_busy')
+                    return b''
+                try:
+                    if not account_matches() or win32gui.GetForegroundWindow() != hwnd:
+                        G.log('图片预览兜底跳过 reason=account_or_foreground_changed')
                         return b''
-            except Exception:
-                acquired = False
-            try:
-                return read_image_via_ui(media, msg, chat_name=chat_name,
-                                         save_dir=getattr(media, 'save_dir', None), log=G.log)
+                    raw = read_image_via_ui(request, G.log)
+                    if raw and not account_matches():
+                        G.log('图片预览兜底丢弃 reason=account_changed')
+                        return b''
+                    return raw
+                finally:
+                    self.gui_lock.release()
             finally:
-                if acquired:
-                    try:
-                        lock.release()
-                    except Exception:
-                        pass
-        except Exception as exc:  # noqa: BLE001 - 兜底失败不影响其它消息
-            G.log('界面兜底异常：消息id=%s:%s 原因=%s(%s)'
-                  % (msg.get('shard') or '', msg.get('local_id'),
-                     type(exc).__name__, str(exc)[:120]))
+                self.send_lock.release()
+        except Exception as exc:
+            G.log('图片预览兜底异常 type=%s' % type(exc).__name__)
             return b''
 
     def describe_emoji(self, msg):

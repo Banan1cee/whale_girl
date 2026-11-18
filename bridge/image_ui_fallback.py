@@ -1,311 +1,241 @@
-# -*- coding: utf-8 -*-
-"""图片密钥取不到时的「界面兜底」：让微信自己把画好的图交出来。
-
-背景
-    微信 4.x 的图片在磁盘上是加密的 ``.dat``（V2：AES + XOR），密钥只能从
-    ``Weixin.exe`` 进程内存里反推。取不到密钥时磁盘那条路走不通；但微信界面上
-    已经把图画出来了，所以还有两条退路：
-
-    1. **导出**：``MediaDownloader.download_image_original()`` 会点开气泡、等原图
-       落盘，等不到就点预览窗的「保存」，由微信自己写出一份明文图片文件；
-    2. **截预览窗**：保存对话框走不通时，把预览窗（图片显示区）从屏幕上截下来，
-       直接送看图模型——图片里是文字还是照片都能看，不依赖 OCR。
-
-代价（用户已知并接受）
-    两条路都要动微信窗口：可能短暂把微信带到前台、移动鼠标点气泡、弹出/关闭预览窗。
-    所以只在「磁盘解密失败」之后才走，并且整段有超时；失败只会让这一条不回话，
-    不会再把会话卡住（外面上限见 ``receiver_mixin.run_media_with_timeout``）。
-
-只读 vendor：调用它已有的方法，不改源码。
-"""
-
+"""用微信已经渲染的预览补救聊天图片读取失败。原生调用只在限时子进程执行。"""
 from __future__ import annotations
 
 import io
+import json
 import os
+import subprocess
+import sys
 import time
+from contextlib import redirect_stdout
 
-# 导出 + 截图两段各自的预算；外面还有 180 秒的识别总上限兜底。
-EXPORT_TIMEOUT = 20.0
-CAPTURE_TIMEOUT = 15.0
-# 默认不做时间窗丢弃：聊天不会等，每张图都要给一次机会。
-# 这个参数只留给「明确想限制界面操作频率」的调用方（测试也在用）。
-FAIL_COOLDOWN = 0.0
-
-_state = {'blocked_until': 0.0}
-
-
-def reset_cooldown():
-    """测试用：清掉冷却状态。"""
-    _state['blocked_until'] = 0.0
+CAPTURE_TIMEOUT = 12
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+MAX_HISTORY = 120
+MAX_REQUEST_BYTES = 128 * 1024
+FAILURES = (
+    '', 'internal_error', 'wechat_not_foreground', 'conversation_mismatch',
+    'message_not_aligned', 'preview_not_opened', 'preview_changed', 'capture_unavailable',
+)
 
 
-def _say(log, *args):
-    if log:
+class PreviewUnavailable(RuntimeError):
+    pass
+
+
+def build_preview_request(db, msg, chat_name, hwnd, pid):
+    """只传定位所需的消息摘要。用独立序号避免不同分片的同号图片错配。"""
+    username, local_id = msg.get('username'), msg.get('local_id')
+    shard = msg.get('shard')
+    chat_name = (chat_name or '').strip()
+    if not username or local_id is None or not chat_name:
+        return None
+    sequence, targets = [], []
+    for row in reversed(db.get_messages(username, limit=MAX_HISTORY)):
+        kind = {'文本': 'text', '图片': 'image'}.get(row.get('type'))
+        if not kind:
+            continue
+        index = len(sequence)
+        anchor = str(row.get('content') or '').strip()[:160] if kind == 'text' else ''
+        sequence.append({'kind': kind, 'content': anchor, 'local_id': index})
+        if (kind == 'image' and row.get('local_id') == local_id
+                and (not shard or row.get('shard') == shard)):
+            targets.append((index, row))
+    if len(targets) != 1:
+        return None
+    index, row = targets[0]
+    self_id = getattr(db, 'wxid', None)
+    return {'hwnd': hwnd, 'pid': pid, 'chat': chat_name, 'sequence': sequence, 'target': index,
+            'is_self': bool(self_id and row.get('sender_username') == self_id)}
+
+
+def _visible_previews(win, process, main, pid):
+    handles = set()
+
+    def collect(hwnd, _):
         try:
-            log(*args)
+            if (hwnd != main and win.IsWindowVisible(hwnd) and not win.IsIconic(hwnd)
+                    and process.GetWindowThreadProcessId(hwnd)[1] == pid
+                    and win.GetAncestor(hwnd, 3) in (main, hwnd)):
+                cls = win.GetClassName(hwnd)
+                if cls == 'mmui::PreviewWindow' or (
+                        cls.startswith('Qt') and win.GetWindowText(hwnd).strip() in (
+                            '图片和视频', '圖片和影片', 'Pictures and Videos')):
+                    handles.add(hwnd)
         except Exception:
+            # 枚举过程中窗口可能已被关闭。
             pass
+        return True
+
+    win.EnumWindows(collect, None)
+    return handles
 
 
-def export_original(dl, msg, chat_name='', save_dir=None, log=None, timeout=EXPORT_TIMEOUT):
-    """让微信自己导出一份明文图片，返回文件路径；失败返回空串。"""
-    method = getattr(dl, 'download_image_original', None)
-    if not callable(method):
-        _say(log, '界面兜底：当前媒体下载器不支持导出原图')
-        return ''
-    try:
-        username = msg.get('username') or ''
-        local_id = msg.get('local_id')
-        if not username or local_id is None:
-            _say(log, '界面兜底：消息缺会话或消息 id，无法导出')
-            return ''
-        _say(log, '界面兜底：开始让微信导出图片（消息id=%s:%s）'
-             % (msg.get('shard') or '', local_id))
-        path = method(username, int(local_id), save_dir=save_dir,
-                      chat_name=(chat_name or None), shard=msg.get('shard'),
-                      timeout=float(timeout))
-        if path:
-            try:
-                size_kb = os.path.getsize(path) // 1024
-            except OSError:
-                size_kb = 0
-            _say(log, '界面兜底：已让微信导出图片（%d KB）' % size_kb)
-            return path
-        _say(log, '界面兜底：微信没导出图片（气泡不在可视区 / 预览窗没弹 / 保存对话框没走通）')
-    except Exception as exc:  # noqa: BLE001 - 兜底失败只影响这一条
-        _say(log, '界面兜底导出异常：', type(exc).__name__, str(exc)[:120])
-    return ''
+def capture_preview_image(request, *, win, process, uia, locator, inp, grab, pause=time.sleep):
+    main, pid = request['hwnd'], request['pid']
+    if (not win.IsWindow(main) or not win.IsWindowVisible(main) or win.IsIconic(main)
+            or process.GetWindowThreadProcessId(main)[1] != pid or win.GetForegroundWindow() != main):
+        raise PreviewUnavailable('wechat_not_foreground')
+    if (uia.current_chat() or '').strip() != request['chat']:
+        raise PreviewUnavailable('conversation_mismatch')
+    messages = uia._message_list()
+    rows = locator._visible_rows(messages) if messages is not None else []
+    index = locator._align_index(rows, request['sequence'], request['target'])
+    if index is None:
+        raise PreviewUnavailable('message_not_aligned')
+    target = rows[index][2]
+    if target.IsOffscreen:
+        raise PreviewUnavailable('message_not_aligned')
 
+    before = _visible_previews(win, process, main, pid)
+    preview = None
+    clicked = False
 
-def _rect(ctrl):
-    """控件矩形（整数，宽高都至少 120 才认）。"""
-    try:
-        r = ctrl.BoundingRectangle
-        left, top = int(r.left), int(r.top)
-        right, bottom = int(r.right), int(r.bottom)
-    except Exception:
+    def fresh_preview():
+        candidates = _visible_previews(win, process, main, pid) - before
+        foreground = win.GetForegroundWindow()
+        if len(candidates) > 1 or (foreground not in (0, main) and foreground not in candidates):
+            raise PreviewUnavailable('preview_changed')
+        if len(candidates) == 1:
+            candidate = next(iter(candidates))
+            if foreground == candidate or (foreground == main and win.GetAncestor(candidate, 3) == main):
+                return candidate
         return None
-    if right - left < 120 or bottom - top < 120:
-        return None
-    return (left, top, right, bottom)
-
-
-def capture_preview_image(dl, msg, chat_name='', log=None, timeout=CAPTURE_TIMEOUT,
-                          uia=None, inp=None, grab=None, sleep=None):
-    """点开这条图片的预览窗并截下图片区域，返回图片字节；失败返回 b''。
-
-    参数里的 ``uia`` / ``inp`` / ``grab`` / ``sleep`` 只为测试注入，生产留空即可。
-    """
-    username = msg.get('username') or ''
-    local_id = msg.get('local_id')
-    if not username or local_id is None:
-        _say(log, '界面兜底：消息缺会话或消息 id，无法定位图片')
-        return b''
-    pause = sleep or time.sleep
-    try:
-        if uia is None or inp is None:
-            from wechatauto.uia_driver import WeChatUIA
-            from wechatauto.guia import WinInput
-            uia = uia or WeChatUIA()
-            inp = inp or WinInput()
-        if grab is None:
-            from PIL import ImageGrab
-            grab = ImageGrab.grab
-    except Exception as exc:  # noqa: BLE001
-        _say(log, '界面兜底不可用（UIA/截图库缺失）：', repr(exc))
-        return b''
-
-    import ctypes
-    VK_ESCAPE = 0x1B
-    _say(log, '界面兜底：开始截预览窗（消息id=%s:%s）'
-         % (msg.get('shard') or '', local_id))
 
     try:
-        if not uia.ensure_window():
-            _say(log, '界面兜底：拿不到微信主窗（没登录 / 控件树没物化）')
-            return b''
-        want = (chat_name or '').strip()
-        try:
-            if want and (uia.current_chat() or '').strip() != want:
-                from wechatauto.wx import WeChat
-                WeChat().ChatWith(want)
-                pause(1.5)
-        except Exception as exc:  # noqa: BLE001
-            _say(log, '界面兜底：切到目标会话失败（%s），按当前会话继续试'
-                 % type(exc).__name__)
-        lst = uia._message_list()
-        if lst is None:
-            _say(log, '界面兜底：消息列表不在控件树里（微信停在其它页？）')
-            return b''
-        hwnd = pid = None
-        try:
-            handles = uia._wechat_hwnds()
-            if handles:
-                hwnd = handles[0]
-                pid = uia._pid_from_hwnd(hwnd)
-        except Exception as exc:  # noqa: BLE001
-            _say(log, '界面兜底：取微信窗口句柄失败（%s），不滚动界面' % type(exc).__name__)
-        deadline = time.monotonic() + max(3.0, float(timeout))
-        row = None
-        db_seq = []
-        try:
-            row = dl.db.get_message_row(username, int(local_id), local_type=3,
-                                        shard=msg.get('shard'))
-            recent = dl.db.get_messages(username, limit=400)      # 降序
-            db_seq = [{'kind': dl._DB_ROW_KIND.get(r.get('type') or ''),
-                       'content': r.get('content') or '',
-                       'local_id': r.get('local_id')} for r in reversed(recent)]
-            db_seq = [d for d in db_seq if d['kind']]
-        except Exception as exc:  # noqa: BLE001
-            _say(log, '界面兜底：读消息历史失败（%s），降级按图片顺序找' % type(exc).__name__)
-            row = row or None
-        target = None
-        if db_seq:
-            try:
-                target, _note = dl._locate_image_row(
-                    int(local_id), lst, db_seq, uia, hwnd, pid,
-                    min(deadline, time.monotonic() + 4.0),
-                    max_scrolls=3 if pid else 0)
-            except Exception as exc:  # noqa: BLE001
-                _say(log, '界面兜底：定位图片行异常（%s）' % type(exc).__name__)
-                target = None
-        if target is None:
-            _say(log, '界面兜底：没在可视区认出这条图片气泡，跳过截图')
-            return b''
-        is_self = False
-        try:
-            is_self = bool(row and dl._sent_by_self(row))
-        except Exception as exc:  # noqa: BLE001
-            _say(log, '界面兜底：判断发送方失败（%s），按对方发送处理' % type(exc).__name__)
-            is_self = False
-        before = set()
-        try:
-            before = {h for h, _w in dl._preview_windows()}
-        except Exception as exc:  # noqa: BLE001
-            _say(log, '界面兜底：读取已有预览窗失败（%s），按没有处理' % type(exc).__name__)
-            before = set()
-        rect = target.BoundingRectangle
-        cy = int((rect.top + rect.bottom) / 2)
-        for cx in dl._bubble_click_xs(rect, is_self):
-            if time.monotonic() >= deadline:
+        # 只尝试同一条消息发送方一侧的气泡，不滚动或切换其他会话。
+        initial = target.BoundingRectangle
+        initial_rect = (initial.left, initial.top, initial.right, initial.bottom)
+        midpoint = (initial.left + initial.right) / 2
+        xs = [x for x in locator._bubble_click_xs(initial, request['is_self'])
+              if initial.left <= x < initial.right and (x > midpoint) == request['is_self']][:2]
+        for x in xs:
+            candidate = fresh_preview()
+            if candidate:
+                if not clicked:
+                    raise PreviewUnavailable('preview_changed')
+                preview = candidate
                 break
+            if win.GetForegroundWindow() != main or (uia.current_chat() or '').strip() != request['chat']:
+                raise PreviewUnavailable('conversation_mismatch')
+            rect = target.BoundingRectangle
+            bounds = messages.BoundingRectangle
+            y = (rect.top + rect.bottom) // 2
+            if ((rect.left, rect.top, rect.right, rect.bottom) != initial_rect or target.IsOffscreen or
+                    not (bounds.left <= x < bounds.right and bounds.top <= y < bounds.bottom) or
+                    win.GetAncestor(win.WindowFromPoint((x, y)), 2) != main):
+                raise PreviewUnavailable('message_not_aligned')
+            if (win.GetForegroundWindow() != main
+                    or process.GetWindowThreadProcessId(main)[1] != pid):
+                raise PreviewUnavailable('wechat_not_foreground')
+            inp.real_click(x, y)
+            clicked = True
+            for _ in range(12):
+                pause(0.12)
+                preview = fresh_preview()
+                if preview:
+                    break
+            if preview:
+                break
+        if not preview:
+            raise PreviewUnavailable('preview_not_opened')
+
+        # 通过窗口句柄获取画面，避免把聊天列表或遮挡预览的窗口送去识图。
+        pause(0.4)
+        if fresh_preview() != preview:
+            raise PreviewUnavailable('preview_changed')
+        image = grab(window=preview).convert('RGB')
+        if fresh_preview() != preview:
+            raise PreviewUnavailable('preview_changed')
+        if min(image.size) < 120 or all(lo == hi for lo, hi in image.getextrema()):
+            raise PreviewUnavailable('capture_unavailable')
+        image.thumbnail((2560, 2560))
+        out = io.BytesIO()
+        image.save(out, format='JPEG', quality=88)
+        data = out.getvalue()
+        if len(data) > MAX_IMAGE_BYTES:
+            raise PreviewUnavailable('capture_unavailable')
+        return data
+    finally:
+        # 只关闭本次打开、仍归属已核验微信窗口的预览。焦点改变后交给用户处理。
+        if preview:
             try:
-                inp.real_click(int(cx), cy)
-            except Exception as exc:  # noqa: BLE001
-                _say(log, '界面兜底：点击图片气泡失败（%s）' % type(exc).__name__)
-                return b''
-            while time.monotonic() < deadline:
-                try:
-                    fresh = [(h, w) for h, w in dl._preview_windows() if h not in before]
-                except Exception as exc:  # noqa: BLE001
-                    _say(log, '界面兜底：检测预览窗失败（%s）' % type(exc).__name__)
-                    fresh = []
-                if fresh:
-                    bbox = _rect(fresh[0][1])
-                    if bbox is None:
-                        try:
-                            import uiautomation as auto
-                            bbox = _rect(auto.ControlFromHandle(fresh[0][0]))
-                        except Exception as exc:  # noqa: BLE001
-                            _say(log, '界面兜底：预览窗矩形取不到（%s）' % type(exc).__name__)
-                            bbox = None
-                        if bbox is None:
-                            _say(log, '界面兜底：预览窗太小或没有有效矩形，放弃截图')
-                    data = b''
-                    if bbox:
-                        try:
-                            image = grab(bbox=bbox)
-                            buf = io.BytesIO()
-                            image.convert('RGB').save(buf, format='JPEG', quality=88)
-                            data = buf.getvalue()
-                        except Exception as exc:  # noqa: BLE001
-                            _say(log, '界面兜底截图失败：%s' % type(exc).__name__)
-                    # 不管截没截到都要把预览窗关掉，别把用户界面留在别人脸上
-                    try:
-                        if hasattr(inp, 'key'):
-                            inp.key(VK_ESCAPE)
-                        else:                                    # pragma: no cover - 老版本兜底
-                            ctypes.windll.user32.keybd_event(VK_ESCAPE, 0, 0, 0)
-                            ctypes.windll.user32.keybd_event(VK_ESCAPE, 0, 2, 0)
-                    except Exception as exc:  # noqa: BLE001
-                        _say(log, '界面兜底：关闭预览窗失败（%s）' % type(exc).__name__)
-                    if data:
-                        _say(log, '界面兜底：已截下这条图片预览（%d KB）' % (len(data) // 1024))
-                        return data
-                    return b''
-                pause(0.3)
+                if fresh_preview() == preview:
+                    win.PostMessage(preview, 0x0010, 0, 0)  # WM_CLOSE
+            except Exception:
+                pass
+
+
+def read_image_via_ui(request, log, *, timeout=CAPTURE_TIMEOUT, run=None):
+    """父进程只等固定时限。UIA 或截图库挂起时，由 subprocess 终止并回收子进程。"""
+    try:
+        payload = json.dumps(request, ensure_ascii=False).encode('utf-8')
+        if len(payload) > MAX_REQUEST_BYTES:
+            log('图片预览兜底跳过 reason=request_too_large')
+            return b''
+        result = (run or subprocess.run)(
+            [sys.executable, '-X', 'utf8', '-B', os.path.abspath(__file__), '--capture-preview'],
+            input=payload, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=timeout,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+        )
+    except subprocess.TimeoutExpired:
+        log('图片预览兜底子进程超时，已停止（%.0f 秒）' % timeout)
         return b''
-    except Exception as exc:  # noqa: BLE001
-        _say(log, '界面兜底截图异常：', type(exc).__name__, str(exc)[:120])
+    except Exception as exc:
+        log('图片预览兜底启动失败 type=%s' % type(exc).__name__)
         return b''
-
-
-def _preview_handles(dl, log=None):
-    try:
-        return {h for h, _w in dl._preview_windows()}
-    except Exception as exc:  # noqa: BLE001
-        _say(log, '界面兜底：读取预览窗列表失败（%s）' % type(exc).__name__)
-        return set()
-
-
-def close_new_previews(dl, before, log=None):
-    """把兜底过程中新开的预览窗关掉（用户本来就开着的那些不动）。"""
-    try:
-        fresh = [h for h, _w in dl._preview_windows() if h not in before]
-    except Exception as exc:  # noqa: BLE001
-        _say(log, '界面兜底：关闭前读取预览窗失败（%s）' % type(exc).__name__)
-        return 0
-    if not fresh:
-        return 0
-    try:
-        from wechatauto.guia import WinInput
-        keys = WinInput()
-        for _h in fresh:
-            keys.key(0x1B)                 # Esc：关掉当前预览窗
-            time.sleep(0.2)
-    except Exception as exc:  # noqa: BLE001
-        _say(log, '界面兜底：关闭预览窗失败（%s）' % type(exc).__name__)
-        return 0
-    _say(log, '界面兜底：已关掉 %d 个预览窗' % len(fresh))
-    return len(fresh)
-
-
-def read_image_via_ui(dl, msg, chat_name='', save_dir=None, log=None,
-                      export_timeout=EXPORT_TIMEOUT, capture_timeout=CAPTURE_TIMEOUT,
-                      cooldown=FAIL_COOLDOWN, **kwargs):
-    """先让微信导出明文，导不出再截预览窗。返回图片字节；都失败返回 b''。
-
-    默认不在失败后关门：聊天不会等，下一张图照样要试一次（每次都有
-    ``export_timeout`` + ``capture_timeout`` 的上限，外面还有识别总超时）。
-    ``cooldown`` 只在调用方明确要限制界面操作频率时才大于 0。
-    """
-    if time.monotonic() < _state['blocked_until']:
-        _say(log, '界面兜底按调用方的冷却设置跳过这张')
+    if result.returncode:
+        code = result.returncode
+        reason = FAILURES[code] if 0 < code < len(FAILURES) else 'worker_exited'
+        log('图片预览兜底未取到图 reason=%s code=%s' % (reason, code))
         return b''
-    before = _preview_handles(dl, log=log)
-    path = export_original(dl, msg, chat_name=chat_name, save_dir=save_dir,
-                           log=log, timeout=export_timeout)
-    data = b''
-    if path:
-        try:
-            with open(path, 'rb') as stream:
-                data = stream.read()
-        except OSError as exc:
-            _say(log, '界面兜底：导出的文件读不了：', repr(exc))
-            data = b''
-    if not data:
-        data = capture_preview_image(dl, msg, chat_name=chat_name, log=log,
-                                     timeout=capture_timeout, **kwargs)
-    try:
-        close_new_previews(dl, before, log=log)
-    except Exception:
-        pass
-    if data:
-        _state['blocked_until'] = 0.0
-    elif cooldown and float(cooldown) > 0:
-        _state['blocked_until'] = time.monotonic() + float(cooldown)
-        _say(log, '界面兜底没取到图，按调用方设置冷却 %.0f 秒' % cooldown)
-    else:
-        _say(log, '界面兜底没取到图；下一张图仍会再试一次')
+    data = result.stdout
+    if not data.startswith(b'\xff\xd8\xff') or len(data) > MAX_IMAGE_BYTES:
+        log('图片预览兜底未取到图 reason=invalid_capture')
+        return b''
+    log('图片预览兜底已取图（%d KB）' % (len(data) // 1024))
     return data
+
+
+def _worker():
+    output = sys.stdout.buffer
+    try:
+        with redirect_stdout(sys.stderr):
+            payload = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
+            if len(payload) > MAX_REQUEST_BYTES:
+                return 1
+            request = json.loads(payload.decode('utf-8'))
+            import win32gui as win
+            import win32process as process
+
+            hwnd, pid = request['hwnd'], request['pid']
+            if (not win.IsWindow(hwnd) or win.GetForegroundWindow() != hwnd
+                    or process.GetWindowThreadProcessId(hwnd)[1] != pid):
+                return FAILURES.index('wechat_not_foreground')
+            import uiautomation as auto
+            from PIL import ImageGrab
+            from wechatauto import MediaDownloader
+            from wechatauto.guia import WinInput
+            from wechatauto.uia_driver import WeChatUIA
+
+            uia = WeChatUIA(hwnd=hwnd, search_timeout=0.5)
+            root = auto.ControlFromHandle(hwnd)
+            if root is None or root.ProcessId != pid or root.NativeWindowHandle != hwnd:
+                return FAILURES.index('wechat_not_foreground')
+            # 直接使用已存在的控件树，避免重新搜窗、激活或建立第二个数据库连接。
+            uia._win = root
+            data = capture_preview_image(
+                request, win=win, process=process, uia=uia, locator=MediaDownloader(None),
+                inp=WinInput(), grab=ImageGrab.grab,
+            )
+        output.write(data)
+        output.flush()
+        return 0
+    except PreviewUnavailable as exc:
+        return FAILURES.index(exc.args[0])
+    except Exception:
+        return 1
+
+
+if __name__ == '__main__' and sys.argv[1:] == ['--capture-preview']:
+    sys.exit(_worker())

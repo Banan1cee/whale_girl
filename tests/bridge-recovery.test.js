@@ -106,19 +106,19 @@ test('图片识别不会把整个会话卡死：密钥扫描和识别都有时�
 /**
  * 图片密钥（AES）只能从 Weixin.exe 进程内存里反推，取不到时磁盘上的 .dat 解不开。
  * 这时不能只留一条“这条不回话”：先记清能不能离线派生、图来自哪个账号目录，
- * 再退到界面兜底（让微信导出明文，导不出就截预览窗）。
+ * 再退到限时的微信预览取图。
  */
 test('密钥取不到时有诊断日志和界面兜底，不是静默不理人', () => {
   assert.match(bridge, /def image_key_note/, '要记录 cfgDword 能不能离线派生');
   assert.match(bridge, /def image_dir_note/, '要记录图来自当前账号目录还是别处');
   assert.match(bridge, /图片密钥状态：%s；消息id=/, '失败日志要带密钥状态和消息 id');
   assert.match(bridge, /def image_ui_fallback/, '磁盘解不开时要有界面兜底');
-  assert.match(bridge, /from image_ui_fallback import read_image_via_ui/, '兜底要真的去调界面');
-  assert.match(bridge, /def read_image_via_ui/, '先导出明文，导出不了再截图');
+  assert.match(bridge, /from image_ui_fallback import [^\n]*read_image_via_ui/, '兜底要接到界面子进程');
+  assert.match(bridge, /def read_image_via_ui/, '预览操作要在限时子进程执行');
   assert.match(bridge, /def capture_preview_image/, '要有截预览窗的实现');
   assert.match(bridge, /def skipped\(reason\)/, '没处理的消息也要留痕');
   assert.match(bridge, /消息未处理：%s；会话=%s 消息id=/, '跳过日志要带原因和消息 id');
-  assert.match(bridge, /界面兜底：没在可视区认出|界面兜底：没取到图/, '兜底失败要写清卡在哪一步');
+  assert.match(bridge, /图片预览兜底未取到图 reason=/, '兜底失败要写清卡在哪一步');
   const fn = bridge.slice(bridge.indexOf('def describe_image'));
   const body = fn.slice(0, fn.indexOf('\n    def ', 10));
   assert.match(body, /image_ui_fallback/, '本地取不到图时必须尝试界面兜底');
