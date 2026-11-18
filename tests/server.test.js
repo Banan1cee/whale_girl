@@ -334,7 +334,8 @@ test('诊断接口：提示词预览能区分主人 / 普通人 / 群聊', async
   const master = await (await post({ senderName: 'Master', senderId: 'wxid_test_master', chatType: 'private', text: '在吗' })).json();
   assert.equal(master.isMaster, true);
   assert.match(master.system, /【主人】/);
-  assert.match(master.system, /父母|养大/);
+  assert.match(master.system, /程序已认证的主人/);
+  assert.doesNotMatch(master.system, /父母|养大/);
 
   // 只把昵称改成主人的名字、id 对不上：配了真 wxid 就不认（和微信里真正跑消息时一致），
   // 以前这里会显示「识别为主人」，害人以为改好了
