@@ -83,6 +83,7 @@ if ($LASTEXITCODE -ne 0) { Pop-Location; Pop-Location; throw '发布自检不通
 Pop-Location
 
 Step '4/5 打包'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 New-Item -ItemType Directory $OutDir -Force | Out-Null
 $srcZip = Join-Path $OutDir $meta.sourceName
 if (Test-Path $srcZip) { Remove-Item $srcZip -Force }
@@ -103,10 +104,22 @@ if (-not $SkipFull) {
   & $node 'scripts\release-resources.js' verify-tree full $fullDir $root
   if ($LASTEXITCODE -ne 0) { Pop-Location; throw '完整包stage资源不完整，不出包' }
   # 首次运行会从示例生成配置；发行包不包含 config.json，覆盖更新不会重置用户设置。
-  $fullZip = Join-Path $OutDir $meta.fullName
-  if (Test-Path $fullZip) { Remove-Item $fullZip -Force }
-  & tar -a -cf $fullZip -C $build $pkgNameFull
-  if ($LASTEXITCODE -ne 0) { Pop-Location; throw "tar 打包失败 $LASTEXITCODE" }
+  $fullZip = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath((Join-Path $OutDir $meta.fullName))
+  $fullZipTemp = $fullZip + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+  try {
+    # ZipFile 保留隐藏的 runtime/.built 和顶层包目录。
+    [IO.Compression.ZipFile]::CreateFromDirectory($fullDir, $fullZipTemp, [IO.Compression.CompressionLevel]::Optimal, $true)
+    if ([IO.File]::Exists($fullZip)) {
+      [IO.File]::Replace($fullZipTemp, $fullZip, [NullString]::Value)
+    } else {
+      [IO.File]::Move($fullZipTemp, $fullZip)
+    }
+  } catch {
+    Pop-Location
+    throw
+  } finally {
+    if ([IO.File]::Exists($fullZipTemp)) { [IO.File]::Delete($fullZipTemp) }
+  }
   Write-Host ("  完整包：{0:N1} MB  →  {1}" -f ((Get-Item $fullZip).Length / 1MB), (Split-Path $fullZip -Leaf))
 }
 
@@ -122,7 +135,6 @@ if ($PrevZip) {
 }
 
 Step '5/5 从 zip 里读文件复核（不信任磁盘）'
-Add-Type -AssemblyName System.IO.Compression.FileSystem
 $checks = @(
   @{ entry = 'src/http/routes/vision.js'; needle = '/api/vision/test'; label = '看图测试接口' },
   @{ entry = 'src/core/master.js'; needle = 'matchMaster'; label = '主人判定' },

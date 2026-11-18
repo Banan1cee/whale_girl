@@ -9,15 +9,15 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 35
     env:
-      CANDIDATE_HEAD: 56fdfcae3724eed56e8140dd05d3d4f1fcbe860f
-      CANDIDATE_TREE: c72acc14083a8525cdad36711861bf51b1a3f8b6
+      CANDIDATE_HEAD: b307902e652b9884a060ab82a5f5db24203152d1
+      CANDIDATE_TREE: e8ff7392e9b17b02a4a2c386f41604eaa8bd4d6f
       NODE_OPTIONS: --test-reporter=tap
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 56fdfcae3724eed56e8140dd05d3d4f1fcbe860f
+          ref: b307902e652b9884a060ab82a5f5db24203152d1
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
