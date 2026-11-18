@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   archive:
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 35
     env:
       CANDIDATE_HEAD: 56fdfcae3724eed56e8140dd05d3d4f1fcbe860f
@@ -68,6 +68,8 @@ jobs:
       - name: Build and inspect the source and full ZIPs
         shell: pwsh
         run: |
+          Write-Output (Get-Command tar.exe).Source
+          tar.exe --version
           $archiveDir = Join-Path $env:RUNNER_TEMP 'whale-archive-proof'
           pwsh -NoProfile -NonInteractive -File scripts/build-release.ps1 -OutDir $archiveDir
           if ($LASTEXITCODE -ne 0) { throw 'Original packaging script did not pass' }
