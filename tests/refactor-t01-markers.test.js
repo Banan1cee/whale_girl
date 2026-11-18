@@ -37,6 +37,11 @@ test('all known marker fragments are hidden without adding more sticker actions'
   const result = finalize('a[[sticker:开心]]b[[sticker:炸毛]]c[[sticker:傲娇]]d[[sticker:炸毛]]e');
   assert.equal(result.text, 'abcde'); assert.equal(result.category, '开心');
 });
+test('unclosed sticker without a separator preserves same-line prose', t => {
+  const result = fixture(t)('答复 [[sticker 后半句照常发');
+  assert.equal(result.text, '答复 后半句照常发');
+  assert.equal(result.category, '');
+});
 test('unknown names and ordinary literal bracket expressions survive', t => {
   const finalize = fixture(t);
   for (const raw of ['a[[unknown:fixture]]b', 'a[[stickers:fixture]]b', 'a((silences:3))b', 'a(b)c[d]']) assert.equal(finalize(raw).text, raw);

@@ -1,7 +1,7 @@
 'use strict';
 
 /** 两种控制语法共享有界行扫描，权限、动作次数和参数规则仍各自处理。 */
-function scanMarks(input, { open, close, name, visit }) {
+function scanMarks(input, { open, close, name, visit, preserveUnclosedProse = false }) {
   const text = String(input == null ? '' : input);
   const lower = text.toLowerCase();
   const kept = [];
@@ -20,6 +20,16 @@ function scanMarks(input, { open, close, name, visit }) {
     while (lineEnd < text.length && text[lineEnd] !== '\n' && text[lineEnd] !== '\r') lineEnd++;
     const end = text.indexOf(close, body);
     const closed = end >= 0 && end < lineEnd;
+    if (!closed && preserveUnclosedProse) {
+      let separator = body;
+      while (text[separator] === ' ' || text[separator] === '\t') separator++;
+      if (text[separator] !== ':' && text[separator] !== '：') {
+        // 没有分隔符的半截表情标记只移除前缀，后面的正文不算参数。
+        kept.push(text.slice(from, start));
+        from = search = separator;
+        continue;
+      }
+    }
     const stop = closed ? end + close.length : lineEnd;
     kept.push(text.slice(from, start));
     visit(text.slice(body, closed ? end : lineEnd));
@@ -42,7 +52,7 @@ function stripSilenceMark(input) {
 function stripStickerMarks(input) {
   let category = '';
   let count = 0;
-  const text = scanMarks(input, { open: '[[', close: ']]', name: 'sticker', visit(body) {
+  const text = scanMarks(input, { open: '[[', close: ']]', name: 'sticker', preserveUnclosedProse: true, visit(body) {
     count++;
     const match = body.match(/^[ \t]*[:：]([^\r\n]*)$/);
     const candidate = match ? match[1].trim() : '';

@@ -197,18 +197,31 @@ test('silent/muted/plugin and early reminder/dismiss/admin lane precedence remai
     ['silent-peer', 'ignore', 'silent'], ['silent-owner', 'reply', 'addressed'],
     ['muted-owner', 'ignore', 'muted'], ['plugin-wake-muted', 'ignore', 'muted'],
     ['dismiss', 'reply', 'dismissed'], ['reminder', 'reply', 'reminder_list'], ['admin', 'command', 'admin'],
+    ['admin-peer', 'ignore', 'muted'],
   ]) {
     const f = fixture(t);
-    const m = message(kind, { atMe: true }); const s = state(f, m);
+    const m = message(kind, { atMe: true });
+    if (kind === 'admin') {
+      Object.assign(m, { platform: 'wechat', chatType: 'private', senderId: 'fixture-owner', senderName: 'FixtureOwner' });
+      f.config.admin.spell = 'fixture-admin-spell';
+      const grant = await f.bot.decide(message(kind, { ...m, msgId: '', text: f.config.admin.spell }));
+      assert.equal(grant.commandType, 'admin_spell');
+    }
+    const s = state(f, m);
     if (kind.startsWith('silent')) s.silentUntil = f.now() + 600000;
     if (kind.endsWith('owner')) { m.platform = 'wechat'; m.senderId = 'fixture-owner'; Object.assign(state(f, m), s); }
     if (kind.startsWith('muted') || kind === 'plugin-wake-muted') state(f, m).mutedUntil = f.now() + 600000;
     if (kind === 'plugin-wake-muted') f.control.pre = 'wake';
     if (kind === 'dismiss') { m.text = '闭嘴'; s.mutedUntil = f.now() + 600000; }
     if (kind === 'reminder') { m.text = '提醒列表'; s.mutedUntil = f.now() + 600000; f.bot.reminders = { pendingFor: () => [] }; }
-    if (kind === 'admin') { m.text = '管理状态'; s.mutedUntil = f.now() + 600000; }
+    if (kind === 'admin' || kind === 'admin-peer') { m.text = '管理状态'; s.mutedUntil = f.now() + 600000; }
     const result = await f.bot.decide(m);
     assert.equal(result.action, expectedAction, kind); assert.equal(result.reason, expectedReason, kind);
+    if (kind === 'admin') assert.equal(result.commandType, 'admin');
+    if (kind === 'admin-peer') {
+      assert.equal(result.msg.newPersonaBehavior, true);
+      assert.equal(result.commandType, undefined);
+    }
     if (['dismiss', 'reminder', 'admin'].includes(kind)) assert.ok(!f.hooks.includes('chat.pre_reply'), kind);
   }
 });
