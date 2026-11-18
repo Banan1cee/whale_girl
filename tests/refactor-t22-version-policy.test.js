@@ -41,9 +41,9 @@ test('both artifact workflows use the shared values and fail mismatched actual p
 test('actual PowerShell-to-native argv renders metadata fields as four exact property arguments', () => {
   const { spawnSync } = require('node:child_process');
   const currentVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
-  assert.equal(currentVersion, '4.1.7');
+  const expectedFileVersion = [...currentVersion.split('.'), '0', '0'].slice(0, 4).join('.');
   const meta = require('../scripts/version-policy').versionMetadata(currentVersion);
-  assert.deepEqual([meta.version, meta.fileVersion, meta.productVersion], ['4.1.7', '4.1.7.0', '4.1.7']);
+  assert.deepEqual([meta.version, meta.fileVersion, meta.productVersion], [currentVersion, expectedFileVersion, currentVersion]);
   const q = (text) => "'" + text.replace(/'/g, "''") + "'";
   for (const file of ['.github/workflows/build.yml', '.github/workflows/installer.yml']) {
     const text = fs.readFileSync(path.join(root, file), 'utf8');
@@ -52,7 +52,12 @@ test('actual PowerShell-to-native argv renders metadata fields as four exact pro
     const script = `$meta=${q(JSON.stringify(meta))}|ConvertFrom-Json\n& ${q(process.execPath)} -e 'console.log(JSON.stringify(process.argv.slice(1)))' -- ${args.join(' ')}\n`;
     const result = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout.trim()), ['-p:Version=' + meta.version, '-p:FileVersion=' + meta.fileVersion, '-p:AssemblyVersion=' + meta.fileVersion, '-p:ProductVersion=' + meta.productVersion]);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), [
+      '-p:Version=' + currentVersion,
+      '-p:FileVersion=' + expectedFileVersion,
+      '-p:AssemblyVersion=' + expectedFileVersion,
+      '-p:ProductVersion=' + currentVersion,
+    ]);
   }
 });
 test('bump CLI arithmetic and writes are exercised only through in-memory filesystem mocks', () => {
