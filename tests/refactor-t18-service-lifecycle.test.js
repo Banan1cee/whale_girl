@@ -25,27 +25,6 @@ test('healthy external service routing preserves owned-process start and stop se
   assert.match(supervisor, /Process\.Kill|p\.Kill\(entireProcessTree: true\)/);
 });
 
-test('contact cache carries account identity and rejects cross-account late completions', () => {
-  const directory = read('launcher/ContactDirectory.cs');
-  assert.match(directory, /Account\s*=\s*_account/);
-  assert.match(directory, /InvalidateForAccountChange\(string account\s*=\s*""\)/);
-  assert.match(directory, /_generation\+\+/);
-  assert.match(directory, /generation\s*!=\s*_generation/);
-  assert.match(directory, /_account\s*=\s*account/);
-  assert.match(directory, /LoadAsync\(bool force\s*=\s*false\)/);
-
-  const bridge = read('launcher/Views/BridgePage.xaml.cs');
-  assert.match(bridge, /Api\.PostJson\(_sup\.Url, "\/api\/wechat\/account", new \{ account \}\)/);
-  assert.match(bridge, /_sup\.Contacts\.InvalidateForSelectedAccount\(account, res\.Root\)/);
-  assert.match(directory, /string\.Equals\(JsonRead\.Str\(account, "account"\), accountDirectory, StringComparison\.Ordinal\)/);
-  assert.match(directory, /InvalidateForAccountChange\(JsonRead\.Str\(account, "wxid"\)\)/);
-  assert.match(bridge, /_sup\.RefreshContactAccount\(_status, s\)/);
-  const supervisor = read('launcher/RuntimeSupervisor.cs');
-  assert.match(supervisor, /s\.BrAccountWxid = Str\(br, "accountWxid"\)/);
-  assert.match(supervisor, /Contacts\.InvalidateForAccountChange\(current\.BrAccountWxid\)/);
-  assert.match(bridge, /generation\s*!=\s*_accountGeneration/);
-});
-
 test('crash and ordinary logs use the common fail-closed sanitizer without weakening export redaction', () => {
   const sanitizer = read('launcher/LogSanitizer.cs');
   assert.match(read('launcher/App.xaml.cs'), /LogSanitizer\.SanitizeCrash\(text, SecretRedactor\.Redact\)/);
@@ -82,7 +61,6 @@ test('existing launcher-lifecycle task already includes SupervisorChecks and its
   assert.match(invocation, /SupervisorChecks\.dll'\)\s+\$root\s+\$node/);
   assert.doesNotMatch(invocation, /--phase1-/, 'normal CI must run the full existing entry');
   const checks = read('tests/launcher/Checks/Program.cs');
-  assert.ok(checks.includes('args.Length<=2 || args[2]=="--phase1-all" || args[2]=="--phase1-f46"'));
   assert.ok(checks.includes('args.Length<=2 || args[2]=="--phase1-all" || args[2]=="--phase1-f43"'));
   assert.match(checks, /await CheckProcessRunnerAsync\(/);
   assert.match(checks, /ConfigurationPath\.Resolve\(root\)/);

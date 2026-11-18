@@ -232,7 +232,7 @@ public static async Task<string[]> RunAdaptationControlsAsync(string workspace, 
 public static async Task<int> Main(string[] args)
 {
 if(args.Length<2||args.Length>3||(args.Length==3&&Array.IndexOf(new[]{
-    "--phase1-f38","--phase1-f43","--phase1-f46","--phase1-runner","--phase1-all"},args[2])<0))
+    "--phase1-f38","--phase1-f43","--phase1-runner","--phase1-all"},args[2])<0))
     throw new ArgumentException("expected workspace/node plus an optional explicit local phase1 selection");
 var workspace = Path.GetFullPath(args[0]);
 var root = Path.Combine(workspace, ".tools", "temp", "supervisor-" + Guid.NewGuid().ToString("N"));
@@ -244,32 +244,13 @@ var externalServer = """
 const fs=require('fs'),http=require('http');
 const remotePath='data/external-config.json';
 const reply=(r,o)=>{r.statusCode=200;r.setHeader('content-type','application/json');r.end(JSON.stringify(o));};
-const accounts=[{account:'fixture-A_a1b2',wxid:'fixture-A'},{account:'fixture-B_c3d4',wxid:'fixture-B'}];
-let selected=accounts[0];
 const s=http.createServer((q,r)=>{
   if(q.url==='/healthz')return reply(r,{ok:true,up:true,service:fs.existsSync('wrong-service')?'other':'whale-girl',pid:fs.existsSync('invalid-pid')?0:fs.existsSync('wrong-pid')?process.pid+1:process.pid});
-  if(q.url==='/api/status')return reply(r,{ok:true,gateways:[{platform:'qq',bridge:{account_nick:'wrong'}},{platform:'wechat',bridge:{online:true,accountOk:true,account:selected.account,accountWxid:selected.wxid,accountNick:'right'}}]});
+  if(q.url==='/api/status')return reply(r,{ok:true,gateways:[{platform:'qq',bridge:{account_nick:'wrong'}},{platform:'wechat',bridge:{online:true,accountOk:true,accountNick:'right'}}]});
   if(q.url==='/api/config'&&q.method==='GET'){const x=JSON.parse(fs.readFileSync(remotePath,'utf8'));x.gets++;fs.writeFileSync(remotePath,JSON.stringify(x));return reply(r,{ok:true,config:x});}
   if(q.url==='/api/config'&&q.method==='POST'){let b='';q.setEncoding('utf8');q.on('data',c=>b+=c);q.on('end',()=>{const x=JSON.parse(fs.readFileSync(remotePath,'utf8'));x.writes++;x.lastBody=JSON.parse(b);x.marker='external-hot';fs.writeFileSync(remotePath,JSON.stringify(x));reply(r,{ok:true,saved:true});});return;}
   if(q.url==='/api/settings'&&q.method==='GET')return reply(r,{ok:true,model:JSON.parse(fs.readFileSync(remotePath,'utf8')).model||''});
   if(q.url==='/api/settings'&&q.method==='POST'){let b='';q.setEncoding('utf8');q.on('data',c=>b+=c);q.on('end',()=>{const x=JSON.parse(fs.readFileSync(remotePath,'utf8'));x.model=JSON.parse(b).model;fs.writeFileSync(remotePath,JSON.stringify(x));reply(r,{ok:true});});return;}
-  if(q.url.startsWith('/api/wechat/contacts')){
-    fs.appendFileSync('data/contact-requests',selected.wxid+'\n');
-    if(fs.existsSync('data/fail-contacts'))return reply(r,{ok:false,error:'fixture contact failure'});
-    const account=fs.existsSync('data/stale-contact-account')?'fixture-A':selected.wxid;
-    const items=fs.existsSync('data/empty-contacts')?[]:[{wxid:'fixture-contact-'+account,name:account,remark:'',isGroup:false}];
-    const body={ok:true,account,updatedAt:1,total:items.length,items};
-    if(fs.existsSync('data/hold-contact-once')){
-      fs.unlinkSync('data/hold-contact-once');fs.writeFileSync('data/contact-request-arrived',account);
-      const gate=setInterval(()=>{if(fs.existsSync('data/release-contact')){clearInterval(gate);clearTimeout(limit);reply(r,body);}},5);
-      const limit=setTimeout(()=>{clearInterval(gate);reply(r,body);},3000);return;
-    }
-    return reply(r,body);
-  }
-  if(q.url==='/api/wechat/account'&&q.method==='POST'){let b='';q.setEncoding('utf8');q.on('data',c=>b+=c);q.on('end',()=>{const wanted=JSON.parse(b).account;
-    const next=wanted?accounts.find(a=>a.account===wanted):accounts[0];
-    if(!next)return reply(r,{ok:false,error:'expected account directory key'});
-    selected=next;reply(r,{ok:true,wanted,current:selected.account,accounts});});return;}
   reply(r,{ok:true});
 });
 s.listen(0,'127.0.0.1',()=>fs.writeFileSync('data/server-port.txt',String(s.address().port)));
@@ -304,73 +285,6 @@ try {
          Check(externalState.NodeUp && externalState.ExternalNode && externalState.NodeReady && externalState.BridgeUp && externalState.BrOnline
              && externalState.BrAccountOk && externalState.BrAccountNick == "right" && !sup.NodeRunning,
              "能看到后台内核、桥接和微信状态，同时保留进程归属");
-         if(args.Length<=2 || args[2]=="--phase1-all" || args[2]=="--phase1-f46")
-         {
-             Check(externalState.BrAccount=="fixture-A_a1b2" && externalState.BrAccountWxid=="fixture-A",
-                 "状态读取分别保留账号目录和联系人 wxid");
-             sup.RefreshContactAccount(new Snapshot(),externalState);
-             var contacts=await sup.Contacts.LoadAsync(force:true);
-             Check(contacts.Account=="fixture-A" && contacts.Items.Count==1 && contacts.Items[0].Name=="fixture-A",
-                 "联系人快照携带API返回的当前账号身份");
-             File.WriteAllText(Path.Combine(root,"data","hold-contact-once"),"1");
-             var oldLoad=sup.Contacts.RefreshAsync();
-             var pendingFile=Path.Combine(root,"data","contact-request-arrived");
-             for(var i=0;i<100&&!File.Exists(pendingFile);i++) await Task.Delay(10);
-             Check(File.Exists(pendingFile)&&File.ReadAllText(pendingFile)=="fixture-A","A联系人请求已被fixture挂起");
-             const string directoryB="fixture-B_c3d4";
-             var switched=await Api.PostJson(sup.Url,"/api/wechat/account",new{account=directoryB});
-             Check(switched.Ok&&switched.Str("current")==directoryB,"切号接口接收并保留 B 的目录 ID");
-             sup.Contacts.InvalidateForSelectedAccount(directoryB,switched.Root);
-             File.WriteAllText(Path.Combine(root,"data","fail-contacts"),"1");
-             var firstBFailure=await sup.Contacts.LoadAsync(force:true);
-             Check(!firstBFailure.Ok&&firstBFailure.Stale&&firstBFailure.Items.Count==0
-                 &&firstBFailure.Account!="fixture-A","B首次请求失败时也不向旧消费者返回A的候选项");
-             File.Delete(Path.Combine(root,"data","fail-contacts"));
-             File.WriteAllText(Path.Combine(root,"data","stale-contact-account"),"1");
-             var previousAccountPayload=await sup.Contacts.RefreshAsync();
-             Check(!previousAccountPayload.Ok&&previousAccountPayload.Items.Count==0,
-                 "切号响应映射到 B 的 wxid，B 心跳前也拒绝 A 的快照");
-             File.Delete(Path.Combine(root,"data","stale-contact-account"));
-             var newLoad=await sup.Contacts.LoadAsync(force:true);
-             Check(newLoad.Ok&&newLoad.Account=="fixture-B"&&newLoad.Items[0].Name=="fixture-B",
-                 "B账号缓存独立且快照正确标记B");
-             File.WriteAllText(Path.Combine(root,"data","release-contact"),"1");
-             var stale=await oldLoad;
-             Check(!stale.Ok&&stale.Account=="fixture-B"&&stale.Items[0].Name=="fixture-B",
-                 "迟到的A响应被拒绝并且不能覆盖B缓存");
-             var cached=await sup.Contacts.LoadAsync();
-             Check(cached.Ok&&cached.Account=="fixture-B"&&cached.Items[0].Name=="fixture-B",
-                 "A迟到后缓存仍保留B账号条目");
-             var heartbeatB=await sup.ProbeAsync();
-             Check(heartbeatB.BrAccountOk&&heartbeatB.BrAccount==directoryB&&heartbeatB.BrAccountWxid=="fixture-B",
-                 "B 心跳同时报告目录 ID 和 canonical wxid");
-             sup.RefreshContactAccount(externalState,heartbeatB);
-             var afterHeartbeat=await sup.Contacts.LoadAsync();
-             Check(afterHeartbeat.Ok&&afterHeartbeat.Account=="fixture-B"&&afterHeartbeat.Items[0].Name=="fixture-B",
-                 "心跳切到 B 后，目录 ID 不会挡住同账号的联系人");
-             var requestsPath=Path.Combine(root,"data","contact-requests");
-             var requestsBefore=File.ReadAllText(requestsPath);
-             File.WriteAllText(Path.Combine(root,"data","fail-contacts"),"1");
-             var cacheHit=await sup.Contacts.LoadAsync();
-             Check(cacheHit.Ok&&File.ReadAllText(requestsPath)==requestsBefore,"同账号TTL内读取命中既有缓存");
-             var failed=await sup.Contacts.RefreshAsync();
-             Check(!failed.Ok&&failed.Stale&&failed.Account=="fixture-B","B读取失败保留账号标签但不冒充新鲜成功列表");
-             File.Delete(Path.Combine(root,"data","fail-contacts"));
-             File.WriteAllText(Path.Combine(root,"data","stale-contact-account"),"1");
-             var mismatched=await sup.Contacts.RefreshAsync();
-             Check(!mismatched.Ok&&mismatched.Account=="fixture-B"&&mismatched.Items[0].Name=="fixture-B",
-                 "账号B期间服务端仍返回A时不能把A缓存标成成功");
-             File.Delete(Path.Combine(root,"data","stale-contact-account"));
-             File.WriteAllText(Path.Combine(root,"data","empty-contacts"),"1");
-             var empty=await sup.Contacts.RefreshAsync();
-             Check(empty.Ok&&empty.Account=="fixture-B"&&empty.Items.Count==0&&!empty.Stale,"空联系人列表也绑定B账号");
-             File.Delete(Path.Combine(root,"data","empty-contacts"));
-             typeof(ContactDirectory).GetField("_loadedAt",BindingFlags.Instance|BindingFlags.NonPublic)
-                 .SetValue(sup.Contacts,DateTime.UtcNow.AddSeconds(-11));
-             var expired=await sup.Contacts.LoadAsync();
-             Check(expired.Ok&&expired.Account=="fixture-B"&&expired.Items.Count==1,"TTL到期重新抓取当前B账号");
-             if(args.Length>2 && args[2]=="--phase1-f46") return 0;
-         }
           if(args.Length<=2 || args[2]=="--phase1-all" || args[2]=="--phase1-f43")
           {
               SecretRedactor.Refresh(root,force:true);

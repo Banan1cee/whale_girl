@@ -40,7 +40,6 @@ namespace WhaleLauncher.Views
         private readonly RuntimeSupervisor _sup;
         private readonly ConfigSaver _saver;
         private Snapshot _status = new Snapshot();
-        private long _accountGeneration;
 
         private const int ViewCap = 3000;
         // 后台通道打字的编码（写进 config.json 的 wechat.bgSend.charMode）。
@@ -244,17 +243,14 @@ namespace WhaleLauncher.Views
             if ((DateTime.Now - _lastRefresh).TotalMilliseconds < 800) return;
             _lastRefresh = DateTime.Now;
 
-            var generation = _accountGeneration;
             var s = await _sup.ProbeAsync();
-            if (generation != _accountGeneration) return;
-            _sup.RefreshContactAccount(_status, s);
             _status = s;
             UpdatePerm(s);
             UpdateStat();
             if (!_configLoaded) await LoadConfigAsync();
             if ((DateTime.Now - _lastAccounts).TotalSeconds < 15) return;
             _lastAccounts = DateTime.Now;
-            await LoadAccountsAsync(s, generation);
+            await LoadAccountsAsync(s);
         }
 
         private DateTime _lastAccounts = DateTime.MinValue;
@@ -283,15 +279,13 @@ namespace WhaleLauncher.Views
             PermLine.ToolTip = sb.ToString();
         }
 
-        private async Task LoadAccountsAsync(Snapshot s, long generation)
+        private async Task LoadAccountsAsync(Snapshot s)
         {
-            if (generation != _accountGeneration) return;
             var cards = new List<AccountCard>();
             var wanted = "";
             try
             {
                 var res = await Api.Get(_sup.Url, "/api/wechat/accounts");
-                if (generation != _accountGeneration) return;
                 if (!res.Ok) return;
                 var root = res.Root;
                 wanted = JsonRead.Str(root, "wanted");
@@ -368,21 +362,14 @@ namespace WhaleLauncher.Views
 
         private async Task PickAccountAsync(string account, string label)
         {
-            var generation = ++_accountGeneration;
             try
             {
                 var res = await Api.PostJson(_sup.Url, "/api/wechat/account", new { account });
-                if (generation != _accountGeneration)
-                {
-                    if (res.Ok) _sup.Contacts.InvalidateForAccountChange();
-                    return;
-                }
                 if (!res.Ok)
                 {
                     SwitchHint.Text = "切账号失败：" + Api.Message(res);
                     return;
                 }
-                _sup.Contacts.InvalidateForSelectedAccount(account, res.Root);
                 TxtAccount.Text = account;
                 _sup.Say("微信账号 → " + label);
                 // 别只指望桥接自己发现 config 变了：它的 config_watch 要等开库/预热
@@ -398,7 +385,7 @@ namespace WhaleLauncher.Views
             }
             catch (Exception ex)
             {
-                if (generation == _accountGeneration) SwitchHint.Text = "切账号失败：" + ex.Message;
+                SwitchHint.Text = "切账号失败：" + ex.Message;
             }
         }
 
@@ -442,11 +429,9 @@ namespace WhaleLauncher.Views
         private async Task LoadConfigAsync()
         {
             if (_configLoaded) return;
-            var generation = _accountGeneration;
             try
             {
                 var result = await _sup.ReadConfigurationAsync("/api/config");
-                if (generation != _accountGeneration) return;
                 if (!result.Ok) return;
                 var cfg = result.Prop("config");
                 if (!cfg.TryGetProperty("wechat", out var wx) || wx.ValueKind != JsonValueKind.Object) return;
