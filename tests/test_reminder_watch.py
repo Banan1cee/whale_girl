@@ -155,5 +155,108 @@ class WiringTests(unittest.TestCase):
         send.assert_not_called()
 
 
+class AckBookkeepingTests(unittest.TestCase):
+    def unknown(self):
+        from send_attempt import SendResult
+        return SendResult('uncertain', 'fixture opaque uncertainty', True)
+
+    def test_unknown_is_not_counted_sent_or_failed_and_is_fenced(self):
+        send = Mock(return_value=self.unknown())
+        receipts, logs = [], []
+        def ack(item, ok, err, *, uncertain=False):
+            receipts.append((item['id'], ok, err, uncertain))
+        runner = rw.ReminderRunner(fetch=lambda: {'items': items('a', 'a')}, send=send,
+                                   ack=ack, log=lambda *args: logs.append(str(args)))
+        self.assertEqual(runner.step()[0], 0)
+        self.assertEqual(runner.step()[0], 0)
+        send.assert_called_once()
+        self.assertEqual((runner.sent, runner.failed, runner.uncertain), (0, 0, 1))
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0][1], False)
+        self.assertTrue(receipts[0][3])
+        self.assertNotIn('服务端会在 5 分钟后重试', '\n'.join(logs))
+
+    def test_legacy_three_argument_callback_is_called_once_for_unknown(self):
+        calls = []
+        def ack(item, ok, err):
+            calls.append((item['id'], ok, err))
+        runner = rw.ReminderRunner(fetch=lambda: {'items': items('a')},
+                                   send=Mock(return_value=self.unknown()), ack=ack)
+        for _ in range(3): runner.step()
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(calls[0][1])
+        self.assertIn('不确定', calls[0][2])
+        self.assertEqual(runner.sent, 0)
+
+    def test_callback_internal_typeerror_does_not_probe_or_invoke_twice(self):
+        calls = []
+        def ack(item, ok, err, *, uncertain=False):
+            calls.append((item['id'], uncertain))
+            raise TypeError('fixture callback body already ran')
+        send = Mock(return_value=self.unknown())
+        runner = rw.ReminderRunner(fetch=lambda: {'items': items('a')}, send=send, ack=ack)
+        for _ in range(5): runner.step()
+        self.assertEqual(calls, [('a', True)])
+        send.assert_called_once()
+
+    def test_failed_ack_retries_only_bookkeeping_at_most_three_times(self):
+        for outcome in (True, self.unknown()):
+            with self.subTest(legacy_bool=isinstance(outcome, bool)):
+                send, ack = Mock(return_value=outcome), Mock(side_effect=RuntimeError('fixture 503'))
+                runner = rw.ReminderRunner(fetch=lambda: {'items': items('a')}, send=send, ack=ack)
+                for _ in range(8): runner.step()
+                send.assert_called_once()
+                self.assertEqual(ack.call_count, 3)
+                self.assertIn('a', runner._pending_acks)
+                self.assertEqual(runner.sent, 1 if outcome is True else 0)
+
+    def test_ack_recovery_keeps_same_id_and_never_resends_payload(self):
+        send, receipts = Mock(return_value=True), []
+        def ack(item, ok, err):
+            receipts.append((item['id'], ok, err))
+            if len(receipts) < 3:
+                raise RuntimeError('fixture response lost')
+            return {'ok': True}
+        runner = rw.ReminderRunner(fetch=lambda: {'items': items('a')}, send=send, ack=ack)
+        for _ in range(6): runner.step()
+        send.assert_called_once()
+        self.assertEqual(receipts, [('a', True, '')] * 3)
+        self.assertNotIn('a', runner._pending_acks)
+
+    def test_known_not_sent_can_follow_later_server_retry_claim(self):
+        b = FakeBridge([{'items': items('a')}, {'items': items('a')}], send_ok=False)
+        runner = b.runner()
+        runner.step(); runner.step()
+        self.assertEqual(len(b.sent), 2)
+        self.assertEqual([row[1] for row in b.acked], [False, False])
+        self.assertEqual(runner.uncertain, 0)
+
+    def test_negative_ack_response_is_not_assumed_persisted(self):
+        send, ack = Mock(return_value=True), Mock(return_value={'ok': False})
+        runner = rw.ReminderRunner(fetch=lambda: {'items': items('a')}, send=send, ack=ack)
+        for _ in range(4): runner.step()
+        send.assert_called_once()
+        self.assertEqual(ack.call_count, 3)
+        self.assertIn('a', runner._pending_acks)
+
+    def test_legacy_group_bool_injection_preserves_target_and_ack(self):
+        class Response:
+            status_code = 200
+            def __init__(self, body): self.body = body
+            def json(self): return self.body
+        item = {'id': 'group-legacy', 'wxid': 'fixture-group', 'name': 'FixtureGroup',
+                'chatType': 'group', 'atName': 'FixtureMember', 'text': 'fixture text'}
+        http = SimpleNamespace(get=Mock(return_value=Response({'ok': True, 'items': [item]})),
+                               post=Mock(return_value=Response({'ok': True})))
+        text, at = Mock(return_value=True), Mock(return_value=True)
+        with patch.object(rw.threading, 'Thread'):
+            runner = rw.start_reminder_watch(http=http, base='http://fixture.invalid', token='fixture-token',
+                                             send_text=text, send_at=at, log=Mock())
+        self.assertEqual(runner.step()[0], 1)
+        at.assert_called_once_with('FixtureMember', 'fixture text', 'FixtureGroup', 'fixture-group')
+        text.assert_not_called()
+        self.assertEqual(http.post.call_args.kwargs['json'], {'id': 'group-legacy', 'ok': True, 'error': ''})
+
+
 if __name__ == '__main__':
     unittest.main()

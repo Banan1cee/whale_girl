@@ -68,7 +68,7 @@ module.exports = function register(router) {
 
     if (info.pathname === '/api/reminders/ack' && method === 'POST') {
       const body = await readBody(req);
-      const out = service.ack(body && body.id, { ok: Boolean(body && body.ok), error: (body && body.error) || '' });
+      const out = service.ack(body && body.id, { ok: Boolean(body && body.ok), error: (body && body.error) || '', uncertain: body?.uncertain === true });
       if (!out.ok) return json(res, out.statusCode || 400, out);
       const it = out.item;
       runtime.logger.info(`提醒回执：${it.status}${it.error ? '（' + it.error + '）' : ''} id=${it.id} ${textMeta(it.text)}`);

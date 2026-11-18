@@ -81,9 +81,19 @@ class LoopMixin:
                 continue
             G.log('主动搭话 →', G.safe_name(name), G.safe_text(text))
             try:
-                ok = self.send_text(text, name, u)
+                from send_attempt import logical_operation, bind_runtime_identity
+                with logical_operation(len(text)) as care_attempt:
+                    before_result = care_attempt.result
+                    no_prior_effect = not care_attempt.effect_started
+                    bound_account = bind_runtime_identity(care_attempt, self, u) and bool(care_attempt.account_identity)
+                    ok = self.send_text(text, name, u)
+                    receipt_confirmed = (ok is True and no_prior_effect
+                        and care_attempt.result is not before_result and care_attempt.effect_started
+                        and care_attempt.target_username == u and bound_account
+                        and bind_runtime_identity(care_attempt, self, u)
+                        and care_attempt.result.status == 'confirmed')
                 save_state({'lastTs': G.time.time(), 'day': today, 'count': sent + (0 if ok is False else 1)})
-                if ok is True:
+                if receipt_confirmed:
                     # 回传失败只重试记账，不重发微信正文；相同 id 由内核去重。
                     import uuid
                     receipt = {'id': uuid.uuid4().hex, 'chat': u, 'text': text, 'group': bool(target.get('isGroup'))}
@@ -264,13 +274,14 @@ class LoopMixin:
 
         预算不再是「固定 40 秒」（H3）：bg 通道逐字投递，长文本单打字就要一两分钟，
         一刀切会把合法慢发送当卡死杀掉（半截草稿留在输入框、重启后不补发）。
-        预算 = max(40 秒, 0.12 秒 × 文本长度)，随每次发送在 SEND_STATE 里更新；
-        各通道进入时还会刷新 SEND_STATE["start"] 当进度心跳。
+        预算由发送操作按文本长度统一决定，准备与恢复不能重置起点。
+        SEND_STATE["start"] 继续保留 epoch 心跳；超时只读内部 monotonic 操作。
         """
+        from send_attempt import watchdog_expired
         while True:
             G.time.sleep(5)
             _budget = float(G.SEND_STATE.get('budget') or 40)
-            if G.SEND_STATE['active'] and G.time.time() - G.SEND_STATE['start'] > _budget:
+            if watchdog_expired(G.SEND_STATE):
                 G.log('发送卡住超过 %.0f 秒，强制重启桥接进程…' % _budget)
                 dump_hang_trace()
                 G.time.sleep(0.3)

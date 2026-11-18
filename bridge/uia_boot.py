@@ -615,14 +615,14 @@ def restore_wechat(win: dict, log=None, wait: float = 15.0) -> bool:
     hwnd = win["hwnd"]
     # 15 秒内只唤起一次：两次 ensure 并发时重复拉起会被微信忽略，反而拖慢。
     # 检查 + 占坑放进同一把锁（L6）：否则两个线程能同时通过检查、各拉起一次。
-    now = time.time()
+    now = time.monotonic()
     with _RESTORE_LOCK:
-        recent = now - _LAST_RESTORE[0] < 15
+        recent = _LAST_RESTORE[0] > 0 and now - _LAST_RESTORE[0] < 15
         if not recent:
             _LAST_RESTORE[0] = now
     if recent:
         deadline = now + 2.0
-        while time.time() < deadline:
+        while time.monotonic() < deadline:
             if tree_state(hwnd, timeout=0.5) == "ok":
                 return True
             time.sleep(0.3)
@@ -636,8 +636,8 @@ def restore_wechat(win: dict, log=None, wait: float = 15.0) -> bool:
     # 1) 托盘图标：真实点击微信自己的托盘按钮，比 ShowWindow 更能触发重建。
     if hidden and click_tray_icon(hwnd, log=log):
         acted = True
-        deadline = time.time() + max(1.0, wait)
-        while time.time() < deadline:
+        deadline = time.monotonic() + max(1.0, wait)
+        while time.monotonic() < deadline:
             if tree_state(hwnd, timeout=0.5) == "ok":
                 return _restore_result(win, hwnd, log)
             time.sleep(0.3)
@@ -663,8 +663,8 @@ def restore_wechat(win: dict, log=None, wait: float = 15.0) -> bool:
         _release_restore_slot()
         return False
 
-    deadline = time.time() + max(1.0, wait)
-    while time.time() < deadline:
+    deadline = time.monotonic() + max(1.0, wait)
+    while time.monotonic() < deadline:
         if tree_state(hwnd, timeout=0.5) == "ok":
             return _restore_result(win, hwnd, log)
         time.sleep(0.4)
@@ -751,9 +751,9 @@ def launch_wechat(log=None, wait: float = 15.0):
         say("UIA 自检：打开微信失败：%r" % (e,))
         return None, False
 
-    deadline = time.time() + max(2.0, wait)
+    deadline = time.monotonic() + max(2.0, wait)
     win = None
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         win = pick_window()
         if win and tree_state(win["hwnd"], timeout=0.6) == "ok":
             close_stray_login_windows(win["hwnd"])
@@ -986,9 +986,9 @@ def ensure(prefer_hwnd: int = 0, log=None, max_candidates: int = 6,
                     continue
                 wrote = True
             # 等树长出来（有的机器要 0.5~1 秒）
-            deadline = time.time() + settle
+            deadline = time.monotonic() + settle
             ok = False
-            while time.time() < deadline:
+            while time.monotonic() < deadline:
                 if tree_state(hwnd, timeout=0.5) == "ok":
                     ok = True
                     break

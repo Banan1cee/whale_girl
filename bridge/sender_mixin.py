@@ -8,14 +8,22 @@ class SenderMixin:
     def bg_send(self, text, chat_display_name, chat_username=''):
         """零焦点通道：用窗口消息打字 + 点发送，全程不抢前台。
 
-        见 `bridge/bg_sender.py` 与 `docs/微信消息后台发送.md`。失败返回 False，
-        由 send_text 继续走 UIA / 键盘 / OCR。**不动 gui、不碰 win32gui**，
+        见 `bridge/bg_sender.py` 与 `docs/微信消息后台发送.md`。只有确认未输入才可回退；
+        不透明或可能已发送的结果按 handled 终止。**不动 gui、不碰 win32gui**，
         所以即使 wechatauto 的 UIA 引擎挂了这条也能用。
         """
+        from send_attempt import operation_for_call, bind_runtime_identity
+        import time as elapsed_time
+        operation = operation_for_call(len(text))
+        if not bind_runtime_identity(operation, self, chat_username):
+            raise G.ChatIdentityError('后台通道账号或目标改变')
+        clock = getattr(G.time, 'monotonic', elapsed_time.monotonic)
         if not G.BG_SEND.get('enabled', True) or self.BG_STATS['disabled']:
             return False
-        if G.time.time() < self.BG_STATS['cooldownUntil']:
+        if clock() < self.BG_STATS['cooldownUntil']:
             return False
+        if not operation.reserve('background'):
+            return operation.result.handled
         try:
             import bg_sender
         except Exception:
@@ -36,7 +44,7 @@ class SenderMixin:
             keys = self.aliases_for(chat_username, chat_display_name) or [chat_display_name]
         else:
             keys = [chat_display_name]
-        t0 = G.time.time()
+        t0 = clock()
         try:
             ok, why = bg_sender.send(text, chat=keys, hwnd=hwnd, log=G.log, char_gap=G.BG_SEND.get('charGap', 0.04), strip_unencodable=G.BG_SEND.get('strip', True), verify=G.BG_SEND.get('verify', True), unhide=G.BG_SEND.get('unhide', True), char_mode=G.BG_SEND.get('charMode') or 'auto')
         except Exception as e:
@@ -47,25 +55,42 @@ class SenderMixin:
         self.BG_STATS['lastAt'] = G.time.time()
         G.log('[delivery] stage=background result=%s reason=%s' % ('submitted' if ok else 'failed', why))
         if why == 'chat_mismatch':
+            operation.record('identity_mismatch', why)
             raise G.ChatIdentityError('后台通道：当前会话不是目标 %s' % G.safe_name(chat_display_name))
         if why == 'content_mismatch':
+            operation.record('draft_dirty', why)
             raise G.DraftDirtyError('正文回读校验未通过，本次输入已清理，未发送（%s）' % why)
         if why == 'input_not_empty':
+            operation.record('draft_dirty', why)
             raise G.DraftDirtyError('目标输入框已有草稿，本条未输入也未发送，请先手动处理草稿（input_not_empty）')
         if why == 'input_dirty':
+            operation.record('draft_dirty', why)
             raise G.DraftDirtyError('本次输入中断或清理未确认，已暂停发送，请检查目标输入框（input_dirty）')
         if why == 'residue_left':
+            operation.record('draft_dirty', why)
             raise G.DraftDirtyError('已尝试点击发送但输入框未清空，请先核对微信是否已收到，避免重复补发（residue_left）')
         if ok:
+            operation.effect_started = True
+            operation.record('uncertain' if why == 'sent_unverified' else 'submitted', why)
             self.BG_STATS['ok'] += 1
             self.BG_STATS['treeFails'] = 0
-            G.log('后台通道发送成功（%s，%.1fs）' % (why, G.time.time() - t0))
+            G.log('后台通道已处理（%s，未确认送达，%.1fs）' % (why, clock() - t0))
             return True
-        G.log('后台通道没发出去（%s，%.1fs），换下一条通道：%s' % (why, G.time.time() - t0, G.safe_name(chat_display_name)))
+        if not operation.can_continue() and not operation.effect_started:
+            return False
+        safe_before_input = {'empty', 'no_window', 'minimized', 'tree_not_ready', 'chat_not_found',
+                             'no_input_field', 'no_send_button', 'gbk_unsupported', 'uipi_denied', 'input_unreadable'}
+        if why not in safe_before_input:
+            operation.effect_started = True
+            operation.record('uncertain', str(why))
+            G.log('后台通道结果不确定，禁止换通道重发：', str(why))
+            return True
+        operation.record('not_sent', why)
+        G.log('后台通道确认未输入（%s，%.1fs），可准备其它通道：%s' % (why, clock() - t0, G.safe_name(chat_display_name)))
         if why == 'tree_not_ready':
             self.BG_STATS['treeFails'] += 1
             if self.BG_STATS['treeFails'] >= 3:
-                self.BG_STATS['cooldownUntil'] = G.time.time() + 600
+                self.BG_STATS['cooldownUntil'] = clock() + 600
                 self.BG_STATS['treeFails'] = 0
                 G.log_throttled('bg-tree-cooldown', '后台通道连续 3 次读不到控件树，先停 10 分钟再试（其余通道不受影响）。排查：python -m bridge --bg-probe')
         if why == 'uipi_denied':
@@ -79,8 +104,14 @@ class SenderMixin:
         return False
 
     def uia_send(self, text, who, username=''):
-        """优先用 UIA 发送：不依赖 OCR 找发送按钮，成功后返回 True。"""
+        """UIA 单次不透明调用；True 表示已处理，不等于确认送达。"""
+        from send_attempt import operation_for_call, bind_runtime_identity
+        from send_input import is_blank, input_value
+        operation = operation_for_call(len(text))
+        if not operation.reserve('uia'):
+            return operation.result.handled
         if not self.account_send_allowed('UIA'):
+            operation.record('identity_mismatch', 'uia_account')
             return False
         if not self.wechat_window_alive():
             with self.gui_lock:
@@ -96,6 +127,7 @@ class SenderMixin:
         except Exception:
             u = self.UIA_CACHE['u']
         if u is None:
+            operation.record('not_sent', 'uia_unavailable')
             return False
         if G.BACKGROUND_SEND and (not G.STICKER_TEST_ON):
             self.install_quiet_uia(u)
@@ -115,7 +147,7 @@ class SenderMixin:
                         u.back_to_chat_tab()
                     except Exception:
                         pass
-                    if not u.open_chat(keys):
+                    if not operation.reserve('uia_reopen') or not u.open_chat(keys):
                         return False
                 if username:
                     try:
@@ -124,39 +156,24 @@ class SenderMixin:
                     except Exception:
                         pass
             self._require_chat_identity(u, who, keys, 'UIA')
-            t_open = G.time.time()
-            sent_ok = False
-            try:
-                sent_ok = bool(u.send_text(text))
-            except G.ChatIdentityError:
-                raise
-            except Exception:
-                sent_ok = False
-            if not sent_ok:
-                try:
-                    u.back_to_chat_tab()
-                    if not u.open_chat(keys):
-                        sent_ok = False
-                    else:
-                        self._require_chat_identity(u, who, keys, 'UIA 重试')
-                        sent_ok = bool(u.send_text(text))
-                except G.ChatIdentityError:
-                    raise
-                except Exception:
-                    sent_ok = False
-            G.log('UIA 发送耗时 %.1fs（打开会话+输入）' % (G.time.time() - t_open))
-            if sent_ok:
-                try:
-                    leftover = self._input_value(u).strip()
-                except Exception:
-                    leftover = ''
-                if leftover:
-                    G.log('UIA 报发送成功但输入框还有 %d 字，补按一次回车' % len(leftover))
-                    self.press_enter(False)
-                return True
-        except G.ChatIdentityError:
+            if not bind_runtime_identity(operation, self, username):
+                raise G.ChatIdentityError('UIA 准备期间账号或目标改变')
+            if (not self.account_send_allowed('UIA 复核') or not self.send_policy_allows(username, who)
+                    or not self.sticker_quarantine_allows(username, who)):
+                operation.record('cancelled', 'uia_gate_changed')
+                return False
+            if not is_blank(input_value(u)):
+                raise G.DraftDirtyError('UIA 输入框有草稿或不可读，本条不输入')
+            handled = operation.opaque('uia_send_text', lambda: u.send_text(text))
+            if operation.result.status == 'submitted' and not is_blank(input_value(u)):
+                operation.record('uncertain', 'uia_composer_unverified_after_submit')
+            G.log('UIA 发送阶段=%s（不确定结果不重发）' % operation.result.status)
+            return handled
+        except (G.ChatIdentityError, G.DraftDirtyError) as exc:
+            operation.record('identity_mismatch' if isinstance(exc, G.ChatIdentityError) else 'draft_dirty', type(exc).__name__)
             raise
         except Exception as e:
+            operation.record('not_sent', 'uia_preparation:' + type(e).__name__)
             G.log_warn('UIA 发送异常：', repr(e))
         return False
 
@@ -186,14 +203,20 @@ class SenderMixin:
         return False
 
     def keyboard_send(self, text, chat_display_name, chat_username=''):
-        """完全不依赖 UIA 的发送通道：Ctrl+F 搜索会话 → 粘贴 → 回车 → 回读数据库确认。
+        """键盘输入通道：只读核对会话/草稿 → 粘贴 → 回车 → 回读数据库确认。
 
         为什么需要它：UIA 依赖微信的 accessibility gate，微信跑久了/窗口状态怪的时候
         整条路都会挂（见 recover_uia 的注释）。键盘通道只用 Win32 按键 + 剪贴板，
-        走的是微信自己的搜索框，不碰 accessibility。
+        输入走微信搜索框；发送前仍须取得只读身份和空输入框证据。
         代价：会抢前台、慢一些，所以只在 UIA 真的发不出去时用。
         """
+        from send_attempt import operation_for_call, bind_runtime_identity
+        from send_input import is_blank, input_value
+        operation = operation_for_call(len(text))
+        if not operation.reserve('keyboard'):
+            return operation.result.handled
         if not self.account_send_allowed('键盘通道'):
+            operation.record('identity_mismatch', 'keyboard_account')
             return False
         try:
             import ctypes
@@ -303,8 +326,17 @@ class SenderMixin:
                         cands.add(cached)
             except Exception:
                 pass
-            return (cur in cands, cur)
+            self._require_chat_identity(u, chat_display_name, cands, '键盘')
+            matched = G._chat_identity_level(cur, cands) is not None
+            if matched and not is_blank(input_value(u)):
+                raise G.DraftDirtyError('键盘通道输入框有草稿或不可读')
+            return (matched, cur)
         t_start = G.time.time()
+        from sticker_transport import db_identity, _outgoing
+        try:
+            database_identity = db_identity(self.db)
+        except Exception:
+            database_identity = None
         saved_clip = get_clip()
         try:
             tap(ord('F'), (win32con.VK_CONTROL,))
@@ -321,30 +353,44 @@ class SenderMixin:
             if not matched:
                 G.log('键盘通道：打开的是「%s」而不是「%s」，为防发错人这次不发' % (G.safe_name(cur), G.safe_name(chat_display_name)))
                 raise G.ChatIdentityError('键盘通道打开的是 %s 而不是 %s' % (G.safe_name(cur), G.safe_name(chat_display_name)))
-            set_clip(text)
-            tap(ord('V'), (win32con.VK_CONTROL,))
-            G.time.sleep(0.4)
-            tap(win32con.VK_RETURN)
-            want = str(text).strip()
-            for _ in range(8):
-                G.time.sleep(0.5)
-                try:
-                    msgs = self.db.get_messages(chat_username or chat_display_name, limit=5) or []
-                except Exception:
-                    msgs = []
-                for m in msgs:
+            if not bind_runtime_identity(operation, self, chat_username):
+                raise G.ChatIdentityError('键盘准备期间账号或目标改变')
+            if (not self.account_send_allowed('键盘复核') or not self.send_policy_allows(chat_username, chat_display_name)
+                    or not self.sticker_quarantine_allows(chat_username, chat_display_name)):
+                operation.record('cancelled', 'keyboard_gate_changed')
+                return False
+            def paste_and_confirm():
+                set_clip(text)
+                tap(ord('V'), (win32con.VK_CONTROL,))
+                G.time.sleep(0.4)
+                tap(win32con.VK_RETURN)
+                want = str(text).strip()
+                for _ in range(8):
+                    G.time.sleep(0.5)
                     try:
-                        if float(m.get('create_time') or 0) <= t_start:
-                            continue
+                        msgs = self.db.get_messages(chat_username or chat_display_name, limit=5) or []
                     except Exception:
-                        continue
-                    if str(m.get('content') or '').strip() == want:
-                        return True
-            G.log_error('键盘通道：按键发了，但数据库里没确认到（可能发到了别的会话），这条按失败处理')
-            return False
-        except G.ChatIdentityError:
+                        msgs = []
+                    for m in msgs:
+                        try:
+                            if float(m.get('create_time') or 0) <= t_start:
+                                continue
+                        except Exception:
+                            continue
+                        if (database_identity is not None and db_identity(self.db) == database_identity
+                                and _outgoing(self.db, m, database_identity[1])
+                                and str(m.get('content') or '').strip() == want):
+                            return True
+                G.log_error('键盘通道：按键发了，但数据库里没确认到，结果不确定且禁止重发')
+                return False
+            return operation.opaque('keyboard_paste', paste_and_confirm, true_status='confirmed')
+        except (G.ChatIdentityError, G.DraftDirtyError) as exc:
+            operation.record('identity_mismatch' if isinstance(exc, G.ChatIdentityError) else 'draft_dirty', type(exc).__name__)
             raise
         except Exception as e:
+            if operation.effect_started:
+                operation.record('uncertain', 'keyboard_exception')
+                return True
             G.log('键盘通道按键失败：', repr(e))
             return False
         finally:
@@ -393,6 +439,11 @@ class SenderMixin:
         return False
 
     def send_text(self, text, chat_display_name, chat_username='', force=False, quote_latest=False):
+        from send_attempt import logical_operation, prepared_adapter, bind_runtime_identity
+        pending = getattr(self, '_text_send_inflight', None)
+        if pending is not None and pending.is_alive():
+            G.log('前一次不透明发送尚未结束，本条不进入输入框')
+            return False
         if chat_username and self.chat_paused(chat_username):
             G.log('跳过已失效的会话：', G.safe_name(chat_display_name))
             return False
@@ -416,7 +467,12 @@ class SenderMixin:
         display = G.safe_name(chat_display_name)
         if not self.account_send_allowed('发送'):
             return False
-        with self.send_lock, G._SendStateScope(len(text)):
+        with self.send_lock, G._SendStateScope(len(text)), logical_operation(len(text)) as operation:
+            if not bind_runtime_identity(operation, self, chat_username):
+                return False
+            pending = getattr(self, '_text_send_inflight', None)
+            if pending is not None and pending.is_alive():
+                return False
             if not self.send_policy_allows(chat_username, chat_display_name):
                 return False
             if not self.sticker_quarantine_allows(chat_username, chat_display_name):
@@ -428,21 +484,33 @@ class SenderMixin:
                 try:
                     if self.bg_send(text, chat_display_name, chat_username):
                         self.fail_streak.pop(chat_username, None)
-                        G.log('发送成功（后台通道，%.1fs）→ %s' % (G.time.time() - t_start, display))
+                        if operation.result.status == 'uncertain':
+                            G.log('后台发送结果未知，禁止重发（%.1fs）→ %s' % (G.time.time() - t_start, display))
+                        elif operation.result.status == 'submitted':
+                            G.log('后台发送已提交（%.1fs）→ %s' % (G.time.time() - t_start, display))
+                        elif operation.result.status == 'confirmed':
+                            G.log('后台发送已确认（%.1fs）→ %s' % (G.time.time() - t_start, display))
+                        else:
+                            G.log('后台发送已处理，结果尚未确认（阶段=%s，%.1fs）→ %s' % (operation.result.status, G.time.time() - t_start, display))
                         return True
                 except G.DraftDirtyError as e:
                     allow_mark_dead = False
                     G.log_error('发送暂停：%s' % e)
                     return False
-                except G.ChatIdentityError as e:
+                except (G.ChatIdentityError, G.DraftDirtyError) as e:
                     G.log_error('会话核对没通过，这条不发（%s）：%s' % (display, e))
                     return False
                 except Exception as e:
-                    G.log('后台通道异常，继续用旧通道：', repr(e))
+                    operation.effect_started = True
+                    operation.record('uncertain', 'background_exception:' + type(e).__name__)
+                    G.log('后台通道结果不确定，不再换通道：', type(e).__name__)
+                    return True
                 if not G.BG_SEND.get('fallback', True):
                     allow_mark_dead = False
                     G.log_error('后台通道失败且已关闭前台兜底，这条不发：', display)
                     return False
+            if not operation.can_continue():
+                return operation.result.handled
             with self.gui_lock:
                 if self.gui is None:
                     G.log('初始化微信窗口驱动…（会抢一下焦点，约 5~10 秒）')
@@ -451,47 +519,99 @@ class SenderMixin:
             if quote_latest and G.QUOTE_REPLY:
                 G.SEND_STATE['start'] = G.time.time()
                 try:
+                    from send_input import is_blank, input_value
+                    if not operation.reserve('quote'):
+                        return operation.result.handled
+                    u = self.gui._get_uia()
+                    if u is None:
+                        raise G.ChatIdentityError('引用回复读不到当前会话')
+                    self._require_chat_identity(u, chat_display_name, self.aliases_for(chat_username, chat_display_name), '引用')
+                    if not is_blank(input_value(u)):
+                        raise G.DraftDirtyError('引用回复输入框有草稿或不可读')
+                    if not bind_runtime_identity(operation, self, chat_username):
+                        raise G.ChatIdentityError('引用准备期间账号或目标改变')
+                    if (not self.account_send_allowed('引用复核') or not self.send_policy_allows(chat_username, chat_display_name)
+                            or not self.sticker_quarantine_allows(chat_username, chat_display_name)):
+                        operation.record('cancelled', 'quote_gate_changed')
+                        return False
                     # 不传 target_text：走上游 1.2.10 的「引用最近一条」路径
                     # （UIA 行控件 + 像素重心），图片/表情/换行也不会 OCR 匹配失败。
-                    if self.with_window_on_top(lambda: self.gui.quote_msg(
-                            text, who=chat_display_name, verify=False)):
-                        G.log('引用回复成功 →', display)
+                    if self.with_window_on_top(lambda: operation.opaque('quote', lambda: self.gui.quote_msg(
+                            text, who=chat_display_name, verify=False))):
+                        G.log('引用回复阶段=%s（仅处理，不声明确认送达）' % operation.result.status, display)
                         return True
                     G.log('引用回复未确认浮层/发送，回退普通发送：', display)
+                except (G.ChatIdentityError, G.DraftDirtyError) as e:
+                    operation.record('identity_mismatch' if isinstance(e, G.ChatIdentityError) else 'draft_dirty', type(e).__name__)
+                    return False
                 except Exception as e:
-                    G.log('引用回复失败，回退普通发送：', repr(e))
+                    if operation.effect_started:
+                        operation.record('uncertain', 'quote_exception')
+                        return True
+                    G.log('引用准备未完成，尚未输入：', type(e).__name__)
             uia_available = False
             try:
                 uia_available = self.gui._get_uia() is not None
             except Exception:
                 uia_available = False
-            for attempt in (1, 2):
-                t_att = G.time.time()
-                G.SEND_STATE['start'] = G.time.time()
-                try:
-                    if self.with_window_on_top(lambda: self.uia_send(text, chat_display_name, chat_username)):
-                        self.fail_streak.pop(chat_username, None)
-                        G.log('发送成功（%.1fs）→ %s' % (G.time.time() - t_start, display))
-                        return True
-                    G.log('UIA 发送未成功（第 %d 次，%.1fs），准备重试' % (attempt, G.time.time() - t_att))
-                except G.ChatIdentityError as e:
-                    G.log_error('会话核对没通过，这条不发（%s）：%s' % (display, e))
-                    return False
-                except Exception as e:
-                    G.log('UIA 发送异常（第 %d 次，%.1fs）：%r' % (attempt, G.time.time() - t_att, e))
-                G.time.sleep(0.5)
-            if uia_available:
+            G.SEND_STATE['start'] = G.time.time()
+            try:
+                if self.with_window_on_top(lambda: prepared_adapter(operation, 'uia', lambda: self.uia_send(text, chat_display_name, chat_username))):
+                    self.fail_streak.pop(chat_username, None)
+                    G.log('UIA 已处理，阶段=%s（不等于确认送达）' % operation.result.status)
+                    return True
+            except (G.ChatIdentityError, G.DraftDirtyError) as e:
+                operation.record('identity_mismatch' if isinstance(e, G.ChatIdentityError) else 'draft_dirty', type(e).__name__)
+                G.log_error('会话或草稿核对没通过，这条不发（%s）' % display)
+                return False
+            except Exception as e:
+                if operation.effect_started:
+                    operation.record('uncertain', 'uia_exception')
+                    return True
+                G.log('UIA 准备未完成：', type(e).__name__)
+            if not operation.can_continue():
+                return operation.result.handled
+            if operation.reserve('recovery'):
                 if self.recover_uia('发送失败'):
                     try:
-                        if self.with_window_on_top(lambda: self.uia_send(text, chat_display_name, chat_username)):
+                        if self.with_window_on_top(lambda: prepared_adapter(operation, 'uia_recovery', lambda: self.uia_send(text, chat_display_name, chat_username))):
                             self.fail_streak.pop(chat_username, None)
-                            G.log('重新激活 UIA 后发送成功（%.1fs）→ %s' % (G.time.time() - t_start, display))
+                            if operation.result.status == 'uncertain':
+                                G.log('重新激活后的发送结果不确定，禁止重发：', display)
+                            else:
+                                G.log('重新激活 UIA 后发送成功（仅已提交，未确认送达）→ %s' % display)
                             return True
-                    except G.ChatIdentityError as e:
-                        G.log_error('会话核对没通过，这条不发（%s）：%s' % (display, e))
+                    except (G.ChatIdentityError, G.DraftDirtyError) as e:
+                        operation.record('identity_mismatch' if isinstance(e, G.ChatIdentityError) else 'draft_dirty', type(e).__name__)
+                        G.log_error('会话或草稿核对没通过，这条不发（%s）' % display)
                         return False
                     except Exception as e:
-                        G.log('重新激活后仍失败：', repr(e))
+                        if operation.effect_started:
+                            operation.record('uncertain', 'recovery_send_exception')
+                            return True
+                        G.log('重新激活后仍未准备好：', type(e).__name__)
+            if not operation.can_continue():
+                return operation.result.handled
+            if operation.reserve('foreground_preparation'):
+                try:
+                    # The previous attempts are proved pre-input failures.
+                    # Preparation may now move the window, then invoke once.
+                    if self.with_window_on_top(lambda: self.force_send_foreground(
+                            lambda: prepared_adapter(operation, 'uia_foreground', lambda: self.uia_send(text, chat_display_name, chat_username)))):
+                        self.fail_streak.pop(chat_username, None)
+                        G.log('安全前台准备后的发送阶段=%s' % operation.result.status)
+                        return True
+                except (G.ChatIdentityError, G.DraftDirtyError) as e:
+                    operation.record('identity_mismatch' if isinstance(e, G.ChatIdentityError) else 'draft_dirty', type(e).__name__)
+                    return False
+                except Exception as e:
+                    if operation.effect_started:
+                        operation.record('uncertain', 'foreground_send_exception')
+                        return True
+                    G.log('前台准备未完成，尚未输入：', type(e).__name__)
+            if not operation.can_continue():
+                return operation.result.handled
+            if uia_available:
                 G.log('UIA 发不出去，跳过 OCR 兜底：', display)
             else:
                 G.log_throttled('uia-unavailable', 'UIA 不可用：先试键盘通道；如果一直这样，到启动器「诊断」页点「UIA 自检」看原因（常见：微信需要重新登录、鲸鱼娘不是管理员而微信是、微信缩在托盘）', ttl=600)
@@ -499,22 +619,40 @@ class SenderMixin:
             if G.KEYBOARD_FALLBACK:
                 G.SEND_STATE['start'] = G.time.time()
                 try:
-                    if self.keyboard_send(text, chat_display_name, chat_username):
+                    if prepared_adapter(operation, 'keyboard', lambda: self.keyboard_send(text, chat_display_name, chat_username)):
                         self.fail_streak.pop(chat_username, None)
-                        G.log('发送成功（键盘通道，%.1fs）→ %s' % (G.time.time() - t_start, display))
+                        G.log('键盘发送阶段=%s（未确认结果不重发）' % operation.result.status)
                         return True
-                except G.ChatIdentityError as e:
+                except (G.ChatIdentityError, G.DraftDirtyError) as e:
                     G.log_error('会话核对没通过，这条不发（%s）：%s' % (display, e))
                     return False
+            if not operation.can_continue():
+                return operation.result.handled
             if not uia_available:
                 G.SEND_STATE['start'] = G.time.time()
                 try:
+                    from send_input import is_blank, input_value
+                    if not operation.reserve('ocr'):
+                        return operation.result.handled
                     with self.gui_lock:
                         try:
                             self.gui = self.new_window_driver()
                         except Exception as e:
                             G.log('重建窗口驱动失败：', repr(e))
                     self.bind_gui_window(self.gui)
+                    target_gui = self.gui
+                    u = target_gui._get_uia()
+                    if u is None:
+                        raise G.ChatIdentityError('OCR 准备后仍读不到当前会话，本条不输入')
+                    self._require_chat_identity(u, chat_display_name, self.aliases_for(chat_username, chat_display_name), 'OCR')
+                    if not is_blank(input_value(u)):
+                        raise G.DraftDirtyError('OCR 输入框有草稿或不可读')
+                    if not bind_runtime_identity(operation, self, chat_username):
+                        raise G.ChatIdentityError('OCR 准备期间账号或目标改变')
+                    if (not self.account_send_allowed('OCR 复核') or not self.send_policy_allows(chat_username, chat_display_name)
+                            or not self.sticker_quarantine_allows(chat_username, chat_display_name)):
+                        operation.record('cancelled', 'ocr_gate_changed')
+                        return False
                     _box = {}
                     _ocr_cancel = G.threading.Event()
 
@@ -522,16 +660,26 @@ class SenderMixin:
                         try:
                             if _ocr_cancel.is_set():
                                 return
-                            _box['r'] = self.with_window_on_top(lambda: not _ocr_cancel.is_set() and bool(self.gui.send_msg(text, chat_display_name, True)))
+                            _box['r'] = self.with_window_on_top(lambda: not _ocr_cancel.is_set() and operation.opaque(
+                                'ocr_send', lambda: target_gui.send_msg(text, chat_display_name, True)))
                         except Exception as _e:
                             _box['e'] = _e
+                        finally:
+                            operation.finish_inflight()
                     _th = G.threading.Thread(target=_ocr_send, daemon=True)
-                    _th.start()
-                    _th.join(8)
+                    self._text_send_inflight = _th
+                    operation.begin_inflight()
+                    try:
+                        _th.start()
+                    except Exception:
+                        operation.finish_inflight()
+                        raise
+                    _th.join(min(8.0, max(0.0, operation.budget - (operation.clock() - operation.started))))
                     if _th.is_alive():
-                        G.log('OCR 兜底 8 秒没返回（卡在截屏），放弃这条，等下次消息')
+                        G.log('OCR 兜底未返回，结果不确定；禁止重复及并行发送')
                         _ocr_cancel.set()
-                        resp = False
+                        operation.record('uncertain', 'ocr_inflight_timeout')
+                        return True
                     else:
                         if 'e' in _box:
                             raise _box['e']
@@ -540,8 +688,21 @@ class SenderMixin:
                         self.fail_streak.pop(chat_username, None)
                         return True
                     G.log('兜底发送失败：%s' % resp)
+                except (G.ChatIdentityError, G.DraftDirtyError) as e:
+                    operation.record('identity_mismatch' if isinstance(e, G.ChatIdentityError) else 'draft_dirty', type(e).__name__)
+                    return False
                 except Exception as e:
-                    G.log('兜底发送异常：%r' % e)
+                    pending = getattr(self, '_text_send_inflight', None)
+                    if pending is not None and pending.is_alive():
+                        _ocr_cancel.set()
+                        operation.record('uncertain', 'ocr_wait_exception')
+                        return True
+                    if operation.effect_started:
+                        operation.record('uncertain', 'ocr_exception')
+                        return True
+                    G.log('兜底准备异常：%s' % type(e).__name__)
+            if not operation.can_continue():
+                return operation.result.handled
             if chat_username and allow_mark_dead:
                 if G.time.time() - float(self.ACCOUNT.get('blockedAt') or 0) < 30:
                     G.log('账号窗口没确认，这条不算会话失效，先不发：', display)
@@ -554,7 +715,12 @@ class SenderMixin:
             return False
 
     def send_at(self, member, text, chat_display_name, chat_username=''):
-        """在群里真 @ 某个成员（UI 选人），失败返回 False 让调用方退回普通发送。"""
+        """真 @；仅已知未输入的失败可回退，进入不透明调用后按 handled 终止。"""
+        from send_attempt import logical_operation, bind_runtime_identity
+        from send_input import is_blank, input_value
+        pending = getattr(self, '_text_send_inflight', None)
+        if pending is not None and pending.is_alive():
+            return False
         if not member or not text:
             return False
         # 和 send_text 同一道闸：群名/成员名可能是 wxid，@ 的时候同样搜不到。
@@ -565,7 +731,12 @@ class SenderMixin:
             return False
         if not self.account_send_allowed('@ 成员'):
             return False
-        with self.send_lock, G._SendStateScope(len(text)):
+        with self.send_lock, G._SendStateScope(len(text)), logical_operation(len(text)) as operation:
+            if not bind_runtime_identity(operation, self, chat_username):
+                return False
+            pending = getattr(self, '_text_send_inflight', None)
+            if pending is not None and pending.is_alive():
+                return False
             if not self.send_policy_allows(chat_username, chat_display_name):
                 return False
             if not self.sticker_quarantine_allows(chat_username, chat_display_name):
@@ -576,11 +747,31 @@ class SenderMixin:
                     self.gui = self.new_window_driver()
             self.bind_gui_window(self.gui)
             try:
-                ok = bool(self.with_window_on_top(lambda: self.gui.at_member(member, text, who=chat_display_name, verify=False)))
+                if not operation.reserve('mention'):
+                    return operation.result.handled
+                u = self.gui._get_uia()
+                if u is None:
+                    raise G.ChatIdentityError('@ 读不到当前会话')
+                self._require_chat_identity(u, chat_display_name, self.aliases_for(chat_username, chat_display_name), '@')
+                if not is_blank(input_value(u)):
+                    raise G.DraftDirtyError('@ 输入框有草稿或不可读')
+                if not bind_runtime_identity(operation, self, chat_username):
+                    raise G.ChatIdentityError('@ 准备期间账号或目标改变')
+                if (not self.account_send_allowed('@ 复核') or not self.send_policy_allows(chat_username, chat_display_name)
+                        or not self.sticker_quarantine_allows(chat_username, chat_display_name)):
+                    operation.record('cancelled', 'mention_gate_changed')
+                    return False
+                ok = bool(self.with_window_on_top(lambda: operation.opaque('mention', lambda: self.gui.at_member(member, text, who=chat_display_name, verify=False))))
                 if ok:
-                    G.log('已 @ %s → %s' % (G.safe_name(member), G.safe_name(chat_display_name)))
+                    G.log('@ 已处理，阶段=%s → %s' % (operation.result.status, G.safe_name(chat_display_name)))
                     return True
                 G.log('@ 成员失败（%s），改用普通发送' % G.safe_name(member))
+            except (G.ChatIdentityError, G.DraftDirtyError) as e:
+                operation.record('identity_mismatch' if isinstance(e, G.ChatIdentityError) else 'draft_dirty', type(e).__name__)
+                return False
             except Exception as e:
+                if operation.effect_started:
+                    operation.record('uncertain', 'mention_exception')
+                    return True
                 G.log('@ 成员异常：', repr(e))
         return False
