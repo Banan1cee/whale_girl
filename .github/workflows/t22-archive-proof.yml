@@ -12,6 +12,8 @@ jobs:
       CANDIDATE_HEAD: 56fdfcae3724eed56e8140dd05d3d4f1fcbe860f
       CANDIDATE_TREE: c72acc14083a8525cdad36711861bf51b1a3f8b6
       NODE_OPTIONS: --test-reporter=tap
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,6 +63,8 @@ jobs:
           "Launcher SHA256: $((Get-FileHash -LiteralPath $launcher.FullName).Hash)"
           "Runtime stamp SHA256: $((Get-FileHash -LiteralPath runtime/.built).Hash)"
           "Packaging Node: $(& runtime/node.exe --version)"
+          & runtime/python/python.exe -u examples/media_fallback.py --selftest
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled Python media self-test failed' }
       - name: Build and inspect the source and full ZIPs
         shell: pwsh
         run: |
