@@ -71,6 +71,11 @@ test('默认和自定义路径注入同一份能力说明', () => {
   assert.equal(block(build('', true)), block(build('保留自定义角色。', true)));
 });
 
+test('新版正文规则允许微信表情包的尾部标记，其他通道仍只输出正文', () => {
+  assert.match(build('', true), /【输出要求】[^\n]*表情包规则[^\n]*标记/);
+  assert.doesNotMatch(build('', true, 'qq'), /【输出要求】[^\n]*表情包/);
+});
+
 test('图库有图时，提示词里带上分类名和张数', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-cap-pics-'));
   try {
