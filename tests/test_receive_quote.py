@@ -31,7 +31,7 @@ class ParseQuoteContentTests(unittest.TestCase):
         return self.env['parse_quote_content'](content)
 
     def text(self, content):
-        return self.env['quote_content_text'](content)
+        return self.env['quote_content_text'](self.parse(content))
 
     def test_wechat4_reply_uses_title_for_new_text(self):
         content = (
@@ -81,6 +81,25 @@ class ParseQuoteContentTests(unittest.TestCase):
                    '<displayname>鲸鲸</displayname><content>1 &lt; 2</content>'
                    '</refermsg></appmsg></msg>')
         self.assertEqual(self.text(content), '（引用鲸鲸「1 < 2」）a&b')
+
+    def test_cdata_fields_are_read_from_the_validated_quote(self):
+        content = (
+            '<msg><appmsg><type>57</type>'
+            '<title><![CDATA[公式里 a < b & c 是什么意思？]]></title>'
+            '<refermsg><displayname><![CDATA[阿明 & 小李]]></displayname>'
+            '<content><![CDATA[原文含有 </refermsg> 和 <title> 字样]]></content>'
+            '</refermsg></appmsg></msg>'
+        )
+        self.assertEqual(self.parse(content), ('阿明 & 小李', '原文含有 </refermsg> 和 <title> 字样',
+                                               '公式里 a < b & c 是什么意思？'))
+
+    def test_uses_outer_title_when_nested_quote_has_another_title(self):
+        content = (
+            '<msg><appmsg><type>57</type><refermsg><displayname>阿明</displayname>'
+            '<content><![CDATA[<msg><appmsg><title>上一句</title><refermsg><content>最早一句</content>'
+            '</refermsg></appmsg></msg>]]></content></refermsg><title>这一句</title></appmsg></msg>'
+        )
+        self.assertEqual(self.parse(content), ('阿明', '最早一句', '这一句'))
 
     def test_non_quote_messages_are_left_alone(self):
         self.assertIsNone(self.parse('<msg><appmsg><title>链接</title>'

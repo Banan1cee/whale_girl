@@ -2,7 +2,7 @@
 
 const personaStore = require('../../persona/store');
 const presets = require('../../persona/presets');
-const { applyPersonaPatch, savePersonaPreset, deletePersonaPreset, renamePersonaPreset } = require('../../services/persona');
+const { applyPersonaPatch, savePersonaPreset, deletePersonaPreset, renamePersonaPreset, currentPersonaWarnings } = require('../../services/persona');
 const { checkPersonaTokens } = require('../../persona/tokenCheck');
 const { json, readBody } = require('../util');
 const { saveSettings } = require('../../infra/config');
@@ -13,7 +13,9 @@ module.exports = function register(router) {
     return json(res, 200, {
       ok: true,
       persona,
-      // 内置/市场预设锁住人设编辑，只能复制成自建预设；手写和自建预设可以改
+      // 打开人设页就提示已有冲突，而不是等用户改完保存才看到。
+      warnings: currentPersonaWarnings(runtime.config),
+      // 区分来源以便显示各预设可用的操作。
       presetSource: presets.sourceOf(runtime.config, persona.sourcePreset),
       llm: {
         provider: runtime.llm.provider,

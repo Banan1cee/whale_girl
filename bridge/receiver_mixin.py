@@ -96,18 +96,15 @@ def image_dir_note(db, path):
 def _nested_quote_text(quoted):
     """被引用的内容本身还是 XML（多层引用）时，往里剥最多两层拿纯文字。"""
     for _ in range(2):
-        if quoted.startswith('<') and '<refermsg' in quoted:
-            inner = re.search(r'<refermsg>.*?</refermsg>', quoted, re.S)
-            if inner:
-                content = re.search(r'<content>(.*?)</content>', inner.group(0), re.S)
-                if content:
-                    quoted = html.unescape(content.group(1)).strip()
-                    continue
-        break
+        nested = parse_quote_content(quoted, unwrap_nested=False) if quoted.startswith('<') else None
+        if nested is None:
+            break
+        _, original, reply = nested
+        quoted = original or reply
     return quoted
 
 
-def parse_quote_content(content):
+def parse_quote_content(content, *, unwrap_nested=True):
     """把微信的引用消息 XML 拆成 (被引用者, 被引用正文, 这次新打的字)。
 
     微信的引用回复是 appmsg（57<<32|49，类型名落到「文件/链接/卡片」），正文
@@ -119,7 +116,9 @@ def parse_quote_content(content):
     """
     if '<refermsg' not in str(content or ''):
         return None
-    content = str(content)
+    content = str(content).lstrip('\ufeff \t\r\n')
+    # 微信群消息可能在 XML 前保留「发送者 ID + 换行」。
+    content = re.sub(r'\A[A-Za-z][A-Za-z0-9_-]{3,}:\r?\n(?=\s*<)', '', content, count=1).lstrip()
     # 字面标签和不完整 XML 都可能出现在普通正文里，不能仅凭子串判为引用。
     import xml.etree.ElementTree as _et
     end = content.rfind('</msg>')
@@ -135,29 +134,25 @@ def parse_quote_content(content):
     if len(apps) > 1:
         return None
     envelope = apps[0] if apps else root
-    if len(envelope.findall('refermsg')) != 1:
+    references = envelope.findall('refermsg')
+    if len(references) != 1:
         return None
     quote_type = envelope.findtext('type')
     if quote_type is not None and quote_type.strip() != '57':
         return None
-    quoted_by = quoted = ''
-    block = re.search(r'<refermsg>.*?</refermsg>', content, re.S)
-    if block:
-        body = block.group(0)
-        name = re.search(r'<displayname>(.*?)</displayname>', body, re.S)
-        said = re.search(r'<content>(.*?)</content>', body, re.S)
-        quoted_by = html.unescape(name.group(1)).strip() if name else ''
-        quoted = html.unescape(said.group(1)).strip() if said else ''
-    quoted = _nested_quote_text(quoted)
-    tail = html.unescape(content.rsplit('</msg>', 1)[-1]).strip() if '</msg>' in content else ''
-    title = re.search(r'<title>(.*?)</title>', content, re.S)
-    reply = tail or (html.unescape(title.group(1)).strip() if title else '')
+    # 从已验证的节点取值，避免把 CDATA 中的标签文字当作 XML 边界。
+    reference = references[0]
+    quoted_by = reference.findtext('displayname', default='').strip()
+    quoted = reference.findtext('content', default='').strip()
+    if unwrap_nested:
+        quoted = _nested_quote_text(quoted)
+    tail = html.unescape(content[end + len('</msg>'):]).strip()
+    reply = tail or envelope.findtext('title', default='').strip()
     return quoted_by, quoted, reply
 
 
-def quote_content_text(content):
+def quote_content_text(parsed):
     """引用消息转成给模型看的正文；没有可用的引用内容时返回空串。"""
-    parsed = parse_quote_content(content)
     if parsed is None:
         return None
     quoted_by, quoted, reply = parsed
@@ -650,13 +645,13 @@ class ReceiverMixin:
                 content = '（对方发了一条语音，说的是：%s）' % said
             # 引用回复：微信存的是 appmsg XML（类型名落到「文件/链接/卡片」），
             # 原来的分支找不到 <url> 就把整条丢掉。这里先拆出被引用原话和新打的字。
-            _quote_text = quote_content_text(content) if mtype not in ('文本', '语音', '图片', '表情', '动画表情') else None
-            _quote_parsed = _quote_text is not None
+            quote = parse_quote_content(content) if mtype not in ('文本', '语音', '图片', '表情', '动画表情') else None
+            _quote_parsed = quote is not None
             if _quote_parsed:
-                if not _quote_text:
+                content = quote_content_text(quote)
+                if not content:
                     skipped('引用消息里没有可读内容')
                     return
-                content = _quote_text
             if not _quote_parsed and mtype not in ('文本', '语音', '图片', '表情', '动画表情'):
                 if '移出群聊' in content or '移出' in content:
                     self.dead_chats.add(username)
@@ -687,7 +682,7 @@ class ReceiverMixin:
                 content = G.fix_garbled((msg.get('content') or '').strip())
                 if username.endswith('@chatroom'):
                     content = G._GROUP_SENDER_PREFIX_RE.sub('', content, count=1).strip()
-            if not content or (content.startswith('<') and mtype != '文本'):
+            if not content or (not _quote_parsed and content.startswith('<') and mtype != '文本'):
                 skipped('正文为空，或仍是没解析出来的 XML（类型=%s）' % (mtype or '未知'))
                 return
             is_group = username.endswith('@chatroom')
@@ -698,7 +693,8 @@ class ReceiverMixin:
                 nickname = ''
             if not nickname:
                 nickname = '群友' if is_group else '微信好友'
-            if G.is_system_notice(username, nickname, content):
+            message_text = quote[2] if _quote_parsed else content
+            if G.is_system_notice(username, nickname, message_text):
                 if G.ONLY_CHATS:
                     skipped('系统通知（白名单模式）')
                     return
@@ -713,15 +709,15 @@ class ReceiverMixin:
             if G.duplicate_guard(username, sender, _guard_text):
                 G.log('跳过重复消息：', G.safe_name(nickname), '：', G.safe_text(content))
                 return
-            if '拍了拍' in content and '<url>' not in content:
+            if '拍了拍' in message_text and '<url>' not in message_text:
                 G.log('跳过拍一拍提示：', G.safe_text(content))
                 return
             _names = self.self_mention_names(username) if is_group else []
             _mention = G.mention.analyze(
-                content, _names, self.display_name(username) if is_group else '')
+                message_text, _names, self.display_name(username) if is_group else '')
             addressed = bool(_mention['addressed'])
             _structured = None
-            if is_group and '@' in content:
+            if is_group and '@' in message_text:
                 # 优先用 source 里的 atuserlist（wxid），昵称改名也不会漏；
                 # 读不到再退回显示名匹配。
                 _structured = G.mention_meta.self_mentioned(
@@ -729,7 +725,7 @@ class ReceiverMixin:
                 if _structured is not None:
                     addressed = bool(_structured)
             _bare_mention = _mention['bare_any'] if _structured else _mention['bare_self']
-            if username.endswith('@chatroom') and addressed and _bare_mention:
+            if is_group and addressed and _bare_mention and not _quote_parsed:
                 try:
                     for m in self.db.get_messages(username, limit=12):
                         if m.get('type') != '文本':
@@ -747,7 +743,7 @@ class ReceiverMixin:
                 except Exception as e:
                     G.log('补问题失败：', repr(e))
             _mentioned_names = list(_mention['mentioned_names'])
-            if is_group and not addressed and '@' in content:
+            if is_group and not addressed and '@' in message_text:
                 # 同一组「@对象」在每个群只提醒一次，避免正常 @ 别人也刷屏。
                 # 这次「@许愿 被跳过」如果留着这条日志，一眼就能看到称呼表不对。
                 G.log_throttled(

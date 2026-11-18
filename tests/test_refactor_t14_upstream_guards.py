@@ -146,7 +146,7 @@ class QuoteDiscriminationTests(unittest.TestCase):
                               'quote_content_text', 'on_message_inner'],
                              {'html': html, 're': re})
 
-    def receive(self, content, mtype='文本', only_chats=()):
+    def receive(self, content, mtype='文本', only_chats=(), chat='fixture-chat'):
         post = Mock(return_value=SimpleNamespace(
             status_code=200, json=lambda: {'ok': True, 'action': 'ignore'}))
         log = Mock()
@@ -155,15 +155,17 @@ class QuoteDiscriminationTests(unittest.TestCase):
             is_system_notice=lambda *_: False, duplicate_guard=lambda *_: False,
             mention=SimpleNamespace(analyze=lambda *_: {
                 'addressed': False, 'bare_any': False, 'bare_self': False,
-                'mentioned_names': []}), LOCAL_HTTP=SimpleNamespace(post=post),
+                'mentioned_names': []}),
+            mention_meta=SimpleNamespace(self_mentioned=Mock(return_value=None)),
+            LOCAL_HTTP=SimpleNamespace(post=post),
             CONN_STATE={'ok': True}, log=log, log_throttled=Mock(), log_error=Mock(),
             safe_name=str, safe_text=str, safe_id=str)
         runtime = SimpleNamespace(
             me='fixture-self', token='', bot_url='fixture-kernel',
             db=SimpleNamespace(get_nickname=lambda _: 'Fixture'),
-            display_name=lambda _: 'Fixture conversation',
+            display_name=lambda _: 'Fixture conversation', self_mention_names=lambda _: ['鲸鲸'],
             self_identity_ids=lambda: {'fixture-self'}, dead_chats=set())
-        msg = {'username': 'fixture-chat', 'sender_username': 'fixture-peer',
+        msg = {'username': chat, 'sender_username': 'fixture-peer',
                'type': mtype, 'content': content, 'local_id': 1}
         self.env['on_message_inner'](runtime, msg, None)
         self.assertFalse(any(call.args and call.args[0] == '提交消息处理失败：'
@@ -193,8 +195,9 @@ class QuoteDiscriminationTests(unittest.TestCase):
                  '<refermsg><content>fixture</content></refermsg></appmsg></msg>')
         for text in cases:
             with self.subTest(text=text):
-                self.assertIsNone(self.env['parse_quote_content'](text))
-                self.assertIsNone(self.env['quote_content_text'](text))
+                parsed = self.env['parse_quote_content'](text)
+                self.assertIsNone(parsed)
+                self.assertIsNone(self.env['quote_content_text'](parsed))
 
     def test_valid_quotes_still_reach_kernel_with_original_sender(self):
         for mtype in ('文件', '链接', '卡片'):
@@ -215,6 +218,16 @@ class QuoteDiscriminationTests(unittest.TestCase):
         self.assertEqual(post.call_args.kwargs['json']['text'],
                          '分享了一个链接：fixture attachment https://example.invalid/fixture')
         self.receive(self.VALID, '文件', only_chats=('other-chat',)).assert_not_called()
+
+    def test_group_quote_with_sender_prefix_reaches_kernel(self):
+        content = ('fixture-peer:\r\n<?xml version="1.0"?>'
+                   + self.VALID.replace('fixture original', '原话提到 @鲸鲸 和拍了拍'))
+        post = self.receive(content, '文件', chat='fixture@chatroom')
+        post.assert_called_once()
+        payload = post.call_args.kwargs['json']
+        self.assertEqual(payload['text'], '（引用Fixture「原话提到 @鲸鲸 和拍了拍」）fixture reply')
+        self.assertFalse(payload['at_me'])
+        self.env['G'].mention_meta.self_mentioned.assert_not_called()
 
 
 if __name__ == '__main__':

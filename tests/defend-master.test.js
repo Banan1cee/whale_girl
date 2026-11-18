@@ -16,6 +16,7 @@ const { DEFAULT_CONFIG } = require('../src/infra/config');
 
 function makeBot({ reply = '你算什么东西', rng = () => 0.99 } = {}) {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  config.persona.newBehavior = false;
   config.persona.master = { names: ['Master'], wxids: ['wxid_boss'] };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-defend-'));
   const store = new Store({ file: path.join(dir, 'store.json'), limits: config.memory });

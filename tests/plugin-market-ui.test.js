@@ -19,12 +19,29 @@ test('插件入口固定在市场，设置在卡片内打开工具或人设', ()
   assert.match(page, /AppDialog\.Confirm\(Window\.GetWindow\(this\), "将这份人设应用到当前鲸鲸？"/);
 });
 
-test('市场右侧可打开随启动器打包的规范', () => {
-  assert.match(read('launcher/Views/PluginMarketPage.xaml'), /Content="插件市场规范".*Click="OnRulesGuide"/);
+test('市场文档从右上角展开，可打开随启动器打包的规范', () => {
+  const xaml = read('launcher/Views/PluginMarketPage.xaml');
+  assert.match(xaml, /x:Name="DocumentsToggle" DockPanel\.Dock="Right" Content="文档（必看）/);
+  assert.match(xaml, /x:Name="DocumentsPanel"[^>]*Visibility="Collapsed"/);
+  assert.match(xaml, /Content="插件市场规范".*Click="OnRulesGuide"/);
   assert.match(read('launcher/WhaleLauncher.csproj'), /LogicalName="WhaleLauncher\.PluginRulesGuide\.md"/);
   const rules = read('docs/插件市场规范.md');
   assert.match(rules, /权限确认.*插件卡片「设置」/);
   assert.match(rules, /相应操作入口按次确认/);
+});
+
+test('插件卡片每行三张，分类同时匹配当前列表和搜索词', () => {
+  const xaml = read('launcher/Views/PluginMarketPage.xaml');
+  const page = read('launcher/Views/PluginMarketPage.xaml.cs');
+  const columns = xaml.match(/<Grid x:Name="Cards">\s*<Grid\.ColumnDefinitions>([\s\S]*?)<\/Grid\.ColumnDefinitions>/);
+  assert.equal(columns?.[1].match(/<ColumnDefinition Width="\*"\s*\/>/g)?.length, 3);
+  for (const kind of ['persona', 'message', 'tool']) {
+    assert.match(xaml, new RegExp(`Tag="${kind}"[^>]*Click="OnCategory"`));
+  }
+  assert.match(page, /_showInstalled \? local\.Values\.AsEnumerable\(\) : _catalog\.AsEnumerable\(\)/);
+  assert.match(page, /p\.Kind == _category\)\s*&&[^\n]*\.Contains\(query,/);
+  assert.match(page, /Grid\.SetRow\(card, index \/ columns\)/);
+  assert.match(page, /Grid\.SetColumn\(card, column\)/);
 });
 
 test('本地安装提示来源和替换版本，人设页应用市场预设须确认', () => {

@@ -46,6 +46,8 @@ function makeStamper(timeZone = '') {
  * 记忆和状态打断。顺序固定：正文 → 记忆块 → 本轮状态。
  */
 function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '') {
+  const preserveOriginal = msg.newPersonaBehavior === true;
+  const modelText = value => preserveOriginal ? String(value || '') : sanitizeForModel(value);
   const memory = String(memoryBlock || '').trim();
   const tail = String(tailBlock || '').trim();
   const turns = [];
@@ -66,7 +68,7 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '
       if (!event.text || event.error) continue;
       const record = {
         发言人: speaker(event),
-        内容: sanitizeForModel(String(event.text).slice(0, MAX_TURN_CHARS)),
+        内容: modelText(String(event.text).slice(0, MAX_TURN_CHARS)),
       };
       if (event.addressedToBot) record.叫到鲸鲸 = true;
       if (event.mentionedNames?.length) record.其他提及对象 = event.mentionedNames;
@@ -77,7 +79,7 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '
     const current = JSON.stringify({
       发言人: speaker(msg),
       // 挨骂的时候要让它看见原话，否则不知道对面骂了什么，回怼就没劲
-      内容: String(msg.fight ? String(msg.cleanText || msg.text) : sanitizeForModel(msg.cleanText || msg.text))
+      内容: String(msg.fight ? String(msg.cleanText || msg.text) : modelText(msg.cleanText || msg.text))
         .slice(0, MAX_TURN_CHARS),
       叫到鲸鲸: Boolean(msg.addressedToBot || msg.atMe || msg.replyToBot),
       其他提及对象: msg.mentionedNames || [],
@@ -136,12 +138,12 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '
     if (m.role === 'assistant') {
       push('assistant', m.text);
     } else {
-      push('user', sanitizeForModel(m.text));
+      push('user', modelText(m.text));
     }
   }
   // 保证最后一条是当前用户消息，并明确这是当前事件而非历史。
   const current = msg.cleanText || msg.text;
-  const currentBody = msg.fight ? String(current) : sanitizeForModel(current);
+  const currentBody = msg.fight ? String(current) : modelText(current);
   // 收集等待只读桥接计时器，不把内部接收时间拼进模型正文。
   push('user', currentBody);
   // 记忆块和本轮状态都不参与上面 1,800 字的单条截断（预算由 memory / persona 层控制）

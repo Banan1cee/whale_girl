@@ -8,6 +8,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 
 namespace WhaleLauncher.Views
@@ -19,6 +20,7 @@ namespace WhaleLauncher.Views
         private readonly string _version;
         private PluginInfo[] _catalog = [];
         private Dictionary<int, PluginFeedback> _feedback = new();
+        private string _category = "";
         private bool _showInstalled;
         private bool _busy;
 
@@ -70,6 +72,27 @@ namespace WhaleLauncher.Views
         private void OnDiscover(object sender, RoutedEventArgs e) { _showInstalled = false; Render(); }
         private void OnInstalled(object sender, RoutedEventArgs e) { _showInstalled = true; Render(); }
 
+        private void OnCategory(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string category } || _category == category) return;
+            _category = category;
+            Render();
+        }
+
+        private void OnToggleDocuments(object sender, RoutedEventArgs e)
+        {
+            var expanded = DocumentsPanel.Visibility != Visibility.Visible;
+            SetDocumentsExpanded(expanded);
+            if (expanded) MarketScroll.ScrollToTop();
+        }
+
+        private void SetDocumentsExpanded(bool expanded)
+        {
+            DocumentsPanel.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+            DocumentsToggle.Content = expanded ? "文档（必看） ▴" : "文档（必看） ▾";
+            AutomationProperties.SetHelpText(DocumentsToggle, expanded ? "收起文档列表" : "展开文档列表");
+        }
+
         private async void OnLocal(object sender, RoutedEventArgs e)
         {
             if (_busy) return;
@@ -81,6 +104,8 @@ namespace WhaleLauncher.Views
                     (info, current) => Dispatcher.Invoke(() => ConfirmLocalInstall(info, current))));
                 if (!installed) return "已取消安装。";
                 _showInstalled = true;
+                _category = "";
+                Search.Clear();
                 return "已安装，可在「已安装」里启用。";
             });
         }
@@ -121,26 +146,36 @@ namespace WhaleLauncher.Views
         {
             if (Cards == null) return;
             Cards.Children.Clear();
+            Cards.RowDefinitions.Clear();
             Discover.Style = (Style)FindResource(_showInstalled ? "Ghost" : "Primary");
             Installed.Style = (Style)FindResource(_showInstalled ? "Primary" : "Ghost");
+            foreach (var button in Categories.Children.OfType<Button>())
+            {
+                var selected = Equals(button.Tag, _category);
+                button.Style = (Style)FindResource(selected ? "Primary" : "Ghost");
+                AutomationProperties.SetItemStatus(button, selected ? "已选择" : "");
+            }
             try
             {
                 var local = _market.Installed().ToDictionary(p => p.Id);
                 var query = Search.Text.Trim();
                 var entries = _showInstalled ? local.Values.AsEnumerable() : _catalog.AsEnumerable();
-                foreach (var info in entries.Where(p => (p.Name + " " + p.Author + " " + p.Description)
-                    .Contains(query, StringComparison.OrdinalIgnoreCase)))
+                var columns = Cards.ColumnDefinitions.Count;
+                foreach (var info in entries.Where(p => (_category.Length == 0 || p.Kind == _category)
+                    && (p.Name + " " + p.Author + " " + p.Description).Contains(query, StringComparison.OrdinalIgnoreCase)))
                 {
+                    var index = Cards.Children.Count;
+                    var column = index % columns;
                     var body = new StackPanel();
-                    var card = new Border { Style = (Style)FindResource("Card"), Child = body, Width = 286,
-                        Margin = new Thickness(0, 0, 12, 12), Padding = new Thickness(14) };
+                    var card = new Border { Style = (Style)FindResource("Card"), Child = body,
+                        Margin = new Thickness(0, 0, column == columns - 1 ? 0 : 12, 12), Padding = new Thickness(14) };
                     body.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80),
                         FontSize = 17, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
                     body.Children.Add(Small(PluginMarket.SafeText(info.Author, 80) + "  ·  v" + info.Version));
                     body.Children.Add(Small(PluginMarket.SafeText(info.Description, 600)));
                     body.Children.Add(Small(info.CompatibilityLabel));
                     // 市场签名暂时隐藏，卡片不再显示已签名 / 未签名目录的标注。
-                    body.Children.Add(Small(info.IsJavaScript ? "权限：完整系统权限（网络、文件、命令与全部主程序 API）" : info.IsMessage ? "消息插件：启用后自动参与聊天；权限见设置" : info.IsPersona ? "类型：人设预设" :
+                    body.Children.Add(Small(info.IsJavaScript ? "权限：完整系统权限（网络、文件、命令与全部主程序 API）" : info.IsMessage ? "消息插件：启用后自动参与聊天；权限见设置" : info.IsPersona ? "类型：人格预设" :
                         info.HostAction == PluginMarket.DigestAction ? "权限：按次确认后生成聊天汇总" : "权限：仅本页输入"));
                     var buttons = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
                     body.Children.Add(buttons);
@@ -194,10 +229,17 @@ namespace WhaleLauncher.Views
                     else body.Children.Add(Small("已安装"));
                     var listing = _showInstalled ? _catalog.FirstOrDefault(p => p.Id == info.Id) : info;
                     AddFeedback(body, listing?.DiscussionIssue ?? 0);
+                    if (column == 0) Cards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                    Grid.SetRow(card, index / columns);
+                    Grid.SetColumn(card, column);
                     Cards.Children.Add(card);
                 }
                 if (Cards.Children.Count == 0)
-                    Cards.Children.Add(Small(_showInstalled ? "没有符合条件的已安装插件。" : "没有符合条件的市场插件。"));
+                {
+                    var empty = Small(_showInstalled ? "没有符合条件的已安装插件。" : "没有符合条件的市场插件。");
+                    Grid.SetColumnSpan(empty, columns);
+                    Cards.Children.Add(empty);
+                }
             }
             catch (Exception ex) { Status.Text = "读取插件失败：" + ex.Message; }
         }
@@ -280,6 +322,7 @@ namespace WhaleLauncher.Views
 
         private void ShowDetail(object content)
         {
+            SetDocumentsExpanded(false);
             DetailContent.Content = content;
             ListPanel.Visibility = Visibility.Collapsed;
             DetailPanel.Visibility = Visibility.Visible;

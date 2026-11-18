@@ -6,7 +6,7 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { IDENTITY_FIELDS } = require('./profile');
+const { IDENTITY_FIELDS, usesNewPersona } = require('./profile');
 const { upgradeLegacyPersona } = require('./legacy');
 
 const FILE_NAME = 'persona.json';
@@ -40,6 +40,7 @@ const CONFIG_PATHS = {
   emojiChance: 'chat.emojiChance',
   discussionMaxChars: 'chat.discussionMaxChars',
   masterRoast: 'persona.masterRoast',
+  newBehavior: 'persona.newBehavior',
   privateMaxChars: 'chat.privateMaxChars',
   groupMaxChars: 'chat.groupMaxChars',
   maxBubbles: 'chat.maxBubbles',
@@ -51,6 +52,7 @@ const CONFIG_PATHS = {
 };
 
 function normalized(key, value) {
+  if (key === 'newBehavior') return typeof value === 'boolean' ? value : undefined;
   if (key === 'ownerName') return String(value || '').trim().slice(0, 24) || '主人';
   if (key === 'aliases') return Array.isArray(value) ? value.filter(v => typeof v === 'string').map(v => v.trim()).filter(Boolean).slice(0, 30) : undefined;
   if (key === 'links' || key === 'freeChat' || key === 'masterRoast') return Boolean(value);
@@ -154,7 +156,7 @@ function save(config, patch) {
       Number(config.chat.groupHistoryTurns || 150) + 2,
     ));
   }
-  // 当前人设来自自建预设时，把这次保存回写预设；内置/市场预设不动
+  // 保存当前预设的本地内容，切换回这份预设时仍能读到修改。
   try {
     const source = String((config.persona && config.persona.sourcePreset) || '');
     if (source && patchObj.sourcePreset === undefined && !require('./presets').updateFromConfig(config, source)
@@ -281,6 +283,7 @@ function summary(config) {
     proactive: config.persona.proactive !== false,
     opinions: config.persona.opinions !== false,
     masterRoast: Boolean(config.persona.masterRoast),
+    newBehavior: usesNewPersona(config),
     name: config.persona.name,
     age: config.persona.age,
     job: config.persona.job,

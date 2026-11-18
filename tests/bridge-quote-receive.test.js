@@ -16,7 +16,7 @@ const ROOT = path.resolve(__dirname, '..');
 const RECV = fs.readFileSync(path.join(ROOT, 'bridge/receiver_mixin.py'), 'utf8');
 
 test('引用消息：解析在类型分支之前，文本重写不会覆盖解析结果', () => {
-  const parseAt = RECV.indexOf('_quote_text = quote_content_text(content)');
+  const parseAt = RECV.indexOf('quote = parse_quote_content(content)');
   const cardAt = RECV.indexOf('if not _quote_parsed and mtype not in');
   const textAt = RECV.indexOf("if mtype == '文本' and not _quote_parsed:");
   assert.ok(parseAt >= 0, '缺少引用解析调用');
@@ -29,6 +29,6 @@ test('引用消息：解析在类型分支之前，文本重写不会覆盖解�
 test('引用消息：解析成功后跳过卡片分支，但不跳过群/白名单等后续检查', () => {
   assert.match(RECV, /if not _quote_parsed and mtype not in \('文本', '语音', '图片', '表情', '动画表情'\):/);
   // 只跳过卡片分支，ONLY_CHATS / 系统通知 / 重复消息等闸门仍在解析之后原样执行
-  assert.ok(RECV.indexOf('if G.ONLY_CHATS:') > RECV.indexOf('_quote_text = quote_content_text(content)'));
-  assert.ok(RECV.indexOf('G.is_system_notice(') > RECV.indexOf('_quote_text = quote_content_text(content)'));
+  assert.ok(RECV.indexOf('if G.ONLY_CHATS:') > RECV.indexOf('quote = parse_quote_content(content)'));
+  assert.ok(RECV.indexOf('G.is_system_notice(') > RECV.indexOf('quote = parse_quote_content(content)'));
 });

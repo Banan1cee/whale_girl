@@ -6,11 +6,34 @@ const presets = require('../persona/presets');
 const { checkPersonaTokens } = require('../persona/tokenCheck');
 const { LIMITS } = require('../memory/constants');
 const { describeError } = require('../infra/errors');
-const { identityPatch } = require('../persona/profile');
+const { identityPatch, usesNewPersona } = require('../persona/profile');
 const { portableFields } = require('../persona/portable');
 const { legacyPatch } = require('../persona/legacy');
+const { checkCustomPrompt } = require('../persona/conflict');
 
 /* ---------------- 人设调教（/api/persona 用） ---------------- */
+
+/** 用「即将保存的值」覆盖当前配置，提醒才对得上用户刚改的内容。 */
+function conflictInput(config, patch = {}) {
+  const persona = config.persona || {};
+  const chat = config.chat || {};
+  const pick = (key, fallback) => (patch[key] === undefined ? fallback : patch[key]);
+  return {
+    customPrompt: pick('customPrompt', persona.customPrompt),
+    name: pick('name', persona.name),
+    ownerName: pick('ownerName', persona.ownerName),
+    personality: pick('personality', persona.personality),
+    appearance: pick('appearance', persona.appearance),
+    background: pick('background', persona.background),
+    privateMaxChars: pick('privateMaxChars', chat.privateMaxChars),
+    groupMaxChars: pick('groupMaxChars', chat.groupMaxChars),
+  };
+}
+
+/** 读取人设页时也要显示已存在的冲突，不能只在保存后提示。 */
+function currentPersonaWarnings(config) {
+  return usesNewPersona(config) ? checkCustomPrompt(conflictInput(config)) : [];
+}
 
 async function applyPersonaPatch(runtime, body) {
   if (body && body.reset) {
@@ -19,6 +42,7 @@ async function applyPersonaPatch(runtime, body) {
     return { ok: true, persona: personaStore.summary(runtime.config) };
   }
   const patch = identityPatch(body);
+  if (typeof body.newBehavior === 'boolean') patch.newBehavior = body.newBehavior;
   Object.assign(patch, legacyPatch(body, runtime.config.persona.customPrompt || ''));
   const portable = portableFields(body);
   for (const key of ['ownerName', 'aliases', 'masterRoast', 'proactive', 'opinions', 'emojiChance', 'maxBubbles', 'discussionMaxChars']) {
@@ -38,6 +62,8 @@ async function applyPersonaPatch(runtime, body) {
   if (body.sourcePreset !== undefined) patch.sourcePreset = str(body.sourcePreset, 80);
   // 人设保存/导入时才做精确 token 校验；每轮聊天仍然用轻量估算。
   const tokenCheck = await checkPersonaTokens(runtime, patch);
+  const warnings = (patch.newBehavior ?? usesNewPersona(runtime.config))
+    ? checkCustomPrompt(conflictInput(runtime.config, patch)) : [];
   if (tokenCheck.overLimit) {
     runtime.logger.warn(
       `人设太长，拒绝保存：${tokenCheck.tokens} token（上限 ${tokenCheck.limit}，${tokenCheck.exact ? '官方计数' : '估算'}）`
@@ -47,6 +73,7 @@ async function applyPersonaPatch(runtime, body) {
       error: `人设太长：${tokenCheck.exact ? '' : '约 '}${tokenCheck.tokens} token，超过当前上限 ${tokenCheck.limit}。`
         + `单人设（system）不计入对话预算，但单轮合计不能超过 ${LIMITS.hardTotalTokens.toLocaleString('en-US')} token，请精简设定或自定义提示词。`,
       tokenCheck,
+      warnings,
     };
   }
   personaStore.save(runtime.config, patch);
@@ -67,6 +94,7 @@ async function applyPersonaPatch(runtime, body) {
     ok: true,
     persona: personaStore.summary(runtime.config),
     tokenCheck,
+    warnings,
     llm: {
       provider: runtime.llm.provider,
       providerLabel: runtime.llm.providerLabel,
@@ -132,4 +160,4 @@ function renamePersonaPreset(runtime, body = {}) {
   return { ok: true, preset: result.preset, presets: presets.list(runtime.config) };
 }
 
-module.exports = { applyPersonaPatch, savePersonaPreset, deletePersonaPreset, renamePersonaPreset };
+module.exports = { applyPersonaPatch, savePersonaPreset, deletePersonaPreset, renamePersonaPreset, currentPersonaWarnings };

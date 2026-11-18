@@ -17,6 +17,7 @@ const RUDE = /(你妈|你爹|你他妈|傻逼|狗东西|废物|滚蛋)/;
 
 function makeBot({ reply, roast = false }) {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  config.persona.newBehavior = false;
   config.persona.master = { names: ['Master'], wxids: ['wxid_boss'] };
   config.persona.masterRoast = roast;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-boss-'));
