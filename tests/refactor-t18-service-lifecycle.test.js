@@ -35,8 +35,14 @@ test('contact cache carries account identity and rejects cross-account late comp
   assert.match(directory, /LoadAsync\(bool force\s*=\s*false\)/);
 
   const bridge = read('launcher/Views/BridgePage.xaml.cs');
-  assert.match(bridge, /_sup\.Contacts\.InvalidateForAccountChange\(account\)/);
-  assert.match(bridge, /_sup\.Contacts\.InvalidateForAccountChange\(s\.BrAccount\)/);
+  assert.match(bridge, /Api\.PostJson\(_sup\.Url, "\/api\/wechat\/account", new \{ account \}\)/);
+  assert.match(bridge, /_sup\.Contacts\.InvalidateForSelectedAccount\(account, res\.Root\)/);
+  assert.match(directory, /string\.Equals\(JsonRead\.Str\(account, "account"\), accountDirectory, StringComparison\.Ordinal\)/);
+  assert.match(directory, /InvalidateForAccountChange\(JsonRead\.Str\(account, "wxid"\)\)/);
+  assert.match(bridge, /_sup\.RefreshContactAccount\(_status, s\)/);
+  const supervisor = read('launcher/RuntimeSupervisor.cs');
+  assert.match(supervisor, /s\.BrAccountWxid = Str\(br, "accountWxid"\)/);
+  assert.match(supervisor, /Contacts\.InvalidateForAccountChange\(current\.BrAccountWxid\)/);
   assert.match(bridge, /generation\s*!=\s*_accountGeneration/);
 });
 

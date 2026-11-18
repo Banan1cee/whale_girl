@@ -72,6 +72,25 @@ namespace WhaleLauncher
 
         public Task<ContactSnapshot> RefreshAsync() => LoadAsync(true);
 
+        internal void InvalidateForSelectedAccount(string accountDirectory, JsonElement response)
+        {
+            // The selection API uses a directory key; the contacts snapshot is keyed by wxid.
+            if (!string.IsNullOrEmpty(accountDirectory) &&
+                response.ValueKind == JsonValueKind.Object &&
+                response.TryGetProperty("accounts", out var accounts) && accounts.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var account in accounts.EnumerateArray())
+                {
+                    if (string.Equals(JsonRead.Str(account, "account"), accountDirectory, StringComparison.Ordinal))
+                    {
+                        InvalidateForAccountChange(JsonRead.Str(account, "wxid"));
+                        return;
+                    }
+                }
+            }
+            InvalidateForAccountChange();
+        }
+
         public void InvalidateForAccountChange(string account = "")
         {
             lock (_gate)

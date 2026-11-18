@@ -247,8 +247,7 @@ namespace WhaleLauncher.Views
             var generation = _accountGeneration;
             var s = await _sup.ProbeAsync();
             if (generation != _accountGeneration) return;
-            if (s.BrAccountOk && !string.Equals(s.BrAccount, _status.BrAccount, StringComparison.Ordinal))
-                _sup.Contacts.InvalidateForAccountChange(s.BrAccount);
+            _sup.RefreshContactAccount(_status, s);
             _status = s;
             UpdatePerm(s);
             UpdateStat();
@@ -383,7 +382,7 @@ namespace WhaleLauncher.Views
                     SwitchHint.Text = "切账号失败：" + Api.Message(res);
                     return;
                 }
-                _sup.Contacts.InvalidateForAccountChange(account);
+                _sup.Contacts.InvalidateForSelectedAccount(account, res.Root);
                 TxtAccount.Text = account;
                 _sup.Say("微信账号 → " + label);
                 // 别只指望桥接自己发现 config 变了：它的 config_watch 要等开库/预热

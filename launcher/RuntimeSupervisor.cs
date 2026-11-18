@@ -45,6 +45,7 @@ namespace WhaleLauncher
         public bool BrAccountGuard;
         public bool BrAccountOk;
         public string BrAccount = "";
+        public string BrAccountWxid = "";
         public string BrAccountNick = "";
         public string BrAccountWhy = "";
         public string BrWindow = "";   // 心跳暂未上报窗口状态，留空显示「未知」
@@ -82,6 +83,14 @@ namespace WhaleLauncher
         private ContactDirectory _contacts;
         /// <summary>联系人缓存 / 搜索的统一入口，各页面共用，避免重复请求和搜索规则漂移。</summary>
         public ContactDirectory Contacts => _contacts ??= new ContactDirectory(this);
+
+        internal void RefreshContactAccount(Snapshot previous, Snapshot current)
+        {
+            if (current.BrAccountOk && (!previous.BrAccountOk ||
+                !string.Equals(current.BrAccount, previous.BrAccount, StringComparison.Ordinal) ||
+                !string.Equals(current.BrAccountWxid, previous.BrAccountWxid, StringComparison.Ordinal)))
+                Contacts.InvalidateForAccountChange(current.BrAccountWxid);
+        }
         private async Task<string> ConfigurationServiceUrlAsync()
         {
             var port = Port;
@@ -625,6 +634,7 @@ namespace WhaleLauncher
                             s.BrFfmpeg = Bool(br, "ffmpeg");
                             s.BrRest = Bool(br, "rest");
                             s.BrAccount = Str(br, "account");
+                            s.BrAccountWxid = Str(br, "accountWxid");
                             s.BrAccountNick = Str(br, "accountNick");
                             s.BrAccountOk = Bool(br, "accountOk");
                             s.BrAccountWhy = Str(br, "accountWhy");
