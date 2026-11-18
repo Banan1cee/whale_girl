@@ -1,6 +1,8 @@
 'use strict';
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
 const declaration = require('./release-resources.json');
+// Windows junctions need native resolution before checking containment.
+const realpath = process.platform === 'win32' ? fs.realpathSync.native : fs.realpathSync;
 const hash = (data) => crypto.createHash('sha256').update(data).digest('hex');
 function relativeFile(value) {
   if (typeof value !== 'string' || !value || /[\\:\0]/.test(value) || path.posix.isAbsolute(value) ||
@@ -12,11 +14,11 @@ function inside(root, file) {
   return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel));
 }
 function safePath(root, relative) {
-  const base = fs.realpathSync(root), target = path.resolve(base, relativeFile(relative));
+  const base = realpath(root), target = path.resolve(base, relativeFile(relative));
   if (!inside(base, target)) throw new Error('资源路径越界/escape：' + relative);
   let existing = target;
   while (!fs.existsSync(existing)) { const parent = path.dirname(existing); if (parent === existing) break; existing = parent; }
-  if (!inside(base, fs.realpathSync(existing))) throw new Error('资源链接越界/escape：' + relative);
+  if (!inside(base, realpath(existing))) throw new Error('资源链接越界/escape：' + relative);
   return target;
 }
 function resourcePlan(catalogRoot, role) {
@@ -88,7 +90,7 @@ function verifyTree(root, { role, catalogRoot, payload = false } = {}) {
   return { role, checked: plan.files.length, metadataChecked: metadata.length };
 }
 function restoreSource(stage, catalogRoot) {
-  const source = fs.realpathSync(catalogRoot), target = fs.realpathSync(stage);
+  const source = realpath(catalogRoot), target = realpath(stage);
   if (inside(source, target) || inside(target, source)) throw new Error('catalog与stage重叠/overlap，拒绝复制');
   const plan = resourcePlan(catalogRoot, 'source');
   for (const item of [...plan.files, ...plan.metadata]) {
