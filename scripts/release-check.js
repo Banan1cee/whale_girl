@@ -178,19 +178,28 @@ try {
   check('预设表情包清单及图片完整', false, e.message);
 }
 
+if (release) {
+  try {
+    const result = require('./release-resources').verifyTree(root, { role: 'source', catalogRoot: root });
+    check('源码发行程序资源完整', true, `${result.checked} 个资源`);
+  } catch (error) { check('源码发行程序资源完整', false, error.message); }
+}
+
 // 9) 不能把自己的隐私带进包里：密钥、真实 wxid、账号目录名、群号、手机号、邮箱、
 //    本机用户名路径，以及 exe/dll 里的调试路径。
 //    这些以前都漏过：docs/BUGS.md 写了真实路径、真实小号目录名进了测试、带 PDB 路径的 exe
 //    进了仓库。规则与遍历统一收在 scripts/privacy-scan.js，这里只把它接进自检。
 try {
   const privacy = require('./privacy-scan');
-  const result = privacy.scan(root);
+  const result = privacy.scan(root, { strict: true });
   const brief = result.findings.slice(0, 4).map((f) => `${f.file}（${f.rule}）`).join('、');
   check('没有个人信息（密钥 / 真实 wxid / 群号 / 手机号 / 邮箱 / 本机用户名 / 二进制路径）',
     result.findings.length === 0,
     result.findings.length ? brief : `${result.files} 个文本 + ${result.binaries} 个二进制干净`);
 } catch (e) {
-  check('个人信息检查可运行', false, e.message);
+  const errors = e.result && Array.isArray(e.result.errors) ? e.result.errors : [];
+  const detail = [e.message, ...errors.slice(0, 4).map((error) => `${error.file}（${error.operation} ${error.code}）`)].join('；');
+  check('个人信息检查可运行', false, detail);
 }
 
 const pad = (s, n) => String(s) + ' '.repeat(Math.max(0, n - String(s).length));

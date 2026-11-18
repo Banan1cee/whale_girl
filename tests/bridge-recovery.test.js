@@ -159,9 +159,21 @@ test('默认后台发送，发完把窗口状态还原（电脑可以正常用�
   assert.match(bridge, /def force_send_foreground/, '抢前台要单独抽出来，只在兜底时用');
   assert.match(bridge, /def snapshot_win_state/, '发送前要记下窗口状态');
   assert.match(bridge, /def restore_win_state/, '发完要还原');
-  assert.match(bridge, /后台发送没成功，把微信拉到前台再试一次/, '失败才抢前台，并说明原因');
+  const attempts = spawnSync(python, ['-B', path.join(root, 'tests/test_refactor_t14_attempts.py'),
+    'AttemptTests.test_window_never_replays_callback_and_always_restores',
+    'AttemptTests.test_known_preparation_failure_can_recover_before_one_effect',
+    'AttemptTests.test_identity_and_draft_guards_stop_before_opaque_effect',
+    'AttemptTests.test_opaque_false_is_handled_uncertain_once_not_twelve_sends'], {
+    cwd: root, encoding: 'utf8', timeout: 30000,
+    env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.ifError(attempts.error);
+  assert.equal(attempts.status, 0, attempts.stdout + attempts.stderr);
+  assert.match(attempts.stderr, /Ran 4 tests/);
+  assert.match(attempts.stderr, /(?:^|\r?\n)OK(?:\r?\n|$)/);
   assert.match(bridge, /def install_quiet_uia/, '要让引擎别自己恢复窗口抢前台');
-  // 顺序：先记状态 → 试后台 → 失败才抢前台 → finally 里还原
+  // 顺序：先记状态 → 单次业务回调 → finally 还原；准备恢复由共享预算决定。
   const win = bridge.slice(bridge.indexOf('def with_window_on_top')).replace(/\r\n/g, '\n');
   const body = win.slice(0, win.indexOf('\n    def ') > 0 ? win.indexOf('\n    def ') : win.length);
   assert.match(body, /if restore_after:/, '表情包关闭且配置允许时走后台分支');

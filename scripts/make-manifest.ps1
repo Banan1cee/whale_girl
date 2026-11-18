@@ -52,6 +52,7 @@ if (-not $Fresh) {
 }
 
 $oldLatest = [string]$policy.latest
+$oldTarget = if ($policy['target']) { [string]$policy['target'] } elseif ($policy['brand_latest']) { [string]$policy['brand_latest'] } else { $oldLatest }
 $oldMessage = [string]$policy.message
 $oldVer = 0
 if (-not [int]::TryParse([string]$policy.manifest_version, [ref]$oldVer) -or $oldVer -lt 0 -or $oldVer -eq [int]::MaxValue) {
@@ -60,7 +61,7 @@ if (-not [int]::TryParse([string]$policy.manifest_version, [ref]$oldVer) -or $ol
 
 $releasePolicies = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'release-update-policy.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $releasePolicy = $releasePolicies.PSObject.Properties[$v]
-if ($null -ne $releasePolicy -and ($Fresh -or $oldLatest -ne $v -or $oldVer -eq 0)) {
+if ($null -ne $releasePolicy -and ($Fresh -or $oldTarget -ne $v -or $oldVer -eq 0)) {
     foreach ($property in $releasePolicy.Value.PSObject.Properties) {
         if ($property.Name -notin @('force', 'force_from', 'force_versions', 'kill_below')) { throw "发布策略含未知字段：$($property.Name)" }
         $policy[$property.Name] = $property.Value

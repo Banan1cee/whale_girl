@@ -25,6 +25,7 @@ const { toBool } = require('../infra/features');
 const { clean } = require('../infra/text');
 const { describeError } = require('../infra/errors');
 const time = require('../infra/time');
+const { replaceFileAtomicSync } = require('../infra/atomicFile');
 
 const MAX_TOTAL = 500;
 const MAX_ACTIVE_PER_CHAT = 20;
@@ -32,6 +33,19 @@ const RETRY_DELAY_MS = 5 * 60 * 1000;
 const CLAIM_TIMEOUT_MS = 2 * 60 * 1000;
 const ACTIVE = new Set(['pending', 'retrying', 'sending']);
 const DONE = new Set(['done', 'failed', 'expired', 'cancelled', 'unconfirmed']);
+
+function countsTowardReminderQuota(item) {
+  return item.kind !== 'diary' && item.kind !== 'plugin';
+}
+
+function occupiesReminderQuota(item, today, tz) {
+  if (!countsTowardReminderQuota(item)) return false;
+  if (item.status === 'done') return time.dayKey(Number(item.finishedAt) || 0, tz) === today;
+  if (item.status === 'sending' || item.status === 'retrying' || item.status === 'unconfirmed') {
+    return time.dayKey(Number(item.claimedAt || item.dueAt || 0) || 0, tz) === today;
+  }
+  return false;
+}
 
 /**
  * 提醒的「规则」：和主动搭话同语义（每天上限 / 刚聊过先跳过），但配置独立
@@ -96,13 +110,10 @@ class ReminderService {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       const body = JSON.stringify({ version: 1, savedAt: this.now(), items: this.items });
-      const tmp = this.file + '.tmp';
-      fs.writeFileSync(tmp, body, 'utf8');
-      fs.renameSync(tmp, this.file);
+      replaceFileAtomicSync(this.file, body, 'utf8');
       // 镜像最新已提交状态，避免备份仍是 pending 而主文件已经 done。
       try {
-        fs.writeFileSync(this.file + '.bak.tmp', body, 'utf8');
-        fs.renameSync(this.file + '.bak.tmp', this.file + '.bak');
+        replaceFileAtomicSync(this.file + '.bak', body, 'utf8');
       } catch (err) {
         if (this.logger) this.logger.warn('提醒备份写入失败：' + describeError(err));
       }
@@ -129,18 +140,9 @@ class ReminderService {
     const rules = normalizeRules(this.config);
     const tz = time.resolveTimeZone(this.config);
     const today = time.dayKey(now, tz);
-    // 已发送 + 在途（sending/retrying）都占当日额度：
+    // 已发送、在途及可能已发送但结果不确定的任务都保留对应日期的额度：
     // 只数 done 的话，桥接还没回执时连续领取能突破每日上限。
-    const sentToday = this.items.filter((it) => {
-      // 日记发送是内核自己的存档通知，不占用户提醒的每日额度。
-      if (it.kind === 'diary' || it.kind === 'plugin') return false;
-      if (it.status === 'done') return time.dayKey(Number(it.finishedAt) || 0, tz) === today;
-      if (it.status === 'sending' || it.status === 'retrying') {
-        const at = Number(it.claimedAt || it.dueAt || 0);
-        return time.dayKey(at || 0, tz) === today;
-      }
-      return false;
-    }).length;
+    const sentToday = this.items.filter(it => occupiesReminderQuota(it, today, tz)).length;
     return {
       ...rules,
       sentToday,
@@ -306,7 +308,7 @@ class ReminderService {
     // 日记正文只保留在 data/diary/；提醒队列里结束的任务不再留全文。
     for (const item of this.items) {
       if (item.kind === 'diary' && !ACTIVE.has(item.status) && item.text !== '（日记已发送）') {
-        item.text = '（日记未发送）';
+        item.text = item.status === 'unconfirmed' ? '（日记发送结果不确定）' : '（日记未发送）';
       }
     }
     if (JSON.stringify(previous) !== JSON.stringify(this.items)) this.commit(previous);
@@ -331,6 +333,9 @@ class ReminderService {
     const rules = this.rules(now);
     const out = [];
     const previous = JSON.parse(JSON.stringify(this.items));
+    const tz = time.resolveTimeZone(this.config);
+    const today = time.dayKey(now, tz);
+    let newReservations = 0;
     // 已领取但尚未回执的任务也占用每日额度，防止多轮领取超限。
     // 日记通知不走用户提醒额度，所以不计入 reserved。
     // rules().sentToday 已经统计 sending/retrying，不能再加一遍 reserved。
@@ -339,14 +344,15 @@ class ReminderService {
       if (item.status !== 'pending' && item.status !== 'retrying') continue;
       if (Number(item.dueAt) > now) continue;
       if (item.status === 'retrying' && Number(item.retryAt) > now) continue;
-      const isDiary = item.kind === 'diary' || item.kind === 'plugin';
-      if (!isDiary && !rules.enabled) {
+      const countsQuota = countsTowardReminderQuota(item);
+      const alreadyReserved = occupiesReminderQuota(item, today, tz);
+      if (countsQuota && !rules.enabled) {
         item.status = 'expired';
         item.error = '提醒功能已关闭';
         item.finishedAt = now;
         continue;
       }
-      if (!isDiary && rules.quietAfterMinutes && this.lastActiveAt) {
+      if (countsQuota && rules.quietAfterMinutes && this.lastActiveAt) {
         let last = 0;
         try { last = Number(this.lastActiveAt(item.wxid)) || 0; } catch { last = 0; }
         if (last && now - last < rules.quietAfterMinutes * 60000) {
@@ -356,7 +362,7 @@ class ReminderService {
           continue;
         }
       }
-      if (!isDiary && rules.dailyCap && rules.sentToday + out.length >= rules.dailyCap) {
+      if (countsQuota && !alreadyReserved && rules.dailyCap && rules.sentToday + newReservations >= rules.dailyCap) {
         item.status = 'expired';
         item.error = `今天提醒次数已满（${rules.dailyCap} 次），不补发`;
         item.finishedAt = now;
@@ -364,6 +370,8 @@ class ReminderService {
       }
       item.status = 'sending';
       item.claimedAt = now;
+      // 同日 retry 已在 rules() 里预留；跨日 retry 和 pending 才占本批新增额度。
+      if (countsQuota && !alreadyReserved) newReservations += 1;
       out.push({ ...item });
     }
     if (JSON.stringify(previous) !== JSON.stringify(this.items)) this.commit(previous);
@@ -390,16 +398,23 @@ class ReminderService {
     return next;
   }
 
-  /** 回执：成功 → done；失败 → 还允许重试就 retrying（+5 分钟），否则 failed */
-  ack(id, { ok = false, error = '' } = {}) {
+  /** 回执：不确定 → unconfirmed；成功 → done；明确失败沿用有界重试。 */
+  ack(id, { ok = false, error = '', uncertain = false } = {}) {
     const item = this.items.find((it) => it.id === String(id || ''));
     if (!item) return { ok: false, error: '找不到这条提醒', statusCode: 404 };
+    if (item.status === 'unconfirmed' && uncertain === true) return { ok: true, item: { ...item } };
     if (item.status === 'done' && ok) return { ok: true, item: { ...item } };
     if (item.status !== 'sending') return { ok: false, error: '提醒已结束或尚未领取，不能更新回执', statusCode: 409 };
     const previous = JSON.parse(JSON.stringify(this.items));
     const now = this.now();
     item.attempts = Number(item.attempts || 0) + 1;
-    if (ok) {
+    if (uncertain === true) {
+      item.status = 'unconfirmed';
+      item.error = clean(error, 200) || '发送结果不确定；不自动重发';
+      item.finishedAt = now;
+      item.retryAt = 0;
+      if (item.kind === 'diary') item.text = '（日记发送结果不确定）';
+    } else if (ok) {
       item.status = 'done';
       item.error = '';
       item.finishedAt = now;

@@ -7,6 +7,7 @@ const { toBool } = require('../infra/features');
 const { describeError } = require('../infra/errors');
 const { matchMaster } = require('../core/master');
 const time = require('../infra/time');
+const { replaceFileAtomicSync } = require('../infra/atomicFile');
 
 // 保留旧导出：测试和外部调用还按 dayKey(date) 用。
 const dayKey = (value, tz = '') => time.dayKey(value instanceof Date ? value.getTime() : value, tz);
@@ -301,9 +302,7 @@ class DiaryService {
       const keys = Object.keys(index.entries).sort();
       for (const key of keys.slice(0, Math.max(0, keys.length - DIARY_INDEX_LIMIT))) delete index.entries[key];
       fs.mkdirSync(this.dir, { recursive: true });
-      const tmp = this.indexFile + '.' + randomUUID() + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(index, null, 2), 'utf8');
-      fs.renameSync(tmp, this.indexFile);
+      replaceFileAtomicSync(this.indexFile, JSON.stringify(index, null, 2), 'utf8');
     } catch (err) {
       this.logger?.warn('日记索引写入失败：' + describeError(err));
     }

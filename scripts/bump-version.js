@@ -19,6 +19,7 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const { bumpVersion } = require('./version-policy');
 
 const root = path.resolve(__dirname, '..');
 const argv = process.argv.slice(2);
@@ -38,17 +39,9 @@ if (!['patch', 'minor', 'hotfix', 'major'].includes(level)) {
 const pkgPath = path.join(root, 'package.json');
 const clPath = path.join(root, 'docs', 'CHANGELOG.md');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-// 版本号允许两段（3.60）或三段（3.55.1）：两段式加补丁就补成三段，别凭空造怪号。
-const parts = String(pkg.version).split('.').map((n) => Number(n) || 0);
-const maj = parts[0];
-const min = parts[1] || 0;
-const threePart = parts.length >= 3;
-const pat = threePart ? parts[2] : 0;
-const hot = parts.length >= 4 ? parts[3] : 0;
-const next = level === 'major' ? `${maj + 1}.0.0`
-  : level === 'minor' ? (threePart ? `${maj}.${min + 1}.0` : `${maj}.${min + 1}`)
-    : level === 'hotfix' ? (threePart ? `${maj}.${min}.${pat}.${hot + 1}` : `${maj}.${min}.1`)
-      : (threePart ? `${maj}.${min}.${pat + 1}` : `${maj}.${min}.1`);
+let next;
+try { next = bumpVersion(pkg.version, level); }
+catch (error) { console.error(error.message); process.exit(1); }
 
 let cl = fs.readFileSync(clPath, 'utf8');
 // 版本号要放进正则：不只转义点，反斜杠和所有正则元字符都要转义，

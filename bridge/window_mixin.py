@@ -249,7 +249,7 @@ class WindowMixin:
 
         默认**不长期占用前台**（backgroundSend=true）：
           1. 先直接让 UIA 在后台发（微信最小化/被遮挡也能发，实测 18/18）；
-          2. 万一失败，才把微信拉到前台重试一次；
+          2. 准备失败的恢复由发送层统一预算决定，本包装器不重播业务回调；
           3. 不管成功失败，**发完都把窗口状态还原**（该最小化的重新最小化、前台还给原来的窗口），
              这样你在用电脑时最多看到它闪一下。
         把 wechat.backgroundSend 设成 false 就退回以前的「每次先抢前台、发完不管」。
@@ -261,15 +261,7 @@ class WindowMixin:
             if force_front:
                 return self.force_send_foreground(fn, require_foreground=True)
             if restore_after:
-                try:
-                    if fn():
-                        return True
-                except G.ChatIdentityError:
-                    raise
-                except Exception as e:
-                    G.log('后台发送异常，改走前台重试：', repr(e))
-                G.log('后台发送没成功，把微信拉到前台再试一次')
-                return self.force_send_foreground(fn)
+                return fn()
             return self.force_send_foreground(fn)
         finally:
             if restore_after:
@@ -437,6 +429,9 @@ class WindowMixin:
         刚点完会话行时标题可能还没刷新，所以读不到/对不上都先重试 3 次（每次 0.3 秒），
         仍然对不上才拒绝 —— 别把「还没刷出来」误判成「发错人」把正常发送全堵死。
         """
+        from send_attempt import operation_for_call
+        from send_state import chat_identity_fact
+        operation = operation_for_call()
         cur = ''
         lvl = None
         for attempt in range(3):
@@ -447,6 +442,8 @@ class WindowMixin:
                 if attempt == 2:
                     G.log_error('%s 会话核对：读不到当前会话名（%r），这条不发' % (where, e))
             lvl = G._chat_identity_level(cur, keys)
+            if lvl is not None:
+                lvl = chat_identity_fact(cur, keys, operation.target_username, operation.known_chats)['level']
             if lvl is not None:
                 break
             G.time.sleep(0.3)

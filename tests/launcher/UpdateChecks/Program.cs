@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using System.IO;
 using WhaleLauncher;
 
 void Check(bool ok, string message) { if (!ok) throw new Exception(message); Console.WriteLine("PASS: " + message); }
@@ -89,3 +90,20 @@ var stalePolicy = ReadManifest("{\"latest\":\"4.1.8\",\"manifest_version\":19,\"
 Check(ReferenceEquals(choose.Invoke(null, new object[] { new[] { stalePolicy }, cachedPolicy }), cachedPolicy), "旧在线清单不能覆盖新名单缓存而重新强制正常版本");
 stalePolicy.ManifestVersion = 21;
 Check(ReferenceEquals(choose.Invoke(null, new object[] { new[] { stalePolicy }, cachedPolicy }), stalePolicy), "更高序号在线策略仍可更新缓存");
+var versionDir = Path.Combine(Path.GetTempPath(), "whale-t22-version-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(versionDir);
+try
+{
+    var versionFile = Path.Combine(versionDir, "package.json");
+    File.WriteAllText(versionFile, "{\"version\":\"4.1.6.1\"}");
+    Check(UpdateManifestService.LocalVersion(versionDir) == "4.1.6.1", "T22 LocalVersion release");
+    File.WriteAllText(versionFile, "{\"version\":\"4.2.0-alpha\"}");
+    Check(UpdateManifestService.LocalVersion(versionDir) == "4.2.0-alpha", "T22 LocalVersion development");
+    var assembly = typeof(UpdateManifestService).Assembly.GetName().Version;
+    var fallback = assembly.Major + "." + assembly.Minor + "." + assembly.Build;
+    File.WriteAllText(versionFile, "{broken");
+    Check(UpdateManifestService.LocalVersion(versionDir) == fallback, "T22 LocalVersion corrupt fallback");
+    File.Delete(versionFile);
+    Check(UpdateManifestService.LocalVersion(versionDir) == fallback, "T22 LocalVersion missing fallback");
+}
+finally { Directory.Delete(versionDir, true); }

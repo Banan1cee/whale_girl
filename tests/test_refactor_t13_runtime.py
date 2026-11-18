@@ -306,12 +306,13 @@ class DefaultSafetyTests(unittest.TestCase):
     def test_background_restore_on_error_and_identity_failure(self):
         scope = self.startup({})
         runtime, send, events, snapshot = self.window(scope)
-        action = Mock(side_effect=[False, True])
-        self.assertTrue(send(action))
-        self.assertEqual(action.call_count, 2)
-        runtime.force_send_foreground.assert_called_once_with(action)
+        action = Mock(return_value=False)
+        self.assertFalse(send(action))
+        action.assert_called_once()
+        runtime.force_send_foreground.assert_not_called()
         runtime.restore_win_state.assert_called_once_with(snapshot)
-        for failure in (RuntimeError('fixture send failure'), self.identity_error('fixture identity failure')):
+        for failure in (RuntimeError('fixture send failure'), self.identity_error('fixture identity failure'),
+                        type('FixtureDraftError', (Exception,), {})('fixture draft')):
             with self.subTest(error=type(failure).__name__):
                 runtime, send, events, snapshot = self.window(scope)
                 action = Mock(side_effect=failure)
@@ -319,19 +320,22 @@ class DefaultSafetyTests(unittest.TestCase):
                     send(action)
                 runtime.restore_win_state.assert_called_once_with(snapshot)
                 self.assertEqual(events[-1], 'restore')
-                if isinstance(failure, self.identity_error):
-                    runtime.force_send_foreground.assert_not_called()
+                action.assert_called_once()
+                runtime.force_send_foreground.assert_not_called()
 
     def assert_quote_path(self, scope, requested=True, allowed=True):
         runtime, window, events, snapshot = self.window(scope)
         runtime.__dict__.update(
-            dead_chats=set(), dead_chat_until={}, chat_paused=Mock(return_value=False),
-            group_is_alive=Mock(return_value=True), is_self_chat=Mock(return_value=False),
+            dead_chats=set(), dead_chat_until={}, chat_paused=Mock(return_value=False), group_is_alive=Mock(return_value=True), is_self_chat=Mock(return_value=False),
             ui_chat_name=Mock(return_value='fixture-chat'), account_send_allowed=Mock(return_value=allowed),
             send_lock=nullcontext(), gui_lock=nullcontext(), send_policy_allows=Mock(return_value=True),
             sticker_quarantine_allows=Mock(return_value=True), fail_streak={}, bg_send=Mock(return_value=False),
-            gui=SimpleNamespace(quote_msg=Mock(return_value=True), _get_uia=Mock(return_value=object())),
+            gui=SimpleNamespace(quote_msg=Mock(return_value=True), _get_uia=Mock(return_value=SimpleNamespace(
+                _chat_input=lambda: SimpleNamespace(value='')))),
             bind_gui_window=Mock(), uia_send=Mock(return_value=True), with_window_on_top=window)
+        runtime._require_chat_identity = Mock()
+        runtime._input_value = Mock(return_value='')
+        runtime.aliases_for = Mock(return_value=['fixture-chat'])
         g = SimpleNamespace(QUOTE_REPLY=scope['QUOTE_REPLY'], STICKER_TEST_ON=False,
             BG_SEND=scope['BG_SEND'], SEND_STATE={}, _SendStateScope=lambda _: nullcontext(),
             time=SimpleNamespace(time=lambda: 10000), log=Mock(), log_error=Mock(), log_throttled=Mock(),

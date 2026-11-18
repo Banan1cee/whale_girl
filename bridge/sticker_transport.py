@@ -349,7 +349,11 @@ def _is_blank(value):
     现场问题：只要按 `!= ''` 判断，输入框永远算「有草稿」，私聊里表情包
     一张也发不出去（日志：input contains a draft）。
     """
-    return isinstance(value, str) and value.strip() == ''
+    try:
+        from send_input import is_blank
+    except ImportError:
+        from .send_input import is_blank
+    return is_blank(value)
 
 
 def _is_attachment(value):

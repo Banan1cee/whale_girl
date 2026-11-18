@@ -246,7 +246,11 @@ def _is_blank(value):
     把空框误判成 residue_left → 回退重发、同一条消息发两遍（M1）。
     所以一律「strip 后为空即认为空」。
     """
-    return isinstance(value, str) and value.strip() == ""
+    try:
+        from send_input import is_blank
+    except ImportError:
+        from .send_input import is_blank
+    return is_blank(value)
 
 
 # ---------------------------------------------------------------- 物化（文档 §4.1）
@@ -889,13 +893,21 @@ def _reset_typed_composer(hwnd, chat, value, input_before):
 
 def _calibrate_char_mode(sender, chat, modes, log):
     """校验固定的汉字，绝不拿整条回复试编码，也不点击发送。"""
+    try:
+        from send_attempt import operation_for_call, SendPreparationStopped
+    except ImportError:
+        from .send_attempt import operation_for_call, SendPreparationStopped
+    operation = operation_for_call()
     for mode in modes:
+        if not operation.reserve('encoding_probe'):
+            raise SendPreparationStopped('encoding preparation stopped')
         info = read_ui(sender.hwnd)
         if not _target_composer(info, chat) or not _is_blank(info.get("value")):
             # 会话切走了 / 框里本来就有草稿：这次一个字都没写，不算探测留下的脏框。
             return "", True
         try:
             input_before = _input_snapshot()
+            operation.record('input_started', 'encoding_probe')
             try:
                 sender.type_text("鲸", char_gap=0.05, strip_unencodable=False, mode=mode)
                 time.sleep(TIMING["sendEnabled"])
@@ -904,12 +916,15 @@ def _calibrate_char_mode(sender, chat, modes, log):
                 sender.end_input()
             clean = _reset_typed_composer(sender.hwnd, chat, info.get("value"), input_before)
         except Exception as err:
+            operation.record('draft_dirty', 'encoding_probe_exception')
             log("后台通道：编码探测中断（%s），停止发送" % type(err).__name__)
             return "", False
         if not clean:
+            operation.record('draft_dirty', 'encoding_probe_not_clean')
             log("后台通道：编码探测后无法确认输入框已空（编码=%s，回读长度=%s，稳定=%s），停止发送"
                 % (mode, len(got) if got is not None else "未知", "是" if stable else "否"))
             return "", False
+        operation.record('not_sent', 'encoding_probe_clean')
         if got == "鲸":
             log("后台通道：编码实测 → %s" % mode)
             return mode, True
@@ -1180,21 +1195,19 @@ def name_score(alias, name):
 def _chat_is_target(current, aliases):
     """当前会话名是否就是目标会话，返回 (是否通过, 当前名)。
 
-    只认 name_score 的 0（完全相同）和 1（未命名群的成员名集合），**不认 2（包含）**：
+    发送采用共享身份事实：完全相同或精确成员多重集，**不认包含/子串**：
     「群A」和「群A2」在包含匹配下互认，点错了也当切过去了，正文就发到别的群。
-    这条判据和 engine._chat_identity_level 保持一致。
+    name_score 只负责搜索排序，不参与发送授权。
     """
-    cur = str(current or "").strip()
-    keys = aliases if isinstance(aliases, (list, tuple, set)) else [aliases]
-    keys = [str(a or "").strip() for a in keys if str(a or "").strip()]
-    if not cur or not keys:
-        return False, cur
-    best = None
-    for a in keys:
-        sc = name_score(a, cur)
-        if sc is not None and (best is None or sc < best):
-            best = sc
-    return (best is not None and best <= 1), cur
+    try:
+        from send_state import chat_identity_fact
+        from send_attempt import operation_for_call
+    except ImportError:
+        from .send_state import chat_identity_fact
+        from .send_attempt import operation_for_call
+    cur = str(current or '').strip()
+    operation = operation_for_call()
+    return chat_identity_fact(cur, aliases, operation.target_username, operation.known_chats)['level'] is not None, cur
 
 
 def _chat_tab_target(info):
@@ -1231,8 +1244,8 @@ def _ensure_chat_page(sender, info, log=None, timeout=2.5, force=False):
         except Exception as e:
             log("后台通道：点「%s」栏失败 %r" % (CHAT_TAB_NAME, e))
             return info
-        deadline = time.time() + max(0.5, float(timeout))
-        while time.time() < deadline:
+        deadline = time.monotonic() + max(0.5, float(timeout))
+        while time.monotonic() < deadline:
             time.sleep(TIMING["pollSwitch"])
             info = read_ui(sender.hwnd)
             if info.get("rows"):
@@ -1303,9 +1316,9 @@ def open_chat(sender, aliases, timeout=6.0, log=None):
         log("后台通道：点会话行失败 %r" % (e,))
         return False
 
-    deadline = time.time() + max(1.0, float(timeout))
+    deadline = time.monotonic() + max(1.0, float(timeout))
     rematerialized = False
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         time.sleep(TIMING["pollSwitch"])
         info = read_ui(sender.hwnd)
         cur = info["chat"]
@@ -1384,7 +1397,7 @@ class _WriteGuard:
 _MODE_LOGGED = set()
 
 
-def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
+def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
          strip_unencodable=True, verify=True, unhide=True, char_mode="auto"):
     """一步发完：物化 → 切会话 → 伪焦点打字 → 点发送 → 回读确认。
 
@@ -1405,6 +1418,13 @@ def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
     | error:<Type> | ❌ | 其它异常 |
     """
     log = log or _noop
+    try:
+        from send_attempt import operation_for_call, SendPreparationStopped
+    except ImportError:
+        from .send_attempt import operation_for_call, SendPreparationStopped
+    operation = operation_for_call(len(str(text or '')))
+    if not operation.can_continue():
+        raise SendPreparationStopped('background preparation stopped')
     # WM_CHAR 里的 CR/LF 可能被当作按键或被吞掉。后台每个气泡用空格保留段落分隔，
     # 前台剪贴板通道仍可原样粘贴多行；不要把格式差异当作编码失效。
     text = re.sub(r"[ \t]*\n[ \t\n]*", " ", _composer_text("" if text is None else str(text)))
@@ -1493,6 +1513,8 @@ def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                 log("后台通道：打字编码 = %s（UIA SetValue 优先，失败回退 WM_CHAR）" % mode)
             # 校验失败本身无法区分丢字、格式差异和乱码。只有短探测读回正确，才重写正文。
             for attempt in range(2):
+                if not operation.can_continue():
+                    raise SendPreparationStopped('background input stopped')
                 current = read_ui(hwnd)
                 if not _target_composer(current, chat) or not _is_blank(current.get("value")):
                     return False, "input_dirty" if attempt else "input_not_empty"
@@ -1501,6 +1523,7 @@ def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                     return False, "content_mismatch" if attempt else "gbk_unsupported"
                 input_before = _input_snapshot()
                 draft_dirty = True
+                operation.record('input_started', 'background_input')
                 ok, skipped = _type_text(sender, current.get("edit"), text,
                                          mode=mode, char_gap=char_gap,
                                          strip_unencodable=strip_unencodable, log=log)
@@ -1546,7 +1569,10 @@ def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                 sender.end_input()
                 log("后台通道：打完字找不到发送按钮，草稿可能残留在输入框")
                 return False, "input_dirty"
+            if not operation.begin_effect('background_click'):
+                raise SendPreparationStopped('background submission stopped')
             sender.click_screen(*xy)
+            operation.record('submitted', 'background_click')
             if not expected.isascii():
                 _remember_char_mode(hwnd, mode, log)
             time.sleep(TIMING["afterClick"])
@@ -1559,8 +1585,8 @@ def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
             # 发出去了没有：输入框清空 = 走了。空框可能是 '\n'，按 _is_blank 判
             # （M1）；读不到（None）按「已发送」处理，免得退回前台通道再打一遍、
             # 聊天里出现两句一样的话。
-            deadline = time.time() + 2.0
-            while time.time() < deadline:
+            deadline = min(time.monotonic() + 2.0, operation.started + operation.budget)
+            while time.monotonic() < deadline:
                 info = read_ui(hwnd)
                 v = info.get("value")
                 if not _target_composer(info, chat) or v is None:
@@ -1585,6 +1611,30 @@ def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                 log("后台通道：打字中断，草稿可能残留在输入框")
                 return False, "input_dirty"
             return False, "error:" + type(e).__name__
+
+
+def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
+         strip_unencodable=True, verify=True, unhide=True, char_mode="auto"):
+    """Compatible tuple entry; share the caller's logical preparation budget."""
+    try:
+        from send_attempt import logical_operation, SendPreparationStopped
+    except ImportError:
+        from .send_attempt import logical_operation, SendPreparationStopped
+    with logical_operation(len(str(text or ''))) as operation:
+        if operation.steps == 0 and not operation.reserve('background'):
+            return False, 'error:SendPreparationStopped'
+        try:
+            outcome = _send_once(text, chat, hwnd, log, char_gap, strip_unencodable, verify, unhide, char_mode)
+        except SendPreparationStopped:
+            return False, 'error:SendPreparationStopped'
+        ok, reason = outcome
+        if ok:
+            operation.record('uncertain' if reason == 'sent_unverified' else 'submitted', reason)
+        elif reason in ('input_dirty', 'input_not_empty', 'content_mismatch', 'residue_left'):
+            operation.record('draft_dirty', reason)
+        elif reason == 'chat_mismatch':
+            operation.record('identity_mismatch', reason)
+        return outcome
 
 
 # ---------------------------------------------------------------- 自检（文档 §11）

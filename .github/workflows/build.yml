@@ -30,6 +30,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       # 启动器是 net10.0-windows，必须用 .NET 10 SDK
       - uses: actions/setup-dotnet@v4
         with:
@@ -47,13 +51,24 @@ jobs:
       - name: 发布
         shell: pwsh
         run: |
+          $packageVersion = (Get-Content package.json -Raw -Encoding utf8 | ConvertFrom-Json).version
+          $metaArgs = @($packageVersion)
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $metaArgs += @('--tag', $env:GITHUB_REF_NAME) }
+          $metaJson = node scripts/version-policy.js @metaArgs
+          if ($LASTEXITCODE -ne 0) { throw '版本元数据无效' }
+          $meta = $metaJson | ConvertFrom-Json
           dotnet publish launcher/WhaleLauncher.csproj `
             -c Release `
             -r win-x64 `
             --self-contained false `
             -p:PublishSingleFile=true `
+            "-p:Version=$($meta.version)" `
+            "-p:FileVersion=$($meta.fileVersion)" `
+            "-p:AssemblyVersion=$($meta.fileVersion)" `
+            "-p:ProductVersion=$($meta.productVersion)" `
             -o "${{ runner.temp }}/publish" `
             --nologo
+          if ($LASTEXITCODE -ne 0) { throw '启动器publish失败' }
 
       # 产物体检：不存在、太小（说明没打进去）、版本号不对都直接红，
       # 避免把一个坏 exe 传上去。
@@ -76,12 +91,16 @@ jobs:
             Write-Output '::error title=产物可疑::exe 超过 20MB，怀疑打成了 self-contained'; exit 1
           }
 
-          # 读文件版本，确认是预期的 4.x
+          $packageVersion = (Get-Content package.json -Raw -Encoding utf8 | ConvertFrom-Json).version
+          $metaArgs = @($packageVersion)
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $metaArgs += @('--tag', $env:GITHUB_REF_NAME) }
+          $metaJson = node scripts/version-policy.js @metaArgs
+          if ($LASTEXITCODE -ne 0) { throw '版本元数据无效' }
+          $meta = $metaJson | ConvertFrom-Json
           $ver = $item.VersionInfo.FileVersion
           Write-Output "文件版本：$ver"
-          if (-not $ver -or -not $ver.StartsWith('4.')) {
-            Write-Output "::warning title=版本异常::文件版本为 $ver，不是预期的 4.x"
-          }
+          if ($item.VersionInfo.FileVersion -ne $meta.fileVersion) { throw '产物FileVersion与package/tag映射不一致' }
+          if ($item.VersionInfo.ProductVersion -ne $meta.productVersion) { throw '产物ProductVersion与package/tag映射不一致' }
 
           # 目录里除了 exe 不应该再有别的（单文件发布）
           $others = Get-ChildItem "${{ runner.temp }}/publish" -File | Where-Object { $_.Name -ne 'WhaleLauncher.exe' }

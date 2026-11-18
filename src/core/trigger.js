@@ -4,6 +4,7 @@ const features = require('../infra/features');
 const { clampInt } = require('./text');
 const { herNames, namedHerIn, isAddressed, talkingToOthers } = require('./addressing');
 const sessionState = require('./sessionState');
+const { recentReplyCount } = require('./replyQuota');
 
 /** 读布尔开关：兼容老配置里的字符串 "false" / "0"（configSchema 允许这种写法） */
 const toBool = features.toBool;
@@ -96,19 +97,7 @@ function computeTrigger(bot, { msg, atMe, clean, isGroup, state, nowMs, isMaster
   // 同一套计数在 chat.js 的 burst_limit 里也会兜一次，两处读同一个配置。
   const cap = Number(g.maxRepliesPerMinute);
   if (cap > 0) {
-    const minuteAgo = nowMs - 60 * 1000;
-    const times = Array.isArray(state.replyTimes) ? state.replyTimes : [];
-    let recent = 0;
-    for (const t of times) if (Number(t) > minuteAgo) recent += 1;
-    // state.replyTimes 在会话状态被重建时会丢条目（并发下实测会漏拦），
-    // 所以再数一遍存储里真正落盘的助手消息 —— 那才是权威来源。
-    try {
-      const stored = bot.store
-        .messages(key, 200)
-        .filter((m) => m.role === 'assistant' && Number(m.ts) > minuteAgo).length;
-      if (stored > recent) recent = stored;
-    } catch { /* 读不到就按内存里的算 */ }
-    if (!recent && Number(state.lastReplyAt) > minuteAgo) recent = 1;
+    const recent = recentReplyCount(bot, { key, state, nowMs });
     if (recent >= cap) return { wake: false, reason: 'minute_cap' };
   }
   // 没点名她的时候有两种放行方式，都受同一个「插话概率」控制：
