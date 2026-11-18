@@ -10,7 +10,7 @@ const presets = require('../persona/presets');
 const features = require('../infra/features');
 const { ReminderService } = require('./reminderService');
 
-const { applyPersonaPatch, savePersonaPreset, deletePersonaPreset, renamePersonaPreset } = require('./persona');
+const { applyPersonaPatch, savePersonaPreset, deletePersonaPreset, renamePersonaPreset, currentPersonaWarnings } = require('./persona');
 const { DiaryService } = require('./diary');
 const { MomentsPublisher } = require('./momentsPublisher');
 const { prepareFeatureCommand, momentsSettings, prepareMomentsSettingsPatch, prepareMomentsPublishPatch } = require('./configCommands');
@@ -90,7 +90,7 @@ function readSnapshot(root, env = process.env) {
     '/api/settings': getSettings(runtime),
     '/api/persona': (() => {
       const p = persona.summary(config);
-      return { ok: true, persona: p, presetSource: presets.sourceOf(config, p.sourcePreset) };
+      return { ok: true, persona: p, warnings: currentPersonaWarnings(config), presetSource: presets.sourceOf(config, p.sourcePreset) };
     })(),
     '/api/persona/presets': { ok: true, presets: presets.list(config) },
     '/api/features': { ok: true, features: features.list(config) },

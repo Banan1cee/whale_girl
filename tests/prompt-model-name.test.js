@@ -45,7 +45,9 @@ for (const staticSystem of [true, false]) {
   });
 
   test(`${mode}：默认人设让被问型号时打哈哈，且不出现「不报型号」式念规则`, () => {
-    const sys = systemFor(makeConfig({ model: randomModel(), staticSystem }));
+    const cfg = makeConfig({ model: randomModel(), staticSystem });
+    cfg.persona.newBehavior = false;
+    const sys = systemFor(cfg);
     assert.match(sys, /就当被问体重，打个哈哈带过去/, '被问模型时要自然带过，而不是声明不报');
     assert.doesNotMatch(sys, /我的模型是/, '旧的报型号模板必须删掉');
     // 否定式规则会被模型复述成「不报型号，…」的开头，system 里不应再有这种措辞

@@ -29,6 +29,7 @@ const { tagId, tagName, textMeta, urlHost } = require('../infra/privacy');
 const { saveSettings } = require('../infra/config');
 const time = require('../infra/time');
 const personaStore = require('../persona/store');
+const { usesNewPersona } = require('../persona/profile');
 const { sanitizeForModel, nameMatches, stripInternalTimestamps } = require('../core/text');
 const { sendDenial } = require('../core/wechatSendPolicy');
 const trigger = require('../core/trigger');
@@ -402,7 +403,7 @@ class Bot {
 
   buildTurns(msg, history, memoryBlock, tailBlock) {
     return context.buildTurns(
-      { ...msg, botName: this.config.persona.name },
+      { ...msg, botName: this.config.persona.name, newPersonaBehavior: msg.newPersonaBehavior ?? usesNewPersona(this.config) },
       history,
       memoryBlock,
       tailBlock,
@@ -484,6 +485,8 @@ class Bot {
 
   async _decide(rawMsg) {
     const msg = this.normalize(rawMsg);
+    const modernPersona = usesNewPersona(this.config);
+    msg.newPersonaBehavior = modernPersona;
     // normalize() 只保留固定字段，桥接状态（gateway 挂在消息上的 {online,uia,ffmpeg}）会丢；
     // 这里补回来，供本轮状态里那句「桥接在线 / 离线」用。
     if (rawMsg && rawMsg.bridgeStatus && typeof rawMsg.bridgeStatus === 'object') {
@@ -732,7 +735,7 @@ class Bot {
     // 群里被人骂了但没 @：只有「骂的是她」才唤醒她反击。
     // 以前这里只看「文本带脏字」+「她刚说过话/在接话窗口」就唤醒 —— 于是群里任何人
     // 抱怨一句「这天气真垃圾」「股票跌了滚蛋吧」，她都会跳出来，还绕过静默期。
-    if (!triggerResult.wake && isGroup && !atMe) {
+    if (!modernPersona && !triggerResult.wake && isGroup && !atMe) {
       const said = String(clean.text || '');
       const insulted = INSULT_RE.test(said) || INSULT_LOOSE_RE.test(said);
       const guard = features.isOn(this.config, 'groupAddressGuard');
@@ -898,7 +901,7 @@ class Bot {
     // 认真讨论（不是随口闲聊）→ 允许说长一点、有观点
     const discussPattern = /(讨论|探讨|你觉得|你怎么看|你认为|为什么|该不该|要不要|是不是应该|如何选择|怎么选|怎么看|有道理吗|值得吗|价值观|人生|意义|观点|看法|利弊|优缺点)/;
     // 只按本条请求判断，旧存档的讨论窗口不能把短句闲聊永久续成详细回答。
-    const discussion = Boolean(clean.text && clean.text.length >= 8 && discussPattern.test(clean.text));
+    const discussion = !modernPersona && Boolean(clean.text && clean.text.length >= 8 && discussPattern.test(clean.text));
     state.discussUntil = 0;
     msg.discussion = discussion;
 
@@ -992,12 +995,12 @@ class Bot {
     // 正在跟她对话的人，哪怕只说「傻逼」两个字、不带「你」不带名字，也是在骂她；
     // 但「张三你个傻逼」里的「你」指的是张三，不在对话中就不算。
     const aimedAtHer = namedHer || inConversationWithSender;
-    let fight = !isMaster && aimedAtHer && insultRe.test(heardText);
+    let fight = !modernPersona && !isMaster && aimedAtHer && insultRe.test(heardText);
     let fightDirty = fight && dirtyRe.test(heardText);
     let fightOnMaster = Boolean(fight && masterMentioned);
     let fightTarget = null;
     // 主人说「有人骂我 / 帮我怼他」：翻最近的记录，把骂他的人揪出来当靶子
-    if (isMaster && /(有人骂我|谁骂我|他骂我|她骂我|骂我了|刚才骂我|帮我骂|帮我怼|怼他|有人喷我)/.test(heardText)) {
+    if (!modernPersona && isMaster && /(有人骂我|谁骂我|他骂我|她骂我|骂我了|刚才骂我|帮我骂|帮我怼|怼他|有人喷我)/.test(heardText)) {
       try {
         const recent = this.store.messages(key, 20).filter((m) => m.role === 'user' && m.uid && String(m.uid) !== String(msg.senderId));
         for (let i = recent.length - 1; i >= 0; i -= 1) {
@@ -1251,6 +1254,7 @@ class Bot {
   handleAdmin({ msg, clean, key, state, isMaster, nowMs }) {
     // 不接受昵称兜底或上游传来的 isMaster 标记作为管理凭据。
     isMaster = isVerifiedOwner(this.config, msg);
+    if (!isMaster && (msg.newPersonaBehavior ?? usesNewPersona(this.config))) return null;
     const adminCfg = this.config.admin || {};
     const spell = String(adminCfg.spell || '').trim();
     const text = String((clean && clean.text) || '').trim();
@@ -1777,6 +1781,7 @@ class Bot {
   }
 
   finalize(decision, text, { error = false } = {}) {
+    const modernPersona = decision?.msg?.newPersonaBehavior ?? usesNewPersona(this.config);
     text = stripInternalTimestamps(text);
     // 模型主动退场标记 [[silence:分钟]]：先解析并从正文剥掉，再走后面的格式清理。
     const silenceMark = stripSilenceMark(text);
@@ -1794,8 +1799,8 @@ class Bot {
     // 去掉波浪号、句号、感叹号，像真人打字一样干净
     text = text.replace(/[~～]+/g, '').replace(/[。！!]+/g, '。').replace(/[ \t]{2,}/g, ' ').trim();
     // 脏话换成年轻人的说法（对喷时保留原样，不然吵起来没劲）
-    const fighting = Boolean(decision && decision.msg && decision.msg.fight) || (decision && decision.reason === 'clapback');
-    if (!fighting) {
+    const fighting = !modernPersona && (Boolean(decision?.msg?.fight) || decision?.reason === 'clapback');
+    if (!modernPersona && !fighting) {
       // 「草」只在整句被当成语气词时才软化：草 / 草，/ 草！ 都要换，
       // 但「草莓」「草地」「草案」这类正常词不能动（以前 ^草 一网打尽，草莓都变我去莓）。
       // 用前瞻保留后面的标点，替换后读起来才是「我去，明天见」而不是「我去明天见」。
@@ -1803,7 +1808,7 @@ class Bot {
     }
     // 弱模型爱说客服话，直接掐掉（免费模型尤其明显）
     const serviceTone = /(有什么(我)?能?可以?帮(你|您)的?吗?|需要我帮(你|您)|希望(这)?能帮到你|还有什么可以帮|作为一个(?:AI|语言模型)|随时告诉我)/;
-    if (serviceTone.test(text) && !fighting) {
+    if (!modernPersona && !fighting && serviceTone.test(text)) {
       const kept = text.split(/[，,。；;\n]/).map((s) => s.trim()).filter((s) => s && !serviceTone.test(s)).join('，').trim();
       if (kept.length >= 2) text = kept;
     }
@@ -1828,8 +1833,7 @@ class Bot {
     const heardList = (decision && decision.heardList) || [String((decision && decision.msg && (decision.msg.cleanText || decision.msg.text)) || '')];
     const ownList = (decision && decision.ownList) || [];
     if (heardList.some((h) => isEcho(text, h)) || ownList.some((h) => isEcho(text, h))) {
-      const fightingNow = Boolean(decision && decision.msg && decision.msg.fight);
-      const line = fightingNow
+      const line = !modernPersona && decision?.msg?.fight
         ? persona.clapbackPick(['重', '爹味', '反问'], this.rng)
         : (this.rng() < 0.5 ? '你说呢' : '这话我听着都替你尴尬');
       if (line) text = line;
@@ -1839,7 +1843,7 @@ class Bot {
     // L3：开火了却说不清对方骂了啥（没引用原话片段）→ 大概率是自作多情，降级成一句「？」
     // 只对「没被叫到、只在群里听到脏话就开火」的情况做原话校验；
     // @她/点名的对喷不需要证明，别再把她嘴堵上。
-    const autoFight = Boolean(msg.fight) && !msg.isMaster && String(msg.fightReason || '') === 'insulted';
+    const autoFight = !modernPersona && Boolean(msg.fight) && !msg.isMaster && String(msg.fightReason || '') === 'insulted';
     // 只在「连她名字都没提」的自动开火时校验；点名了就是在说她，别把人嘴堵上
     if (autoFight && !addressing.namedHerIn(msg.cleanText || msg.text || '', addressing.herNames(this, msg))
         && features.isOn(this.config, 'fightQuoteCheck')) {
@@ -1858,7 +1862,7 @@ class Bot {
       }
     }
     // 主人告状说有人骂他：她在替主人出头，骂的是别人，不适用「对主人不许带脏字」
-    if (msg.fightTarget && msg.fightTarget.name) {
+    if (!modernPersona && msg.fightTarget?.name) {
       const name = msg.fightTarget.name;
       if (!String(text).includes(name)) {
         const attack = persona.clapbackPick(['重', '爹味', '反问'], this.rng) || '你算什么东西';
@@ -1887,11 +1891,11 @@ class Bot {
         text = '是我主人啊，这还用问。';
         decision.finalText = text;
       }
-      if (rude.test(text)) {
+      if (!modernPersona && rude.test(text)) {
         this.logger && this.logger.warn('对主人回嘴越线，改掉：' + textMeta(text));
         text = roastOn && scolded ? pickRoast() : '主人你骂我我也得听着，这次是我没做好';
         decision.finalText = text;
-      } else if (roastOn && scolded && (apology.test(String(text)) || tooHostile.test(String(text)))) {
+      } else if (!modernPersona && roastOn && scolded && (apology.test(String(text)) || tooHostile.test(String(text)))) {
         // 主人在数落她，她却在道歉、或者骂得像仇人，换成撒泼式回嘴
         this.logger && this.logger.warn('主人让互怼，但语气不对，换掉：' + textMeta(text));
         text = pickRoast();
@@ -1939,7 +1943,7 @@ class Bot {
     const maxBubbles = Math.max(1, Number(this.config.chat.maxBubbles) || 2);
     const hard = LIMITS.maxOutputHard || 4000;
     const normalMaxChars = Math.max(20, Math.min(Number(isGroup ? this.config.chat.groupMaxChars : this.config.chat.privateMaxChars) || LIMITS.maxOutputNormal, hard));
-    const maxChars = msg.discussion
+    const maxChars = !modernPersona && msg.discussion
       ? Math.min(normalMaxChars, Math.max(20, Number(this.config.chat.discussionMaxChars) || LIMITS.maxOutputDiscussion))
       : normalMaxChars;
     // 字数设置约束整轮正文，不能因分句、多气泡或讨论模式而放大。

@@ -27,6 +27,20 @@
             <StackPanel Margin="0,0,12,0" MaxWidth="1100" HorizontalAlignment="Stretch">
                 <Border x:Name="SecPreset" Style="{StaticResource Card}" Padding="20" Margin="0,0,0,16">
                     <StackPanel>
+                        <Grid Margin="0,0,0,14">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <CheckBox x:Name="ChkNewBehavior" Content="使用新版人设行为" IsChecked="True"
+                                      Click="OnToggleField" VerticalAlignment="Top" />
+                            <Expander Grid.Column="1" Header="小贴士 · 新旧版区别" IsExpanded="False"
+                                      HorizontalAlignment="Right" Foreground="{DynamicResource Text}">
+                                <StackPanel Margin="10,8,0,0" MaxWidth="390">
+                                    <TextBlock Style="{StaticResource Small}" TextWrapping="Wrap"
+                                               Text="新版（默认）更依赖你填写的人设。主人认证只确认身份，按本条内容回应，不自动进入对喷或认真讨论模式；回复长度按私聊与群聊设置，提示词有可能冲突时会提示。" />
+                                    <TextBlock Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,8,0,0"
+                                               Text="旧版沿用原有的主人命令提示、自动对喷、讨论长度和文字润色。关闭开关即可切回。两种模式下都可以编辑所有人设，已保存的人设会继续使用。" />
+                                </StackPanel>
+                            </Expander>
+                        </Grid>
                         <TextBlock Text="人设与预设" Style="{StaticResource H2}" />
                         <TextBlock x:Name="CurrentPreset" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,12" />
                         <Grid>
@@ -39,15 +53,12 @@
                             <Button x:Name="BtnSavePreset" Content="创建自定义人设" Style="{StaticResource Ghost}" Click="OnSavePreset" Margin="0,0,8,8" />
                             <Button Content="打包分享" Style="{StaticResource Ghost}" Click="OnExportPersona" Margin="0,0,8,8" />
                             <Button Content="仅分享提示词" Style="{StaticResource Ghost}" Click="OnExportPrompt" Margin="0,0,8,8" />
-                            <Button x:Name="BtnCopyPreset" Content="复制为自建预设" Style="{StaticResource Ghost}" Click="OnCopyPreset" Visibility="Collapsed" Margin="0,0,8,8" />
                             <Button x:Name="BtnUpdatePreset" Content="更新此预设" Style="{StaticResource Ghost}" Click="OnUpdatePreset" Margin="0,0,8,8" />
                             <Button x:Name="BtnResetMarket" Content="恢复作者版本" Style="{StaticResource Ghost}" Click="OnResetMarket" Margin="0,0,8,8" />
                             <Button x:Name="BtnRenamePreset" Content="重命名" Style="{StaticResource Ghost}" Click="OnRenamePreset" Margin="0,0,8,8" />
                             <Button x:Name="BtnDeletePreset" Content="删除预设" Style="{StaticResource Ghost}" Click="OnDeletePreset" Margin="0,0,8,8" />
                             <TextBlock x:Name="PresetSaved" Style="{StaticResource Small}" VerticalAlignment="Center" />
                         </WrapPanel>
-                        <TextBlock x:Name="PresetLockHint" Style="{StaticResource Small}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,4,0,12"
-                                   Text="所有人设均可编辑；创建自定义人设可另存当前内容，原始内置文件不变。" />
                         <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Margin="0,8,0,16" />
                         <TextBlock Text="内在性格" Style="{StaticResource H2}" />
                         <TextBlock Text="这些基础字段定义她是谁。自定义内容用于补充，冲突时以当前基础字段为准。" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,12" />
@@ -81,6 +92,7 @@
                             <StackPanel Margin="0,8,0,0">
                                 <TextBlock Text="可写说话细节、喜好和补充经历；无需重复当前名字、开关和能力说明。内容随每轮请求发送，越长越占输入预算。" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,0,0,8" />
                                 <TextBox x:Name="TxtPrompt" MinHeight="120" MaxHeight="320" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" LostFocus="OnFieldLostFocus" AutomationProperties.Name="自定义补充提示词" />
+                                <TextBlock x:Name="PromptWarnings" Foreground="{DynamicResource Warn}" Style="{StaticResource Small}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite" />
                             </StackPanel>
                         </Expander>
                     </StackPanel>
@@ -114,7 +126,7 @@
                             <StackPanel Margin="0,0,12,0"><Label Content="私聊字数上限" Target="{Binding ElementName=TxtPrivate}" /><ui:NumberField x:Name="TxtPrivate" Minimum="40" Maximum="800" Fallback="100" Label="私聊字数上限" LostFocus="OnFieldLostFocus" /><TextBlock x:Name="HintPrivate" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" /></StackPanel>
                             <StackPanel Grid.Column="1"><Label Content="群聊字数上限" Target="{Binding ElementName=TxtGroup}" /><ui:NumberField x:Name="TxtGroup" Minimum="20" Maximum="300" Fallback="70" Label="群聊字数上限" LostFocus="OnFieldLostFocus" /><TextBlock x:Name="HintGroup" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" /></StackPanel>
                         </Grid>
-                        <TextBlock Text="普通回复遵循以上上限；认真讨论有独立上限，不为了短句牺牲完整回答。" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,12" />
+                        <TextBlock Text="私聊和群聊分别使用上面的字数上限。旧版认真讨论还有独立上限。" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,12" />
                         <Label Content="颜文字用量" Target="{Binding ElementName=SldEmoji}" />
                         <Slider x:Name="SldEmoji" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="OnEmojiChanged" AutomationProperties.Name="颜文字用量百分比" />
                         <TextBlock x:Name="HintEmoji" Style="{StaticResource Small}" Margin="0,6,0,12" />

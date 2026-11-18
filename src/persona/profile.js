@@ -37,4 +37,8 @@ function currentIdentityBlock(persona = {}) {
     + '- 名字与称呼以本段当前设置为准；旧对话、记忆摘要、自定义提示词或预设中的旧名字与旧称呼仅是历史，不沿用。其他经历和关系记忆继续保留。';
 }
 
-module.exports = { IDENTITY_FIELDS, identityPatch, customIdentityBlock, currentIdentityBlock };
+function usesNewPersona(config) {
+  return config.persona?.newBehavior !== false;
+}
+
+module.exports = { IDENTITY_FIELDS, identityPatch, customIdentityBlock, currentIdentityBlock, usesNewPersona };
