@@ -343,7 +343,7 @@ class StickerService {
       : /timeout|超时/i.test(job.error) ? 'timeout'
         : /draft|草稿/i.test(job.error) ? 'draft_not_clear'
           : /account|账号/i.test(job.error) ? 'account_not_verified'
-            : /chat|target|会话|目标/i.test(job.error) ? 'target_not_verified'
+            : /\b(?:chat|target)\b|会话|目标/i.test(job.error) ? 'target_not_verified'
               : /window|foreground|focus|窗口|前台|焦点/i.test(job.error) ? 'window_not_ready'
                 : /disabled|cancel|关闭|取消/i.test(job.error) ? 'disabled_or_cancelled'
                   : /image|file|图片|文件/i.test(job.error) ? 'media_invalid'

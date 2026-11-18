@@ -1,4 +1,4 @@
-"""仅供朋友圈发表使用的有限前台切换，不改变聊天通道的窗口激活策略。"""
+"""朋友圈和表情包共用的限时前台切换。"""
 import time
 
 
@@ -16,8 +16,8 @@ def _unlock_foreground():
     return True
 
 
-def activate_for_publish(runtime, hwnd, pid, allowed, *, pause=time.sleep,
-                         unlock=None, probe=lambda details: None):
+def activate_verified_window(runtime, hwnd, pid, allowed, *, pause=time.sleep,
+                             unlock=None, probe=lambda details: None):
     import win32gui as win
     import win32process as process
 
@@ -31,7 +31,10 @@ def activate_for_publish(runtime, hwnd, pid, allowed, *, pause=time.sleep,
                 and win.IsWindowVisible(hwnd) and not win.IsIconic(hwnd))
 
     try:
-        if not valid() or not allowed():
+        # 单窗绑定等入口只记录 HWND，此处固定第一次核验到的进程。
+        if not pid and win.IsWindow(hwnd):
+            pid = process.GetWindowThreadProcessId(hwnd)[1]
+        if not pid or not valid() or not allowed():
             return False
         # SetForegroundWindow 可能返回失败/抛异常，但窗口其实已经在前台。
         if ready():
@@ -77,3 +80,6 @@ def activate_for_publish(runtime, hwnd, pid, allowed, *, pause=time.sleep,
                    'visible': bool(win.IsWindowVisible(hwnd)), 'iconic': bool(win.IsIconic(hwnd))})
         except Exception:
             pass
+
+
+activate_for_publish = activate_verified_window
