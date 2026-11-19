@@ -31,7 +31,7 @@ static class ProviderChecks
     public static async Task Run(string directory)
     {
         int count=0;void Check(bool ok){if(!ok)throw new Exception("Speech provider check failed #"+(count+1));count++;}
-        Check(SpeechProviders.All.Length==3);
+        Check(SpeechProviders.All.Length==4);
         bool rejected=false;try{SpeechProviders.KeyFile(directory,"../other");}catch(ArgumentException){rejected=true;}Check(rejected);
         var oldKey=SpeechProviders.KeyFile(directory,"breezeblue");
         BreezeSpeech.SaveKey(oldKey,"fake-breeze-key");BreezeSpeech.SaveKey(SpeechProviders.KeyFile(directory,"minimax"),"fake-minimax-key");

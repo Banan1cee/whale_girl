@@ -27,6 +27,9 @@ public static class SpeechProviders
     public const string CosyModel = "FunAudioLLM/CosyVoice2-0.5B";
     public const string MossModel = "fnlp/MOSS-TTSD-v0.5";
     public const string MiniMaxDefaultVoice = "qiaopi_mengmei";
+    // DeepSeek 的 TTS 没有模型参数，模型下拉里只放这一项占位，避免界面空着。
+    public const string DeepSeekModel = "deepseek-tts";
+    public const string DeepSeekDefaultVoice = "stella";
     static readonly Lazy<BreezeSpeech.Choice[]> MiniMaxVoices = new(() => {
         using var stream = typeof(SpeechProviders).Assembly.GetManifestResourceStream("WhaleLauncher.MiniMaxVoices.json");
         return JsonSerializer.Deserialize<BreezeSpeech.Choice[]>(stream);
@@ -34,7 +37,9 @@ public static class SpeechProviders
     public static readonly Provider[] All = {
         new("breezeblue", "BreezeBlue", BreezeSpeech.BaseUrl, "https://breezeblue.ai/zh/app/developer/api-keys"),
         new("minimax", "MiniMax", "https://api.minimax.cn/v1", "https://platform.minimax.cn/console/keys"),
-        new("siliconflow", "硅基流动 SiliconFlow", "https://api.siliconflow.cn/v1", "https://cloud.siliconflow.cn/account/ak")
+        new("siliconflow", "硅基流动 SiliconFlow", "https://api.siliconflow.cn/v1", "https://cloud.siliconflow.cn/account/ak"),
+        // DeepSeek TTS：/v1/tools/tts，参数是 voice_id + format，和 OpenAI 那套不同，单独走分支。
+        new("deepseek", "DeepSeek", "https://api.deepseek.com", "https://platform.deepseek.com/api_keys")
     };
     public static Provider Get(string id) => All.FirstOrDefault(p => p.Id == id)
         ?? throw new ArgumentException("不支持的语音厂商，请重新选择");
@@ -43,10 +48,13 @@ public static class SpeechProviders
         Get(id);
         return Path.Combine(root, "data", id == "breezeblue" ? "voice-send-breeze.key" : "voice-send-" + id + ".key");
     }
+
     public static SpeechProfile Defaults(string id) => id switch {
         "breezeblue" => new() { Model = BreezeSpeech.DefaultModelId, Voice = BreezeSpeech.DefaultVoiceId },
         "minimax" => new() { Model = "speech-2.8-turbo", Voice = MiniMaxDefaultVoice },
         "siliconflow" => new() { Model = CosyModel, Voice = CosyModel + ":claire" },
+        // DeepSeek 只有 voice_id，没有模型参数；这里放一个占位模型名给界面显示。
+        "deepseek" => new() { Model = DeepSeekModel, Voice = DeepSeekDefaultVoice },
         _ => throw new ArgumentException("不支持的语音厂商")
     };
     public static BreezeSpeech.Choice[] Choices(string id, IEnumerable<BreezeSpeech.Choice> options, string selected, bool voices, string model = null)
@@ -79,6 +87,10 @@ public static class SpeechProviders
                 new BreezeSpeech.Choice(model + ":david", "欢快男声 David") }
                 : new[] { new BreezeSpeech.Choice(CosyModel, "CosyVoice 2（默认）"), new BreezeSpeech.Choice(MossModel, "MOSS-TTSD 0.5 · 中英对话语音") });
         if(id == "minimax" && voices) presets = presets.Concat(MiniMaxVoices.Value).DistinctBy(c => c.Id).ToArray();
+        if (id == "deepseek")
+            presets = voices
+                ? new[] { new BreezeSpeech.Choice("stella", "海星（女声，默认）"), new BreezeSpeech.Choice("tide", "暗潮（男声）") }
+                : new[] { new BreezeSpeech.Choice(DeepSeekModel, "DeepSeek 语音合成（按字符计费）") };
         var list = presets.Concat(options ?? Array.Empty<BreezeSpeech.Choice>()).Where(c => !string.IsNullOrWhiteSpace(c.Id)).DistinctBy(c => c.Id).ToList();
         if (!list.Any(c => c.Id == selected)) list.Add(new(selected, "已保存的自定义" + (voices ? "音色" : "模型")));
         return list.ToArray();
@@ -98,6 +110,15 @@ public static class SpeechProviders
     {
         Get(id);
         if (id == "breezeblue") return BreezeSpeech.CreateRequest(key, model, voice, text, instructions);
+        // DeepSeek：POST /v1/tools/tts，没有 model 参数，音色用 voice_id，直接回 audio/wav。
+        // 放在通用校验之前：它不需要 model，音色留空时退回默认 stella，不该被"请选择模型和音色"拦掉。
+        if (id == "deepseek") {
+            if (string.IsNullOrWhiteSpace(text) || text.Length > 1000) throw new ArgumentException("请输入 1～1000 字");
+            return Request(id, key, "/v1/tools/tts", new {
+                text, voice_id = string.IsNullOrWhiteSpace(voice) ? DeepSeekDefaultVoice : voice,
+                format = "wav", filter_markdown = true
+            });
+        }
         if (string.IsNullOrWhiteSpace(text) || text.Length > 1000) throw new ArgumentException("请输入 1～1000 字");
         if (string.IsNullOrWhiteSpace(model) || string.IsNullOrWhiteSpace(voice)) throw new ArgumentException("请选择模型和音色");
         if (id == "minimax") return Request(id, key, "/t2a_v2", new {
@@ -105,6 +126,7 @@ public static class SpeechProviders
             voice_setting = new { voice_id = voice, speed = 1, vol = 1, pitch = 0 },
             audio_setting = new { sample_rate = 32000, format = "wav", channel = 1 }
         });
+
         string input = model == MossModel ? "[S1]" + text
             : string.IsNullOrWhiteSpace(instructions) ? text : instructions.Trim() + "<|endofprompt|>" + text;
         return Request(id, key, "/audio/speech", new {
@@ -152,7 +174,9 @@ public static class SpeechProviders
                 if (string.IsNullOrEmpty(hex) || hex.Length > 32 * 1024 * 1024) throw new Exception("MiniMax 未返回有效音频");
                 audio = Convert.FromHexString(hex);
             }
-            if(id == "siliconflow") DownloadedWave.FinalizeHeader(audio);
+            // DeepSeek 回的是流式 WAV：RIFF 和 data 的长度字段是 0xFFFFFFFF 占位，
+            // 和实际数据长度对不上，统一在这里按真实字节数改写。
+            if(id == "siliconflow" || id == "deepseek") DownloadedWave.FinalizeHeader(audio);
             timeout.Token.ThrowIfCancellationRequested();
             using (var output = new FileStream(file, FileMode.CreateNew, FileAccess.Write)) {
                 created = true; await output.WriteAsync(audio, timeout.Token);
@@ -171,6 +195,8 @@ public static class SpeechProviders
     {
         Get(id);
         if (id == "breezeblue") return await BreezeSpeech.Catalog(key, voices, search, ct);
+        // DeepSeek 只有 stella / tide 两个固定音色，没有目录接口，别去联网问。
+        if (id == "deepseek") return Choices(id, null, "", voices);
         if (id == "minimax" && !voices) return Choices(id, null, "", false);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct); timeout.CancelAfter(TimeSpan.FromSeconds(15));
         using var owned = transport == null ? Client() : null;
@@ -211,6 +237,16 @@ public static class SpeechProviders
         if (id == "breezeblue") return await BreezeSpeech.CheckKey(key, ct, transport);
         if (string.IsNullOrWhiteSpace(key)) return new(false, "请先填写 " + Get(id).Name + " Key");
         try {
+            // DeepSeek 的 Catalog 是本地固定列表，鉴权必须真的打一次接口。
+            if (id == "deepseek") {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct); timeout.CancelAfter(TimeSpan.FromSeconds(15));
+                using var owned = transport == null ? Client() : null;
+                using var probe = Request(id, key, "/v1/models");
+                using var response = await (transport ?? owned).SendAsync(probe, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                if (!response.IsSuccessStatusCode)
+                    return new(false, (int)response.StatusCode == 401 ? "API Key 不可用：HTTP 401" : "接口返回 HTTP " + (int)response.StatusCode);
+                return new(true, "DeepSeek Key 鉴权通过（合成按字符计费）");
+            }
             await Catalog(id, key, id == "minimax", "", ct, transport);
             return new(true, Get(id).Name + " 连接与鉴权通过（合成仍需额度和模型权限）");
         }
