@@ -22,26 +22,40 @@ function safeId(value) {
   return id;
 }
 function isPrivateHost(hostname) {
-  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  let host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
-  const family = net.isIP(host);
+  let family = net.isIP(host);
   if (family === 4) {
     const p = host.split('.').map(Number);
     return p[0] === 0 || p[0] === 10 || p[0] === 127 || p[0] >= 224
       || (p[0] === 100 && p[1] >= 64 && p[1] <= 127)
       || (p[0] === 169 && p[1] === 254)
       || (p[0] === 172 && p[1] >= 16 && p[1] <= 31)
-      || (p[0] === 192 && (p[1] === 0 || p[1] === 168))
+      || (p[0] === 192 && ((p[1] === 0 && (p[2] === 0 || p[2] === 2)) || p[1] === 168))
       || (p[0] === 198 && (p[1] === 18 || p[1] === 19 || p[1] === 51 && p[2] === 100))
       || (p[0] === 203 && p[1] === 0 && p[2] === 113);
   }
   if (family === 6) {
-    const mapped = host.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isPrivateHost(mapped[1]);
-    return host === '::1' || host === '::' || host.startsWith('fc') || host.startsWith('fd')
-      || host.startsWith('fe80:') || host.startsWith('ff') || host.startsWith('2001:db8:');
+    // Canonicalize first: URL.hostname rewrites dotted IPv4-mapped IPv6 such as
+    // ::ffff:127.0.0.1 into the hexadecimal form ::ffff:7f00:1.
+    try {
+      host = new URL('http://[' + host + ']/').hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    } catch { return true; }
+    family = net.isIP(host);
+    if (family !== 6) return true;
+
+    const words = host.split(':');
+    const first = Number.parseInt(words[0] || '0', 16);
+    const second = Number.parseInt(words[1] || '0', 16);
+    // Only accept IPv6 global-unicast space (2000::/3). This excludes
+    // unspecified/loopback, mapped/compatible IPv4, ULA, link-local and multicast.
+    if ((first & 0xe000) !== 0x2000) return true;
+    // Also reject special-purpose protocol/documentation ranges and 6to4.
+    if (first === 0x2001 && (second <= 0x01ff || second === 0x0db8)) return true;
+    if (first === 0x2002 || first === 0x3fff) return true;
+    return false;
   }
-  return false;
+  return family === 0 ? false : true;
 }
 
 function requestPinned(urlText, { signal, headers, address }) {
@@ -176,10 +190,19 @@ class SkillsKnowledgeService {
       const parts = [];
       let bytes = 0;
       for (const file of files) {
-        const data = fs.readFileSync(file);
-        bytes += data.length;
-        if (bytes > MAX_KB_BYTES) throw fail('知识库内容超过 1 MiB 限制');
-        parts.push('\n## ' + path.basename(file) + '\n' + data.toString('utf8'));
+        // Check the advertised size before opening the file, then enforce the
+        // same cumulative limit while streaming in case it grows during the read.
+        const fileStat = fs.statSync(file);
+        if (!fileStat.isFile() || fileStat.size > MAX_KB_BYTES - bytes) {
+          throw fail('知识库内容超过 1 MiB 限制');
+        }
+        const chunks = [];
+        for await (const chunk of fs.createReadStream(file)) {
+          bytes += chunk.length;
+          if (bytes > MAX_KB_BYTES) throw fail('知识库内容超过 1 MiB 限制');
+          chunks.push(chunk);
+        }
+        parts.push('\n## ' + path.basename(file) + '\n' + Buffer.concat(chunks).toString('utf8'));
       }
       text = parts.join('\n').slice(0, MAX_KB_BYTES);
     } else {
