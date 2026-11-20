@@ -71,7 +71,7 @@ test('remote knowledge rejects private addresses and unsupported protocols', asy
 test('remote knowledge follows bounded text response and rejects redirects', async () => {
   const f = fixture();
   try {
-    const service = new SkillsKnowledgeService({ dataDir: f.dir, fetcher: async (_url, options) => {
+    const service = new SkillsKnowledgeService({ dataDir: f.dir, resolver: async () => [{ address: '93.184.216.34', family: 4 }], fetcher: async (_url, options) => {
       assert.equal(options.redirect, 'error');
       return { ok: true, status: 200, headers: { get: () => 'text/plain; charset=utf-8' }, text: async () => '远程知识内容' };
     } });
