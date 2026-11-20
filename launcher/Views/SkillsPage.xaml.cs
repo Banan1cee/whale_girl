@@ -54,7 +54,7 @@ namespace WhaleLauncher.Views
         private async void OnDelete(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrWhiteSpace(IdBox.Text)) return;
-            var res = await _sup.SaveConfigurationAsync("/api/skills/" + Uri.EscapeDataString(IdBox.Text.Trim()) + "/delete", new { });
+            var res = await _sup.SaveConfigurationAsync("/api/skills/delete", new { id = IdBox.Text.Trim() });
             StatusText.Text = res.Ok ? "删除请求已完成。" : "删除失败：" + Api.Message(res);
             if (res.Ok) { OnClear(sender, e); await RefreshAsync(); }
         }
