@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
+const dns = require('node:dns/promises');
 const crypto = require('node:crypto');
 
 const MAX_SKILLS = 100;
@@ -32,7 +33,7 @@ function isPrivateHost(hostname) {
 }
 
 class SkillsKnowledgeService {
-  constructor({ dataDir, fetcher = fetch, logger = null } = {}) {
+  constructor({ dataDir, fetcher = fetch, resolver = dns.lookup, logger = null } = {}) {
     this.dataDir = path.resolve(dataDir || 'data');
     this.skillsFile = path.join(this.dataDir, 'custom-skills.json');
     this.knowledgeFile = path.join(this.dataDir, 'knowledge-sources.json');
