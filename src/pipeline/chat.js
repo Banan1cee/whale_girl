@@ -2111,6 +2111,9 @@ class Bot {
       } else if (decision.mock) {
         text = decision.text;
       } else {
+        if (this.skillsKnowledge) {
+          decision.system = this.skillsKnowledge.enrich({ purpose: 'chat', system: decision.system, turns: decision.turns }).system;
+        }
         text = await this.llm.complete({ system: decision.system, turns: decision.turns, signal, purpose: 'chat' });
         if (signal?.aborted) return { action: 'ignore', reason: 'cancelled' };
         this.checkReplyLength(String(text || '').length);
