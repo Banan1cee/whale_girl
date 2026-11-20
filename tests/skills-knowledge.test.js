@@ -113,3 +113,15 @@ test('remote knowledge rejects a public-looking hostname that resolves to loopba
     assert.equal(requested, false);
   } finally { f.close(); }
 });
+
+
+test('malformed persisted files do not break service startup', () => {
+  const f = fixture();
+  try {
+    fs.writeFileSync(path.join(f.dir, 'custom-skills.json'), JSON.stringify({ skills: [{ id: 'broken', keywords: [null], content: 7 }] }));
+    fs.writeFileSync(path.join(f.dir, 'knowledge-sources.json'), 'null');
+    const service = new SkillsKnowledgeService({ dataDir: f.dir });
+    assert.deepEqual(service.listSkills(), []);
+    assert.deepEqual(service.listKnowledge(), []);
+  } finally { f.close(); }
+});
