@@ -38,6 +38,7 @@ class SkillsKnowledgeService {
     this.skillsFile = path.join(this.dataDir, 'custom-skills.json');
     this.knowledgeFile = path.join(this.dataDir, 'knowledge-sources.json');
     this.fetcher = fetcher;
+    this.resolver = resolver;
     this.logger = logger;
     this.knowledge = new Map();
     this.skills = this.readJson(this.skillsFile, { skills: [] }).skills || [];
