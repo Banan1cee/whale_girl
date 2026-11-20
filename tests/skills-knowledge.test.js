@@ -64,6 +64,8 @@ test('remote knowledge rejects private addresses and unsupported protocols', asy
     assert.throws(() => f.service.validateSource({ id: 'internal', type: 'remote', path: 'http://127.0.0.1/private' }), /内网/);
     assert.throws(() => f.service.validateSource({ id: 'bad', type: 'remote', path: 'file:///etc/passwd' }), /HTTP/);
     assert.equal(isPrivateHost('192.168.1.2'), true);
+    assert.equal(isPrivateHost('::ffff:127.0.0.1'), true);
+    assert.equal(isPrivateHost('100.64.0.1'), true);
     assert.equal(isPrivateHost('example.com'), false);
   } finally { f.close(); }
 });
@@ -78,5 +80,19 @@ test('remote knowledge follows bounded text response and rejects redirects', asy
     const result = await service.testKnowledgeSource({ id: 'remote-doc', type: 'remote', path: 'https://example.com/guide.txt' });
     assert.equal(result.status, 'loaded');
     assert.ok(result.bytes > 0);
+  } finally { f.close(); }
+});
+
+
+test('skill edits and deletions persist by stable id', () => {
+  const f = fixture();
+  try {
+    f.service.saveSkill({ id: 'notes', name: '笔记', keywords: ['记笔记'], content: '旧内容' });
+    f.service.saveSkill({ id: 'notes', name: '笔记助手', keywords: ['笔记'], content: '新内容' });
+    assert.equal(f.service.listSkills().length, 1);
+    assert.equal(f.service.listSkills()[0].content, '新内容');
+    f.service.deleteSkill('notes');
+    assert.equal(f.service.listSkills().length, 0);
+    assert.throws(() => f.service.deleteSkill('notes'), /不存在/);
   } finally { f.close(); }
 });
