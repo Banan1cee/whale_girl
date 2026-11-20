@@ -146,9 +146,21 @@ class SkillsKnowledgeService {
         if (!response.ok) throw fail('网络知识库加载失败：HTTP ' + response.status, 502);
         const type = String(response.headers.get('content-type') || '');
         if (type && !/(text\/|application\/json)/i.test(type)) throw fail('网络知识库返回了不支持的内容类型', 502);
-        const data = await response.text();
-        if (Buffer.byteLength(data, 'utf8') > MAX_KB_BYTES) throw fail('网络知识库内容超过 1 MiB 限制');
-        text = data;
+        const declared = Number(response.headers.get('content-length')) || 0;
+        if (declared > MAX_KB_BYTES) throw fail('网络知识库内容超过 1 MiB 限制');
+        if (response.body) {
+          const chunks = [];
+          let bytes = 0;
+          for await (const chunk of response.body) {
+            bytes += chunk.length;
+            if (bytes > MAX_KB_BYTES) throw fail('网络知识库内容超过 1 MiB 限制');
+            chunks.push(Buffer.from(chunk));
+          }
+          text = Buffer.concat(chunks).toString('utf8');
+        } else {
+          text = await response.text();
+          if (Buffer.byteLength(text, 'utf8') > MAX_KB_BYTES) throw fail('网络知识库内容超过 1 MiB 限制');
+        }
       } catch (err) {
         if (err.name === 'AbortError') throw fail('网络知识库加载超时', 504);
         throw err;
