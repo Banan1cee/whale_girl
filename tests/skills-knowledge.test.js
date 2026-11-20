@@ -61,6 +61,18 @@ test('local knowledge sources load and contribute matching lines', async () => {
   } finally { f.close(); }
 });
 
+test('local knowledge rejects oversized files before loading their content', async () => {
+  const f = fixture();
+  try {
+    const file = path.join(f.dir, 'too-large.txt');
+    fs.writeFileSync(file, Buffer.alloc(1024 * 1024 + 1, 0x61));
+    await assert.rejects(
+      f.service.testKnowledgeSource({ id: 'too-large', type: 'local', path: file }),
+      /超过 1 MiB/
+    );
+  } finally { f.close(); }
+});
+
 test('remote knowledge rejects private addresses and unsupported protocols', async () => {
   const f = fixture();
   try {
@@ -117,6 +129,31 @@ test('remote knowledge rejects a public-looking hostname that resolves to loopba
   } finally { f.close(); }
 });
 
+
+test('remote knowledge rejects canonicalized mapped IPv4 and non-global IPv6 addresses', async () => {
+  const f = fixture();
+  try {
+    const mappedUrl = new URL('http://[::ffff:127.0.0.1]/private').hostname;
+    assert.equal(isPrivateHost(mappedUrl), true);
+    assert.throws(
+      () => f.service.validateSource({ id: 'mapped-url', type: 'remote', path: 'http://[::ffff:127.0.0.1]/private' }),
+      /内网/
+    );
+    assert.equal(isPrivateHost('fe90::1'), true);
+
+    let requested = false;
+    const service = new SkillsKnowledgeService({
+      dataDir: f.dir,
+      resolver: async () => [{ address: '::ffff:7f00:1', family: 6 }],
+      fetcher: async () => { requested = true; throw new Error('fetch must not run'); }
+    });
+    await assert.rejects(
+      service.testKnowledgeSource({ id: 'mapped-dns', type: 'remote', path: 'https://mapped.example/guide.md' }),
+      /内网/
+    );
+    assert.equal(requested, false);
+  } finally { f.close(); }
+});
 
 test('malformed persisted files do not break service startup', () => {
   const f = fixture();
