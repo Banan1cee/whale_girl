@@ -20,7 +20,7 @@ module.exports = function register(router) {
       return json(res, 200, { ok: true, item: service.setSkillEnabled(decodeURIComponent(skillEnabled[1]), body?.enabled) });
     }
     const skill = p.match(/^\/api\/skills\/([^/]+)$/);
-    if (skill && info.method === 'DELETE') return json(res, 200, service.deleteSkill(decodeURIComponent(skill[1])));
+    if (skill && (info.method === 'DELETE' || info.method === 'POST' && skill[1].endsWith('/delete'))) return json(res, 200, service.deleteSkill(decodeURIComponent(skill[1].replace(/\\/delete$/, ''))));
     if (p === '/api/knowledge' && info.method === 'GET') return json(res, 200, { ok: true, items: service.listKnowledge() });
     if (p === '/api/knowledge/test' && info.method === 'POST') {
       const body = await readBody(req);
@@ -31,7 +31,7 @@ module.exports = function register(router) {
       return json(res, 200, { ok: true, item: await service.saveKnowledgeSource(body) });
     }
     const knowledge = p.match(/^\/api\/knowledge\/([^/]+)$/);
-    if (knowledge && info.method === 'DELETE') return json(res, 200, service.deleteKnowledgeSource(decodeURIComponent(knowledge[1])));
+    if (knowledge && (info.method === 'DELETE' || info.method === 'POST' && knowledge[1].endsWith('/delete'))) return json(res, 200, service.deleteKnowledgeSource(decodeURIComponent(knowledge[1].replace(/\\/delete$/, ''))));
     if (p === '/api/knowledge/reload' && info.method === 'POST') return json(res, 200, { ok: true, results: await service.reloadKnowledge() });
     return json(res, 404, { ok: false, error: 'unknown skills or knowledge operation' });
   });
