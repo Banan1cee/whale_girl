@@ -52,7 +52,10 @@ test('local knowledge sources load and contribute matching lines', async () => {
     const file = path.join(f.dir, 'guide.md');
     fs.writeFileSync(file, '# 安装指南\nWindows 安装需要重启启动器。\n无关内容。', 'utf8');
     await f.service.saveKnowledgeSource({ id: 'guide', type: 'local', path: file });
-    const out = f.service.enrich({ purpose: 'chat', system: 'base', turns: [{ role: 'user', content: 'Windows 安装怎么做' }] });
+    const restarted = new SkillsKnowledgeService({ dataDir: f.dir });
+    const reload = await restarted.reloadKnowledge();
+    assert.equal(reload[0].status, 'loaded');
+    const out = restarted.enrich({ purpose: 'chat', system: 'base', turns: [{ role: 'user', content: 'Windows 安装怎么做' }] });
     assert.match(out.system, /重启启动器/);
     assert.equal(f.service.listKnowledge()[0].status, 'loaded');
   } finally { f.close(); }
