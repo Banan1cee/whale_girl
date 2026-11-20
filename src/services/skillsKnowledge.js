@@ -25,10 +25,20 @@ function isPrivateHost(hostname) {
   const family = net.isIP(host);
   if (family === 4) {
     const p = host.split('.').map(Number);
-    return p[0] === 10 || p[0] === 127 || p[0] === 0 || (p[0] === 169 && p[1] === 254)
-      || (p[0] === 172 && p[1] >= 16 && p[1] <= 31) || (p[0] === 192 && p[1] === 168);
+    return p[0] === 0 || p[0] === 10 || p[0] === 127 || p[0] >= 224
+      || (p[0] === 100 && p[1] >= 64 && p[1] <= 127)
+      || (p[0] === 169 && p[1] === 254)
+      || (p[0] === 172 && p[1] >= 16 && p[1] <= 31)
+      || (p[0] === 192 && (p[1] === 0 || p[1] === 168))
+      || (p[0] === 198 && (p[1] === 18 || p[1] === 19 || p[1] === 51 && p[2] === 100))
+      || (p[0] === 203 && p[1] === 0 && p[2] === 113);
   }
-  if (family === 6) return host === '::1' || host === '::' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:');
+  if (family === 6) {
+    const mapped = host.match(/^::ffff:(\\d+\\.\\d+\\.\\d+\\.\\d+)$/);
+    if (mapped) return isPrivateHost(mapped[1]);
+    return host === '::1' || host === '::' || host.startsWith('fc') || host.startsWith('fd')
+      || host.startsWith('fe80:') || host.startsWith('ff') || host.startsWith('2001:db8:');
+  }
   return false;
 }
 
