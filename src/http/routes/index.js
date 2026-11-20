@@ -22,6 +22,7 @@ const modules = [
   require('./memory'),
   require('./moments'),
   require('./plugins'),
+  require('./skillsKnowledge'),
 ];
 
 /** 组装路由表：每个领域一个文件，server 只负责启动。 */
