@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
 const dns = require('node:dns/promises');
+const http = require('node:http');
+const https = require('node:https');
 const crypto = require('node:crypto');
 
 const MAX_SKILLS = 100;
@@ -42,8 +44,38 @@ function isPrivateHost(hostname) {
   return false;
 }
 
+function requestPinned(urlText, { signal, headers, address }) {
+  const url = new URL(urlText);
+  const transport = url.protocol === 'https:' ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = transport.request(url, {
+      method: 'GET',
+      headers,
+      signal,
+      // 固定到刚刚校验过的公网 IP，避免 DNS 检查与实际连接之间被重绑定。
+      lookup: (_hostname, options, callback) => {
+        if (options && options.all) return callback(null, [{ address: address.address, family: address.family }]);
+        callback(null, address.address, address.family);
+      },
+    }, response => {
+      const status = Number(response.statusCode) || 0;
+      resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        headers: { get: name => {
+          const value = response.headers[String(name).toLowerCase()];
+          return Array.isArray(value) ? value.join(', ') : String(value || '');
+        } },
+        body: response,
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 class SkillsKnowledgeService {
-  constructor({ dataDir, fetcher = fetch, resolver = dns.lookup, logger = null } = {}) {
+  constructor({ dataDir, fetcher = null, resolver = dns.lookup, logger = null } = {}) {
     this.dataDir = path.resolve(dataDir || 'data');
     this.skillsFile = path.join(this.dataDir, 'custom-skills.json');
     this.knowledgeFile = path.join(this.dataDir, 'knowledge-sources.json');
@@ -160,8 +192,10 @@ class SkillsKnowledgeService {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 8000);
       try {
-        const response = await this.fetcher(source.path, { redirect: 'error', signal: controller.signal,
-          headers: { accept: 'text/plain, text/markdown, application/json' } });
+        const headers = { accept: 'text/plain, text/markdown, application/json' };
+        const response = this.fetcher
+          ? await this.fetcher(source.path, { redirect: 'error', signal: controller.signal, headers })
+          : await requestPinned(source.path, { signal: controller.signal, headers, address: addresses[0] });
         if (!response.ok) throw fail('网络知识库加载失败：HTTP ' + response.status, 502);
         const type = String(response.headers.get('content-type') || '');
         if (type && !/(text\/|application\/json)/i.test(type)) throw fail('网络知识库返回了不支持的内容类型', 502);
