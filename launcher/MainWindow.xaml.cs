@@ -50,6 +50,8 @@ namespace WhaleLauncher
             new NavEntry { Key = "微信桥接", Label = "微信桥接", Icon = Geometry.Parse("M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-4-.9L3 21l1.9-3.5a8.4 8.4 0 1 1 16.1-6Z M8 10h8 M8 13h5") },
             new NavEntry { Key = "诊断", Label = "诊断", Icon = Geometry.Parse("M3 12h4l2-5 4 10 2-5h6") },
             new NavEntry { Key = "插件市场", Label = "插件市场", Icon = Geometry.Parse("M4 9h16v11H4z M3 5h18v4H3z M10 13h4") },
+            new NavEntry { Key = "技能", Label = "技能", Icon = Geometry.Parse("M12 3v4 M12 17v4 M3 12h4 M17 12h4 M5.6 5.6l2.8 2.8 M15.6 15.6l2.8 2.8 M18.4 5.6l-2.8 2.8 M8.4 15.6l-2.8 2.8") },
+            new NavEntry { Key = "知识库", Label = "知识库", Icon = Geometry.Parse("M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21z M4 5.5V21 M8 7h8 M8 11h8") },
             new NavEntry { Key = "设置", Label = "设置", Icon = Geometry.Parse("M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.12.4.5.86 1.56 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1Z") },
         };
 
@@ -547,6 +549,8 @@ namespace WhaleLauncher
                 case "微信桥接": return new BridgePage(_sup);
                 case "诊断": return new DiagPage(_sup);
                 case "插件市场": return new PluginMarketPage(_pluginMarket, UpdateManifestService.LocalVersion(_sup.BaseDir), _sup);
+                case "技能": return new SkillsPage(_sup);
+                case "知识库": return new KnowledgePage(_sup);
                 case "设置": return new SettingsPage(_sup);
                 default:
                     return new PlaceholderPage(key, "这一页还没做。");
