@@ -51,9 +51,12 @@ class SkillsKnowledgeService {
     this.resolver = resolver;
     this.logger = logger;
     this.knowledge = new Map();
-    this.skills = this.readJson(this.skillsFile, { skills: [] }).skills || [];
-    this.sources = this.readJson(this.knowledgeFile, { sources: [] }).sources || [];
-    this.skills = this.skills.filter(s => s && typeof s === 'object' && typeof s.id === 'string');
+    const skillData = this.readJson(this.skillsFile, { skills: [] });
+    const sourceData = this.readJson(this.knowledgeFile, { sources: [] });
+    this.skills = Array.isArray(skillData.skills) ? skillData.skills.filter(s =>
+      s && typeof s === 'object' && typeof s.id === 'string' && Array.isArray(s.keywords) && typeof s.content === 'string') : [];
+    this.sources = Array.isArray(sourceData.sources) ? sourceData.sources.filter(s =>
+      s && typeof s === 'object' && typeof s.id === 'string' && typeof s.type === 'string' && typeof s.path === 'string') : [];
   }
 
   readJson(file, fallback) {
