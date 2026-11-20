@@ -34,6 +34,7 @@ const { DiaryService } = require('./services/diary');
 const { DigestService } = require('./services/digest');
 const locationProbe = require('./services/location');
 const { PluginHost } = require('./services/pluginHost');
+const { SkillsKnowledgeService } = require('./services/skillsKnowledge');
 
 const VERSION = require('../package.json').version;
 
@@ -153,6 +154,9 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   });
   runtime.trace = trace;
   runtime.bot = new Bot({ config, store, llm: runtime.llm, logger: child('pipeline'), trace, version: VERSION });
+  runtime.skillsKnowledge = new SkillsKnowledgeService({ dataDir: config.paths.dataDir, logger: child('knowledge') });
+  runtime.bot.skillsKnowledge = runtime.skillsKnowledge;
+  runtime.skillsKnowledge.reloadKnowledge().catch(err => logger.warn('知识库启动加载失败：' + describeError(err)));
   // 主人问起日记时，聊天模型通过 [[diary:日期]] 标记读取；不给它直接塞全文。
   runtime.bot.diary = runtime.diary;
   // 本机所在地：后台探一次（Windows 定位服务优先，挂 VPN 也准），之后定期刷新。
