@@ -88,8 +88,8 @@ test('artifact configuration 带 metadata restrictions，版本号从 parameters
   for (const file of ['whale-launcher.xml', 'whale-setup.xml']) {
     const xml = fs.readFileSync(path.join(dir, file), 'utf8');
     assert.match(xml, /<parameter name="version" required="true" \/>/, `${file} 缺 version 参数定义`);
-    assert.match(xml, /product-name="鲸鲸"/, `${file} 缺 product-name 约束`);
-    assert.match(xml, /company-name="鲸鲸"/, `${file} 缺 company-name 约束`);
+    assert.match(xml, /product-name="助手"/, `${file} 缺 product-name 约束`);
+    assert.match(xml, /company-name="助手"/, `${file} 缺 company-name 约束`);
     assert.match(xml, /product-version="\$\{version\}"/, `${file} 缺 product-version 约束`);
   }
   // 两轮签名都要把 version 传进去
@@ -124,11 +124,9 @@ test('SignPath 申请表单要的三个页面都在仓库里', () => {
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
   assert.match(readme, /## Download/, 'README 要有下载段落当 Homepage/Download 入口');
   assert.match(readme, /PRIVACY\.md/, 'README 要链到隐私声明');
-
-  const download = fs.readFileSync(path.join(root, 'docs', 'DOWNLOAD.md'), 'utf8');
-  assert.match(download, /尚未签名/, '下载页要说明当前未签名');
-  assert.match(download, /SHA256SUMS\.txt/, '下载页要给校验方式');
-  assert.match(download, /github\.com\/Banan1cee\/whale_girl\/releases/, '下载页要给 Releases 链接');
+  assert.match(readme, /SHA256SUMS\.txt/, '下载段落要给校验方式');
+  assert.match(readme, /github\.com\/Banan1cee\/whale_girl\/releases/, '下载段落要给 Releases 链接');
+  assert.match(readme, /not signed yet|未签名/, '下载段落要说明当前签名状态');
 
   const privacy = fs.readFileSync(path.join(root, 'docs', 'PRIVACY.md'), 'utf8');
   assert.match(privacy, /隐私政策/, '隐私政策要有标题');

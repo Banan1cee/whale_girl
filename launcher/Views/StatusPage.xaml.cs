@@ -149,7 +149,7 @@ namespace WhaleLauncher.Views
             "daily_cap" => "今天已经到上限了",
             "too_soon" => "刚说过没多久",
             "group_not_allowed" => "群里不让主动说话",
-            "only_master" => "只对主人主动",
+            "only_master" => "只对主要联系人主动",
             _ => "等待中"
         };
 

@@ -83,7 +83,7 @@ public sealed partial class MomentsPage : UserControl
             var items = result.Prop("items");
             var formatted = FormatItems(items);
             TxtOutput.Text = formatted.Text;
-            StatusText.Text = formatted.Count == 0 ? "本地缓存中没有匹配的动态；这不代表微信服务器没有新动态。" : $"已读取 {formatted.Count} 条（已保存最近快照，主人问起时可直接回答）";
+            StatusText.Text = formatted.Count == 0 ? "本地缓存中没有匹配的动态；这不代表微信服务器没有新动态。" : $"已读取 {formatted.Count} 条（已保存最近快照，主要联系人问起时可直接回答）";
         }
         catch (Exception ex) { if (generation == viewGeneration) StatusText.Text = Api.FriendlyError(ex); }
         finally { reading = false; BtnRead.IsEnabled = true; }
@@ -311,10 +311,12 @@ public sealed partial class MomentsPage : UserControl
         {
             var res = await sup.SaveConfigurationAsync("/api/moments/publish-settings",
                 new { featureEnabled, enabled, withImage = ChkPublishImage.IsChecked == true, interval, maxPerDay });
-            if (!res.Ok) { PublishStatus.Text = Api.Message(res); return; }
+            if (!res.Ok) { PublishStatus.Text = "保存失败：" + Api.Message(res); return; }
             publishSettingsLoaded = true;
             ChkPublish.IsChecked = res.Bool("enabled");
-            ShowPublishStatus(res);
+            // 保存成功要肉眼可见：只回显策略时用户分不清「点有没有生效」。
+            PublishStatus.Text = "发表设置已保存 · " + DateTime.Now.ToString("HH:mm:ss")
+                + Environment.NewLine + DescribePublishStatus(res);
         }
         finally { BtnSavePublish.IsEnabled = true; }
     }
@@ -351,7 +353,9 @@ public sealed partial class MomentsPage : UserControl
         finally { BtnTestPublish.IsEnabled = true; }
     }
 
-    void ShowPublishStatus(ApiResult res)
+    void ShowPublishStatus(ApiResult res) => PublishStatus.Text = DescribePublishStatus(res);
+
+    string DescribePublishStatus(ApiResult res)
     {
         var reason = res.Str("error");
         var detail = res.Str("status") switch
@@ -405,7 +409,7 @@ public sealed partial class MomentsPage : UserControl
         if (res.Str("status") is not ("no_material" or "model_unavailable" or "filtered" or "generating"))
             detail += " · " + imageInfo;
         var mode = res.Bool("enabled") ? "定时发表已开" : "定时发表已关";
-        PublishStatus.Text = res.Bool("featureEnabled")
+        return res.Bool("featureEnabled")
             ? $"{mode} · 今日自动发表占用 {res.Long("count")} 条额度 · {detail}" + (preview.Length > 0 ? Environment.NewLine + preview : "")
             : "朋友圈发表总开关已关闭";
     }

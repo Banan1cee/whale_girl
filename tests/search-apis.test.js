@@ -8,11 +8,11 @@ const path = require('node:path');
 const https = require('node:https');
 const { EventEmitter } = require('node:events');
 
-const deepseek = require('../src/adapters/search/deepseek');
-const zhihu = require('../src/adapters/search/zhihu');
-const qwen = require('../src/adapters/search/qwen');
-const { apiSearch } = require('../src/adapters/search/apiSearch');
-const quota = require('../src/adapters/search/quota');
+const deepseek = require('../src/modules/search/providers/deepseek');
+const zhihu = require('../src/modules/search/providers/zhihu');
+const qwen = require('../src/modules/search/providers/qwen');
+const { apiSearch } = require('../src/modules/search/providers/apiSearch');
+const quota = require('../src/modules/search/providers/quota');
 const { loadConfig } = require('../src/infra/config');
 
 function fakePost(t, handler) {

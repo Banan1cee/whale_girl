@@ -78,6 +78,13 @@ const REGISTRY = [
     default: true,
   },
   {
+    key: 'styleProfile',
+    path: 'features.styleProfile',
+    label: '对话风格画像（本机）',
+    desc: '有 data/style-profile.json 时，把对方的句长、语气、标点和常聊话题作为风格参考注入提示词。默认只做本地统计；让模型总结需要用户明确开启。关掉=不加载画像。',
+    default: true,
+  },
+  {
     key: 'wechatAccountGuard',
     path: 'wechat.accountGuard',
     label: '微信双开时钉死账号（认不出就不发）',
@@ -171,4 +178,4 @@ function defaults() {
   return out.features;
 }
 
-module.exports = { REGISTRY, isOn, list, defaults, getByPath, toBool };
+module.exports = { REGISTRY, isOn, list, defaults, toBool };

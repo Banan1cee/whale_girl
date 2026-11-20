@@ -64,6 +64,17 @@ Copy-Item launcher/publish/WhaleLauncher.exe .\WhaleLauncher.exe -Force
 - 提交信息按 `CONTRIBUTING.md` 第三节（新增 / 改进 / 修复 / 其他 四段），不再另设规范副本。
 - 用户可见行为变了，`docs/CHANGELOG.md` 补一段，版本规则见第 5 节。
 
+### 4.1 Node 内核模块边界
+
+Node 内核已按领域模块化到 `src/modules/<domain>/`（HTTP 路由全部由模块 manifest 注册）。多 agent 并行开发时按 `docs/模块边界.md` 执行：
+
+- 模块 agent 只写自己的 `src/modules/<id>/` 与对应 `tests/*.test.js`；跨模块静态依赖只用 `require('../other')` 到 `index.js`，禁止深 import。
+- `src/app.js`、`src/http/routes/index.js`、`src/bootstrap/`、`scripts/check-layers.js`、`CHANGELOG` 只由一个集成人合并修改；**新增/变更全局路由 `order` 也由集成人统一分配**。
+- `src/services/` 是共享用例平台层：由集成人指定**唯一平台写入者**，不与模块迁移并发；模块可以调用它的公开函数，但它调用模块时也只能走公开 `index.js`。
+- 路由注册必须保留原 `order`；模块 `manifest.js` 只声明，不创建实例、不启动任务。
+- 平台层（`core` / `pipeline` / `persona` / `memory` / `llm` / `adapters` / `infra`）不得反向依赖 `modules`。
+- `src/services/launcherSnapshot.js`、`src/services/stickerLibraryLocal.js` 是旧启动器直接执行的 CLI 入口，永久保留，不能改成纯 re-export。
+
 ## 5. 版本与 CHANGELOG
 
 - **已发布版本冻结**：GitHub Releases 上已经发过的版本，不再往它的条目里加内容。

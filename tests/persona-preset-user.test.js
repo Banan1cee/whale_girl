@@ -15,6 +15,16 @@ const { saveLocalConfiguration, readSnapshot } = require('../src/services/launch
 
 const rootRepo = path.resolve(__dirname, '..');
 
+function writePreset(dir, name, id, extra = {}) {
+  const data = {
+    id, order: 1, name, description: '测试预设', age: 22,
+    privateMaxChars: 120, groupMaxChars: 70, historyTurns: 10, groupHistoryTurns: 5,
+    customPrompt: '测试自定义提示词。'.repeat(40),
+    ...extra,
+  };
+  fs.writeFileSync(path.join(dir, name), JSON.stringify(data));
+}
+
 async function boot(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-user-preset-'));
   fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({
@@ -22,9 +32,8 @@ async function boot(t) {
     log: { level: 'error' },
   }));
   fs.mkdirSync(path.join(root, 'assets', 'personas'), { recursive: true });
-  for (const name of ['persona-standard.json', 'persona-zhainan.json']) {
-    fs.copyFileSync(path.join(rootRepo, 'assets', 'personas', name), path.join(root, 'assets', 'personas', name));
-  }
+  writePreset(path.join(root, 'assets', 'personas'), 'persona-standard.json', 'persona-standard');
+  writePreset(path.join(root, 'assets', 'personas'), 'persona-zhainan.json', 'persona-zhainan');
   const app = await startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0 });
   t.after(async () => {
     await app.close();
@@ -126,7 +135,7 @@ test('离线：启动器不在线时也能另存和删除', async (t) => {
   t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ watchConfig: false, env: { autoDetect: false } }));
   fs.mkdirSync(path.join(root, 'assets', 'personas'), { recursive: true });
-  fs.copyFileSync(path.join(rootRepo, 'assets', 'personas', 'persona-standard.json'), path.join(root, 'assets', 'personas', 'persona-standard.json'));
+  writePreset(path.join(root, 'assets', 'personas'), 'persona-standard.json', 'persona-standard');
 
   const saved = await saveLocalConfiguration(root, {
     path: '/api/persona/preset/save', body: { name: '离线预设' },

@@ -134,7 +134,7 @@ function transcript(messages) {
   return (messages || [])
     .filter((m) => m && m.text)
     .map((m) => {
-      const who = m.role === 'assistant' ? '鲸鲸' : (m.name || m.uid || '对方');
+      const who = m.role === 'assistant' ? '助手' : (m.name || m.uid || '对方');
       return `[${m.id || ('msg_' + m.seq)}] ${who}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 200)}`;
     })
     .join('\n')
@@ -226,7 +226,7 @@ function extractiveSummary(messages, maxChars = 160) {
   const parts = [];
   for (const m of messages || []) {
     if (!m || !m.text) continue;
-    const who = m.role === 'assistant' ? '鲸鲸' : (m.name || '对方');
+    const who = m.role === 'assistant' ? '助手' : (m.name || '对方');
     const body = String(m.text).replace(/\s+/g, ' ').trim();
     if (!body) continue;
     parts.push(`${who}：${body.slice(0, 40)}`);

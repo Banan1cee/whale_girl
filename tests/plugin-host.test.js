@@ -5,8 +5,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { PluginHost } = require('../src/services/pluginHost');
-const { ReminderService } = require('../src/services/reminderService');
-const { StickerService } = require('../src/services/stickerService');
+const { ReminderService } = require('../src/modules/reminders');
+const { StickerService } = require('../src/modules/stickers');
 const features = require('../src/infra/features');
 
 function fixture(t) {

@@ -42,7 +42,7 @@ const g = (text, extra = {}) => ({
 
 test('模型原样复读对方的话 → 会重写', async () => {
   const { bot, calls, cleanup } = makeBot({ replies: ['我打完了', '那你先歇会儿吧'] });
-  const r = await bot.handle(g('@鲸鲸 我打完了'));
+  const r = await bot.handle(g('@助手 我打完了'));
   assert.equal(r.action, 'reply');
   assert.notEqual(r.reply, '我打完了');
   assert.match(r.reply, /歇/);
@@ -53,31 +53,31 @@ test('模型原样复读对方的话 → 会重写', async () => {
 
 test('只加一个问号也算复读', async () => {
   const { bot, cleanup } = makeBot({ replies: ['好蠢？', '你才蠢，我是故意的'] });
-  const r = await bot.handle(g('@鲸鲸 好蠢'));
+  const r = await bot.handle(g('@助手 好蠢'));
   assert.doesNotMatch(r.reply, /^好蠢/);
   cleanup();
 });
 
 test('重写还是复读 → 换成不重复的兜底话', async () => {
   const { bot, cleanup } = makeBot({ replies: ['好蠢', '好蠢啊'] });
-  const r = await bot.handle(g('@鲸鲸 好蠢'));
+  const r = await bot.handle(g('@助手 好蠢'));
   assert.ok(!['好蠢', '好蠢啊'].includes(r.reply), '不该把对方的话发回去：' + r.reply);
   cleanup();
 });
 
 test('不会重复自己上一句', async () => {
   const { bot, cleanup } = makeBot({ replies: ['嘴硬', '行吧，那就当我嘴硬', '嘴硬', '那你说个不嘴硬的'] });
-  const first = await bot.handle(g('@鲸鲸 你是不是嘴硬'));
+  const first = await bot.handle(g('@助手 你是不是嘴硬'));
   assert.equal(first.action, 'reply');
   // 第二次她本来会再回一次「嘴硬」，应被判定成自我复读并重写
-  const second = await bot.handle(g('@鲸鲸 再说一遍', { msgId: 'm2' }));
+  const second = await bot.handle(g('@助手 再说一遍', { msgId: 'm2' }));
   assert.notEqual(second.reply, '嘴硬');
   cleanup();
 });
 
 test('正常回答不会被改动，也不会白跑一次重写', async () => {
   const { bot, calls, cleanup } = makeBot({ replies: ['那就先休息，别硬撑'] });
-  const r = await bot.handle(g('@鲸鲸 我今天好累'));
+  const r = await bot.handle(g('@助手 我今天好累'));
   assert.equal(r.reply, '那就先休息，别硬撑');
   assert.equal(calls.length, 1);
   cleanup();
@@ -85,7 +85,7 @@ test('正常回答不会被改动，也不会白跑一次重写', async () => {
 
 test('提示词里明确禁止复读', async () => {
   const { bot, cleanup } = makeBot({ replies: ['随便'] });
-  const d = await bot.decide(g('@鲸鲸 在吗'));
+  const d = await bot.decide(g('@助手 在吗'));
   assert.match(d.system, /不复读对方的话/);
   cleanup();
 });

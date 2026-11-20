@@ -12,7 +12,7 @@ const path = require('node:path');
 const http = require('node:http');
 
 const reminder = require('../src/core/reminder');
-const { ReminderService } = require('../src/services/reminderService');
+const { ReminderService } = require('../src/modules/reminders');
 const { Bot } = require('../src/pipeline/chat');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG, loadConfig } = require('../src/infra/config');

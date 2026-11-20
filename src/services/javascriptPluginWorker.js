@@ -2,7 +2,7 @@
 
 // Api 4 is trusted native JavaScript, NOT a vm/security sandbox. Its source is
 // loaded only after the launcher recorded full-access consent for this hash.
-const Module = require('node:module');
+const { createRequire } = require('node:module');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const path = require('node:path');
 const calls = new Map();
@@ -53,13 +53,33 @@ function initialize(message) {
   settings = message;
   sdk = createSdk();
   const filename = path.join(settings.paths.pluginData, 'plugin.js');
-  const entry = new Module(filename, module);
-  entry.filename = filename;
-  entry.paths = Module._nodeModulePaths(settings.paths.pluginData);
-  const originalRequire = entry.require.bind(entry);
-  entry.require = name => name === 'whale' ? sdk : originalRequire(name);
-  entry._compile(message.source, filename);
-  exported = entry.exports;
+  // Bun 的 Module 实例没有 Node 的 .require / ._compile，所以自己拼 CommonJS 外壳。
+  // createRequire 同时负责相对路径与 node: 内置模块，Node 下与原来的 entry.require 等价。
+  const nativeRequire = createRequire(filename);
+  const pluginRequire = name => name === 'whale' ? sdk : nativeRequire(name);
+  // 保留 require.resolve / cache / main，插件按 Node 习惯用它们时不至于突然 undefined。
+  pluginRequire.resolve = (request, options) => nativeRequire.resolve(request, options);
+  pluginRequire.cache = nativeRequire.cache;
+  pluginRequire.main = nativeRequire.main;
+  pluginRequire.extensions = nativeRequire.extensions;
+  const pluginModule = {
+    id: filename,
+    filename,
+    path: settings.paths.pluginData,
+    exports: {},
+    loaded: false,
+    children: [],
+    parent: module,
+    paths: [],
+  };
+  const source = String(message.source || '')
+    .replace(/^\uFEFF/, '')
+    .replace(/^#![^\n]*\n?/, '');
+  const wrapper = new Function('require', 'module', 'exports', '__filename', '__dirname', source);
+  wrapper.call(pluginModule.exports, pluginRequire, pluginModule, pluginModule.exports,
+    filename, settings.paths.pluginData);
+  pluginModule.loaded = true;
+  exported = pluginModule.exports;
   send({ type: 'ready' });
 }
 

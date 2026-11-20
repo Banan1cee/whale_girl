@@ -6,8 +6,8 @@ const assert = require('node:assert/strict');
 const https = require('node:https');
 const http = require('node:http');
 const { EventEmitter } = require('node:events');
-const web = require('../src/adapters/websearch');
-const { route } = require('../src/adapters/searchRouter');
+const web = require('../src/modules/search/websearch');
+const { route } = require('../src/modules/search/router');
 const { DeepSeekClient, LlmError } = require('../src/llm/client');
 
 function fakeHttps(t, handler) {
@@ -303,7 +303,7 @@ test('weather geocoding and forecast use one total deadline', async (t) => {
 const so = (title, url, snippet = title) => `<li class="res-list" data-result-type="normal"><h3 class="res-title"><a href="https://www.so.com/link?m=fixture" data-mdurl="${url}">${title}</a></h3><p class="res-desc">${snippet}</p></li>`;
 
 test('360 解析真实地址、摘要和实体，丢弃广告、不透明跳转和危险链接', () => {
-  const { parseSo360 } = require('../src/adapters/search/so360');
+  const { parseSo360 } = require('../src/modules/search/providers/so360');
   const html = so('<em>显卡</em>报价', 'https://example.test/price?id=1&amp;utm_source=so', '5天前&nbsp;-&nbsp;显卡价格')
     + '<li class="res-list"><h3 class="res-title"><a href="https://www.so.com/link?m=opaque">不透明</a></h3></li>'
     + '<li class="res-list"><h3 class="res-title"><a href="javascript:alert(1)">危险</a></h3></li>'
@@ -312,7 +312,7 @@ test('360 解析真实地址、摘要和实体，丢弃广告、不透明跳转�
 });
 
 test('360 验证码与明确无结果分开报告', async t => {
-  const provider = require('../src/adapters/search/so360');
+  const provider = require('../src/modules/search/providers/so360');
   fakeHttps(t, call => new URL(call.url).searchParams.get('q') === 'blocked'
     ? { body: '<html>安全验证 请输入验证码</html>' } : { body: '<html>没有找到相关结果</html>' });
   await assert.rejects(provider.search('blocked', { timeoutMs: 1000 }), { code: 'blocked' });
@@ -370,7 +370,7 @@ test('解析结构变化与空结果有不同状态，错误不泄露页面内�
 });
 
 test('传输调用者取消会销毁请求，零预算不会偷偷重置为八秒', async t => {
-  const { getText } = require('../src/adapters/search/transport');
+  const { getText } = require('../src/modules/search/providers/transport');
   const controller = new AbortController();
   const calls = fakeHttps(t, () => ({ never: true }));
   await assert.rejects(getText('https://example.test/', { timeoutMs: 0 }), { code: 'deadline_exceeded' });
@@ -382,7 +382,7 @@ test('传输调用者取消会销毁请求，零预算不会偷偷重置为八�
 });
 
 test('天气超时仍有预算走搜索回退，底层天气连接确实关闭', async t => {
-  const { search } = require('../src/services/search');
+  const { search } = require('../src/modules/search');
   const calls = fakeHttps(t, call => call.url.includes('geocoding-api')
     ? { body: JSON.stringify({ results: [{ name: '测试城', latitude: 30, longitude: 120 }] }) }
     : call.url.includes('api.open-meteo') ? { drip: true }

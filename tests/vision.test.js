@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-const visionSrc = fs.readFileSync(path.join(root, 'src', 'adapters', 'vision.js'), 'utf8');
+const visionSrc = fs.readFileSync(path.join(root, 'src', 'modules', 'vision', 'vision.js'), 'utf8');
 const bridgeSrc = require('./helpers/bridge-source');
 
 test('视觉提示词要求逐条转写，并且分清左右气泡', () => {
@@ -50,7 +50,7 @@ test('图片描述长度有上限，不会把上下文塞爆（长截图分段�
 /* ---------------- Key 的查找顺序（以前只认 config.vision.apiKey） ---------------- */
 
 const os = require('node:os');
-const vision = require('../src/adapters/vision');
+const vision = require('../src/modules/vision');
 
 function makeCfg(settings, visionCfg = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-vis-'));

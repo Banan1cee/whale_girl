@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { ReminderService, RETRY_DELAY_MS } = require('../src/services/reminderService');
+const { ReminderService, RETRY_DELAY_MS } = require('../src/modules/reminders');
 
 const NOW = Date.UTC(2026, 0, 1, 12);
 const OWNER = 'wxid_test_t09_owner';

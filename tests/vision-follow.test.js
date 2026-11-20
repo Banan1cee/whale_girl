@@ -20,7 +20,7 @@ const path = require('node:path');
 
 const { PROVIDERS, resolveVisionConfig, loadConfig } = require('../src/infra/config');
 const { decideVisionPatch, visionFromChat } = require('../src/services/settings');
-const vision = require('../src/adapters/vision');
+const vision = require('../src/modules/vision');
 
 function tempRoot(settings) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-vision-'));

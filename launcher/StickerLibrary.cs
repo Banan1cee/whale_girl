@@ -14,8 +14,8 @@ namespace WhaleLauncher
         {
             try
             {
-                var node = Path.Combine(root, "runtime", "node.exe");
-                var start = new ProcessStartInfo(File.Exists(node) ? node : "node")
+                var node = RuntimePaths.NodeLikeExe(root);
+                var start = new ProcessStartInfo(node)
                 {
                     WorkingDirectory = root,
                     UseShellExecute = false,

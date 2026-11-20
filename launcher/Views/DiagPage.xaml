@@ -11,9 +11,12 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,12">
-            <TextBlock DockPanel.Dock="Left" Text="诊断" Style="{StaticResource H1}" VerticalAlignment="Center" />
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,14">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Text="诊断" Style="{StaticResource H1}" VerticalAlignment="Center" />
+                <TextBlock Text="自检、内核日志与数据维护" Style="{StaticResource Small}" Margin="0,4,0,0" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                 <Button Content="⟳ 重新自检" Style="{StaticResource Ghost}" Click="OnRecheck" />
                 <Button Content="UIA 自检" Style="{StaticResource Ghost}" Margin="8,0,0,0" Click="OnUiaCheck"
                         ToolTip="检查微信的 UIA 控件树能不能用（发送走不走快通道）" />
@@ -53,7 +56,7 @@
                                 <TextBox x:Name="TxtSearch" Width="130" Margin="12,0,0,0" TextChanged="OnSearchChanged" ToolTip="搜关键字" />
                             </StackPanel>
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
-                                <ComboBox x:Name="CmbTail" Width="96" Height="24" SelectionChanged="OnTailChanged">
+                                <ComboBox x:Name="CmbTail" Width="110" Height="30" SelectionChanged="OnTailChanged">
                                     <ComboBoxItem Content="尾部 500" />
                                     <ComboBoxItem Content="尾部 2000" />
                                     <ComboBoxItem Content="全部" />

@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { Scheduler } = require('../src/infra/scheduler');
-const { DiaryService } = require('../src/services/diary');
+const { DiaryService } = require('../src/modules/diary');
 
 /** 可控时钟：测试不真的等 15 秒/6 小时。 */
 function fakeClock() {

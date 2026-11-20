@@ -12,9 +12,9 @@ const { loadConfig } = source('src/infra/config');
 const backup = source('src/memory/backup');
 const { pipedSpawnBlocked, SKIP_REASON } = require('./support/spawn-env');
 const stickers = source('src/adapters/stickers');
-const { StickerService } = source('src/services/stickerService');
-const { refreshWechatAccounts } = source('src/services/wechat');
-const vision = source('src/adapters/vision');
+const { StickerService } = source('src/modules/stickers');
+const { refreshWechatAccounts } = source('src/modules/wechat');
+const vision = source('src/modules/vision');
 function fixture(t) {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'whale-ux-'));
  t.after(()=>fs.rmSync(root,{recursive:true,force:true,maxRetries:6,retryDelay:60}));
@@ -102,7 +102,7 @@ test('桥接用户流程与语音凭据隔离的离线回归',t=>{
 test('未授权聊天请求返回404后立即结束，不进入模型或记忆处理',async()=>{
  const {Readable}=require('node:stream'); const {EventEmitter}=require('node:events');
  let handler,decisions=0,writes=0;
- source('src/http/routes/chat')({post(route,fn){if(route==='/api/chat')handler=fn;}});
+ source('src/modules/chat/routes')({post(route,fn){if(route==='/api/chat')handler=fn;}});
  const req=Readable.from([Buffer.from(JSON.stringify({text:'不得处理'}))]);req.headers={};req.socket={remoteAddress:'127.0.0.1'};
  const res=new EventEmitter();res.writeHead=()=>{writes++;};res.end=()=>{};
  const runtime={gateways:new Map(),config:{persona:{}},logger:{error(){}},bot:{async decide(){decisions++;return {action:'ignore'};}}};

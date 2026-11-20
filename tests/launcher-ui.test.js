@@ -199,7 +199,7 @@ test('人设页按四层分组，维护与能力开关不再混入角色设置',
   assert.doesNotMatch(code, /LoadFlagsAsync|OnFlagClick|HiddenFlags|ChkLinks|\/api\/features/);
   assert.match(xaml, /Header="自定义补充提示词"/);
   assert.match(xaml, /Header="清空指定对话记忆"/);
-  assert.match(xaml, /AutomationProperties.Name="搜索主人联系人"/);
+  assert.match(xaml, /AutomationProperties.Name="搜索主要联系人"/);
   assert.match(xaml, /昵称或自称不能授予权限/);
   assert.ok(xaml.includes('x:Name="Body"'), '主体滚动区还在');
 });
@@ -240,13 +240,15 @@ test('所有人设可编辑和打包分享，新版开关默认打开，说明�
   assert.doesNotMatch(xaml, /全部保存/, '人设改为热保存后不该再有保存按钮');
 });
 
-test('设置页去掉侧栏和标题，单列铺开，模型/高级模式/外观', () => {
+test('设置页去掉侧栏，单列铺开，模型/高级模式/外观', () => {
   const xaml = readLauncher('Views/SettingsPage.xaml');
   const code = readLauncher('Views/SettingsPage.xaml.cs');
 
   assert.ok(!xaml.includes('SettingsNav'), '设置页不该再有分类侧栏');
   assert.ok(!xaml.includes('SelectionChanged="OnSettingsNavChanged"'), '侧栏跳转事件应删掉');
-  assert.ok(!xaml.includes('Text="设置"'), '设置页顶部的「设置」标题应去掉');
+  // Fluent 改版后各页统一有 H1 页头；设置页标题与导航项一致，保留标题、不再保留侧栏。
+  assert.ok(xaml.includes('Text="设置"'), '设置页应有与导航一致的「设置」页头');
+  assert.ok(xaml.includes('模型、外观与高级选项'), '设置页页头应有说明行');
   assert.ok(xaml.includes('x:Name="SectionsHost"'), '缺少单列卡片容器');
   assert.ok(xaml.includes('x:Name="MainScroll"'), '缺少滚动区');
   assert.ok(xaml.includes('x:Name="KernelHint"'), '内核提示行不该丢');

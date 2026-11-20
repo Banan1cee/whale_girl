@@ -132,7 +132,7 @@ test('带旧分类的库启动：listen 快、维护期间不堵、图一张不�
 test('构造函数零磁盘 I/O：总闸关着时连 data 目录都不建', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-startup-off-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 80 }));
-  const { StickerService } = require('../src/services/stickerService');
+  const { StickerService } = require('../src/modules/stickers');
   const cfg = { root, features: { stickers: false }, sticker: { dir: 'data/stickers' } };
   const started = Date.now();
   new StickerService(cfg);
@@ -142,7 +142,7 @@ test('构造函数零磁盘 I/O：总闸关着时连 data 目录都不建', asyn
 
 test('maintenance 幂等：同一次启动里重复 startMaintenance 只跑一次', async (t) => {
   const { root } = makeLibrary(t);
-  const { StickerService } = require('../src/services/stickerService');
+  const { StickerService } = require('../src/modules/stickers');
   const { loadConfig } = require('../src/infra/config');
   const cfg = loadConfig({ root, env: {} });
   const service = new StickerService(cfg);

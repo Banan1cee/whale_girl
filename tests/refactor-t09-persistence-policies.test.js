@@ -4,8 +4,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { ReminderService } = require('../src/services/reminderService');
-const { DiaryService } = require('../src/services/diary');
+const { ReminderService } = require('../src/modules/reminders');
+const { DiaryService } = require('../src/modules/diary');
 const json = require('../src/infra/jsonFile');
 
 const NOW = Date.UTC(2026, 0, 1, 12);

@@ -321,8 +321,7 @@ namespace WhaleLauncher
         {
             if (UpdateBlocked) { SayWarn("正在检查更新或当前版本必须更新，暂不能启动服务"); return; }
             if (NodeRunning) return;
-            var exe = Path.Combine(BaseDir, "runtime", "node.exe");
-            if (!File.Exists(exe)) exe = "node";
+            var exe = RuntimePaths.NodeLikeExe(BaseDir);
             _node = Launch(exe, "server.js --no-browser", "K", "内核");
         }
 
@@ -351,14 +350,33 @@ namespace WhaleLauncher
             {
                 if (_disposed || BridgeRunning) return;
                 if (!NodeRunning) { SayWarn("内核尚未启动，请先启动服务"); return; }
-                var exe = Path.Combine(BaseDir, "runtime", "python", "python.exe");
-                if (!File.Exists(exe)) { SayError("找不到内置 Python，桥接起不来，请检查安装包"); return; }
+                var exe = RuntimePaths.PythonExe(BaseDir);
+                if (!File.Exists(exe)) { SayError(MissingPythonHint()); return; }
                 try { File.Delete(Path.Combine(DataDir, "bridge-ready.json")); } catch { }
                 try { File.Delete(Path.Combine(DataDir, "PAUSED")); } catch { }
                 _bridgeWanted = true;
                 _bridgeStartedAt = DateTime.UtcNow;
                 _bridge = Launch(exe, "-u examples\\wechatauto_bridge.py", "B", "桥接");
             }
+        }
+
+        /// <summary>
+        /// 缺 Python 时按形态给不同提示：打包版本该带 runtime\python，源码运行则要靠
+        /// WHALE_PYTHON 或 scripts\build-runtime.ps1。混在一起说会把用户指错方向；
+        /// 也不回退 PATH Python —— 打包缺陷必须能被发现。
+        /// </summary>
+        private string MissingPythonHint()
+        {
+            bool packaged;
+            try
+            {
+                packaged = File.Exists(Path.Combine(BaseDir, "runtime", "node.exe"))
+                    || Directory.Exists(Path.Combine(BaseDir, "runtime", "python"));
+            }
+            catch { packaged = true; }   // 路径都拼不出来时按打包缺陷报，别把问题藏起来
+            return packaged
+                ? "找不到内置 Python（runtime\\python\\python.exe），安装包可能不完整，请重新安装。"
+                : "源码运行：未找到内置 Python。可设置 WHALE_PYTHON 指向已装桥接依赖的 Python，或先运行 scripts\\build-runtime.ps1 生成 runtime\\python。";
         }
 
         private async Task RecoverBridgeAsync(Process exited, int generation)

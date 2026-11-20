@@ -59,12 +59,12 @@ function dismissReply(bot, { msg, text, isGroup, isMaster, atMe, state, nowMs, k
     .map((name) => String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .filter(Boolean)
     .sort((a, b) => b.length - a.length);
-  const nameAlt = selfNames.join('|') || '鲸鲸|小鲸|肥鱼';
+  const nameAlt = selfNames.join('|') || '助手|小助手';
 
   // 「没你事儿了，走吧」→ 回一句就退场，之后不再接
   const dismissClean = ask.replace(/^[\s，,。.!！~～、]+|[\s，,。.!！~～、…]+$/g, '');
   // 「不要叫机器人闭嘴」「别让她走」是在制止别人，不是在赶她走。
-  if (/(不要|别|不用|不许).{0,10}(让|叫|把|喊|请)?[^。！？\n]{0,10}(机器人|她|它|鲸鲸|小鲸|肥鱼)[^。！？\n]{0,10}(滚|闭嘴|安静|走开|消失|退下)/.test(dismissClean)) {
+  if (/(不要|别|不用|不许).{0,10}(让|叫|把|喊|请)?[^。！？\n]{0,10}(机器人|她|它|助手|小助手)[^。！？\n]{0,10}(滚|闭嘴|安静|走开|消失|退下)/.test(dismissClean)) {
     return null;
   }
   const dismissHit =
@@ -76,7 +76,7 @@ function dismissReply(bot, { msg, text, isGroup, isMaster, atMe, state, nowMs, k
     // 第三人称：群里说「让她滚」「叫它闭嘴」「把机器人赶走」——也是在赶她走。
     // 以前只认「你滚/滚」这种直接命令，「让她滚」完全识别不到，于是不静默、还接着说话。
     // 只用「她 / 它 / 鲸鲸」这类明确指向她的词，别把「让他滚」（指别的男生）也当成赶她。
-    new RegExp(`(让|叫|把|喊|请)(?:她|它|这货|这家伙|这玩意|这玩意儿|机器人|${nameAlt}|鲸)(?:赶紧|快点|马上)?(?:滚|滚蛋|滚开|滚出去|爬|走开|消失|退下|下去|闭嘴|安静|别说话|少说话|别接话|别插嘴|别吵|歇着)`).test(dismissClean);
+    new RegExp(`(让|叫|把|喊|请)(?:她|它|这货|这家伙|这玩意|这玩意儿|机器人|${nameAlt})(?:赶紧|快点|马上)?(?:滚|滚蛋|滚开|滚出去|爬|走开|消失|退下|下去|闭嘴|安静|别说话|少说话|别接话|别插嘴|别吵|歇着)`).test(dismissClean);
   // 群友也能让她闭嘴（不用 @）：只要是在赶她走，就认。
   const dismissByGroup = isGroup && new RegExp(`(让她|叫她|让它|叫它|机器人|${nameAlt})`).test(dismissClean);
   if (dismissHit && (isMaster || atMe || msg.replyToBot || !isGroup || dismissByGroup)) {

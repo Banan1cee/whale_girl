@@ -23,7 +23,7 @@ function cleanIncomingForPersona(text, config, extraNames = []) {
     const bareRe = new RegExp(`^\\s*${escaped}${bareBoundary}\\s*[，,：:！!~～\\-—]*\\s*`, 'g');
     if (bareRe.test(s)) { hadAlias = true; s = s.replace(bareRe, ''); }
     if (alias.length >= 2) {
-      const midRe = new RegExp(`${escaped}(?![娘鱼鲸乐妹姐哥儿仔])\\s*[，,：:！!~～\\-—]*`, 'g');
+      const midRe = new RegExp(`${escaped}(?![娘乐妹姐哥儿仔鲸鱼])\\s*[，,：:！!~～\\-—]*`, 'g');
       if (midRe.test(s)) { hadAlias = true; s = s.replace(midRe, ' ').replace(/[ \t]{2,}/g, ' ').trim(); }
     }
   }

@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const stickers = require('../src/adapters/stickers');
-const { StickerService } = require('../src/services/stickerService');
+const { StickerService } = require('../src/modules/stickers');
 
 const GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64');
 

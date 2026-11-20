@@ -81,7 +81,7 @@ test('id 里带路径穿越取不到东西', () => {
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 6, retryDelay: 60 });
 });
 
-test('仓库自带的 persona-standard 是通用版：不含微信号、群昵称、Key', () => {
+test('仓库自带的人设预设都是通用版：不含微信号、群昵称、Key', () => {
   const root = path.resolve(__dirname, '..');
   const list = presets.list({ paths: { root } });
   assert.ok(list.length >= 1, '至少要有一个人设预设');
@@ -155,7 +155,7 @@ test('保存人设会回写来源的当前自建预设，并保留创建时间',
   const next = JSON.parse(fs.readFileSync(path.join(root, 'data', 'personas', saved.preset.id + '.json'), 'utf8'));
   assert.equal(next.personality, '改过的性格');
   assert.equal(next.createdAt, first.createdAt);
-  assert.equal(presets.updateFromConfig(config, 'persona-standard'), false, '内置预设不回写');
+  assert.equal(presets.updateFromConfig(config, 'persona-neutral'), false, '内置预设不回写');
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 6, retryDelay: 60 });
 });
 

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { ReminderService, RETRY_DELAY_MS, CLAIM_TIMEOUT_MS } = require('../src/services/reminderService');
+const { ReminderService, RETRY_DELAY_MS, CLAIM_TIMEOUT_MS } = require('../src/modules/reminders');
 
 function setup(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-reminder-report-'));

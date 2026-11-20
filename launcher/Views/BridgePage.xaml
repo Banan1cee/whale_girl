@@ -16,7 +16,7 @@
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="b" Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
-                                CornerRadius="14" Padding="12,9" SnapsToDevicePixels="True">
+                                CornerRadius="8" Padding="12,9" SnapsToDevicePixels="True">
                             <ContentPresenter />
                         </Border>
                         <ControlTemplate.Triggers>
@@ -42,7 +42,7 @@
             </Setter>
         </Style>
     </UserControl.Resources>
-    <Grid Margin="28,16,32,14">
+    <Grid Margin="28,24,32,20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -51,9 +51,12 @@
         </Grid.RowDefinitions>
 
         <!-- 页头 -->
-        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,8">
-            <TextBlock DockPanel.Dock="Left" Text="微信 · 桥接" Style="{StaticResource H1}" VerticalAlignment="Center" />
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,10">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Text="微信 · 桥接" Style="{StaticResource H1}" VerticalAlignment="Center" />
+                <TextBlock Text="账号绑定、发送方式与桥接日志" Style="{StaticResource Small}" Margin="0,4,0,0" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                 <Button Content="发言范围 · 黑白名单" Style="{StaticResource Ghost}" Click="OnChatPolicy" />
                 <Button Content="⟳ 刷新账号" Style="{StaticResource Ghost}" Margin="8,0,0,0" Click="OnRefreshAccounts" />
                 <Button Content="⟳ 重启桥接" Style="{StaticResource Ghost}" Margin="8,0,0,0" Click="OnRestartBridge" />

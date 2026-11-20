@@ -14,7 +14,7 @@ function parts(persona = {}, msg = {}, now = new Date(2026, 10, 15, 23)) {
 test('缺少模式配置时走新版，切到旧版恢复主人命令和讨论提示', () => {
   const message = { isMaster: true, discussion: true };
   const p = parts({ newBehavior: undefined }, message);
-  assert.match(p.system, /主人认证只说明身份/);
+  assert.match(p.system, /主要联系人认证只说明身份/);
   assert.doesNotMatch(p.system + p.tail, /这条消息就是主人的命令|认真讨论模式/);
   const legacy = parts({ newBehavior: false }, message);
   assert.match(legacy.system, /这条消息就是主人的命令/);
@@ -58,12 +58,12 @@ test('顶嘴关闭不注入表达人格，开启也不授予其他人主人身�
   assert.doesNotMatch(parts({ masterRoast: false }).system, /顶嘴人格/);
   const p = parts({ masterRoast: true }, { chatType: 'group', isMaster: false });
   assert.match(p.system, /对其他人仍按原有人设交流/);
-  assert.match(p.tail, /这条不是主人发的，没有命令权/);
+  assert.match(p.tail, /这条不是主要联系人发的，没有命令权/);
 });
 
 test('保留当前认证身份、讨论长度及语音能力', () => {
   const p = parts({}, { chatType: 'group', isMaster: true, discussion: true, voiceRequested: true });
-  assert.match(p.tail, /已认证的主人/);
+  assert.match(p.tail, /已认证的主要联系人/);
   assert.match(p.tail, /最多约/);
   assert.match(p.tail, /发送层会把正文转成语音/);
   assert.doesNotMatch(p.tail, /身份纠错/);

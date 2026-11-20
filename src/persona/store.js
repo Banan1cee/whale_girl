@@ -41,6 +41,8 @@ const CONFIG_PATHS = {
   discussionMaxChars: 'chat.discussionMaxChars',
   masterRoast: 'persona.masterRoast',
   newBehavior: 'persona.newBehavior',
+  styleMode: 'persona.styleMode',
+  styleScope: 'persona.styleScope',
   privateMaxChars: 'chat.privateMaxChars',
   groupMaxChars: 'chat.groupMaxChars',
   maxBubbles: 'chat.maxBubbles',
@@ -53,7 +55,9 @@ const CONFIG_PATHS = {
 
 function normalized(key, value) {
   if (key === 'newBehavior') return typeof value === 'boolean' ? value : undefined;
-  if (key === 'ownerName') return String(value || '').trim().slice(0, 24) || '主人';
+  if (key === 'styleMode') return value === 'mimic' ? 'mimic' : value === 'adapt' ? 'adapt' : undefined;
+  if (key === 'styleScope') return value === 'all' ? 'all' : value === 'owner' ? 'owner' : undefined;
+  if (key === 'ownerName') return String(value || '').trim().slice(0, 24) || '你';
   if (key === 'aliases') return Array.isArray(value) ? value.filter(v => typeof v === 'string').map(v => v.trim()).filter(Boolean).slice(0, 30) : undefined;
   if (key === 'links' || key === 'freeChat' || key === 'masterRoast') return Boolean(value);
   if (key === 'mutedGroups') return Array.isArray(value) ? value.slice() : undefined;
@@ -166,12 +170,14 @@ function save(config, patch) {
 }
 
 const DEFAULTS = {
-  ownerName: '主人',
-  aliases: ['鲸鲸', '小鲸娘', '鲸娘', '深鲸娘', '鲸鱼娘', '小鲸'],
+  ownerName: '你',
+  aliases: ['助手', '小助手'],
   emojiChance: 0,
   discussionMaxChars: 400,
   masterRoast: false,
   emoji: '正常',
+  styleMode: 'adapt',
+  styleScope: 'owner',
   // 必须和 DEFAULT_CONFIG.chat 保持同一套值，否则「恢复默认」会写回另一套数。
   privateMaxChars: 100,
   groupMaxChars: 70,
@@ -182,12 +188,12 @@ const DEFAULTS = {
   mutedGroups: [],
   proactive: true,
   opinions: true,
-  name: '鲸鲸',
-  age: 23,
-  job: '自由职业',
-  appearance: '深蓝色长卷发，头发上别着一枚鲸尾发夹，常穿深蓝色水手领裙子，怀里或包里总有一只软乎乎的蓝鲸玩偶（你叫它小蓝鲸）。',
-  personality: '温柔但有点小倔，嘴硬心软，慢热；熟了话很多，会害羞、会怼人、会犯懒、偶尔 emo。',
-  background: '因为头像和玩偶全是鲸鱼，朋友开玩笑叫你「鲸鱼娘」，你也就认了。',
+  name: '助手',
+  age: 22,
+  job: '聊天伙伴',
+  appearance: '',
+  personality: '自然、友善、有分寸；会认真回答问题，也会正常闲聊，不刻意卖萌或扮演固定角色。',
+  background: '运行在这台电脑上的聊天伙伴。',
   // 这两个不写进默认值的话，「恢复默认」就清不掉自定义提示词：
   // 旧值会一直盖在控件人设上面，表现出来就是「点了恢复默认还是没变」。
   customPrompt: '',
@@ -262,7 +268,7 @@ function apply(config, data) {
   for (const k of Object.keys(IDENTITY_FIELDS)) {
     if (data[k] !== undefined) config.persona[k] = String(data[k] || '');
   }
-  if (data.age !== undefined) config.persona.age = Number(data.age) || 23;
+  if (data.age !== undefined) config.persona.age = Number(data.age) || 22;
   if (data.customPrompt !== undefined) config.persona.customPrompt = String(data.customPrompt || '');
   // 记下「这份人设是从哪个人设文件导入的」，页面上直接显示，免得用户不知道自己现在用的是哪版
   if (data.sourcePreset !== undefined) config.persona.sourcePreset = String(data.sourcePreset || '');

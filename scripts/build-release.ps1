@@ -61,13 +61,19 @@ if (Test-Path $publishedLauncher) {
 }
 
 # 本地活动用的东西不进包：吵架大赛预设（避免别人一下载就拿去开骂）
-$localOnly = @('assets\personas\persona-fight.json', 'assets\personas\persona-tieba.json', 'assets\clapback-fight.txt')
+$localOnly = @('assets\clapback-fight.txt')
 foreach ($rel in $localOnly) {
   $p = Join-Path $stage $rel
   if (Test-Path $p) {
     Remove-Item $p -Force
     Write-Host "  已排除（本地活动用）：$rel"
   }
+}
+# legacy/ 是旧角色预设，整目录不随发行包分发；需要时从源码仓库手动取。
+$legacyDir = Join-Path $stage 'assets\personas\legacy'
+if (Test-Path $legacyDir) {
+  Remove-Item $legacyDir -Recurse -Force
+  Write-Host '  已排除（旧角色预设）：assets\personas\legacy'
 }
 
 # 只恢复声明的程序资源；不放开全局用户图片排除，也不改变API/代码目录的复制规则。
@@ -136,7 +142,7 @@ if ($PrevZip) {
 
 Step '5/5 从 zip 里读文件复核（不信任磁盘）'
 $checks = @(
-  @{ entry = 'src/http/routes/vision.js'; needle = '/api/vision/test'; label = '看图测试接口' },
+  @{ entry = 'src/modules/vision/routes.js'; needle = '/api/vision/test'; label = '看图测试接口' },
   @{ entry = 'src/core/master.js'; needle = 'matchMaster'; label = '主人判定' },
   @{ entry = 'scripts/tools/uia-diag.py'; needle = 'QACCESSIBLE_ACTIVE_RVA_BY_VERSION'; label = 'UIA 诊断工具' }
 )

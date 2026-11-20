@@ -2,7 +2,7 @@
 
 const { loadSettings, saveSettings, resolveRuntime, resolveVisionConfig, resolveVoiceConfig, resolveSearchConfig, maskKey, PROVIDERS, isLocalUrl, normalizeBaseUrl } = require('../infra/config');
 const { applyConfigPatch } = require('../infra/configPatch');
-const vision = require('../adapters/vision');
+const vision = require('../modules/vision');
 const { statusPayload } = require('./status');
 const { describeError } = require('../infra/errors');
 const { tagName } = require('../infra/privacy');
@@ -176,7 +176,7 @@ function decideVisionPatch({ preset, nextModel, saved = {}, manualValue = null, 
 
 /**
  * 「从聊天配置复制」：把聊天正在用的接口地址 + 能看图的模型抄到看图设置里。
- * 不动 Key：地址和聊天完全相同时，resolveKey 会直接复用聊天那把（见 adapters/vision.js），
+ * 不动 Key：地址和聊天完全相同时，resolveKey 会直接复用聊天那把（见 modules/vision/vision.js），
  * 这样不用把同一把密钥在 settings.json 里存两遍。
  */
 function visionFromChat(config) {
@@ -312,7 +312,7 @@ async function applySettings(runtime, body) {
   // 称呼：设置界面和接口改的是同一份数据，写进 config.json，重启也不会被旧值盖回来
   if (typeof body.userName === 'string') {
     // 清空 = 恢复默认称呼，不是「不改」（以前清空后依然叫旧称呼）
-    const name = String(patch.userName || '').trim() || '主人';
+    const name = String(patch.userName || '').trim() || '你';
     config.persona.ownerName = name;
     try {
       applyConfigPatch(runtime, { 'persona.ownerName': name });
@@ -336,7 +336,7 @@ async function applySettings(runtime, body) {
       baseUrl: llm.baseUrl,
       keyMasked: maskKey(resolveRuntime(config).apiKey),
       thinking: llm.thinking === true,
-      userName: String(config.persona.ownerName || '主人'),
+      userName: String(config.persona.ownerName || '你'),
       // 保存后前端立刻能把「看图 Key 已存」显示出来
       vision: vision.status(config),
       ...followStatus(config),

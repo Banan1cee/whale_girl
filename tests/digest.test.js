@@ -19,7 +19,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
-const { DigestService, rangeWindow, dayKey } = require('../src/services/digest');
+const { DigestService, rangeWindow, dayKey } = require('../src/modules/digest');
 const { createRouter } = require('../src/http/routes');
 
 const NOW = new Date(2026, 10, 10, 15, 0, 0).getTime();

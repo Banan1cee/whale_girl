@@ -75,80 +75,80 @@ namespace WhaleLauncher
 
         private static readonly Dictionary<string, string> Light = new Dictionary<string, string>
         {
-            ["Bg"] = "#FFF4F6F9",
-            ["BgDeep"] = "#FFEEF1F6",
-            ["BgNav"] = "#E6F4F6F9",
-            ["BgTop"] = "#F2FFFFFF",
-            ["BgFoot"] = "#F2FFFFFF",
-            ["BgContent"] = "#FFF4F6F9",
+            ["Bg"] = "#FFF3F3F3",
+            ["BgDeep"] = "#FFEBEBEB",
+            ["BgNav"] = "#FFF3F3F3",
+            ["BgTop"] = "#FFF9F9F9",
+            ["BgFoot"] = "#FFF9F9F9",
+            ["BgContent"] = "#00F3F3F3",
             ["CardBg"] = "#FFFFFFFF",
-            ["CardBorder"] = "#FFD8E0EA",
-            ["Line"] = "#FFE4E9F0",
-            ["LineSoft"] = "#FFEDF1F6",
-            ["Text"] = "#FF121722",
-            ["Text2"] = "#FF465164",
-            ["Muted"] = "#FF5E6A7C",
-            ["Dim"] = "#FF6F7B8D",
-            ["Accent"] = "#FF3B6EF6",
-            ["AccentDim"] = "#FFEDF2FF",
-            ["AccentSoft"] = "#FFEDF2FF",
-            ["Ok"] = "#FF12B76A",
-            ["Warn"] = "#FFF79009",
-            ["Bad"] = "#FFF04438",
-            ["Idle"] = "#FFB3BCCB",
-            ["PrimaryBg"] = "#FF111827",
+            ["CardBorder"] = "#FFE1E1E1",
+            ["Line"] = "#FFE1E1E1",
+            ["LineSoft"] = "#FFEAEAEA",
+            ["Text"] = "#FF1A1A1A",
+            ["Text2"] = "#FF424242",
+            ["Muted"] = "#FF5C5C5C",
+            ["Dim"] = "#FF6E6E6E",
+            ["Accent"] = "#FF0F6E72",
+            ["AccentDim"] = "#FFE3EDED",
+            ["AccentSoft"] = "#FFDCE9E9",
+            ["Ok"] = "#FF107C41",
+            ["Warn"] = "#FF9D5D00",
+            ["Bad"] = "#FFC42B1C",
+            ["Idle"] = "#FF9A9A9A",
+            ["PrimaryBg"] = "#FF0F6E72",
             ["PrimaryFg"] = "#FFFFFFFF",
-            ["PrimaryHover"] = "#FF1F2937",
+            ["PrimaryHover"] = "#FF0C5C5F",
             ["GhostBg"] = "#FFFFFFFF",
-            ["GhostHover"] = "#FFF1F4F8",
-            ["Hover"] = "#FFF1F4F8",
-            ["FieldBg"] = "#FFF7F9FC",
-            ["FieldBorder"] = "#FFC9D3E0",
+            ["GhostHover"] = "#FFF5F5F5",
+            ["Hover"] = "#FFEDEDED",
+            ["FieldBg"] = "#FFFFFFFF",
+            ["FieldBorder"] = "#FFD1D1D1",
             ["PopupBg"] = "#FFFFFFFF",
-            ["ChipBg"] = "#FFFFFFFF",
-            ["Surface3"] = "#FFF1F4F8",
-            ["TopBtnHover"] = "#FFF1F4F8",
-            ["ScrollThumb"] = "#FFCBD3DF",
-            ["BackdropTint"] = "#F0F4F6F9",
+            ["ChipBg"] = "#FFF7F7F7",
+            ["Surface3"] = "#FFE8E8E8",
+            ["TopBtnHover"] = "#FFE8E8E8",
+            ["ScrollThumb"] = "#FFBDBDBD",
+            ["BackdropTint"] = "#F0F3F3F3",
         };
 
         private static readonly Dictionary<string, string> Dark = new Dictionary<string, string>
         {
-            ["Bg"] = "#FF080C12",
-            ["BgDeep"] = "#FF05080D",
-            ["BgNav"] = "#E6080C12",
-            ["BgTop"] = "#F20C121A",
-            ["BgFoot"] = "#F20C121A",
-            ["BgContent"] = "#FF080C12",
-            ["CardBg"] = "#FF0F151E",
-            ["CardBorder"] = "#FF243140",
-            ["Line"] = "#FF202B38",
-            ["LineSoft"] = "#FF1A2430",
-            ["Text"] = "#FFF4F7FA",
-            ["Text2"] = "#FFC3CDDA",
-            ["Muted"] = "#FF98A6B8",
-            ["Dim"] = "#FF7E8CA0",
-            ["Accent"] = "#FF86ADFF",
-            ["AccentDim"] = "#FF1A2A47",
-            ["AccentSoft"] = "#FF1A2A47",
-            ["Ok"] = "#FF48E3A1",
-            ["Warn"] = "#FFFFC266",
-            ["Bad"] = "#FFFF7B7B",
-            ["Idle"] = "#FF5E6C80",
-            ["PrimaryBg"] = "#FFF2F5F9",
-            ["PrimaryFg"] = "#FF0A0F16",
-            ["PrimaryHover"] = "#FFFFFFFF",
-            ["GhostBg"] = "#FF131B26",
-            ["GhostHover"] = "#FF1B2634",
-            ["Hover"] = "#FF1A2431",
-            ["FieldBg"] = "#FF141C27",
-            ["FieldBorder"] = "#FF2A3748",
-            ["PopupBg"] = "#FF131B26",
-            ["ChipBg"] = "#FF121A24",
-            ["Surface3"] = "#FF1A2431",
-            ["TopBtnHover"] = "#FF1A2431",
-            ["ScrollThumb"] = "#FF35465A",
-            ["BackdropTint"] = "#AD080C12",
+            ["Bg"] = "#FF202020",
+            ["BgDeep"] = "#FF1A1A1A",
+            ["BgNav"] = "#FF272727",
+            ["BgTop"] = "#FF272727",
+            ["BgFoot"] = "#FF272727",
+            ["BgContent"] = "#00202020",
+            ["CardBg"] = "#FF2B2B2B",
+            ["CardBorder"] = "#FF3A3A3A",
+            ["Line"] = "#FF3A3A3A",
+            ["LineSoft"] = "#FF333333",
+            ["Text"] = "#FFFFFFFF",
+            ["Text2"] = "#FFC5C5C5",
+            ["Muted"] = "#FF9A9A9A",
+            ["Dim"] = "#FF969696",
+            ["Accent"] = "#FF4CC2C4",
+            ["AccentDim"] = "#FF203838",
+            ["AccentSoft"] = "#FF2A3B3B",
+            ["Ok"] = "#FF6CCB7C",
+            ["Warn"] = "#FFF2C94C",
+            ["Bad"] = "#FFFF6B6B",
+            ["Idle"] = "#FF8A8A8A",
+            ["PrimaryBg"] = "#FF4CC2C4",
+            ["PrimaryFg"] = "#FF102A2B",
+            ["PrimaryHover"] = "#FF5FD3D5",
+            ["GhostBg"] = "#FF2D2D2D",
+            ["GhostHover"] = "#FF383838",
+            ["Hover"] = "#FF333333",
+            ["FieldBg"] = "#FF2D2D2D",
+            ["FieldBorder"] = "#FF454545",
+            ["PopupBg"] = "#FF2C2C2C",
+            ["ChipBg"] = "#FF2A2A2A",
+            ["Surface3"] = "#FF333333",
+            ["TopBtnHover"] = "#FF383838",
+            ["ScrollThumb"] = "#FF5A5A5A",
+            ["BackdropTint"] = "#AD202020",
         };
 
         public static void Load()
@@ -286,6 +286,14 @@ namespace WhaleLauncher
             colors["AccentSoft"] = Blend(bg, accent, dark ? 0.16 : 0.12);
             colors["AccentDim"] = Blend(bg, accent, dark ? 0.10 : 0.07);
 
+            // 主按钮始终跟主题色走：亮青绿配深字、深青绿配白字，保证 4.5:1 以上。
+            // 用户改强调色后按钮一起变，不需要再到 XAML 里找第二份颜色。
+            var darkInk = Color.FromRgb(0x10, 0x24, 0x24);
+            var onAccent = Contrast(Colors.White, accent) >= Contrast(darkInk, accent) ? Colors.White : darkInk;
+            colors["PrimaryBg"] = accent;
+            colors["PrimaryFg"] = onAccent;
+            colors["PrimaryHover"] = dark ? Blend(accent, Colors.White, 0.12) : Blend(accent, Colors.Black, 0.14);
+
             if (!HasBackdrop || !MonetEnabled) return;
 
             // 只染一点点，保留原来的深浅关系；顶栏会在 MainWindow 里单独还原成本色。
@@ -331,8 +339,9 @@ namespace WhaleLauncher
             var fade = IsLight(text) ? Colors.Black : Colors.White;
 
             // 有背景图时底是花的，灰字整体往正文方向收一档，别让说明文字糊进图里。
-            var muted = HasBackdrop ? (dark ? 0.18 : 0.14) : 0.30;
-            var dim = HasBackdrop ? (dark ? 0.28 : 0.18) : 0.44;
+            // 档位按 Fluent 的中性层级压：正文 #FFF / #1A1A1A，次要 #C5 / #42，三级 #96 / #6E。
+            var muted = HasBackdrop ? (dark ? 0.23 : 0.26) : 0.30;
+            var dim = HasBackdrop ? (dark ? 0.41 : 0.38) : 0.44;
 
             colors["Text"] = text;
             colors["Text2"] = Blend(text, fade, 0.14);
@@ -439,11 +448,12 @@ namespace WhaleLauncher
 
             // 内容区纸面：桥接 / 设置这些页的正文直接压在图上，暗图 + 浅色主题根本看不清。
             // 纸面厚度跟图片明暗走：暗图盖厚一点，亮图薄一点，图还透得出来。
+            // Fluent 卡片是半透明玻璃，但正文层要比卡片更稳，否则大段说明文字会浮在花纹上。
             if (colors.TryGetValue("BgContent", out var content))
             {
                 var k = TryGetMonet() ? Math.Clamp((_monetLum - 0.20) / 0.60, 0, 1) : 0.5;
-                var a = (dark ? 0.10 + 0.25 * k : 0.24 + 0.34 * (1 - k)) * (0.55 + 0.45 * ratio);
-                content.A = (byte)Math.Round(a * 255);
+                var a = (dark ? 0.20 + 0.32 * k : 0.30 + 0.34 * (1 - k)) * (0.60 + 0.40 * ratio);
+                content.A = (byte)Math.Round(Math.Clamp(a, 0, 0.92) * 255);
                 colors["BgContent"] = content;
             }
         }
@@ -547,6 +557,24 @@ namespace WhaleLauncher
 
         private static bool IsLight(Color c) => (0.299 * c.R + 0.587 * c.G + 0.114 * c.B) > 140;
 
+        /// <summary>WCAG 相对亮度，用来给强调色挑深色 / 白色文字，而不是拍一个亮度阈值。</summary>
+        private static double RelativeLuminance(Color c)
+        {
+            static double Channel(byte value)
+            {
+                var v = value / 255.0;
+                return v <= 0.03928 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4);
+            }
+            return 0.2126 * Channel(c.R) + 0.7152 * Channel(c.G) + 0.0722 * Channel(c.B);
+        }
+
+        private static double Contrast(Color a, Color b)
+        {
+            var la = RelativeLuminance(a);
+            var lb = RelativeLuminance(b);
+            return (Math.Max(la, lb) + 0.05) / (Math.Min(la, lb) + 0.05);
+        }
+
         private static Color Blend(Color a, Color b, double amountOfB)
         {
             var t = Math.Clamp(amountOfB, 0, 1);
@@ -583,7 +611,7 @@ namespace WhaleLauncher
         /// 面板和卡片是主题色的，字也跟着主题色才稳定。
         /// </summary>
         private static Color AutoTextColor(bool dark) =>
-            dark ? Color.FromRgb(0xF4, 0xF7, 0xFA) : Color.FromRgb(0x0B, 0x12, 0x20);
+            dark ? Color.FromRgb(0xFF, 0xFF, 0xFF) : Color.FromRgb(0x1A, 0x1A, 0x1A);
 
         public static Color EffectiveColor(string kind)
         {

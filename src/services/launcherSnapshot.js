@@ -8,11 +8,11 @@ const { getSettings, applySettings } = require('./settings');
 const persona = require('../persona/store');
 const presets = require('../persona/presets');
 const features = require('../infra/features');
-const { ReminderService } = require('./reminderService');
+const { ReminderService } = require('../modules/reminders');
 
-const { applyPersonaPatch, savePersonaPreset, deletePersonaPreset, renamePersonaPreset, currentPersonaWarnings } = require('./persona');
-const { DiaryService } = require('./diary');
-const { MomentsPublisher } = require('./momentsPublisher');
+const { applyPersonaPatch, savePersonaPreset, deletePersonaPreset, renamePersonaPreset, currentPersonaWarnings } = require('../modules/persona');
+const { DiaryService } = require('../modules/diary');
+const { MomentsPublisher } = require('../modules/moments');
 const { prepareFeatureCommand, momentsSettings, prepareMomentsSettingsPatch, prepareMomentsPublishPatch } = require('./configCommands');
 
 async function saveLocalConfiguration(root, { path, body }, env = process.env) {

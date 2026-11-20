@@ -2,11 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { search } = require('../src/services/search');
-const apiSearch = require('../src/adapters/search/apiSearch');
-const { result, formatResult } = require('../src/core/search/result');
-const { parseRoute, systemFor } = require('../src/adapters/searchRouter');
-const { weatherSnippet } = require('../src/adapters/search/weather');
+const { search } = require('../src/modules/search');
+const apiSearch = require('../src/modules/search/providers/apiSearch');
+const { result, formatResult } = require('../src/modules/search/core/result');
+const { parseRoute, systemFor } = require('../src/modules/search/router');
+const { weatherSnippet } = require('../src/modules/search/providers/weather');
 
 const evidence = provider => result([{ title: '测试资料', snippet: '可核实的事实', url: 'https://example.test/source',
   provider, fetchedAt: '2026-11-06T00:00:00Z', publishedAt: null }]);

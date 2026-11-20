@@ -39,6 +39,10 @@ const FIELDS = {
   'log.traceRaw': { type: 'bool' },
 
   // ---- 对话 ----
+  // 风格画像：adapt=贴合对方习惯，mimic=模仿对方表达。画像文件不存在时不生效。
+  'persona.styleMode': { type: 'enum', values: ['adapt', 'mimic'] },
+  // owner=只在主要联系人说话时参考（默认），all=群聊/其他人也参考。
+  'persona.styleScope': { type: 'enum', values: ['owner', 'all'] },
   'chat.historyTurns': { type: 'int', min: 2, max: 800 },
   'chat.groupHistoryTurns': { type: 'int', min: 2, max: 800 },
   'chat.privateMaxChars': { type: 'int', min: 20, max: 4000 },
@@ -72,13 +76,14 @@ const FIELDS = {
   // 命中提醒的轮次，模型没写标记也由程序补一张（1.0 + 开启才约等于每轮都发）。
   'sticker.ensureSend': { type: 'bool' },
   'sticker.collectReceived': { type: 'bool' },
+  // 27 张内置表情包带特定角色形象，通用部署默认不自动导入。
+  'sticker.builtinPresets': { type: 'bool' },
 
   // ---- 记忆（旧键，运行时只读 constants.js）----
   // 唯一生效的可调项：对话预算（不含 system prompt）。没有上限：
   // 启动器里可以用输入框手填任意值，但 system + 它超过 hardTotalTokens（64,000）时会被拒绝，
   // 那个提示由 /api/budget/estimate 的 overHardLimit 在界面上提前给出来。
   'memory.dialogueBudget': { type: 'int', min: 1000 },
-  'memory.maxSessions': { type: 'int', min: 1, max: 10000 },
   'memory.maxMessages': { type: 'int', min: 2, max: 2000 },
   'memory.maxNotesPerUser': { type: 'int', min: 0, max: 200 },
 
@@ -287,4 +292,4 @@ function formatErrors(errors) {
   return errors.map((e) => `${e.path}：${e.message}`).join('；');
 }
 
-module.exports = { FIELDS, API_KEY_SPEC, validate, checkValue, formatErrors, getByPath };
+module.exports = { FIELDS, API_KEY_SPEC, validate, checkValue, formatErrors };

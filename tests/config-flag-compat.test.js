@@ -19,9 +19,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const care = require('../src/services/care');
+const care = require('../src/modules/care');
 const { computeTrigger } = require('../src/core/trigger');
-const { ReminderService, normalizeRules } = require('../src/services/reminderService');
+const { ReminderService, normalizeRules } = require('../src/modules/reminders');
 const { validate } = require('../src/infra/configSchema');
 
 const NOW = new Date('2026-10-31T10:00:00+08:00').getTime();

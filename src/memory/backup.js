@@ -196,7 +196,7 @@ function listBackups(root) {
 
 function validateBundle(bundle) {
   if (!bundle || bundle.kind !== 'whale-girl-memory') {
-    throw new Error('这个文件不是鲸鲸的记忆备份（缺少 kind=whale-girl-memory）');
+    throw new Error('这个文件不是本应用的记忆备份（缺少 kind=whale-girl-memory）');
   }
   const files = bundle.files;
   if (!object(files)) throw new Error('备份里的 files 必须是对象');

@@ -16,7 +16,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { scanWechatAccounts } = require('../src/services/wechat');
+const { scanWechatAccounts } = require('../src/modules/wechat');
 
 function makeFixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-accounts-'));

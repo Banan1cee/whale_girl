@@ -15,7 +15,10 @@ function migrateOwnerName(config) {
     fromSettings = String((loadSettings(config) || {}).userName || '').trim();
   } catch { /* 没设置文件就是空的 */ }
   const fromConfig = String(config.persona.ownerName || '').trim();
-  if (fromSettings && (!fromConfig || fromConfig === '主人')) {
+  // 「主人」是老版本默认值，「你」是通用版默认值；两者都算「没显式设置」，
+  // 否则升级后旧 settings.userName 永远迁不过来。
+  const unset = !fromConfig || fromConfig === '主人' || fromConfig === '你';
+  if (fromSettings && unset) {
     config.persona.ownerName = fromSettings;
     try {
       const file = config.paths.configFile;
@@ -31,7 +34,7 @@ function migrateOwnerName(config) {
       try { saveSettings(config, { userName: '' }); } catch { /* 清不掉也没关系 */ }
     } catch { /* 写不了就只改内存，不至于启动失败 */ }
   }
-  config.persona.ownerName = String(config.persona.ownerName || '').trim() || '主人';
+  config.persona.ownerName = String(config.persona.ownerName || '').trim() || '你';
   return config.persona.ownerName;
 }
 

@@ -12,8 +12,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { loadConfig } = require('../src/infra/config');
-const { ContactsCache, normalizeItem } = require('../src/services/contacts');
-const care = require('../src/services/care');
+const { ContactsCache, normalizeItem } = require('../src/modules/wechat');
+const care = require('../src/modules/care');
 
 // 默认夹具固定在 UTC 中午，避免实际执行时刻改变时间窗与目标断言。
 const FIXTURE_NOW = Date.UTC(2026, 0, 1, 12, 0, 0);

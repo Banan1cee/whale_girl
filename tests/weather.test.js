@@ -34,7 +34,7 @@ test('联网有开关，配置项齐全', () => {
 });
 
 test('天气代码翻译表覆盖主要天气', () => {
-  const { wmoText } = require('../src/adapters/websearch');
+  const { wmoText } = require('../src/modules/search/websearch');
   assert.equal(wmoText(0), '晴');
   assert.equal(wmoText(3), '阴');
   assert.equal(wmoText(61), '小雨');
@@ -44,7 +44,7 @@ test('天气代码翻译表覆盖主要天气', () => {
 });
 
 test('没配城市时按 IP 猜，失败可恢复且成功缓存（离线 transport fixture）', async (t) => {
-  const { ipCity } = require('../src/adapters/websearch');
+  const { ipCity } = require('../src/modules/search/websearch');
   const { EventEmitter } = require('node:events');
   const https = require('node:https');
   let requests = 0;

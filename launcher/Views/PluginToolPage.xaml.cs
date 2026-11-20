@@ -33,7 +33,7 @@ namespace WhaleLauncher.Views
             if (digest && !AppDialog.Confirm(
                 Window.GetWindow(this),
                 $"允许「{_info.Name}」生成{(range == "today" ? "今天" : "昨天")}的聊天汇总？\n"
-                + "鲸鲸会把本机所选日期内可用的群聊和私聊片段交给当前模型。如果使用云端模型，片段会发送给模型服务商，调用可能产生费用。插件只接收汇总结果。",
+                + "本应用会把本机所选日期内可用的群聊和私聊片段交给当前模型。如果使用云端模型，片段会发送给模型服务商，调用可能产生费用。插件只接收汇总结果。",
                 "确认聊天汇总权限", okText: "允许一次"))
                 return;
             Run.IsEnabled = false;

@@ -56,7 +56,7 @@
                                         <TextBlock Text="{Binding Sub}" Style="{StaticResource Small}"
                                                    TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
                                     </StackPanel>
-                                    <Border Grid.Column="1" Background="{DynamicResource Surface3}" CornerRadius="3"
+                                    <Border Grid.Column="1" Background="{DynamicResource Surface3}" CornerRadius="4"
                                             Padding="5,1" Margin="8,0,0,0" VerticalAlignment="Center"
                                             Visibility="{Binding GroupBadgeVisibility}">
                                         <TextBlock Text="群" Foreground="{DynamicResource Accent}" FontSize="10" />

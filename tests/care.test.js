@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const care = require('../src/services/care');
+const care = require('../src/modules/care');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 const { startServer } = require('../server');
 

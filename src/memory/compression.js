@@ -81,7 +81,7 @@ function parseSummary(raw) {
 async function llmSummary(messages, llm) {
   if (!llm || llm.isMock || typeof llm.complete !== 'function') return '';
   const transcript = messages
-    .map((m) => `${m.role === 'assistant' ? '鲸鲸' : (m.name || '对方')}：${String(m.text).slice(0, 200)}`)
+    .map((m) => `${m.role === 'assistant' ? '助手' : (m.name || '对方')}：${String(m.text).slice(0, 200)}`)
     .join('\n')
     .slice(0, 8000);
   const raw = await llm.complete({

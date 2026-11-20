@@ -612,11 +612,8 @@ module.exports = {
   migrateSessions,
   legacyStatus,
   readImportNotice,
-  writeImportNotice,
   ackImportNotice,
   readSessionsFile,
   readLegacyStore,
-  readMemoryJson,
-  canonicalChatId,
   LEGACY_SOURCES,
 };

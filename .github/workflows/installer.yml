@@ -246,9 +246,8 @@ jobs:
           if ($meta.version -ne $env:version) { throw '工作流版本与package版本不一致' }
           dotnet publish launcher/WhaleLauncher.csproj `
             -c Release `
-            -r win-x64 `
-            --self-contained false `
             -p:PublishSingleFile=true `
+            -p:SelfContained=false `
             "-p:Version=$($meta.version)" `
             "-p:FileVersion=$($meta.fileVersion)" `
             "-p:AssemblyVersion=$($meta.fileVersion)" `
@@ -478,6 +477,19 @@ jobs:
           node scripts/release-resources.js verify-tree installer $dir . --payload
           if ($LASTEXITCODE -ne 0) { throw '安装后程序资源不完整' }
 
+          # 开始菜单快捷方式：装完必须能点。DefaultGroupName 是「助手」，
+          # 快捷方式名与 AppExe 都指向 {app}\WhaleLauncher.exe。
+          # PrivilegesRequired=lowest 时 {group} 落在用户 Start Menu（{userprograms}），
+          # 提升权限的 runner 上也可能走 {commonprograms}，两处都认。
+          $shortcutCandidates = @(
+            (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\助手\助手.lnk'),
+            (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\助手\助手.lnk')
+          )
+          if (-not ($shortcutCandidates | Where-Object { Test-Path -LiteralPath $_ })) {
+            Write-Output "::error title=快捷方式缺失::$($shortcutCandidates -join ' / ') 都不存在"
+            exit 1
+          }
+
           # 虚拟声卡整包在安装目录根部（用户反馈埋在 runtime 深处根本找不到）；
           . ./scripts/vb-cable-package.ps1
           Assert-VbCablePackage (Join-Path $dir 'VB-CABLE虚拟声卡')
@@ -693,7 +705,7 @@ jobs:
             exit 1
           }
 
-          '## 鲸鲸安装包' | Out-File $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          '## 助手安装包' | Out-File $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           '' | Out-File $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           '| 项目 | 值 |' | Out-File $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           '| --- | --- |' | Out-File $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
@@ -744,7 +756,7 @@ jobs:
           $manifest | Add-Member -NotePropertyName brand_latest -NotePropertyValue $env:version -Force
           $manifest | Add-Member -NotePropertyName target -NotePropertyValue $env:version -Force
           # released_at / manifest_version 已由 make-manifest 统一生成并递增一次。
-          $manifest.message = "鲸鲸 $env:version 已发布：下载安装包覆盖安装即可，data 与 config.json 不受影响。"
+          $manifest.message = "助手 $env:version 已发布：下载安装包覆盖安装即可，data 与 config.json 不受影响。"
           $popupSummary = (node scripts/release-notes.js $env:version --summary) -join "`n"
           if ($LASTEXITCODE -ne 0) { throw '本版本的更新弹窗摘要缺失或格式错误，停止准备发布资产' }
           $releaseDetails = (node scripts/release-notes.js $env:version) -join "`n"

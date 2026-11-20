@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 文本清洗：合并 services/contacts.js 与 services/reminderService.js 里逐字节相同的两份实现。
+ * 文本清洗：合并 modules/wechat/contacts.js 与 modules/reminders/service.js 里逐字节相同的两份实现。
  *
  * 语义（不要顺手统一成别的版本）：
  *   - null / undefined → 空串

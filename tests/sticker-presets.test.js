@@ -7,7 +7,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
-const { StickerService } = require('../src/services/stickerService');
+const { StickerService } = require('../src/modules/stickers');
 const stickers = require('../src/adapters/stickers');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 
@@ -20,6 +20,7 @@ test('新配置默认关闭表情发送和收集，微信示例配置使用后�
   for (const cfg of [DEFAULT_CONFIG, example]) {
     assert.equal(cfg.features.stickers, false);
     assert.equal(cfg.sticker.collectReceived, false);
+    assert.equal(cfg.sticker.builtinPresets, false, '特定角色的内置表情包默认不导入');
   }
   assert.equal(example.wechat.backgroundSend, true);
   assert.equal(example.wechat.bgSend.enabled, true);
@@ -36,7 +37,7 @@ function fixture(t, enabled = true) {
     return { file, sha256: hash(GIF) };
   });
   fs.writeFileSync(path.join(assets, 'manifest.json'), JSON.stringify({ version: 1, files }));
-  const config = { root, features: { stickers: enabled }, sticker: { dir: 'data/stickers' } };
+  const config = { root, features: { stickers: enabled }, sticker: { dir: 'data/stickers', builtinPresets: true } };
   return { root, assets, files, config, dir: path.join(root, 'data', 'stickers') };
 }
 
@@ -88,6 +89,7 @@ test('升级保留旧图库，手动导入接口添加 27 张并刷新 HTTP 图�
     fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({
       server: { port: 0, openBrowser: false }, watchConfig: false, log: { level: 'error' },
       features: { stickers: true, memorySnapshot: false, mediaCleanup: false, envContext: false },
+      sticker: { builtinPresets: true },
     }));
     inst = await startServer({ root, env: { WHALE_LOG_FILE: '', WHALE_TEST_NO_SHELL: '1' }, port: 0, openBrowser: false });
     assert.equal((await fetch(inst.url + '/healthz')).status, 200);
@@ -123,6 +125,18 @@ test('总闸关闭时有预设也不创建 data、不导入图片', async t => {
   const f = fixture(t, false);
   await new StickerService(f.config).startMaintenanceNow();
   assert.equal(fs.existsSync(path.join(f.root, 'data')), false);
+});
+
+test('默认配置不会自动导入角色预设；显式开启 builtinPresets 后仍可手动导入', async t => {
+  const f = fixture(t);
+  f.config.sticker.builtinPresets = false;
+  const service = new StickerService(f.config);
+  await service.startMaintenanceNow();
+  for (const item of f.files) assert.equal(fs.existsSync(path.join(f.dir, item.file)), false, '默认不能自动落图');
+  assert.equal(await service.importPresets({ manual: true }), 0, '默认配置下手动导入也不复制');
+  for (const item of f.files) assert.equal(fs.existsSync(path.join(f.dir, item.file)), false);
+  f.config.sticker.builtinPresets = true;
+  assert.equal(await service.importPresets({ manual: true }), f.files.length, '显式开启后手动导入仍可用');
 });
 
 test('不覆盖已有同名图，删除预设后重启也不复活', async t => {

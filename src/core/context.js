@@ -11,9 +11,6 @@ const { estimateBudgetTokens } = require('../infra/textBudget');
 const MAX_TURN_CHARS = 1800;
 // 和 memory/constants.hardTotalTokens 一致；按 token 裁剪，不再拿字符数冒充预算。
 const MAX_PROMPT_TOKENS = 64000;
-// 兼容旧调用方/测试的导出；实际裁剪已改成 token 口径。
-const MAX_PROMPT_CHARS = 100000;
-
 // 时间戳只在「首条 / 与上一条隔了 5 分钟以上 / 跨天」时标，别每条都写，省 token 也更像聊天记录。
 const STAMP_GAP_MS = 5 * 60 * 1000;
 
@@ -58,7 +55,7 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '
     // 单独的群聊事件记录：历史不是所有人轮流与机器人私聊。
     // 只发送不可反推的参与者标签，不把内部微信 ID 暴露给模型。
     const speaker = (m) => {
-      if (m.role === 'assistant') return `${msg.botName || '鲸鲸'}（机器人）`;
+      if (m.role === 'assistant') return `${msg.botName || '助手'}（机器人）`;
       const uid = m.uid || m.senderId || m.name || m.senderName || '未知';
       const tag = createHash('sha256').update(`${msg.chatId}:${uid}`).digest('hex').slice(0, 8);
       return `${m.name || m.senderName || '群友'}（参与者${tag}）`;
@@ -70,7 +67,7 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '
         发言人: speaker(event),
         内容: modelText(String(event.text).slice(0, MAX_TURN_CHARS)),
       };
-      if (event.addressedToBot) record.叫到鲸鲸 = true;
+      if (event.addressedToBot) record.叫到助手 = true;
       if (event.mentionedNames?.length) record.其他提及对象 = event.mentionedNames;
       if (event.inferredTargetNames?.length) record.可能承接的对象 = event.inferredTargetNames;
       if (event.replyToName) record.引用对象 = event.replyToName;
@@ -81,7 +78,7 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '
       // 挨骂的时候要让它看见原话，否则不知道对面骂了什么，回怼就没劲
       内容: String(msg.fight ? String(msg.cleanText || msg.text) : modelText(msg.cleanText || msg.text))
         .slice(0, MAX_TURN_CHARS),
-      叫到鲸鲸: Boolean(msg.addressedToBot || msg.atMe || msg.replyToBot),
+      叫到助手: Boolean(msg.addressedToBot || msg.atMe || msg.replyToBot),
       其他提及对象: msg.mentionedNames || [],
       ...(msg.replyToName ? { 引用对象: msg.replyToName } : {}),
     });
@@ -167,4 +164,4 @@ function buildTurns(msg, history, memoryBlock = '', tailBlock = '', timeZone = '
   return turns;
 }
 
-module.exports = { MAX_TURN_CHARS, MAX_PROMPT_CHARS, MAX_PROMPT_TOKENS, STAMP_GAP_MS, buildTurns, makeStamper };
+module.exports = { MAX_TURN_CHARS, MAX_PROMPT_TOKENS, STAMP_GAP_MS, buildTurns, makeStamper };

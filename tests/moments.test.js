@@ -5,13 +5,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { MomentsService } = require('../src/services/moments');
-const { MomentsPublisher } = require('../src/services/momentsPublisher');
+const { MomentsService } = require('../src/modules/moments');
+const { MomentsPublisher } = require('../src/modules/moments');
 const { Scheduler } = require('../src/infra/scheduler');
 const { momentsIntent, Bot } = require('../src/pipeline/chat');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
-const register = require('../src/http/routes/moments');
+const register = require('../src/modules/moments/routes');
 
 test('朋友圈：读取结果保存为最近一次快照，重启后能回答主人', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'moments-snapshot-'));
@@ -372,7 +372,7 @@ test('朋友圈发表允许小数间隔、大于旧限制的设置和不限每�
 });
 
 test('定时发表从首次在线开始计时，重启后到六小时才生成、领取和回执', async t => {
-  const { MomentsPublisher } = require('../src/services/momentsPublisher');
+  const { MomentsPublisher } = require('../src/modules/moments');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-moments-clock-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const hour = 3600000;
@@ -431,7 +431,7 @@ test('定时发表从首次在线开始计时，重启后到六小时才生成�
 });
 
 test('无效的朋友圈发表状态显示为暂停而不是让查询报错', t => {
-  const { MomentsPublisher } = require('../src/services/momentsPublisher');
+  const { MomentsPublisher } = require('../src/modules/moments');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-moments-state-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'moments'));
@@ -621,6 +621,7 @@ test('朋友圈内置图与表情包清单一致，三类自动补齐并保留�
   const repo = path.resolve(__dirname, '..');
   const publisher = new MomentsPublisher({ config: {
     root: repo, paths: { dataDir: root }, features: { stickers: false },
+    sticker: { builtinPresets: true },
     moments: { publishFeatureEnabled: true },
   } });
   const existing = path.join(publisher.images, '开心', 'custom.png');

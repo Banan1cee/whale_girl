@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
@@ -94,7 +95,7 @@ namespace WhaleLauncher.Views
                 new FieldSpec { Path = "group.freeChatChance", Label = "插话概率", Kind = "num", Min = 0, Max = 1, IsInt = false, Hint = "没点名的消息按这个概率接一句；0.06 = 百分之六，约 16 条回 1 条；填 1 = 每条都回，仍受冷却和每分钟上限约束" },
                 new FieldSpec { Path = "group.cooldownSec", Label = "两次回复冷却(秒)", Kind = "num", Min = 0, Max = 3600 },
                 new FieldSpec { Path = "group.maxRepliesPerMinute", Label = "每分钟最多回几条", Kind = "slider", Min = 5, Max = 30, Unit = " 条/分钟", Hint = "推荐 10–20 条" },
-                new FieldSpec { Path = "group.masterAlwaysReply", Label = "主人在群里说话永远回", Kind = "bool" },
+                new FieldSpec { Path = "group.masterAlwaysReply", Label = "主要联系人在群里说话永远回", Kind = "bool" },
                 new FieldSpec { Path = "group.engagedMinutes", Label = "接话后保持参与(分钟)", Kind = "num", Min = 1, Max = 1440 },
                 new FieldSpec { Path = "group.silentMinutes", Label = "冷场多久算结束(分钟)", Kind = "num", Min = 1, Max = 10080 },
                 new FieldSpec { Path = "group.muteDefaultMinutes", Label = "免打扰默认时长(分钟)", Kind = "num", Min = 1, Max = 1440 },
@@ -159,7 +160,7 @@ namespace WhaleLauncher.Views
 
         private Border BuildAdminSpellSection()
         {
-            var card = Card("管理员魔咒", "主人在微信私聊发魔咒后，可在同一私聊发送管理命令：禁言 群名 / 解除禁言 群名 / 改名 新名字 / 重置记忆 / 清空所有记忆。默认有效 30 分钟。", out var body);
+            var card = Card("管理员魔咒", "主要联系人在微信私聊发魔咒后，可在同一私聊发送管理命令：禁言 群名 / 解除禁言 群名 / 改名 新名字 / 重置记忆 / 清空所有记忆。默认有效 30 分钟。", out var body);
             _adminSpellStatus = new TextBlock { Style = (Style)FindResource("Small") };
             body.Children.Add(_adminSpellStatus);
             var password = new PasswordBox();
@@ -279,7 +280,7 @@ namespace WhaleLauncher.Views
             {
                 Width = 216,
                 Height = 116,
-                CornerRadius = new CornerRadius(12),
+                CornerRadius = new CornerRadius(8),
                 BorderThickness = new Thickness(1),
                 ClipToBounds = true,
                 HorizontalAlignment = HorizontalAlignment.Left,
@@ -515,8 +516,8 @@ namespace WhaleLauncher.Views
             var border = new Border
             {
                 Style = (Style)FindResource("Card"),
-                Padding = new Thickness(16, 14, 16, 14),
-                Margin = new Thickness(0, 0, 0, 12)
+                Padding = new Thickness(18, 16, 18, 16),
+                Margin = new Thickness(0, 0, 0, 14)
             };
             var stack = new StackPanel();
             stack.Children.Add(new TextBlock { Text = title, Style = (Style)FindResource("H2") });
@@ -543,7 +544,7 @@ namespace WhaleLauncher.Views
             {
                 Width = 38,
                 Height = 22,
-                CornerRadius = new CornerRadius(6),
+                CornerRadius = new CornerRadius(4),
                 BorderThickness = new Thickness(1),
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -662,7 +663,7 @@ namespace WhaleLauncher.Views
             {
                 if (!_sup.NodeRunning)
                 {
-                    result.Text = "内核没在运行，先启动鲸鲸再试。";
+                    result.Text = "内核没在运行，先启动内核再试。";
                     return;
                 }
                 btn.IsEnabled = false;
@@ -1084,10 +1085,10 @@ namespace WhaleLauncher.Views
                         };
                         var pill = new Border
                         {
-                            CornerRadius = new CornerRadius(12),
+                            CornerRadius = new CornerRadius(4),
                             BorderThickness = new Thickness(1),
                             Padding = new Thickness(10, 0, 10, 0),
-                            Height = 24,
+                            Height = 26,
                             Margin = new Thickness(0, 0, 6, 0),
                             Cursor = System.Windows.Input.Cursors.Hand,
                             Background = Brushes.Transparent,
@@ -1396,10 +1397,10 @@ namespace WhaleLauncher.Views
             var stack = new StackPanel { Orientation = Orientation.Horizontal };
             stack.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
             stack.Children.Add(badge);
-            return new Button
+            var tab = new Button
             {
-                Height = 30,
-                Padding = new Thickness(12, 0, 12, 0),
+                Height = 32,
+                Padding = new Thickness(12, 6, 12, 6),
                 Margin = new Thickness(0, 0, 6, 0),
                 BorderThickness = new Thickness(1),
                 Cursor = System.Windows.Input.Cursors.Hand,
@@ -1407,6 +1408,9 @@ namespace WhaleLauncher.Views
                 Content = stack,
                 Style = (Style)FindResource("Ghost"),
             };
+            // 页签内容是「文字 + 角标」的 StackPanel，读屏拿不到名字，这里显式给。
+            AutomationProperties.SetName(tab, text + "页签");
+            return tab;
         }
 
         private static void MarkTab(Button btn, bool active)

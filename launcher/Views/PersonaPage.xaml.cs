@@ -164,6 +164,7 @@ namespace WhaleLauncher.Views
 
             await LoadPresetsAsync(_currentPresetId);
             await LoadMemoryChatsAsync();
+            await LoadStyleAsync();
             _loadedOnline = _sup.NodeRunning;
             SaveState.Text = _loadedOnline ? "" : "可保存到本地 · 启动后生效";
             PresetSaved.Text = "";
@@ -206,7 +207,7 @@ namespace WhaleLauncher.Views
             CmbMemoryChat.ItemsSource = groups;
             if (groups.Count > 0) CmbMemoryChat.SelectedIndex = 0;
             BtnResetMemory.IsEnabled = groups.Count > 0;
-            MemoryHint.Text = groups.Count > 0 ? "列出鲸鲸当前保存了记忆的所有对话，包含群聊和私聊。" : "暂无已保存记忆的对话。";
+            MemoryHint.Text = groups.Count > 0 ? "列出本应用当前保存了记忆的所有对话，包含群聊和私聊。" : "暂无已保存记忆的对话。";
         }
 
         private async void OnRefreshMemoryChats(object sender, RoutedEventArgs e)
@@ -246,6 +247,377 @@ namespace WhaleLauncher.Views
                 CmbMemoryChat.IsEnabled = true;
                 BtnResetMemory.IsEnabled = CmbMemoryChat.SelectedItem != null;
             }
+        }
+
+        // ── 对话风格学习 ────────────────────────────────────────
+        // 统计和摘要都由内核生成；这里只负责展示、触发分析和切换模式。
+        // 模式回填必须静默，否则刷新页面会把默认值当用户操作写回去。
+
+        private bool _styleBusy;
+        private bool _styleModeBusy;
+        private bool _styleClearing;
+        private bool _styleHasData;
+        private bool _styleSyncing;
+        private string _styleMode = "adapt";
+
+        private async Task LoadStyleAsync()
+        {
+            if (!_sup.NodeRunning)
+            {
+                _styleHasData = false;
+                SetStyleModeSilently("adapt");
+                StyleState.Text = "尚未学习";
+                StyleDot.Fill = (Brush)FindResource("Idle");
+                TxtStylePreview.Text = "点击学习后，这里会显示摘要和统计。";
+                TxtStylePreview.Foreground = (Brush)FindResource("Dim");
+                StyleHint.Text = "启动内核后可分析已有记忆。先在身份关系里配置主要联系人，结果会更准确。";
+                SetStyleControlsEnabled(false);
+                return;
+            }
+
+            var res = await Api.Get(_sup.Url, "/api/persona/style", 15);
+            if (!res.Ok)
+            {
+                _styleHasData = false;
+                StyleState.Text = "尚未学习";
+                StyleDot.Fill = (Brush)FindResource("Idle");
+                TxtStylePreview.Text = "点击学习后，这里会显示摘要和统计。";
+                TxtStylePreview.Foreground = (Brush)FindResource("Dim");
+                StyleHint.Text = res.StatusCode == 404
+                    ? "当前内核还没有风格学习接口，更新内核后再试。"
+                    : "读取风格状态失败：" + Api.Message(res);
+                SetStyleControlsEnabled(true);
+                return;
+            }
+
+            ApplyStyleResponse(res);
+            SetStyleControlsEnabled(true);
+        }
+
+        private void ApplyStyleResponse(ApiResult res)
+        {
+            var root = res.Root;
+            var style = Obj(root, "style") ?? Obj(root, "profile") ?? root;
+            var data = Obj(style, "profile") ?? Obj(style, "stats")
+                ?? Obj(root, "profile") ?? Obj(root, "stats") ?? style;
+
+            SetStyleModeSilently(StyleString(data, style, root, "mode"));
+
+            var count = StyleLong(data, style, root,
+                "messageCount", "totalMessages", "messages", "sampleCount", "samples", "count", "total");
+            var time = StyleTime(data, style, root);
+            var summary = StyleString(data, style, root, "summary", "preview", "text");
+            var avg = StyleDouble(data, style, root,
+                "avgLength", "avgChars", "avgSentenceLength", "avgSentenceChars", "sentenceLength", "avgLen");
+            var tone = StyleList(data, style, root, "tone", "tones", "toneTags", "toneSummary");
+            var punct = StyleList(data, style, root, "punctuation", "punctuationStyle", "punctuationHabits");
+            var emoji = StyleList(data, style, root, "emoji", "emojiUsage", "emojiHabit");
+            var topics = StyleList(data, style, root, "topics", "topTopics", "frequentTopics");
+
+            var lines = new List<string>();
+            if (!string.IsNullOrWhiteSpace(summary))
+                lines.Add(summary.Trim());
+            else
+            {
+                var explicitLines = JsonRead.Strings(data, "lines");
+                if (explicitLines.Count == 0) explicitLines = JsonRead.Strings(style, "lines");
+                if (explicitLines.Count == 0) explicitLines = JsonRead.Strings(root, "lines");
+                lines.AddRange(explicitLines);
+            }
+
+            if (lines.Count == 0)
+            {
+                if (avg > 0) lines.Add("平均句长：约 " + Math.Round(avg) + " 字");
+                if (tone.Length > 0) lines.Add("语气：" + tone);
+                if (punct.Length > 0) lines.Add("标点习惯：" + punct);
+                if (emoji.Length > 0) lines.Add("颜文字 / 表情：" + emoji);
+                if (topics.Length > 0) lines.Add("常聊话题：" + topics);
+            }
+
+            var hasData = count > 0 || time > 0 || lines.Count > 0
+                || JsonRead.Bool(data, "hasProfile") || JsonRead.Bool(style, "hasProfile")
+                || JsonRead.Bool(root, "hasProfile");
+            _styleHasData = hasData;
+            if (lines.Count > 0)
+            {
+                TxtStylePreview.Text = string.Join("\n", lines);
+                TxtStylePreview.Foreground = (Brush)FindResource("Text");
+            }
+            else
+            {
+                TxtStylePreview.Text = hasData
+                    ? "已生成风格画像，暂时没有文字摘要。"
+                    : "点击学习后，这里会显示摘要和统计。";
+                TxtStylePreview.Foreground = (Brush)FindResource(hasData ? "Text2" : "Dim");
+            }
+
+            if (count > 0 && time > 0)
+                StyleState.Text = $"已从 {count:N0} 条消息生成，时间 {FormatStyleTime(time)}";
+            else if (count > 0)
+                StyleState.Text = $"已从 {count:N0} 条消息生成";
+            else if (time > 0)
+                StyleState.Text = "已生成风格画像，时间 " + FormatStyleTime(time);
+            else if (hasData)
+                StyleState.Text = "已生成风格画像";
+            else
+                StyleState.Text = "尚未学习";
+
+            StyleDot.Fill = (Brush)FindResource(hasData ? "Ok" : "Idle");
+            StyleHint.Text = hasData
+                ? "只保存统计和摘要，不保存原始聊天正文。"
+                : "点击学习后，这里会显示摘要和统计。先在身份关系里配置主要联系人，结果会更准确。";
+        }
+
+        private async void OnStyleModeChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_styleSyncing || !_loaded || _styleBusy || _styleModeBusy || _styleClearing) return;
+            if (!(CmbStyleMode.SelectedItem is ComboBoxItem item)
+                || !(item.Tag is string mode) || mode == _styleMode) return;
+            if (!_sup.NodeRunning)
+            {
+                SetStyleModeSilently(_styleMode);
+                StyleHint.Text = "启动内核后才能切换学习方式。";
+                return;
+            }
+
+            _styleModeBusy = true;
+            SetStyleControlsEnabled(true);
+            StyleHint.Text = "正在保存学习方式…";
+            try
+            {
+                var res = await Api.PostJson(_sup.Url, "/api/persona/style/mode", new { mode }, 20);
+                if (!res.Ok)
+                {
+                    SetStyleModeSilently(_styleMode);
+                    StyleHint.Text = "切换失败：" + Api.Message(res);
+                    return;
+                }
+
+                _styleMode = mode;
+                StyleHint.Text = mode == "mimic" ? "已切换为模仿对方表达。" : "已切换为贴合对方习惯。";
+            }
+            finally
+            {
+                _styleModeBusy = false;
+                SetStyleControlsEnabled(_sup.NodeRunning);
+            }
+        }
+
+        private async void OnStyleLearnMemory(object sender, RoutedEventArgs e)
+            => await RunStyleAnalyzeAsync("memory", null);
+
+        private async void OnStyleLearnExport(object sender, RoutedEventArgs e)
+        {
+            if (_styleBusy || _styleModeBusy || _styleClearing) return;
+            var file = AppFilePicker.Open("选择微信导出", ".json");
+            if (string.IsNullOrWhiteSpace(file)) return;
+            await RunStyleAnalyzeAsync("export", file);
+        }
+
+        private async void OnStyleClear(object sender, RoutedEventArgs e)
+        {
+            if (_styleBusy || _styleModeBusy || _styleClearing || !_styleHasData) return;
+            if (!_sup.NodeRunning)
+            {
+                StyleHint.Text = "请先启动内核，再清除学习结果。";
+                return;
+            }
+            if (!AppDialog.Confirm(Window.GetWindow(this),
+                "清除本机已学习的对话风格画像？\n\n"
+                + "只会删除统计摘要和后续对话里的风格参考，不改人设和聊天记忆，也不删原始聊天记录。清除后需要重新学习。",
+                "清除风格画像", danger: true, okText: "清除", cancelText: "取消")) return;
+
+            _styleClearing = true;
+            SetStyleControlsEnabled(true);
+            StyleHint.Text = "正在清除…";
+            try
+            {
+                var res = await Api.PostJson(_sup.Url, "/api/persona/style/clear", new { }, 30);
+                if (!res.Ok)
+                {
+                    StyleDot.Fill = (Brush)FindResource("Warn");
+                    StyleHint.Text = "清除失败：" + Api.Message(res);
+                    return;
+                }
+
+                _styleHasData = false;
+                await LoadStyleAsync();
+                StyleHint.Text = "已清除。点击学习后，这里会显示摘要和统计。";
+            }
+            catch (Exception ex)
+            {
+                StyleDot.Fill = (Brush)FindResource("Warn");
+                StyleHint.Text = "清除失败：" + Api.FriendlyError(ex);
+            }
+            finally
+            {
+                _styleClearing = false;
+                SetStyleControlsEnabled(_sup.NodeRunning);
+            }
+        }
+
+        private async Task RunStyleAnalyzeAsync(string source, string file)
+        {
+            if (_styleBusy || _styleModeBusy || _styleClearing) return;
+            if (!_sup.NodeRunning)
+            {
+                StyleHint.Text = "请先启动内核，再开始学习。";
+                return;
+            }
+
+            _styleBusy = true;
+            SetStyleControlsEnabled(true);
+            StyleHint.Text = "正在分析…这一步可能要十几秒，请稍等。";
+            try
+            {
+                object body = file == null
+                    ? new { source, useLlm = ChkStyleUseLlm.IsChecked == true }
+                    : new { source, file, useLlm = ChkStyleUseLlm.IsChecked == true };
+                var res = await Api.PostJson(_sup.Url, "/api/persona/style/analyze", body, 120);
+                if (!res.Ok)
+                {
+                    StyleDot.Fill = (Brush)FindResource("Warn");
+                    StyleHint.Text = "分析失败：" + Api.Message(res);
+                    return;
+                }
+
+                ApplyStyleResponse(res);
+                // 有的实现只回 {ok:true}，成功后补一次状态读取，预览才不会停在旧值。
+                if (!res.Has("style") && !res.Has("profile") && !res.Has("summary")
+                    && !res.Has("preview") && !res.Has("messageCount"))
+                    await LoadStyleAsync();
+                StyleHint.Text = "分析完成。后续对话会参考学到的风格。";
+            }
+            catch (Exception ex)
+            {
+                StyleDot.Fill = (Brush)FindResource("Warn");
+                StyleHint.Text = "分析失败：" + Api.FriendlyError(ex);
+            }
+            finally
+            {
+                _styleBusy = false;
+                SetStyleControlsEnabled(_sup.NodeRunning);
+            }
+        }
+
+        private void SetStyleControlsEnabled(bool online)
+        {
+            var enabled = online && !_styleBusy && !_styleModeBusy && !_styleClearing;
+            BtnStyleMemory.IsEnabled = enabled;
+            BtnStyleExport.IsEnabled = enabled;
+            CmbStyleMode.IsEnabled = enabled;
+            BtnStyleClear.IsEnabled = enabled && _styleHasData;
+            BtnStyleMemory.Content = _styleBusy ? "正在分析…" : "从已有记忆学习";
+            BtnStyleExport.Content = _styleBusy ? "正在分析…" : "从微信导出文件学习…";
+            BtnStyleClear.Content = _styleClearing ? "正在清除…" : "清除学习结果";
+        }
+
+        private void SetStyleModeSilently(string mode)
+        {
+            _styleMode = string.Equals(mode, "mimic", StringComparison.OrdinalIgnoreCase) ? "mimic" : "adapt";
+            _styleSyncing = true;
+            try
+            {
+                foreach (var item in CmbStyleMode.Items)
+                {
+                    if (item is ComboBoxItem row
+                        && string.Equals(row.Tag as string, _styleMode, StringComparison.Ordinal))
+                    {
+                        CmbStyleMode.SelectedItem = row;
+                        break;
+                    }
+                }
+            }
+            finally { _styleSyncing = false; }
+        }
+
+        private static JsonElement? Obj(JsonElement e, string name)
+        {
+            var value = JsonRead.Prop(e, name);
+            return value.ValueKind == JsonValueKind.Object ? value : (JsonElement?)null;
+        }
+
+        private static string StyleString(JsonElement data, JsonElement style, JsonElement root, params string[] names)
+        {
+            foreach (var element in new[] { data, style, root })
+                foreach (var name in names)
+                {
+                    var text = JsonRead.Str(element, name);
+                    if (!string.IsNullOrWhiteSpace(text)) return text.Trim();
+                }
+            return "";
+        }
+
+        private static string StyleList(JsonElement data, JsonElement style, JsonElement root, params string[] names)
+        {
+            foreach (var element in new[] { data, style, root })
+                foreach (var name in names)
+                {
+                    var list = JsonRead.Strings(element, name);
+                    if (list.Count > 0) return string.Join("、", list);
+                    var text = JsonRead.Str(element, name);
+                    if (!string.IsNullOrWhiteSpace(text)) return text.Trim();
+                }
+            return "";
+        }
+
+        private static long StyleLong(JsonElement data, JsonElement style, JsonElement root, params string[] names)
+        {
+            foreach (var element in new[] { data, style, root })
+                foreach (var name in names)
+                {
+                    var value = JsonRead.Long(element, name);
+                    if (value > 0) return value;
+                }
+            return 0;
+        }
+
+        private static double StyleDouble(JsonElement data, JsonElement style, JsonElement root, params string[] names)
+        {
+            foreach (var element in new[] { data, style, root })
+                foreach (var name in names)
+                {
+                    var value = JsonRead.Double(element, name, 0);
+                    if (value > 0) return value;
+                }
+            return 0;
+        }
+
+        private static long StyleTime(JsonElement data, JsonElement style, JsonElement root)
+        {
+            foreach (var element in new[] { data, style, root })
+                foreach (var name in new[] { "updatedAt", "generatedAt", "learnedAt", "analyzedAt", "createdAt", "at", "time" })
+                {
+                    var stamp = EpochMillis(JsonRead.Prop(element, name));
+                    if (stamp > 0) return stamp;
+                }
+            return 0;
+        }
+
+        private static long EpochMillis(JsonElement value)
+        {
+            long number;
+            if (value.ValueKind == JsonValueKind.Number)
+            {
+                if (!value.TryGetInt64(out number)) return 0;
+            }
+            else if (value.ValueKind == JsonValueKind.String)
+            {
+                var text = (value.GetString() ?? "").Trim();
+                if (text.Length == 0) return 0;
+                if (!long.TryParse(text, out number))
+                    return DateTimeOffset.TryParse(text, out var parsed) ? parsed.ToUnixTimeMilliseconds() : 0;
+            }
+            else return 0;
+
+            if (number <= 0) return 0;
+            return number < 100000000000L ? number * 1000 : number;
+        }
+
+        private static string FormatStyleTime(long millis)
+        {
+            try { return DateTimeOffset.FromUnixTimeMilliseconds(millis).LocalDateTime.ToString("yyyy-MM-dd HH:mm"); }
+            catch { return ""; }
         }
 
         private void UpdateHints()
@@ -386,7 +758,7 @@ namespace WhaleLauncher.Views
                     Padding = new Thickness(4, 0, 4, 0),
                     Style = (Style)FindResource("Ghost"),
                     Tag = entry,
-                    ToolTip = "移除这个主人",
+                    ToolTip = "移除这个主要联系人",
                 };
                 remove.Click += OnRemoveMaster;
                 row.Children.Add(remove);
@@ -404,7 +776,7 @@ namespace WhaleLauncher.Views
             var incomplete = _masterEntries.Any((e) =>
                 string.IsNullOrWhiteSpace(e.Name) || string.IsNullOrWhiteSpace(e.Wxid));
             MasterWarn.Text = incomplete
-                ? "有主人只填了昵称或只填了 wxid。微信只按 wxid 认主人，请重新搜索选择一次，避免名字和 id 不是同一个人。"
+                ? "有主要联系人只填了昵称或只填了 wxid。微信只按 wxid 认主要联系人，请重新搜索选择一次，避免名字和 id 不是同一个人。"
                 : "";
             MasterWarn.Visibility = incomplete ? Visibility.Visible : Visibility.Collapsed;
             MasterHint.Text = _sup.NodeRunning
@@ -474,7 +846,7 @@ namespace WhaleLauncher.Views
             finally { _masterRendering = false; }
 
             MasterHint.Text = items.Count > 0
-                ? "点一个结果加为主人。"
+                ? "点一个结果设为主要联系人。"
                 : "没有匹配「" + q + "」的联系人；换个名字或直接搜 wxid。";
         }
 
@@ -712,7 +1084,7 @@ namespace WhaleLauncher.Views
             if (_applyingPreset) return;
             if (!(CmbPreset.SelectedItem is PresetItem p)) return;
             if (p.Id.StartsWith("market-", StringComparison.Ordinal) &&
-                !AppDialog.Confirm(Window.GetWindow(this), "应用此人设会替换人设内容及包内的表达、长度设置，主人账号与密钥不变。是否继续？",
+                !AppDialog.Confirm(Window.GetWindow(this), "应用此人设会替换人设内容及包内的表达、长度设置，主要联系人账号与密钥不变。是否继续？",
                     "应用插件人设", okText: "应用")) return;
             if (!await FlushEditsAsync()) return;
             _applyingPreset = true;
@@ -787,7 +1159,7 @@ namespace WhaleLauncher.Views
             if (!AppDialog.Confirm(Window.GetWindow(this),
                 promptOnly
                     ? "只导出自定义补充提示词，不含身份字段和页面开关。安装启用后会出现在人设列表。\n请确认提示词正文不包含个人信息。"
-                    : "导出当前人设、称呼、别名、顶嘴与交流偏好、颜文字和长度设置。\n不包含主人账号、密钥、聊天记忆或系统权限。\n请检查人设正文及称呼是否写有个人信息。",
+                    : "导出当前人设、称呼、别名、顶嘴与交流偏好、颜文字和长度设置。\n不包含主要联系人账号、密钥、聊天记忆或系统权限。\n请检查人设正文及称呼是否写有个人信息。",
                 "打包分享", okText: "继续")) return;
             var title = AppDialog.Prompt(Window.GetWindow(this), "分享包名称", "打包分享",
                 string.IsNullOrWhiteSpace(_currentPresetName) ? TxtName.Text : _currentPresetName);
@@ -819,7 +1191,7 @@ namespace WhaleLauncher.Views
         {
             if (!_loaded) return;
             var name = AppDialog.Prompt(Window.GetWindow(this),
-                "给这份人设起个标题（只用于列表展示，不会改她的名字）。以后保存人设会自动更新它。",
+                "给这份人设起个标题（只用于列表展示，不会改这个角色的名字）。以后保存人设会自动更新它。",
                 "另存为人设预设");
             if (name == null) return;
             name = name.Trim();

@@ -3,17 +3,17 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="Transparent">
     <UserControl.Resources>
-        <!-- 对话预算专用的细滑轨：6px 轨道 + 圆头滑块。默认 WPF 那个灰槽+金属滑块太丑。 -->
+        <!-- 对话预算专用的细滑轨：4px 轨道 + 18px 圆头滑块，和全局 Slider 同一手感 -->
         <Style x:Key="BudgetSlider" TargetType="Slider">
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
-            <Setter Property="Height" Value="24" />
+            <Setter Property="Height" Value="26" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Slider">
                         <Grid Background="Transparent" VerticalAlignment="Center">
                             <Border Height="4" CornerRadius="2" VerticalAlignment="Center"
-                                    Background="{DynamicResource Muted}" Opacity="0.18" />
-                            <Track x:Name="PART_Track" VerticalAlignment="Center">
+                                    Background="{DynamicResource LineSoft}" />
+                            <Track x:Name="PART_Track" VerticalAlignment="Center" IsDirectionReversed="True">
                                 <Track.DecreaseRepeatButton>
                                     <RepeatButton Focusable="False" IsTabStop="False"
                                                   Command="{x:Static Slider.DecreaseLarge}"
@@ -27,11 +27,10 @@
                                     </RepeatButton>
                                 </Track.DecreaseRepeatButton>
                                 <Track.Thumb>
-                                    <Thumb Width="14" Height="14" Focusable="False">
+                                    <Thumb Width="18" Height="18" Focusable="False">
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
-                                                <!-- 不留深色外圈：外圈和已填充的轨道同色，接缝就看不出来了；亮环 3px + 深色内芯 -->
-                                                <Grid Width="14" Height="14">
+                                                <Grid Width="18" Height="18">
                                                     <Ellipse Fill="{DynamicResource Accent}" />
                                                     <Ellipse Width="8" Height="8" Fill="{DynamicResource Bg}" />
                                                 </Grid>
@@ -57,20 +56,27 @@
             </Setter>
         </Style>
     </UserControl.Resources>
-    <!-- 单列滚动：不再有分类侧栏，也没有「设置」标题；内容靠卡片分组 -->
-    <Grid Margin="28,20,32,16">
+    <!-- 单列滚动：没有分类侧栏；内容靠卡片分组。保留 Fluent 页头，和其余页面同一节奏。 -->
+    <Grid Margin="28,24,32,20">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <ScrollViewer x:Name="MainScroll" Grid.Row="0" VerticalScrollBarVisibility="Auto"
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <TextBlock Text="设置" Style="{StaticResource H1}" />
+            <TextBlock Text="模型、外观与高级选项；改动会自动保存，下一轮生效。" Style="{StaticResource Small}"
+                       Margin="0,4,0,0" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <ScrollViewer x:Name="MainScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled" FocusVisualStyle="{x:Null}">
-            <StackPanel x:Name="SectionsHost" Margin="0,0,10,0" />
+            <StackPanel x:Name="SectionsHost" Margin="0,0,12,0" />
         </ScrollViewer>
 
         <!-- 状态行放底部：不再占侧栏 -->
-        <StackPanel Grid.Row="1" Margin="0,10,0,0">
+        <StackPanel Grid.Row="2" Margin="0,10,0,0">
             <TextBlock x:Name="KernelHint" Style="{StaticResource Small}" TextWrapping="Wrap" />
             <TextBlock x:Name="StatusText" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" />
         </StackPanel>

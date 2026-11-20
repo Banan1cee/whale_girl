@@ -60,7 +60,7 @@ test('actual bounded ZIP verification accepts fixture and rejects a missing prog
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 Add-Type -AssemblyName System.IO.Compression
-$srcZip=${q(zip)}; $fullZip=$null; $pkgName='stage'; $pkgNameFull='unused'; $checks=@(); $root=${q(f.catalog)}
+$srcZip=${q(zip)}; $fullZip=$null; $pkgName='stage'; $pkgNameFull='unused'; $checks=@(); $root=${q(f.catalog)}; $stage=${q(f.stage)}
 $script:planJson=[IO.File]::ReadAllText(${q(plan)})
 function T22FixturePlan { $script:planJson }
 $node='T22FixturePlan'; $global:LASTEXITCODE=0

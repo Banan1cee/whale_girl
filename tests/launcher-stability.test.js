@@ -99,7 +99,7 @@ test('看图是「服务商 + 模型」两个下拉；自动跟随时只留「�
 });
 
 test('自动跟随的看图 Key 取聊天那把（provider 只在 config.json 也不误报没 Key）', () => {
-  const code = fs.readFileSync(path.join(root, 'src', 'adapters', 'vision.js'), 'utf8');
+  const code = fs.readFileSync(path.join(root, 'src', 'modules', 'vision', 'vision.js'), 'utf8');
   assert.match(code, /if \(vc\.auto\)[\s\S]{0,200}resolveRuntime\(config\)\.apiKey/, '自动模式要用聊天运行时的 Key');
 });
 

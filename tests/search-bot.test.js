@@ -8,9 +8,9 @@ const path = require('node:path');
 const { Bot } = require('../src/pipeline/chat');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
-const web = require('../src/adapters/websearch');
-const places = require('../src/adapters/search/weather');
-const { result } = require('../src/core/search/result');
+const web = require('../src/modules/search/websearch');
+const places = require('../src/modules/search/providers/weather');
+const { result } = require('../src/modules/search/core/result');
 const { promptOf } = require('./support/prompt');
 
 function evidence(method) {

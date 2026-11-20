@@ -14,7 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const time = require('../src/infra/time');
-const care = require('../src/services/care');
+const care = require('../src/modules/care');
 const reminder = require('../src/core/reminder');
 const { loadConfig } = require('../src/infra/config');
 const { applyConfigPatch, publicConfig } = require('../src/infra/configPatch');
@@ -190,7 +190,7 @@ test('日记的文件名和到点判断按 env.timezone，而不是系统本地�
     diary: { enabled: true, time: '23:00', sendToOwner: false },
     persona: { name: '鲸鲸', ownerName: '主人', master: { names: ['主人'], wxids: ['wxid_master'] } },
   };
-  const service = new (require('../src/services/diary').DiaryService)(config, {
+  const service = new (require('../src/modules/diary').DiaryService)(config, {
     store,
     llm,
     logger: { info() {}, warn() {} },
@@ -203,7 +203,7 @@ test('日记的文件名和到点判断按 env.timezone，而不是系统本地�
   // 同一时刻换成纽约时区：才上午 10 点，不到 23:00，不应生成。
   const nyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-diary-tz-ny-'));
   t.after(() => fs.rmSync(nyDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 80 }));
-  const nyService = new (require('../src/services/diary').DiaryService)(
+  const nyService = new (require('../src/modules/diary').DiaryService)(
     { ...config, paths: { dataDir: nyDir }, env: { timezone: 'America/New_York' } },
     { store, llm, logger: { info() {}, warn() {} }, now: () => now }
   );

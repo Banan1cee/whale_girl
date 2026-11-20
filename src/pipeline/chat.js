@@ -109,11 +109,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const VERSION = require('../../package.json').version;
 
 class Bot {
-  constructor({ config, store, llm, logger, trace = null, now = () => new Date(), rng = Math.random, mockChunkDelayMs = 12, linkReader = null, calibration = null, moments = null, version = VERSION }) {
+  constructor({ config, store, llm, logger, trace = null, now = () => new Date(), rng = Math.random, mockChunkDelayMs = 12, linkReader = null, calibration = null, moments = null, styleProfile = null, version = VERSION }) {
     this.config = config;
     this.store = store;
     this.llm = llm;
     this.logger = logger;
+    // 从已有聊天学到的使用者风格画像（data/style-profile.json）。
+    // 没有文件就是 null；这里只持有普通数据，不在这里做文件 IO。
+    this.styleProfile = styleProfile;
     // 程序版本：环境块里要报给模型（问「你是什么版本」时不能瞎说）
     this.version = version;
     // 判定链落盘（src/core/trace.js）。测试/接口里可以不传，没有 trace 只是少一份证据。
@@ -773,7 +776,7 @@ class Bot {
           key,
           msg,
           atMe,
-          canned: isMaster ? `${this.config.persona.ownerName || '主人'}你叫谁乐乐呢，哼` : '乐乐你叫谁呢',
+          canned: isMaster ? `${this.config.persona.ownerName || '你'}你叫谁乐乐呢，哼` : '乐乐你叫谁呢',
           reason: 'nickname_provoke',
         };
       }
@@ -782,7 +785,7 @@ class Bot {
         key,
         msg,
         atMe,
-        canned: isGroup ? '在，怎么啦' : (isMaster ? `在呢${this.config.persona.ownerName || '主人'}，怎么啦` : '在，怎么了'),
+        canned: isGroup ? '在，怎么啦' : (isMaster ? `在呢${this.config.persona.ownerName || '你'}，怎么啦` : '在，怎么了'),
         reason: 'bare_mention',
       };
     }
@@ -992,6 +995,7 @@ class Bot {
       // 外部动作账本：她做过什么（发表情包、交给桥接、读链接、联网），
       // 不塞进去她就永远不知道自己的副作用，只能编。
       events: recentEvents,
+      styleProfile: this.styleProfile,
       now,
       envBlock,
     });

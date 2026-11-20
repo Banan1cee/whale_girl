@@ -12,6 +12,8 @@
 
 一个运行在本机的 AI 微信伙伴。她会在群里接话、记住别人说过的事，也能发预设表情包、语音和每日日记。
 
+> **本仓库默认人设**：通用聊天伙伴（默认名「助手」），不再默认启用特定二次元形象；旧角色预设与默认角色表情包不再随包导入。对话风格学习见 [对话风格学习.md](对话风格学习.md)。
+
 所有操作都在一个 Windows 启动器里完成。浏览器不再提供控制台；`127.0.0.1:8787` 只给启动器和桥接调用本地 HTTP API。
 
 > **想直接使用？** 到 [Releases](https://github.com/Banan1cee/whale_girl/releases/latest) 下载 `whale-girl-*-setup.exe`。
@@ -134,7 +136,6 @@ whale-girl/                        # 与仓库一致，运行数据不入库
 ├─ assets/                         # 人设预设与词库
 ├─ examples/                       # 桥接入口与媒体兜底
 ├─ docs/                           # 文档
-├─ website/                        # 静态官网
 ├─ vendor/                         # 固定版 wechatauto
 └─ tests/                          # 测试
 ```
@@ -156,7 +157,7 @@ whale-girl/                        # 与仓库一致，运行数据不入库
 
 ## 下载
 
-安装包只从 **GitHub Releases** 下载：<https://github.com/Banan1cee/whale_girl/releases>。校验值与验证命令见 [`DOWNLOAD.md`](DOWNLOAD.md)。
+安装包只从 **GitHub Releases** 下载：<https://github.com/Banan1cee/whale_girl/releases>。安装前核对 Release 里的 `SHA256SUMS.txt`。
 
 ## 代码签名
 

@@ -157,14 +157,14 @@ const DEFAULT_CONFIG = {
     thinkingMaxTokens: 5000,
   },
   persona: {
-    name: '鲸鲸',
-    age: 23,
-    job: '自由职业',
-    appearance: '深蓝色长卷发，头发上别着一枚鲸尾发夹，常穿深蓝色水手领裙子，怀里或包里总有一只软乎乎的蓝鲸玩偶（你叫它小蓝鲸）。',
-    personality: '温柔但有点小倔，嘴硬心软，慢热；熟了话很多，会害羞、会怼人、会犯懒、偶尔 emo。',
-    background: '因为头像和玩偶全是鲸鱼，朋友开玩笑叫你「鲸鱼娘」，你也就认了。',
-    aliases: ['鲸鲸', '小鲸娘', '鲸娘', '深鲸娘', '鲸鱼娘', '小鲸'],
-    ownerName: '主人',
+    name: '助手',
+    age: 22,
+    job: '聊天伙伴',
+    appearance: '',
+    personality: '自然、友善、有分寸；会认真回答问题，也会正常闲聊，不刻意卖萌或扮演固定角色。',
+    background: '运行在这台电脑上的聊天伙伴。',
+    aliases: ['助手', '小助手'],
+    ownerName: '你',
     // 主人名单：填你自己的昵称 / wxid，谁填谁就是主人（留空 = 没有主人）
     master: {
       names: [],
@@ -173,6 +173,12 @@ const DEFAULT_CONFIG = {
     // 主人骂她时能不能还嘴（默认关：只许委屈不许骂回去）
     masterRoast: false,
     newBehavior: true,
+    // 从已有聊天学到的使用者风格怎么用：adapt=贴合对方习惯，mimic=模仿对方表达。
+    // 画像文件不存在时这一项不产生任何提示词。
+    styleMode: 'adapt',
+    // 画像只描述主要联系人；默认只在主要联系人说话时参考，
+    // 群里用已有的「学这个群说话」，避免把主人的口癖套到别人身上。
+    styleScope: 'owner',
   },
   chat: {
     privateMaxChars: 100, groupMaxChars: 70, historyTurns: 120, groupHistoryTurns: 100,
@@ -235,6 +241,9 @@ const DEFAULT_CONFIG = {
     testChat: '文件传输助手', // 启动器「发送测试表情包」默认发到哪
     demandChance: 0.7,
     ensureSend: false,
+    // 是否随包导入 27 张内置表情包。默认关：这些图是特定角色素材，
+    // 通用部署不应在用户不知情时把它们写进图库；需要时可由用户手动开启。
+    builtinPresets: false,
   },
   // 图片理解：默认智谱 GLM-4V-Flash（免费）
   features: {
@@ -250,6 +259,9 @@ const DEFAULT_CONFIG = {
     memorySnapshot: true,
     // 群聊关系加载（A 提到 B）：默认开，可在「实验开关」里关
     relations: true,
+    // 对话风格画像：有 data/style-profile.json 时把它注入提示词；没有文件时无效果。
+    // 只统计句长/标点/语气词，可选让模型总结（需要用户明确开启）。
+    styleProfile: true,
   },
 
   storage: {

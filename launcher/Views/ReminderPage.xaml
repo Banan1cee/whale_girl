@@ -12,9 +12,12 @@
         </Grid.RowDefinitions>
 
         <DockPanel Grid.Row="0" LastChildFill="False">
-            <TextBlock DockPanel.Dock="Left" Text="主动与提醒" Style="{StaticResource H1}" VerticalAlignment="Center" />
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Text="主动与提醒" Style="{StaticResource H1}" VerticalAlignment="Center" />
+                <TextBlock Text="日记、定时提醒与主动搭话" Style="{StaticResource Small}" Margin="0,4,0,0" />
+            </StackPanel>
             <Button x:Name="BtnRefresh" DockPanel.Dock="Right" Content="⟳ 刷新"
-                    Style="{StaticResource Ghost}" HorizontalAlignment="Right" Click="OnRefresh" />
+                    Style="{StaticResource Ghost}" HorizontalAlignment="Right" VerticalAlignment="Center" Click="OnRefresh" />
         </DockPanel>
 
         <TextBlock Grid.Row="1" x:Name="HintText"
@@ -42,7 +45,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Orientation="Horizontal">
-                                    <Border Width="4" Height="28" CornerRadius="2"
+                                    <Border Width="3" Height="20" CornerRadius="1.5"
                                             Background="{DynamicResource Accent}" VerticalAlignment="Center" />
                                     <StackPanel Margin="10,0,12,0">
                                         <TextBlock Text="日记" Style="{StaticResource H2}" FontSize="15" />
@@ -52,12 +55,12 @@
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                     <CheckBox x:Name="ChkDiaryEnabled" Content="每天自动写" />
-                                    <CheckBox x:Name="ChkDiarySend" Content="写完发给主人" Margin="0,8,0,0" />
+                                    <CheckBox x:Name="ChkDiarySend" Content="写完发给主要联系人" Margin="0,8,0,0" />
                                 </StackPanel>
                             </Grid>
 
                             <Border Background="{DynamicResource Surface3}" BorderBrush="{DynamicResource Line}"
-                                    BorderThickness="1" CornerRadius="12" Padding="12,10" Margin="0,14,0,0">
+                                    BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,14,0,0">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
@@ -94,13 +97,13 @@
                             </Grid>
 
                             <TextBlock Style="{StaticResource Small}" Margin="0,10,0,0" TextWrapping="Wrap"
-                                       Text="每天最多一篇；只记录主人私聊；当天已有就跳过；错过时间会补写；失败每 5 分钟重试，最多 3 次。"
-                                       ToolTip="沿用当前人设和聊天模型，只根据当天和主人的聊天素材记录，保存为 Markdown。打开「写完发给主人」后，每篇生成完会把全文交给桥接发送。过去日期不补写，当天没有和主人的聊天不生成。" />
+                                       Text="每天最多一篇；只记录主要联系人私聊；当天已有就跳过；错过时间会补写；失败每 5 分钟重试，最多 3 次。"
+                                       ToolTip="沿用当前人设和聊天模型，只根据当天和主要联系人的聊天素材记录，保存为 Markdown。打开「写完发给主要联系人」后，每篇生成完会把全文交给桥接发送。过去日期不补写，当天没有和主要联系人的聊天不生成。" />
                         </StackPanel>
 
                         <!-- 右：状态。用浅色面板和左边设置区分开，按钮放在状态下面。 -->
                         <Border Grid.Column="1" Background="{DynamicResource Surface3}"
-                                CornerRadius="0,18,18,0" Padding="16,16,18,16">
+                                CornerRadius="0,8,8,0" Padding="16,16,18,16">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -128,7 +131,7 @@
                 </Border>
 
                 <!-- 提醒规则：字段语义和「主动搭话」一致，但这是提醒自己的配置 -->
-                <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                <Border Style="{StaticResource Card}" Padding="16" Margin="0,0,0,12">
                     <StackPanel>
                         <TextBlock Text="提醒规则" Style="{StaticResource H2}" Margin="0,0,0,6" />
                         <TextBlock Text="和主动搭话同一套规则语义，但配置独立：当日次数用完、或刚聊过（按下面设置）就不发，也不会推迟补发。提醒不限制时间段 —— 你定几点就几点发。"
@@ -163,7 +166,7 @@
                 </Border>
 
                 <!-- 主动搭话：和提醒同一页，省得在两处来回对规则 -->
-                <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                <Border Style="{StaticResource Card}" Padding="16" Margin="0,0,0,12">
                     <StackPanel>
                         <DockPanel LastChildFill="False" Margin="0,0,0,6">
                             <TextBlock Text="主动搭话" Style="{StaticResource H2}" DockPanel.Dock="Left"
@@ -207,7 +210,7 @@
                                       VerticalScrollBarVisibility="Auto" />
 
                         <WrapPanel Margin="0,10,0,0">
-                            <CheckBox x:Name="ChkCareOnlyMaster" Content="只找主人" Margin="0,0,18,0" />
+                            <CheckBox x:Name="ChkCareOnlyMaster" Content="只找主要联系人" Margin="0,0,18,0" />
                             <CheckBox x:Name="ChkCareGroups" Content="允许在群里主动" Margin="0,0,18,0" />
                             <CheckBox x:Name="ChkCareOthers" Content="允许主动找别人" />
                         </WrapPanel>
@@ -224,13 +227,13 @@
                 </Border>
 
                 <!-- 提醒列表：跟着整页滚，不再自己套一层滚动（嵌套滚动会让滚轮打架） -->
-                <Border Style="{StaticResource Card}" Padding="10" MinHeight="180">
+                <Border Style="{StaticResource Card}" Padding="12" MinHeight="180">
                     <Grid>
                         <ItemsControl x:Name="ReminderList">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Background="{DynamicResource Surface3}" BorderBrush="{DynamicResource Line}"
-                                            BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,0,0,8">
+                                            BorderThickness="1" CornerRadius="4" Padding="10,8" Margin="0,0,0,8">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto" MinWidth="78" />

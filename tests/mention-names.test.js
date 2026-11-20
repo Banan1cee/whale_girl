@@ -53,9 +53,9 @@ test('账号昵称在 3 分钟追话窗口里也算叫她', () => {
 });
 
 test('旧的人设别名仍然有效', () => {
-  assert.equal(namedHerIn('鲸鲸你说呢'), true);
+  assert.equal(namedHerIn('助手你说呢'), true);
   assert.equal(namedHerIn('许愿你说呢', ['许愿']), true);
-  assert.equal(namedHerIn('许愿你说呢', ['鲸鲸']), false);
+  assert.equal(namedHerIn('许愿你说呢', ['助手']), false);
 });
 
 test('提示词清洗会去掉账号昵称的 @，并排除自己被当成第三人', () => {

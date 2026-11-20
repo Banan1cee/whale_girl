@@ -22,16 +22,15 @@ const { Bot } = require('./pipeline/chat');
 const { createTrace } = require('./core/trace');
 const { createGateways } = require('./adapters/gateway');
 const personaStore = require('./persona/store');
-const { StickerService } = require('./services/stickerService');
+const stickersModule = require('./modules/stickers');
 const stickersAdapter = require('./adapters/stickers');
 const probe = require('./infra/probe');
 const { Scheduler } = require('./infra/scheduler');
-const { ContactsCache } = require('./services/contacts');
-const { MomentsService } = require('./services/moments');
-const { MomentsPublisher } = require('./services/momentsPublisher');
-const { ReminderService } = require('./services/reminderService');
-const { DiaryService } = require('./services/diary');
-const { DigestService } = require('./services/digest');
+const { ContactsCache } = require('./modules/wechat');
+const { MomentsService, MomentsPublisher } = require('./modules/moments');
+const remindersModule = require('./modules/reminders');
+const { DiaryService } = require('./modules/diary');
+const digestModule = require('./modules/digest');
 const locationProbe = require('./services/location');
 const { PluginHost } = require('./services/pluginHost');
 
@@ -137,11 +136,7 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   });
   runtime.diary.start();
   // 消息汇总：用户在启动器点「生成」时才跑，不占后台定时器，也不自动烧 token。
-  runtime.digest = new DigestService(config, {
-    store,
-    llm: runtime.llm,
-    logger: child('digest'),
-  });
+  runtime.digest = digestModule.create(runtime, { store, logger });
   // 记忆层用同一个模型做 episode 摘要/抽取（后台跑，不在回复热路径）
   store.llm = runtime.llm;
   // 判定链：为什么回 / 为什么不回。默认只记原因和状态；正文在 data/trace/raw 里留 24 小时，
@@ -152,7 +147,18 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
     raw: Boolean(config.log && config.log.traceRaw !== false),
   });
   runtime.trace = trace;
-  runtime.bot = new Bot({ config, store, llm: runtime.llm, logger: child('pipeline'), trace, version: VERSION });
+  // 从已有聊天学到的使用者风格画像；没有文件时返回 null，不产生任何提示词。
+  // 这里只读一次，分析接口会同时更新 runtime.styleProfile 和 bot.styleProfile。
+  runtime.styleProfile = require('./persona/styleProfile').load(config);
+  runtime.bot = new Bot({
+    config,
+    store,
+    llm: runtime.llm,
+    logger: child('pipeline'),
+    trace,
+    styleProfile: runtime.styleProfile,
+    version: VERSION,
+  });
   // 主人问起日记时，聊天模型通过 [[diary:日期]] 标记读取；不给它直接塞全文。
   runtime.bot.diary = runtime.diary;
   // 本机所在地：后台探一次（Windows 定位服务优先，挂 VPN 也准），之后定期刷新。
@@ -165,7 +171,7 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   // 表情包任务队列：内存态，重启不重放（避免把上一条没发出去的表情再补发一次）
   // store 用来记动作账：发了哪张、桥接确认没确认，下一轮提示词才看得见
   stickersAdapter.setProbeLogger(child('sticker'));   // 探针：让适配层也往同一份日志写
-  runtime.stickerService = new StickerService(config, { store, logger: child('sticker') });
+  runtime.stickerService = stickersModule.create(runtime, { store, logger });
   runtime.bot.stickerService = runtime.stickerService;
   // 联系人缓存：桥接推上来的 wxid 清单，给启动器选择器和 care 白名单用
   runtime.contacts = new ContactsCache(config, { logger: child('contacts') });
@@ -182,22 +188,7 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
     config, store, llm: runtime.llm, logger: child('moments'),
   });
   // 提醒：到点由桥接来取（/api/reminders/due），这里只管存和状态
-  runtime.reminders = new ReminderService(config, {
-    logger: child('reminder'),
-    // 「刚聊过先跳过」规则要看会话最后一条消息的时间
-    lastActiveAt: (wxid) => {
-      const keys = [`wechat:u:${wxid}`, `wechat:g:${wxid}`];
-      let last = 0;
-      for (const key of keys) {
-        try {
-          const msgs = store.messages(key, 1);
-          const ts = Number(msgs && msgs[0] && msgs[0].ts) || 0;
-          if (ts > last) last = ts;
-        } catch { /* 读不到就算了 */ }
-      }
-      return last;
-    },
-  });
+  runtime.reminders = remindersModule.create(runtime, { store, logger });
   runtime.bot.reminders = runtime.reminders;
   // 启动扫描：已经过了提醒时间（连 5 分钟重试窗口都过了）的一律标过期，不再补发
   try {

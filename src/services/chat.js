@@ -48,7 +48,7 @@ async function handleChat(runtime, req, res) {
     } catch (err) {
       logger.error('decide 失败：' + (err && err.stack ? err.stack : err));
       if (closed) return res.end();
-      return json(res, 500, { ok: false, error: '鲸鲸打了个结，稍后再试' });
+      return json(res, 500, { ok: false, error: '出了点问题，稍后再试' });
     }
     if (closed) return res.end();
     if (decision.action === 'ignore') {

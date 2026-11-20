@@ -9,7 +9,7 @@
  * 顺序（**先系统、后 IP**）：
  *   1. 系统定位：Windows 定位服务（WinRT `Windows.Devices.Geolocation`）。
  *      它走 Wi-Fi / GPS / 蜂窝基站，**不看公网 IP**，所以挂 VPN 也照样是本机位置。
- *   2. IP 兜底：系统定位被关掉、没有权限、拿不到时才用（`adapters/websearch` 的 ipCity）。
+ *   2. IP 兜底：系统定位被关掉、没有权限、拿不到时才用（`modules/search` 的 websearch.ipCity）。
  *      这条会跟着出口 IP 走，挂 VPN 时可能显示成别的国家/城市 —— 所以文案里必须写明。
  *
  * 隐私（红线，改这里之前先看 docs/PRIVACY.md）：
@@ -255,7 +255,7 @@ async function detect({ logger = null, ipFallback = true } = {}) {
   }
   if (ipFallback) {
     try {
-      const websearch = require('../adapters/websearch');
+      const { websearch } = require('../modules/search');
       const city = tidy(await websearch.ipCity(REVERSE_TIMEOUT_MS));
       if (city) {
         // ipinfo 的城市名是英文（Xiamen），先换成中文（厦门）再进提示词

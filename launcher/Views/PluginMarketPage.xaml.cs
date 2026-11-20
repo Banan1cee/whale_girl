@@ -96,7 +96,7 @@ namespace WhaleLauncher.Views
         private async void OnLocal(object sender, RoutedEventArgs e)
         {
             if (_busy) return;
-            var file = AppFilePicker.Open("选择鲸鲸插件包", ".zip");
+            var file = AppFilePicker.Open("选择插件包", ".zip");
             if (file == null) return;
             await WithStatus(async () =>
             {
@@ -128,7 +128,7 @@ namespace WhaleLauncher.Views
             if (info.IsPersona)
                 details += "\n\n应用人设会替换包内包含的人设和表达设置。停用或卸载后，已应用的人设仍会保留。";
             return AppDialog.Confirm(Window.GetWindow(this),
-                "此本地 ZIP 未经鲸鲸插件市场审核或签名。请确认你信任文件的提供者。\n\n" + details,
+                "此本地 ZIP 未经插件市场审核或签名。请确认你信任文件的提供者。\n\n" + details,
                 "安装本地插件", danger: true, okText: "仍然安装");
         }
 
@@ -168,9 +168,9 @@ namespace WhaleLauncher.Views
                     var column = index % columns;
                     var body = new StackPanel();
                     var card = new Border { Style = (Style)FindResource("Card"), Child = body,
-                        Margin = new Thickness(0, 0, column == columns - 1 ? 0 : 12, 12), Padding = new Thickness(14) };
+                        Margin = new Thickness(0, 0, column == columns - 1 ? 0 : 12, 12), Padding = new Thickness(16) };
                     body.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80),
-                        FontSize = 17, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                        FontSize = 15, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
                     body.Children.Add(Small(PluginMarket.SafeText(info.Author, 80) + "  ·  v" + info.Version));
                     body.Children.Add(Small(PluginMarket.SafeText(info.Description, 600)));
                     body.Children.Add(Small(info.CompatibilityLabel));
@@ -217,7 +217,7 @@ namespace WhaleLauncher.Views
                         buttons.Children.Add(settings);
                     }
                     else if (!PluginMarket.Compatible(info, _version, UpdateManifestService.LocalEpoch(_sup.BaseDir)))
-                        body.Children.Add(Small("此版本与你的鲸鲸不兼容"));
+                        body.Children.Add(Small("此版本与当前应用不兼容"));
                     else if (current != null && !PluginMarket.SameAuthor(current.Author, info.Author))
                         body.Children.Add(Small("作者与已安装版本不一致，请先卸载旧版本再安装"));
                     else if (current == null || Version.Parse(info.Version) > Version.Parse(current.Version))
@@ -308,7 +308,7 @@ namespace WhaleLauncher.Views
             panel.Children.Add(apply);
             apply.Click += async (_, _) =>
             {
-                if (!AppDialog.Confirm(Window.GetWindow(this), "将这份人设应用到当前鲸鲸？", "应用人设",
+                if (!AppDialog.Confirm(Window.GetWindow(this), "将这份人设应用到当前角色？", "应用人设",
                     okText: "应用")) return;
                 apply.IsEnabled = false;
                 try
@@ -362,7 +362,7 @@ namespace WhaleLauncher.Views
                 var actions = new WrapPanel();
                 AddButton(actions, "运行一次", async () =>
                 {
-                    if (!_sup.NodeRunning) throw new InvalidOperationException("请先启动鲸鲸内核");
+                    if (!_sup.NodeRunning) throw new InvalidOperationException("请先启动内核");
                     using var payload = JsonDocument.Parse(input.Text);
                     var response = await Api.PostJson(_sup.Url, "/api/plugins/run", new { id = info.Id, input = payload.RootElement }, 125);
                     if (!response.Ok) throw new InvalidOperationException(Api.Message(response));

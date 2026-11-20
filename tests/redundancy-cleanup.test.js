@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { StickerService } = require('../src/services/stickerService');
+const { StickerService } = require('../src/modules/stickers');
 const jsonFile = require('../src/infra/jsonFile');
 const { readStoreFile, Store } = require('../src/memory/store');
 const { readLegacyStore } = require('../src/memory/migrate');
@@ -23,7 +23,7 @@ function fixture(t) {
 }
 
 test('表情包设置只定义一次，每份状态只读取一次且保持响应结构', () => {
-  assert.equal((source('src/services/stickerService.js').match(/^  _demandSettings\(\) \{/gm) || []).length, 1);
+  assert.equal((source('src/modules/stickers/service.js').match(/^  _demandSettings\(\) \{/gm) || []).length, 1);
   let calls = 0;
   const context = {
     config: {}, generation: 3, migration: null,

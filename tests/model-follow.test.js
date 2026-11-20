@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { DEFAULT_CONFIG, loadConfig, resolveVoiceConfig, resolveSearchConfig, resolveVisionConfig } = require('../src/infra/config');
-const vision = require('../src/adapters/vision');
+const vision = require('../src/modules/vision');
 const { probe } = require('../src/services/apiProbe');
 
 function fixture(t, settings = {}) {
@@ -113,7 +113,7 @@ test('升级保留旧版手动语音和搜索设置，新安装默认开启跟�
 
 test('搜索跟随进入实际服务调用，关闭总闸后不调用搜索 API', async t => {
   const { cfg } = fixture(t, { provider: 'deepseek', apiKey: 'unit-ds', baseUrl: 'https://api.deepseek.com' });
-  const api = require('../src/adapters/search/apiSearch');
+  const api = require('../src/modules/search/providers/apiSearch');
   const original = api.apiSearch; t.after(() => { api.apiSearch = original; });
   let calls = 0;
   api.apiSearch = async opts => {
@@ -121,7 +121,7 @@ test('搜索跟随进入实际服务调用，关闭总闸后不调用搜索 API'
     assert.equal(opts.websearch.deepseek.apiKey, 'unit-ds');
     return { items: [{ title: '来源', url: 'https://example.org/news', snippet: '测试证据' }], status: 'ok' };
   };
-  const search = require('../src/services/search').search;
+  const search = require('../src/modules/search').search;
   const args = { text: '查一下新闻', force: true, llm: { config: cfg }, config: cfg.websearch };
   const deps = { route: async () => ({ need: true, query: '新闻' }), providers: { searchResult: async () => ({ items: [], status: 'empty' }) } };
   const out = await search(args, deps); assert.equal(out.status, 'ok'); assert.equal(calls, 1);

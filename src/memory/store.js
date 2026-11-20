@@ -941,4 +941,4 @@ class Store {
   }
 }
 
-module.exports = { Store, readStoreFile, trimText };
+module.exports = { Store, readStoreFile };

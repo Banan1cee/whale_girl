@@ -134,10 +134,10 @@ test('群聊里没被叫到就只看不说，但会旁听记住上下文', async
 
 test('@ 或叫名字会触发回复，且回复里不该带 @ 前缀', async () => {
   const { bot, cleanup } = makeBot();
-  const a = await bot.decide(groupMsg('@鲸鲸 在吗', { atMe: true }));
+  const a = await bot.decide(groupMsg('@助手 在吗', { atMe: true }));
   assert.equal(a.action, 'reply');
   assert.ok(!a.msg.cleanText.includes('@'));
-  const b = await bot.decide(groupMsg('鲸娘，你觉得呢'));
+  const b = await bot.decide(groupMsg('助手，你觉得呢'));
   assert.equal(b.action, 'reply');
   assert.equal(b.msg.cleanText, '你觉得呢');
   cleanup();
@@ -189,7 +189,7 @@ test('群里 @ 她也不会执行旧的斜杠命令', async () => {
 
 test('只 @ 不说话会给一个可爱的回应', async () => {
   const { bot, cleanup } = makeBot();
-  const decision = await bot.decide(groupMsg('@鲸鲸', { atMe: true }));
+  const decision = await bot.decide(groupMsg('@助手', { atMe: true }));
   assert.equal(decision.action, 'reply');
   assert.ok(decision.canned.length > 0);
   cleanup();
@@ -441,7 +441,7 @@ test('管理员可以按群名禁言，禁言后那个群完全不说话', async
   assert.equal(g.action, 'ignore');
   assert.equal(g.reason, 'muted_group');
 
-  const g2 = await bot.decide(groupMsg('@鲸鲸 在吗', { chatTitle: '别的群' }));
+  const g2 = await bot.decide(groupMsg('@助手 在吗', { chatTitle: '别的群' }));
   assert.equal(g2.action, 'reply');
 
   const u = await bot.decide(master('解除禁言 鼠标'));
@@ -456,7 +456,7 @@ test('改名和记忆清理都要先过魔咒，改名后提示词用新名字',
   // 没验证魔咒：改名和清记忆都不执行
   const denied = await bot.decide(master('改名 小鱼'));
   assert.equal(denied.commandType, 'admin_hint');
-  assert.equal(config.persona.name, '鲸鲸');
+  assert.equal(config.persona.name, '助手');
   await bot.decide(master('在吗'));
   assert.ok(store.sessions.size > 0);
   const deniedReset = await bot.decide(master('重置记忆'));
@@ -624,7 +624,7 @@ test('同名群友单独 @ 时只恢复自己的上一条问题', async () => {
   const { bot, cleanup } = makeBot();
   await bot.decide(groupMsg('甲的问题是什么', { senderName: '同名', senderId: 'u-a' }));
   await bot.decide(groupMsg('乙的问题是什么', { senderName: '同名', senderId: 'u-b' }));
-  const recovered = await bot.decide(groupMsg('@鲸鲸', { atMe: true, senderName: '同名', senderId: 'u-a' }));
+  const recovered = await bot.decide(groupMsg('@助手', { atMe: true, senderName: '同名', senderId: 'u-a' }));
   assert.equal(recovered.msg.cleanText, '甲的问题是什么');
   cleanup();
 });

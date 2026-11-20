@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -22,7 +23,8 @@ namespace WhaleLauncher
     {
         public string Key { get; set; }
         public string Label { get; set; }
-        public Geometry Icon { get; set; }
+        // Segoe Fluent Icons 字形。保留 Icon 这个名字，导航模板只换渲染方式。
+        public string Icon { get; set; }
         public override string ToString() => Label ?? Key ?? "";
     }
 
@@ -42,15 +44,15 @@ namespace WhaleLauncher
 
         private static readonly NavEntry[] NavKeys =
         {
-            new NavEntry { Key = "状态", Label = "状态", Icon = Geometry.Parse("M4 4h7v7H4z M13 4h7v4h-7z M13 10h7v10h-7z M4 13h7v7H4z") },
-            new NavEntry { Key = "人设", Label = "人设", Icon = Geometry.Parse("M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7") },
-            new NavEntry { Key = "表情包", Label = "表情包", Icon = Geometry.Parse("M4 4h16v16H4z M8.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z M20 16l-4.6-4.6L7 20") },
-            new NavEntry { Key = "朋友圈", Label = "朋友圈", Icon = Geometry.Parse("M4 8h3l2-3h6l2 3h3v12H4z M12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z") },
-            new NavEntry { Key = "主动与提醒", Label = "主动与提醒", Icon = Geometry.Parse("M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8 M10.5 20a2 2 0 0 0 3 0") },
-            new NavEntry { Key = "微信桥接", Label = "微信桥接", Icon = Geometry.Parse("M21 11.5a8.4 8.4 0 0 1-9 8.4 9.9 9.9 0 0 1-4-.9L3 21l1.9-3.5a8.4 8.4 0 1 1 16.1-6Z M8 10h8 M8 13h5") },
-            new NavEntry { Key = "诊断", Label = "诊断", Icon = Geometry.Parse("M3 12h4l2-5 4 10 2-5h6") },
-            new NavEntry { Key = "插件市场", Label = "插件市场", Icon = Geometry.Parse("M4 9h16v11H4z M3 5h18v4H3z M10 13h4") },
-            new NavEntry { Key = "设置", Label = "设置", Icon = Geometry.Parse("M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.12.4.5.86 1.56 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1Z") },
+            new NavEntry { Key = "状态", Label = "状态", Icon = "\uE80F" },
+            new NavEntry { Key = "人设", Label = "人设", Icon = "\uE77B" },
+            new NavEntry { Key = "表情包", Label = "表情包", Icon = "\uE76E" },
+            new NavEntry { Key = "朋友圈", Label = "朋友圈", Icon = "\uE722" },
+            new NavEntry { Key = "主动与提醒", Label = "主动与提醒", Icon = "\uE823" },
+            new NavEntry { Key = "微信桥接", Label = "微信桥接", Icon = "\uE8BD" },
+            new NavEntry { Key = "诊断", Label = "诊断", Icon = "\uE90F" },
+            new NavEntry { Key = "插件市场", Label = "插件市场", Icon = "\uE719" },
+            new NavEntry { Key = "设置", Label = "设置", Icon = "\uE713" },
         };
 
         public MainWindow()
@@ -68,7 +70,7 @@ namespace WhaleLauncher
             VersionText.Text = ver.Length > 0 ? "v" + ver : "v?";
 
             foreach (var k in NavKeys) Nav.Items.Add(k);
-            Nav.Items.Insert(4, new NavEntry { Key = "语音发送", Label = "语音发送", Icon = Geometry.Parse("M9 3h6v12H9z M5 10v3a7 7 0 0 0 14 0v-3 M12 20v3 M8 23h8") });
+            Nav.Items.Insert(4, new NavEntry { Key = "语音发送", Label = "语音发送", Icon = "\uE720" });
             Nav.SelectedIndex = 0;
 
             _sup.Say("启动器就绪 · " + dir);
@@ -87,7 +89,10 @@ namespace WhaleLauncher
             Loaded += async (_, __) =>
             {
                 Nav.SelectedIndex = 0;
-                await SilentUpdateCheckAsync(allowBlocking: true);
+                // 启动检查期间「启动 / 重启」要排队等这次检查，不能直接撞上 UpdateBlocked。
+                BeginUpdateCheckGate();
+                try { await SilentUpdateCheckAsync(allowBlocking: true); }
+                finally { EndUpdateCheckGate(); }
                 await RefreshAsync();
             };
             Closing += OnClosingDuringUpdate;
@@ -104,6 +109,55 @@ namespace WhaleLauncher
         private bool _checkingUpdates;
         private ManifestCheck _lastManifest;
         private DateTime _lastManifestCheck = DateTime.MinValue;
+
+        // 启动检查是一次可能耗时几秒的网络请求，期间 UpdateBlocked 挂着不让启动。
+        // 用户在这几秒内点「启动」不该被吞掉：先排队等检查收尾，再继续。
+        private TaskCompletionSource<bool> _updateGate;
+        private bool _updateCheckPending;
+        private bool _waitingUpdateGate;
+        private DateTime _statusHoldUntil = DateTime.MinValue;
+
+        /// <summary>启动检查最长等 15 秒；单源 4 秒超时，正常远不到上限。</summary>
+        private const int UpdateGateSeconds = 15;
+
+        private void BeginUpdateCheckGate()
+        {
+            if (_updateGate != null) return;
+            _updateGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _updateCheckPending = true;
+        }
+
+        private void EndUpdateCheckGate()
+        {
+            _updateCheckPending = false;
+            var gate = _updateGate;
+            _updateGate = null;
+            gate?.TrySetResult(true);
+        }
+
+        /// <summary>
+        /// 等启动检查收尾。超时按「拿不到清单就放行」的既有策略解除门口限制，
+        /// 不能因为一次网络卡住就把启动永久锁死；若检查稍后真的判定 Force/Kill，
+        /// ApplyManifestPolicy 仍会写回 UpdateBlocked 并弹原来的提示。
+        /// </summary>
+        private async Task WaitForUpdateGateAsync()
+        {
+            var gate = _updateGate;
+            if (!_updateCheckPending || gate == null) return;
+            _waitingUpdateGate = true;
+            StatusLine.Text = "正在检查更新，完成后自动启动…";
+            try
+            {
+                var finished = await Task.WhenAny(gate.Task, Task.Delay(TimeSpan.FromSeconds(UpdateGateSeconds))) == gate.Task;
+                if (!finished && _updateCheckPending)
+                {
+                    _sup.UpdateBlocked = false;
+                    _statusHoldUntil = DateTime.Now.AddSeconds(8);
+                    StatusLine.Text = "更新检查超时，先按当前版本继续（不影响使用）";
+                }
+            }
+            finally { _waitingUpdateGate = false; }
+        }
 
         // 挂后台不关的用户也要能看到新版：每 6 小时静默查一次（只提示，不拦人）。
         private const int PeriodicCheckHours = 6;
@@ -190,6 +244,7 @@ namespace WhaleLauncher
         private void SetUpdateButton(bool hasUpdate)
         {
             BtnUpdate.Content = hasUpdate ? "有新版本" : "检查更新";
+            AutomationProperties.SetName(BtnUpdate, hasUpdate ? "有新版本，立即更新" : "检查更新");
         }
 
         private async void OnCheckUpdate(object sender, RoutedEventArgs e)
@@ -224,6 +279,17 @@ namespace WhaleLauncher
             {
                 var chk = await UpdateManifestService.FetchAsync(_sup.BaseDir);
                 ApplyManifestPolicy(chk, false, allowBlocking);
+            }
+            catch (Exception ex)
+            {
+                // 检查本身失败不能当成「必须更新」：放行启动，只说明原因。
+                if (allowBlocking) _sup.UpdateBlocked = false;
+                _lastManifest = null;
+                HideToast();
+                SetUpdateButton(false);
+                _statusHoldUntil = DateTime.Now.AddSeconds(8);
+                StatusLine.Text = "检查更新失败：" + ex.Message + "（不影响使用）";
+                _sup.SayWarn("检查更新失败：" + ex.Message);
             }
             finally { _checkingUpdates = false; }
         }
@@ -478,10 +544,11 @@ namespace WhaleLauncher
             if (DwmSetWindowAttribute(hwnd, 20, ref dark, sizeof(int)) != 0)
                 DwmSetWindowAttribute(hwnd, 19, ref dark, sizeof(int));
 
-            // Win11：把系统标题栏也染成主题色，避免深色界面顶着一根白条
-            var bg = Appearance.IsDark ? Color.FromRgb(0x0C, 0x12, 0x1A) : Color.FromRgb(0xF4, 0xF6, 0xF9);
-            var fg = Appearance.IsDark ? Color.FromRgb(0xF4, 0xF7, 0xFA) : Color.FromRgb(0x12, 0x17, 0x22);
-            var line = Appearance.IsDark ? Color.FromRgb(0x24, 0x31, 0x40) : Color.FromRgb(0xE5, 0xE9, 0xF0);
+            // Win11：把系统标题栏也染成主题色，避免深色界面顶着一根白条。
+            // 直接取主题本色，深浅切换和自定义配色都跟着走，不再维护第二份硬编码。
+            var bg = Appearance.BaseColor("BgTop");
+            var fg = Appearance.BaseColor("Text");
+            var line = Appearance.BaseColor("Line");
             int caption = ToColorRef(bg), text = ToColorRef(fg), border = ToColorRef(line);
             DwmSetWindowAttribute(hwnd, 35, ref caption, sizeof(int)); // DWMWA_CAPTION_COLOR
             DwmSetWindowAttribute(hwnd, 36, ref text, sizeof(int));    // DWMWA_TEXT_COLOR
@@ -531,6 +598,20 @@ namespace WhaleLauncher
                 _pages[key] = page;
             }
             Host.Content = page;
+            // 切页时给内容一个很短的淡入 + 上移，和 Fluent 的页面切换节奏一致；
+            // 不做整页滑动，避免每次切页都晃眼睛。
+            Host.BeginAnimation(OpacityProperty,
+                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160))
+                { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut } });
+            var slide = Host.RenderTransform as TranslateTransform;
+            if (slide == null)
+            {
+                slide = new TranslateTransform();
+                Host.RenderTransform = slide;
+            }
+            slide.BeginAnimation(TranslateTransform.YProperty,
+                new DoubleAnimation(6, 0, TimeSpan.FromMilliseconds(200))
+                { EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut } });
             if (page is IRefreshable r) _ = r.RefreshAsync();
         }
 
@@ -591,12 +672,14 @@ namespace WhaleLauncher
             {
                 if (AnythingRunning)
                 {
+                    // 停止不受更新检查影响：人想停就得能停。
                     _sup.Say("— 停止中 —");
                     await Task.Run(() => _sup.StopAll());
                     await Task.Delay(200);
                 }
                 else
                 {
+                    await WaitForUpdateGateAsync();
                     _sup.Say("— 启动中 —");
                     await _sup.StartAllAsync(clearRestartHistory: false);
                 }
@@ -615,6 +698,13 @@ namespace WhaleLauncher
             BtnToggle.IsEnabled = BtnRestart.IsEnabled = false;
             try
             {
+                // 先等启动检查，别先把正在跑的服务停掉再去撞 UpdateBlocked。
+                await WaitForUpdateGateAsync();
+                if (_sup.UpdateBlocked && !_updateCheckPending)
+                {
+                    StatusLine.Text = "当前版本必须更新后才能重启，请先完成更新";
+                    return;
+                }
                 _sup.Say("— 重启中 —");
                 await Task.Run(() => _sup.StopAll());
                 await Task.Delay(600);
@@ -671,7 +761,10 @@ namespace WhaleLauncher
                 WechatLabel.ToolTip = string.IsNullOrEmpty(who) ? "微信" : "微信 · " + who;
                 var ownsProcesses = AnythingRunning;
                 const string externalTip = "内核已在后台运行，请用原来的方式管理它";
-                BtnToggleText.Text = ownsProcesses ? "停止" : s.ExternalNode ? "后台运行中" : "启动";
+                var toggleLabel = ownsProcesses ? "停止" : s.ExternalNode ? "后台运行中" : "启动";
+                BtnToggleText.Text = toggleLabel;
+                // 顶栏按钮只有图标 + 短词，读屏要拿到和当前状态一致的名字。
+                AutomationProperties.SetName(BtnToggle, toggleLabel);
                 BtnToggle.IsEnabled = !_busy && (ownsProcesses || !s.ExternalNode);
                 BtnToggle.ToolTip = s.ExternalNode && !ownsProcesses ? externalTip : null;
                 BtnRestart.IsEnabled = !_busy && !s.ExternalNode;
@@ -687,8 +780,10 @@ namespace WhaleLauncher
                 }
                 if (s.NodeUp && s.NeedsKey && !s.HasKey) parts.Add("还没填 Key");
                 if (s.StFailed > 0) parts.Add($"发送失败 {s.StFailed}");
-                // 更新期间这行归更新流程管，别被两秒一次的刷新覆盖掉
-                if (!_updating) StatusLine.Text = parts.Count > 0 ? string.Join(" · ", parts) : "启动器就绪";
+                // 更新期间这行归更新流程管；检查更新排队、刚提示完的保存 / 失败结果也别马上盖掉
+                if (!_updating) StatusLine.Text = _waitingUpdateGate || DateTime.Now < _statusHoldUntil
+                    ? StatusLine.Text
+                    : parts.Count > 0 ? string.Join(" · ", parts) : "启动器就绪";
 
                 if (Host.Content is IRefreshable r) await r.RefreshAsync();
             }

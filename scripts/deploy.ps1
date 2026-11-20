@@ -30,6 +30,13 @@ if ($Restart) {
 
 Write-Host "同步：$src  ->  $Target" -ForegroundColor Cyan
 
+# 0) 清理本轮模块化删除的旧代码路径（robocopy /E 不会删旧文件）。
+#    先整删再由 /E 重建：旧路由/旧服务/搜索适配器不会残留在目标目录。
+$staleDirs = @('src\http\routes', 'src\services', 'src\core\search', 'src\adapters\search')
+$staleFiles = @('src\adapters\vision.js', 'src\adapters\websearch.js', 'src\adapters\searchRouter.js')
+foreach ($rel in $staleDirs) { $p = Join-Path $Target $rel; if (Test-Path $p) { Remove-Item $p -Recurse -Force } }
+foreach ($rel in $staleFiles) { $p = Join-Path $Target $rel; if (Test-Path $p) { Remove-Item $p -Force } }
+
 # 1) 只同步代码
 $exclDirs = @('data', 'runtime', 'wechatauto_db', 'wechatauto_logs', '__pycache__', 'backup', '.tools', 'artifacts', 'bin', 'obj', 'publish', '.git', 'whale-girl-3.0-full', '鲸鲸表情包')
 $exclFiles = @('config.json', '*.log', '*.png', '*.jpg', '*.bak-*')
@@ -44,7 +51,7 @@ if ($LASTEXITCODE -ge 8) { throw "预设表情包复制失败，退出码 $LASTE
 # 2) 校验关键文件（防止「改了但没过去」）
 $must = @(
   'server.js', 'package.json',
-  'src/pipeline/chat.js', 'src/adapters/vision.js', 'src/core/master.js', 'src/persona/index.js',
+  'src/pipeline/chat.js', 'src/modules/vision/vision.js', 'src/modules/vision/routes.js', 'src/modules/stickers/service.js', 'src/modules/reminders/service.js', 'src/modules/care/service.js', 'src/core/master.js', 'src/persona/index.js',
   'src/app.js', 'bridge/engine.py', 'scripts/tools/uia-diag.py', 'scripts/release-check.js'
 )
 $presetManifest = Get-Content (Join-Path $src 'assets\stickers\manifest.json') -Encoding UTF8 -Raw | ConvertFrom-Json

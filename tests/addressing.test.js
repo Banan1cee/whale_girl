@@ -31,42 +31,42 @@ const g = (text, extra = {}) => ({
   senderId: 'wxid_stranger', senderName: '路人', text, chatTitle: '深海鱼塘', ...extra,
 });
 
-test('句尾叫名字也算在叫她：你好响呀鲸鲸', () => {
+test('句尾叫名字也算在叫她：你好响呀助手', () => {
   const { cleanup } = makeBot();
-  const r = persona.cleanIncomingForPersona('你好响呀鲸鲸', DEFAULT_CONFIG);
+  const r = persona.cleanIncomingForPersona('你好响呀助手', DEFAULT_CONFIG);
   assert.equal(r.hadAlias, true);
   assert.equal(r.text, '你好响呀');
   cleanup();
 });
 
-test('句中说名字也算：鲸鲸你别装了', () => {
-  const r = persona.cleanIncomingForPersona('鲸鲸你别装了', DEFAULT_CONFIG);
+test('句中说名字也算：助手你别装了', () => {
+  const r = persona.cleanIncomingForPersona('助手你别装了', DEFAULT_CONFIG);
   assert.equal(r.hadAlias, true);
 });
 
-test('「小鲸鱼」不能误判成「小鲸」叫她', () => {
-  const r = persona.cleanIncomingForPersona('@小鲸鱼 你好', DEFAULT_CONFIG);
+test('「小助手哥」不能误判成「小助手」叫她', () => {
+  const r = persona.cleanIncomingForPersona('@小助手哥 你好', DEFAULT_CONFIG);
   assert.equal(r.hadAlias, false);
 });
 
-test('「大肥鱼人工智能」这种连写也要认出来', () => {
+test('「大忙人人工智能」这种连写也要认出来', () => {
   // 名字后面直接跟汉字，也要算叫到她
   const cfg = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
-  cfg.persona.aliases = ['鲸鲸', '大肥鱼'];
-  assert.equal(persona.cleanIncomingForPersona('大肥鱼人工智能是吧', cfg).hadAlias, true);
-  assert.equal(persona.cleanIncomingForPersona('这大肥鱼是不是人工智能', cfg).hadAlias, true);
+  cfg.persona.aliases = ['助手', '大忙人'];
+  assert.equal(persona.cleanIncomingForPersona('大忙人人工智能是吧', cfg).hadAlias, true);
+  assert.equal(persona.cleanIncomingForPersona('这大忙人是不是人工智能', cfg).hadAlias, true);
   // 但更长的昵称不能被截断
-  assert.equal(persona.cleanIncomingForPersona('大肥鱼儿来了', cfg).hadAlias, false);
+  assert.equal(persona.cleanIncomingForPersona('大忙人儿来了', cfg).hadAlias, false);
 });
 
 test('图片描述里出现名字不算叫她', () => {
-  const r = persona.cleanIncomingForPersona('（对方发了一张图片，图里是：有人 @鲸鲸 骂了一句）', DEFAULT_CONFIG);
+  const r = persona.cleanIncomingForPersona('（对方发了一张图片，图里是：有人 @助手 骂了一句）', DEFAULT_CONFIG);
   assert.equal(r.hadAlias, false);
 });
 
 test('群里句尾叫她，会真的接话', async () => {
   const { bot, cleanup } = makeBot();
-  const r = await bot.decide(g('你好响呀鲸鲸'));
+  const r = await bot.decide(g('你好响呀助手'));
   assert.equal(r.action, 'reply');
   cleanup();
 });

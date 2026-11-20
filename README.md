@@ -12,6 +12,8 @@
 
 A local-first AI companion for WeChat. She replies in group chats, remembers what people tell her, and can also send stickers, voice messages, and daily diary entries.
 
+> **本仓库的默认人设**：通用聊天伙伴（默认名「助手」），不再默认启用特定二次元形象；旧角色预设与默认角色表情包不再随包导入。对话风格学习见 [`docs/对话风格学习.md`](docs/对话风格学习.md)。
+
 Everything is controlled from one Windows launcher. There is no browser UI; `127.0.0.1:8787` only serves the local HTTP API.
 
 > **Just want to run it?** Download `whale-girl-*-setup.exe` from [Releases](https://github.com/Banan1cee/whale_girl/releases/latest).
@@ -95,6 +97,7 @@ The full field list is in [`docs/设置说明.md`](docs/设置说明.md). Owner 
 | [`docs/搜索模块.md`](docs/搜索模块.md) | Search sources and relevance rules |
 | [`docs/维护手册.md`](docs/维护手册.md) | Recovery, logs, backup, and factory reset |
 | [`docs/架构总览.md`](docs/架构总览.md) | Kernel, bridge, launcher, and data flow |
+| [`docs/模块边界.md`](docs/模块边界.md) | Node module boundaries and multi-agent write scopes |
 | [`docs/打包与签名.md`](docs/打包与签名.md) | Build, packaging, signing, and release steps |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Full change history |
 
@@ -132,7 +135,6 @@ whale-girl/                        # repository layout; runtime data is never co
 ├─ assets/                         # persona presets and lexicons
 ├─ examples/                       # bridge entry and media fallbacks
 ├─ docs/                           # documentation
-├─ website/                        # static project site
 ├─ vendor/                         # pinned wechatauto source
 └─ tests/                          # tests
 ```
@@ -162,7 +164,7 @@ To the extent permitted by applicable law, third-party plugins are provided as-i
 
 ## Download
 
-Only download installers from **GitHub Releases**: <https://github.com/Banan1cee/whale_girl/releases>. Checksums and verification commands are in [`docs/DOWNLOAD.md`](docs/DOWNLOAD.md).
+Only download installers from **GitHub Releases**: <https://github.com/Banan1cee/whale_girl/releases>. Verify `SHA256SUMS.txt` from the release before installing.
 
 ## Code signing policy
 
@@ -172,10 +174,9 @@ Current release builds are **not signed yet**, so Windows may show "Unknown publ
 
 - **我在微信里养了个 AI 群友：零焦点 UIA 收发、本地数据、可换人设** — how the bridge talks to WeChat without stealing focus, the UIA/WM_CHAR version traps, and the personas system.
   - Zhihu: <https://zhuanlan.zhihu.com/p/2103852627175986683>
-  - Copy in this repo: [`docs/articles/wechat-ai-companion.md`](docs/articles/wechat-ai-companion.md)
 ## Acknowledgements
 
-- **Character author 上善无形** — the Whale Girl icon is a derivative work based on their original character. See [`docs/NOTICE.md`](docs/NOTICE.md).
+- **Character author 上善无形** — the launcher icon is now original artwork; remaining Whale Girl character assets (legacy stickers etc.) are derivative works based on their original character. See [`docs/NOTICE.md`](docs/NOTICE.md).
 - **[wechatauto-replica](https://github.com/fanyuantaier/wechatauto-replica)** (Apache-2.0) — Windows WeChat 4.x automation library. A pinned copy lives in `vendor/wechatauto/`; build-time and runtime patches are kept outside the upstream source.
 - **[wxauto](https://github.com/cluic/wxauto)** (Apache-2.0) — the original Windows WeChat automation project whose approach inspired `wechatauto-replica`.
 - **[VB-CABLE](https://vb-audio.com/Cable/)** — virtual audio cable used by optional voice sending; the installer only ships the official driver installer.

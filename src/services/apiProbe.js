@@ -1,8 +1,7 @@
 'use strict';
 
 const { loadSettings, resolveVoiceConfig, resolveSearchConfig } = require('../infra/config');
-const deepseek = require('../adapters/search/deepseek');
-const zhihu = require('../adapters/search/zhihu');
+const { deepseek, zhihu } = require('../modules/search');
 
 function voiceKey(config, url) {
   if ((config.voice?.provider || 'auto') === 'follow') return resolveVoiceConfig(config).apiKey || '';

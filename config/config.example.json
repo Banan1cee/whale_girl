@@ -1,5 +1,5 @@
 {
-  "_说明": "鲸鲸的全部设置都在这里。改完直接存盘就生效（服务在跑会自动重新加载，不用重启）。data/ 和 config.json 都不会进 git。启动器「设置」里的东西存在 data/settings.json，优先级比这个文件高。",
+  "_说明": "助手的全部设置都在这里。改完直接存盘就生效（服务在跑会自动重新加载，不用重启）。data/ 和 config.json 都不会进 git。启动器「设置」里的东西存在 data/settings.json，优先级比这个文件高。",
   "_模型服务": "provider 可选 deepseek / zhipu / siliconflow / qwen / doubao / opencode / tju / ollama / custom；本地地址（127.0.0.1、192.168.*）可以免 Key",
   "provider": "deepseek",
   "diary": {
@@ -37,27 +37,25 @@
   },
   "persona": {
     "_说明": "人设。这些是「出厂设定」，被叫出来的语气/口癖会在 data/persona.json 里慢慢演化，启动器「人设」页可以微调",
-    "name": "鲸鲸",
-    "age": 23,
-    "job": "自由职业",
-    "appearance": "深蓝色长卷发，头发上别着一枚鲸尾发夹，常穿深蓝色水手领裙子，怀里或包里总有一只软乎乎的蓝鲸玩偶（你叫它小蓝鲸）。",
-    "personality": "温柔但有点小倔，嘴硬心软，慢热；熟了话很多，会害羞、会怼人、会犯懒、偶尔 emo。",
-    "background": "因为头像和玩偶全是鲸鱼，朋友开玩笑叫你「鲸鱼娘」，你也就认了。",
+    "name": "助手",
+    "age": 22,
+    "job": "聊天伙伴",
+    "appearance": "",
+    "personality": "自然、友善、有分寸；会认真回答问题，也会正常闲聊，不刻意卖萌或扮演固定角色。",
+    "background": "运行在这台电脑上的聊天伙伴。",
     "aliases": [
-      "鲸鲸",
-      "小鲸娘",
-      "鲸娘",
-      "深鲸娘",
-      "鲸鱼娘",
-      "小鲸"
+      "助手",
+      "小助手"
     ],
-    "ownerName": "主人",
+    "ownerName": "你",
     "master": {
       "_说明": "主人名单：names 填微信昵称，wxids 填 wxid_xxx —— 微信内部 id，不是你设置的微信号。微信里只认 wxid；wxids 全空时才退回按昵称认。谁填谁就是主人，留空则没有主人。不知道自己的 wxid 就开调试台 /debug 看「最近说过话的人」",
       "names": [],
       "wxids": []
     },
-    "masterRoast": false
+    "masterRoast": false,
+    "styleMode": "adapt",
+    "styleScope": "owner"
   },
   "chat": {
     "_说明": "回复长度与上下文：privateMaxChars 私聊每条最多几个字，groupMaxChars 群聊每条，maxBubbles 一次最多连发几条，historyTurns 带多少轮历史；messageSettleMs 是最后一条消息后的安静等待，groupMaxBatchWaitMs 是群聊从首条开始的最大等待",
@@ -84,9 +82,8 @@
     "muteDefaultMinutes": 30
   },
   "memory": {
-    "_说明": "记忆规模：最多记几个会话、每个会话多少条消息、每人多少条笔记。dialogueBudget=对话预算（不含 system prompt），默认 5500 = 记忆 900 + 摘要 900 + 原文 3200 + 预留 500，可在启动器「高级模式 → 高级」里调；maxSessions 等旧键运行时已忽略",
+    "_说明": "记忆规模：每个会话多少条消息、每人多少条笔记。dialogueBudget=对话预算（不含 system prompt），默认 5500 = 记忆 900 + 摘要 900 + 原文 3200 + 预留 500，可在启动器「高级模式 → 高级」里调",
     "dialogueBudget": 5500,
-    "maxSessions": 200,
     "maxMessages": 400,
     "maxNotesPerUser": 6
   },
@@ -222,13 +219,16 @@
     "groupAddressGuard": true,
     "fightQuoteCheck": true,
     "mediaCleanup": true,
-    "memorySnapshot": true
+    "memorySnapshot": true,
+    "styleProfile": true
   },
   "sticker": {
     "collectReceived": false,
     "_收集说明": "开启后将收到的表情原图去重保存到 data/收集的表情包，保留动图；独立于发送开关。",
     "_说明": "表情包（实验性）：总闸在 features.stickers。文件夹 data/stickers/<傲娇|炸毛|开心|自定义>/（中英文名都认）。发哪一类优先由模型在回复里用 [[sticker:分类名]] 决定，程序不猜情绪、不按概率配图；分类没有图或名字不对就不发。demandChance 决定“这一轮要不要在尾部提醒她带一张”（0=不提醒，0.7≈五到六成轮次，1=每轮提醒）；ensureSend=true 时，命中提醒的轮次即使模型没写标记也由程序补一张（1.0 + 开启才约等于每轮都发，难过/求助除外）。控制台可以上传/删除/预览缩略图。",
     "dir": "data/stickers",
+    "_内置说明": "随包的 27 张图是特定角色素材，默认不导入；需要时把 builtinPresets 改成 true，再到表情包页手动导入。",
+    "builtinPresets": false,
     "testChat": "文件传输助手",
     "demandChance": 0.7,
     "ensureSend": false

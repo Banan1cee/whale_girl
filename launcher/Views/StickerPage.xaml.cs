@@ -55,6 +55,8 @@ namespace WhaleLauncher.Views
         private bool _refreshPending;          // 上一轮还没跑完时点的刷新，跑完补一次
         private ApiResult _inventory = new();
         private DateTime _nextRefresh;
+        // 保存成功 / 失败的提示先停几秒，别被两秒一次的状态刷新盖掉
+        private DateTime _statusHoldUntil;
         private CancellationTokenSource _preview = new();
         private string _renderedSignature = "";
         private bool _currentIsExtra;
@@ -70,6 +72,16 @@ namespace WhaleLauncher.Views
         {
             if (!ProbeOn) return;
             try { _sup.Say("[probe] " + text); } catch { /* 探针不许影响界面 */ }
+        }
+
+        /// <summary>
+        /// 写状态行，可选保持几秒。刷新路径会看 _statusHoldUntil，避免刚保存的
+        /// 「已保存」被下一轮「就绪 / 总开关已关闭」立刻冲掉。
+        /// </summary>
+        private void SetStatus(string text, double holdSeconds = 0)
+        {
+            StatusText.Text = text;
+            _statusHoldUntil = holdSeconds > 0 ? DateTime.UtcNow.AddSeconds(holdSeconds) : DateTime.MinValue;
         }
 
         public StickerPage(RuntimeSupervisor sup)
@@ -132,6 +144,12 @@ namespace WhaleLauncher.Views
             var status = online ? await Api.Get(_sup.Url, "/api/stickers/status") : new ApiResult();
             tFetch.Stop();
 
+            // 总开关关闭时路由直接 404（表情包功能未开启）；这和「内核没起来」必须分开报，
+            // 否则用户会以为服务挂了，去重启内核也修不好。
+            var featureOff = online && !status.Ok
+                && (status.StatusCode == 404 || status.Error.Contains("表情包功能未开启"));
+            var kernelOffline = !online || (!status.Ok && !featureOff && status.StatusCode == 0);
+
             if (online && status.Ok && status.Prop("emotions").ValueKind == JsonValueKind.Array)
             {
                 view.Online = true;
@@ -154,7 +172,7 @@ namespace WhaleLauncher.Views
             }
             else
             {
-                // 内核没起来：用本地扫描兜底，至少能看图和打开文件夹
+                // 内核没起来 / 总开关关闭：都用本地扫描兜底，至少能看图和打开文件夹
                 var res = await StickerLibrary.Call(_sup.BaseDir, "inventory");
                 if (!res.Ok)
                 {
@@ -164,6 +182,9 @@ namespace WhaleLauncher.Views
                 }
                 _inventory = res;
                 view.Online = false;
+                view.FeatureOff = featureOff;
+                view.KernelOffline = kernelOffline;
+                if (!featureOff && !kernelOffline) view.StatusError = Api.Message(status);
                 view.Enabled = res.Bool("enabled");
                 view.CollectReceived = res.Bool("collectReceived");
                 view.Dir = res.Str("dir");
@@ -218,12 +239,20 @@ namespace WhaleLauncher.Views
                 RenderGridInBackground();   // 不 await：取数路径不被几百张缩略图拖住
             }
 
-            QueueInfo.Text = !view.Online ? "内核未启动" : !view.Enabled ? "发送已关闭"
-                : view.Pending > 0 ? $"排队中 {view.Pending} 张" : "队列空";
-            if (!view.Online) StatusText.Text = "内核未运行：这里显示的是本地目录内容，启动后才能真的发送。";
-            else if (view.MaintPhase == "running" || view.MaintPhase == "pending")
-                StatusText.Text = $"正在整理旧图 {view.MaintDone}/{Math.Max(view.MaintDone, view.MaintTotal)}…";
-            else StatusText.Text = $"就绪 · 共 {total} 张";
+            QueueInfo.Text = view.Online ? (!view.Enabled ? "发送已关闭"
+                    : view.Pending > 0 ? $"排队中 {view.Pending} 张" : "队列空")
+                : view.FeatureOff ? "总开关已关闭" : "内核未启动";
+            // 刚保存完的提示优先保留几秒（_statusHoldUntil 由 SetStatus 设置）
+            if (DateTime.UtcNow >= _statusHoldUntil)
+            {
+                if (view.FeatureOff) StatusText.Text = "表情包总开关已关闭，启用后才能发送/管理。";
+                else if (!view.Online && view.KernelOffline) StatusText.Text = "内核未运行：这里显示的是本地目录内容，启动后才能真的发送。";
+                else if (!view.Online) StatusText.Text = "读取表情包状态失败："
+                    + (view.StatusError.Length > 0 ? view.StatusError : "内核没有返回原因");
+                else if (view.MaintPhase == "running" || view.MaintPhase == "pending")
+                    StatusText.Text = $"正在整理旧图 {view.MaintDone}/{Math.Max(view.MaintDone, view.MaintTotal)}…";
+                else StatusText.Text = $"就绪 · 共 {total} 张";
+            }
             RenderJobs(status.Prop("jobs"));
             _loaded = true;
             Probe($"LoadCore 完成 在线={view.Online} 取数={tFetch.ElapsedMilliseconds}ms 总计={tLoad.ElapsedMilliseconds}ms 分类={_emotions.Count} 张数={total}");
@@ -232,6 +261,9 @@ namespace WhaleLauncher.Views
         private sealed class ViewData
         {
             public bool Online;
+            public bool FeatureOff;      // 内核在跑，但表情包总开关关着（路由 404）
+            public bool KernelOffline;   // 真的连不上内核
+            public string StatusError = "";
             public bool Enabled;
             public bool CollectReceived;
             public string Dir = "";
@@ -336,11 +368,13 @@ namespace WhaleLauncher.Views
                     _demandDirty = false;
                     _demandRevision++;
                 }
-                StatusText.Text = res.Ok
+                SetStatus(res.Ok
                     ? $"表情包频率已保存：{Math.Round(chance * 100)}%" + (ensure ? "，必发已开" : "")
-                    : "保存失败：" + Api.Message(res);
+                    : "保存失败：" + Api.Message(res), res.Ok ? 6 : 8);
+                // 成功后也把下一轮刷新往后放一点，让提示有时间被看见。
+                if (res.Ok) _nextRefresh = DateTime.UtcNow.AddSeconds(3);
             }
-            catch (Exception ex) { StatusText.Text = "保存失败：" + Api.FriendlyError(ex); }
+            catch (Exception ex) { SetStatus("保存失败：" + Api.FriendlyError(ex), 8); }
             finally { _savingDemand = false; BtnSaveDemand.IsEnabled = true; }
         }
 
@@ -357,15 +391,16 @@ namespace WhaleLauncher.Views
                 var btn = new Button
                 {
                     Content = emotion.Label,
-                    Height = 28,
+                    Height = 30,
                     Padding = new Thickness(14, 0, 14, 0),
                     Margin = new Thickness(0, 0, 6, 0),
-                    Style = (Style)FindResource(key == _current ? "Primary" : "Ghost"),
+                    Style = (Style)FindResource("Ghost"),
                     Tag = key
                 };
                 btn.Click += (s, e) => OnTabClick(key);
                 Tabs.Children.Add(btn);
             }
+            HighlightTabs();
         }
 
         /// <summary>只改高亮，不重建按钮（重建会把正在按的那颗按钮换掉）。</summary>
@@ -375,7 +410,13 @@ namespace WhaleLauncher.Views
             for (var i = 0; i < Tabs.Children.Count; i++)
             {
                 if (Tabs.Children[i] is Button btn && btn.Tag is string key)
-                    btn.Style = (Style)FindResource(key == _current ? "Primary" : "Ghost");
+                {
+                    var selected = key == _current;
+                    btn.SetResourceReference(Control.BackgroundProperty, selected ? "AccentSoft" : "Transparent");
+                    btn.SetResourceReference(Control.BorderBrushProperty, selected ? "Accent" : "Line");
+                    btn.SetResourceReference(Control.ForegroundProperty, selected ? "Accent" : "Muted");
+                    btn.FontWeight = selected ? FontWeights.SemiBold : FontWeights.Normal;
+                }
             }
             _currentIsExtra = _current.StartsWith("x:");
             if (BtnDelCat != null) BtnDelCat.Visibility = _currentIsExtra ? Visibility.Visible : Visibility.Collapsed;
@@ -520,7 +561,7 @@ namespace WhaleLauncher.Views
             var border = new Border
             {
                 Width = 120, Height = 120, Margin = new Thickness(0, 0, 10, 10),
-                CornerRadius = new CornerRadius(8), ClipToBounds = true, ToolTip = item.Name
+                CornerRadius = new CornerRadius(6), ClipToBounds = true, ToolTip = item.Name
             };
             border.SetResourceReference(Border.BackgroundProperty, "Surface3");
             var grid = new Grid();
@@ -531,12 +572,14 @@ namespace WhaleLauncher.Views
                 Content = "删",
                 Width = 26,
                 Height = 22,
-                FontSize = 11,
+                FontSize = 10.5,
+                Padding = new Thickness(0),
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Top,
                 Margin = new Thickness(0, 4, 4, 0),
                 Style = (Style)FindResource("Ghost"),
-                Opacity = 0.85,
+                Opacity = 0.9,
+                ToolTip = "删除这张",
                 Tag = item.Id
             };
             del.Click += async (s, e) =>
@@ -655,7 +698,7 @@ namespace WhaleLauncher.Views
             {
             var on = ChkEnabled.IsChecked == true;
             var res = await _sup.SaveConfigurationAsync("/api/features", new { key = "stickers", value = on });
-            StatusText.Text = res.Ok ? $"表情包已{(on ? "开启" : "关闭")}" : "保存失败：" + Api.Message(res);
+            SetStatus(res.Ok ? $"表情包已{(on ? "开启" : "关闭")}" : "保存失败：" + Api.Message(res), 5);
             _loaded = false;
             _nextRefresh = DateTime.MinValue;
             await LoadAsync();

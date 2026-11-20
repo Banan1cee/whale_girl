@@ -29,10 +29,10 @@ namespace WhaleLauncher
             {
                 if (request != null || _snapshot.ValueKind != JsonValueKind.Object || DateTime.UtcNow - _loadedAt > TimeSpan.FromSeconds(2))
                 {
-                    var node = Path.Combine(_root, "runtime", "node.exe");
+                    var node = RuntimePaths.NodeLikeExe(_root);
                     var info = new ProcessStartInfo
                     {
-                        FileName = File.Exists(node) ? node : "node",
+                        FileName = node,
                         WorkingDirectory = _root,
                         UseShellExecute = false, CreateNoWindow = true,
                         RedirectStandardOutput = true, RedirectStandardError = true,

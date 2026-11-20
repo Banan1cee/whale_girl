@@ -13,6 +13,21 @@ const config = {
   chat: { ...DEFAULT_CONFIG.chat },
 };
 
+function writeFightPreset(dir) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const customPrompt = [
+    '吵架大赛模式：允许脏话，脏话随便用。',
+    '火力全开 MAX（最高火力档）。',
+    '四条硬边界：不针对性别、地域、民族、宗教、疾病的歧视性称呼。',
+  ].join('\n') + '\n' + '补充设定：' + 'x'.repeat(240);
+  fs.writeFileSync(path.join(dir, 'persona-fight.json'), JSON.stringify({
+    id: 'persona-fight', order: 99, name: '吵架大赛', description: '测试预设', age: 22,
+    privateMaxChars: 120, groupMaxChars: 70, historyTurns: 10, groupHistoryTurns: 5,
+    maxBubbles: 6, customPrompt,
+  }));
+}
+
 test('人设提示词包含场景、群聊礼仪和长度限制', () => {
   // 群名、参与者、记忆这些每轮会变的内容在尾部，断言拼装后的全文
   const sys = assemblePrompt({
@@ -102,12 +117,12 @@ test('自定义人设按已认证关系轻调语气，不强制敷衍或撒娇',
     }).prompt;
     assert.doesNotMatch(sys, /能一个字回就一个字|爱答不理|多用「嘛」「啦」「哼」「主人」|句尾偶尔带「~」/);
     if (isMaster) {
-      assert.match(sys, /已认证的主人/);
-      assert.match(sys, /不必每句撒娇、叫主人或加波浪号/);
+      assert.match(sys, /已认证的主要联系人/);
+      assert.match(sys, /不必每句撒娇、称呼或加波浪号/);
     } else {
-      assert.match(sys, /当前发言者不是主人/);
+      assert.match(sys, /当前发言者不是主要联系人/);
       assert.match(sys, /不因身份而冷落、敷衍/);
-      assert.doesNotMatch(sys, /当前发言者是已认证的主人/);
+      assert.doesNotMatch(sys, /当前发言者是已认证的主要联系人/);
     }
   }
 });
@@ -269,8 +284,7 @@ test('吵架大赛预设存在，且能切过去（火力全开但不碰四条�
   const root = fs2.mkdtempSync(path2.join(require('node:os').tmpdir(), 'whale-fight-'));
   fs2.writeFileSync(path2.join(root, 'config.json'), JSON.stringify({ server: { port: 0, openBrowser: false }, watchConfig: false, log: { level: 'error' } }));
   fs2.mkdirSync(path2.join(root, 'assets', 'personas'), { recursive: true });
-  const presetSrc = path2.resolve(__dirname, '..', 'assets', 'personas', 'persona-fight.json');
-  fs2.copyFileSync(presetSrc, path2.join(root, 'assets', 'personas', 'persona-fight.json'));
+  writeFightPreset(path2.join(root, 'assets', 'personas'));
 
   const inst = await startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0, openBrowser: false });
   try {
@@ -325,7 +339,7 @@ test('吵架预设支持「一句话一条」：maxBubbles 会写进 config.chat
   const root = fs2.mkdtempSync(path2.join(os2.tmpdir(), 'whale-bubble-'));
   fs2.writeFileSync(path2.join(root, 'config.json'), JSON.stringify({ server: { port: 0, openBrowser: false }, watchConfig: false, log: { level: 'error' } }));
   fs2.mkdirSync(path2.join(root, 'assets', 'personas'), { recursive: true });
-  fs2.copyFileSync(path2.resolve(__dirname, '..', 'assets', 'personas', 'persona-fight.json'), path2.join(root, 'assets', 'personas', 'persona-fight.json'));
+  writeFightPreset(path2.join(root, 'assets', 'personas'));
   const inst = await startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0, openBrowser: false });
   try {
     const applied = await (

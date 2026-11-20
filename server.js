@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 鲸鲸 HTTP 服务入口（薄层）：
+ * 助手 HTTP 服务入口（薄层）：
  *   - 组装运行时（src/app.js）
  *   - 挂路由（src/http/routes）
  *   - 启动 / 自检 / CLI
@@ -143,7 +143,7 @@ function printBanner(runtime, url) {
   const { llm, config } = runtime;
   const lines = [
     '',
-    '  🐋  鲸鲸 · 深海聊天机器人  ',
+    '  助手 · 本地聊天服务  ',
     `  版本：       v${runtime.version}`,
     '  ────────────────────────────────────────────',
     `  运行模式：   ${llm.isMock ? '演示模式（还没配置模型，用内置台词）' : `${llm.providerLabel} · ${llm.model}`}`,
@@ -151,7 +151,6 @@ function printBanner(runtime, url) {
     `  记忆文件：   ${config.paths.storeFile}`,
     `  回复发送：   ${replyChannelLabel(config)}`,
     `  接入微信：   POST ${url}/webhook/wechat   （见 docs/接入微信.md）`,
-    `  接入抖音：   POST ${url}/webhook/douyin   （见 docs/接入抖音.md）`,
     '  ────────────────────────────────────────────',
     '  按 Ctrl+C 停止',
     '',
@@ -200,7 +199,7 @@ function runDoctor() {
       gw && gw.enabled ? (gw.outboundUrl ? `outbound: ${gw.outboundUrl}` : '已启用，但未配置 outboundUrl（只打印不发送）') : '未启用（可在 config.json 里开启）'
     );
   }
-  console.log('\n🐋 鲸鲸 · 环境自检\n');
+  console.log('\n助手 · 环境自检\n');
   for (const c of checks) console.log(`  ${c.ok ? '✅' : '⚠️ '} ${c.name.padEnd(12, ' ')} ${c.detail}`);
   console.log('\n提示：没有 Key 也能启动——启动器「设置」里可以选免费的智谱 GLM-4-Flash，或本地 Ollama，全程不花钱。\n');
   return checks.every((c) => c.ok);
@@ -239,7 +238,7 @@ async function main() {
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
-    console.log('\n🌊 鲸鲸要潜回深海了…');
+    console.log('\n助手已停止。');
     await instance.close();
     process.exit(0);
   };

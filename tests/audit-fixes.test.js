@@ -14,7 +14,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const visionSrc = fs.readFileSync(path.join(ROOT, 'src', 'adapters', 'vision.js'), 'utf8');
+const visionSrc = fs.readFileSync(path.join(ROOT, 'src', 'modules', 'vision', 'vision.js'), 'utf8');
 const bridgeSrc = require('./helpers/bridge-source');
 const mediaSrc = fs.readFileSync(path.join(ROOT, 'examples', 'media_fallback.py'), 'utf8');
 
@@ -32,7 +32,7 @@ test('看图：本地 http 视觉服务真的能被打通', async () => {
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
-  const { describe } = require('../src/adapters/vision');
+  const { describe } = require('../src/modules/vision');
   const text = await describe(
     { vision: { apiKey: 'test-key', baseUrl: `http://127.0.0.1:${port}`, model: 'local-vl', timeoutMs: 5000 } },
     { imageBase64: 'AAAA', mime: 'image/jpeg' }

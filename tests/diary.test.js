@@ -5,10 +5,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { DiaryService, dayKey } = require('../src/services/diary');
+const { DiaryService, dayKey } = require('../src/modules/diary');
 const { loadConfig } = require('../src/infra/config');
 const { applyConfigPatch } = require('../src/infra/configPatch');
-const register = require('../src/http/routes/diary');
+const register = require('../src/modules/diary/routes');
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-diary-'));

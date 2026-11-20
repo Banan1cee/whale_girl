@@ -71,6 +71,6 @@ test('清空称呼 = 恢复默认，不是「不改」', async () => {
     body: JSON.stringify({ userName: '' }),
   });
   assert.equal(res.status, 200);
-  assert.equal(readJson(inst.configFile).persona.ownerName, '主人', '清空后应该回到默认称呼');
+  assert.equal(readJson(inst.configFile).persona.ownerName, '你', '清空后应该回到默认称呼');
   await inst.close();
 });

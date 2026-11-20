@@ -18,7 +18,7 @@
   用法（本机验证 CI 的证书能不能签）：
     $env:WINDOWS_SIGNING_PFX_BASE64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes('cert.pfx'))
     $env:WINDOWS_SIGNING_PFX_PASSWORD = '...'
-    powershell -File scripts\sign-windows.ps1 -Path .\WhaleLauncher.exe
+    powershell -File scripts\sign-windows.ps1 -Path .\launcher\publish\WhaleLauncher.exe
 #>
 param(
     [Parameter(Mandatory = $true)][string[]]$Path,

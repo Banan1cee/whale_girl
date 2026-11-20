@@ -279,7 +279,7 @@ class Gateway {
       bubbles,
       reply_to: replyTo,
       reply_to_name: senderName,
-      bot: '鲸鲸',
+      bot: (this.bot && this.bot.config && this.bot.config.persona && this.bot.config.persona.name) || '助手',
       ts: Date.now(),
     };
     const lines = this.options.sendBubbles && Array.isArray(bubbles) && bubbles.length > 1 ? bubbles : [text];

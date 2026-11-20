@@ -37,10 +37,11 @@ test('设置里叫「爸爸」，提示词里就出现「爸爸」', () => {
   cleanup();
 });
 
-test('默认还是叫「主人」，不乱改', () => {
+test('默认直接称呼「你」，不乱改', () => {
   const { config, cleanup } = configWith({});
   const system = assemblePrompt({ config, msg: fromMaster(), profile: {}, notes: [] }).prompt;
-  assert.match(system, /主人/);
+  assert.match(system, /主要联系人/);
+  assert.match(system, /直接称呼「你」/);
   cleanup();
 });
 

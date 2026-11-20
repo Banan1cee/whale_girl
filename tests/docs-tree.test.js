@@ -27,10 +27,10 @@ const REQUIRED = [
   'LICENSE', 'README.md', 'WhaleLauncher.exe', 'package.json',
   'release-manifest.json', 'server.js',
   '.github', 'assets', 'bridge', 'config', 'docs', 'examples', 'installer', 'launcher', 'scripts',
-  'src', 'tests', 'vendor', 'website',
+  'src', 'tests', 'vendor',
 ];
 
-const FORBIDDEN = ['data', 'runtime', 'artifacts', 'config.json', 'web', 'tools', 'personas', 'resources'];
+const FORBIDDEN = ['data', 'runtime', 'artifacts', 'config.json', 'web', 'tools', 'personas', 'resources', 'website'];
 
 /** 取出「## Project structure」这一节里第一个代码块的行 */
 function treeLines() {

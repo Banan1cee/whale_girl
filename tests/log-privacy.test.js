@@ -112,7 +112,7 @@ test('Node 已知日志调用点不再直接拼接正文/昵称/会话 id', () =
     ['src/pipeline/chat.js', /判定在跟别人说话，不接：\$\{said\.slice/],
     ['src/pipeline/chat.js', /私聊 \$\{msg\.senderName\}/],
     ['src/adapters/gateway.js', /消息 \$\{msg\.senderName\}/],
-    ['src/http/routes/reminders.js', /提醒已取消：' \+ out\.item\.text/],
+    ['src/modules/reminders/routes.js', /提醒已取消：' \+ out\.item\.text/],
     ['src/services/settings.js', /称呼已改为「\$\{name\}/],
   ];
   for (const [file, pattern] of checks) {

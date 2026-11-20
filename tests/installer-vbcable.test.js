@@ -157,7 +157,7 @@ test('下载脚本：官方地址与 SHA256 原样未动', () => {
  * 完整性级别更高的进程，用户就停在「DeleteFile failed; code 5 拒绝访问」上。
  * 所以安装器必须自己 taskkill（必要时提权），光靠 [Setup] 那三个开关不够。
  */
-test('whale.iss：安装前主动结束正在运行的鲸鲸（提权 taskkill）', () => {
+test('whale.iss：安装前主动结束正在运行的助手（提权 taskkill）', () => {
   assert.match(iss, /function PrepareToInstall\(var NeedsRestart: Boolean\): String;/, '缺 PrepareToInstall 钩子');
   assert.match(iss, /function IsAppRunning\(\): Boolean;/, '缺进程探测');
   assert.match(iss, /function KillAppProcesses\(\): Boolean;/, '缺结束进程的实现');
@@ -169,11 +169,11 @@ test('whale.iss：安装前主动结束正在运行的鲸鲸（提权 taskkill�
 
   // 没在运行时不能有任何提示（零 UAC、零打扰）：早退必须发生在提示之前
   const gate = iss.indexOf('if not IsAppRunning() then');
-  const prompt = iss.indexOf('检测到鲸鲸正在运行');
+  const prompt = iss.indexOf('检测到助手正在运行');
   assert.ok(gate > 0 && prompt > gate, 'PrepareToInstall 没有先判断「没在运行」，会无端弹窗/提权');
 
   // 关不掉就必须中止安装，不能带着被占用的 exe 继续
-  assert.ok(iss.includes("Result := '没能关闭正在运行的鲸鲸"), '关不掉时没有返回错误中止安装');
+  assert.ok(iss.includes("Result := '没能关闭正在运行的助手"), '关不掉时没有返回错误中止安装');
 });
 
 test('whale.iss：卸载前也先关掉鲸鲸，且静默卸载不弹框', () => {

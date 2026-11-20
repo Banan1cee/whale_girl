@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const web = require('../src/adapters/websearch');
+const web = require('../src/modules/search/websearch');
 
 test('全部过期的资料不能恢复为有效结果', () => {
   assert.deepEqual(web.dropStaleResults('今天显卡价格', [

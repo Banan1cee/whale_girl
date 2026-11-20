@@ -13,7 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const mediaCache = require('../src/adapters/mediaCache');
-const websearch = require('../src/adapters/websearch');
+const websearch = require('../src/modules/search/websearch');
 
 const ROOT = path.resolve(__dirname, '..');
 

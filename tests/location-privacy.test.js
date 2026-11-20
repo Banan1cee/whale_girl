@@ -11,8 +11,8 @@ for (const source of ['system', 'ip']) {
     const logs = [];
     const context = {
       module: { exports: {} }, process: { platform: 'test' },
-      require: id => id === '../adapters/websearch'
-        ? { ipCity: async () => 'PrivateCity', geocodeCity: async () => ({ name: '测试隐私城市' }) }
+      require: id => id === '../modules/search'
+        ? { websearch: { ipCity: async () => 'PrivateCity', geocodeCity: async () => ({ name: '测试隐私城市' }) } }
         : require(id),
     };
     vm.createContext(context);

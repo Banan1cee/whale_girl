@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const care = require('../src/services/care');
+const care = require('../src/modules/care');
 const { parseBoolean } = require('../src/infra/configValues');
 const features = require('../src/infra/features');
 

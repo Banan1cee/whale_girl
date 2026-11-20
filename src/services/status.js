@@ -130,7 +130,7 @@ function recentMessages(store, limit = 10) {
       if (!text) continue;
       out.push({
         ts: Number(m.ts || 0),
-        who: String(m.name || (m.role === 'assistant' ? '鲸鲸' : '对方')),
+        who: String(m.name || (m.role === 'assistant' ? '助手' : '对方')),
         text: text.slice(0, 200),
         role: m.role || 'user',
         chatType: sess.chatType || 'private',

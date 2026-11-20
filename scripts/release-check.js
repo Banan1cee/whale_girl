@@ -44,11 +44,11 @@ function mustInclude(rel, needles) {
 }
 
 // 1) 看图（图片识别）这条链路
-mustInclude('src/http/routes/vision.js', [
+mustInclude('src/modules/vision/routes.js', [
   ['看图测试接口', '/api/vision/test'],
   ['返回 vision 状态', 'vision.status('],
 ]);
-mustInclude('src/adapters/vision.js', [
+mustInclude('src/modules/vision/vision.js', [
   ['Key 兜底解析', 'resolveKey'],
   ['按文件头判格式', 'sniffMime'],
   ['wxgf 提示', 'wxgf'],

@@ -88,7 +88,7 @@ test('恢复前会先把当前记忆另存一份（before-restore）', () => {
 test('坏文件要明确报错，不要默默清空记忆', () => {
   const { root, store } = seed();
   store.close();
-  assert.throws(() => backup.restoreFrom(root, { hello: 1 }), /不是鲸鲸的记忆备份/);
+  assert.throws(() => backup.restoreFrom(root, { hello: 1 }), /不是本应用的记忆备份/);
   const check = new Store({ file: path.join(root, 'data', 'store.json'), logger: null });
   assert.equal(check.listNotes('wechat:u:wxid_a')[0].notes[0], '喜欢喝冰美式');
   check.close();

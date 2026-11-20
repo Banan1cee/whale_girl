@@ -206,7 +206,7 @@ test('API save and file watch reconcile the same effects once, preserving refere
 
 async function onlineFeature(f, body) {
   let handler;
-  require('../src/http/routes/features')({ get() {}, post(_path, fn) { handler = fn; } });
+  require('../src/modules/settings/routes/features')({ get() {}, post(_path, fn) { handler = fn; } });
   const req = Readable.from([Buffer.from(JSON.stringify(body))]);
   req.headers = { 'content-type': 'application/json' };
   let output;
@@ -265,7 +265,7 @@ test('offline partial Moments fields leave other settings and publishing flags i
 });
 
 test('Moments command preparation preserves strict publishing confirmation and selects only own fields', () => {
-  const commands = require('../src/services/configCommands');
+  const commands = require('../src/modules/moments');
   const current = { featureEnabled: true, enabled: true };
   assert.deepEqual(commands.prepareMomentsPublishPatch({ withImage: false }, current), { 'moments.publishWithImage': false });
   assert.deepEqual(commands.prepareMomentsPublishPatch({ featureEnabled: false }, current), {

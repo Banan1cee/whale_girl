@@ -19,7 +19,7 @@ function herNames(bot, msg) {
 /** 正文里是否出现她的名字/外号（含「你机器人」这类明确指代）。 */
 function namedHerIn(text, names = []) {
   const s = String(text || '');
-  const list = Array.isArray(names) && names.length ? names : ['鲸鲸', '小鲸', '肥鱼'];
+  const list = Array.isArray(names) && names.length ? names : ['助手', '小助手'];
   if (list.some((name) => name && s.includes(name))) return true;
   return /(这个|那个|你|破|臭|傻|烂|死)\s*机器人/.test(s);
 }

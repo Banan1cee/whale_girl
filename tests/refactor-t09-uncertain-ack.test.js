@@ -1,10 +1,10 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {EventEmitter}=require('node:events');
-const {ReminderService,RETRY_DELAY_MS}=require('../src/services/reminderService');
+const {ReminderService,RETRY_DELAY_MS}=require('../src/modules/reminders');
 const {Router}=require('../src/http/router');
 const {Gateway}=require('../src/adapters/gateway');
-const register=require('../src/http/routes/reminders');
+const register=require('../src/modules/reminders/routes');
 const NOW=Date.UTC(2026,10,16,12),TOKEN='synthetic-round2-token';
 function fixture(t,kind='ordinary'){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'whale-t09-uncertain-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));

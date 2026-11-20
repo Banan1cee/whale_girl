@@ -246,7 +246,7 @@ function fromConfig(config) {
     background: String(p.background || '').trim().slice(0, 500),
     customPrompt: String(p.customPrompt || '').trim(),
     emoji: String(p.emojiLevel || '正常').trim(),
-    ownerName: String(p.ownerName || '主人').trim(),
+    ownerName: String(p.ownerName || '你').trim(),
     aliases: Array.isArray(p.aliases) ? p.aliases.slice() : [],
     masterRoast: p.masterRoast === true,
     proactive: p.proactive !== false,

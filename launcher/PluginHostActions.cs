@@ -7,7 +7,7 @@ namespace WhaleLauncher
     {
         internal static async Task<string> SummarizeAsync(RuntimeSupervisor supervisor, string range)
         {
-            if (!supervisor.NodeRunning) throw new InvalidOperationException("请先启动鲸鲸内核");
+            if (!supervisor.NodeRunning) throw new InvalidOperationException("请先启动内核");
             if (range is not ("today" or "yesterday")) throw new InvalidOperationException("汇总日期无效");
 
             var current = await Api.Get(supervisor.Url, "/api/digest", 5);

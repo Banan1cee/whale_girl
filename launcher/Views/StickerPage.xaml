@@ -11,16 +11,19 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,12">
-            <TextBlock DockPanel.Dock="Left" Text="表情包" Style="{StaticResource H1}" VerticalAlignment="Center" />
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,14">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Text="表情包" Style="{StaticResource H1}" VerticalAlignment="Center" />
+                <TextBlock Text="分类管理、上传与真实消息测试" Style="{StaticResource Small}" Margin="0,4,0,0" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                 <Button Content="打开总目录" Style="{StaticResource Ghost}" Click="OnOpenFolder"
                         ToolTip="打开表情包库根目录（data\stickers）" />
                 <Button Content="⟳ 刷新" Style="{StaticResource Ghost}" Margin="8,0,0,0" Click="OnReload" />
             </StackPanel>
         </DockPanel>
 
-        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="14,10">
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="18,14">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -106,7 +109,7 @@
                     ToolTip="选 1~5 张图片存进当前分类（单张 4MB 以内，不会发消息）" />
             <Button x:Name="BtnImportPresets" Content="导入预设表情包" Style="{StaticResource Ghost}"
                     Margin="6,0,0,0" Click="OnImportPresets" IsEnabled="False"
-                    ToolTip="启动鲸鲸并开启表情包后可用。空图库会自动导入；已有图库可点这里添加，保留原图。" />
+                    ToolTip="启动内核并开启表情包后可用。空图库会自动导入；已有图库可点这里添加，保留原图。" />
             <Button x:Name="BtnOpenCat" Content="打开本分类文件夹" Style="{StaticResource Ghost}" Margin="6,0,0,0"
                     Click="OnOpenCategoryFolder" ToolTip="打开当前分类的文件夹，把图拖进去即可" />
             <TextBlock x:Name="QueueInfo" Style="{StaticResource Small}" Margin="14,0,0,0" VerticalAlignment="Center" />

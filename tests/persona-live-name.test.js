@@ -106,7 +106,7 @@ test('自定义人设中的旧名字不盖过当前设置，主人称呼不授�
   assert.match(master.system, /你现在的名字是「小鱼」/);
   assert.match(master.system, /当前称呼为「老大」/);
   assert.match(master.system, /旧名字与旧称呼仅是历史，不沿用/);
-  assert.match(make(false).system, /当前发言者不是主人|没有命令权/);
+  assert.match(make(false).system, /当前发言者不是主要联系人|没有命令权/);
 });
 
 test('18,000 字提示词完整保存、进入实际对话，导入预设也不截断', async (t) => {

@@ -5,7 +5,7 @@
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseRoute, route, systemFor } = require('../src/adapters/searchRouter');
+const { parseRoute, route, systemFor } = require('../src/modules/search/router');
 
 test('路由提示词带上真实日期：判「今天/最新」不能靠训练数据', () => {
   const system = systemFor(new Date('2026-11-03T09:05:00+08:00'));
@@ -84,7 +84,7 @@ test('乱七八糟的输出不会让程序崩', () => {
 });
 
 test('路由失败时返回 failed，调用方回退关键词', async () => {
-  const { route } = require('../src/adapters/searchRouter');
+  const { route } = require('../src/modules/search/router');
   const broken = { complete: async () => { throw new Error('network down'); } };
   assert.deepEqual(await route(broken, 'B站热搜'), { need: false, query: '', site: '', city: '', fresh: 'normal', failed: true });
   const noisy = { complete: async () => '我不知道' };

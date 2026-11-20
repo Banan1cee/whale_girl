@@ -8,7 +8,7 @@ const path = require('node:path');
 const { Readable } = require('node:stream');
 const { loadConfig } = require('../src/infra/config');
 const location = require('../src/services/location');
-const registerMoments = require('../src/http/routes/moments');
+const registerMoments = require('../src/modules/moments/routes');
 
 function fixture(t, moments, confirmedAccount = '') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-t03-moments-'));

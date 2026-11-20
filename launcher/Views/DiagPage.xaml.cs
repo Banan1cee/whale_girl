@@ -63,7 +63,7 @@ namespace WhaleLauncher.Views
             await LoadVersionsAsync();
 
             RuntimeInfo.Text =
-                $"内核 node {_nodeVersion}（{(s.NodeUp ? "运行中" : "未运行")}）\n" +
+                $"内核 Bun/Node {_nodeVersion}（{(s.NodeUp ? "运行中" : "未运行")}）\n" +
                 $"桥接 python {_pythonVersion}（{(s.BrOnline ? "在线" : "离线")}）\n" +
                 $"端口 {s.Port} · 数据目录 {_sup.DataDir}";
 
@@ -108,18 +108,19 @@ namespace WhaleLauncher.Views
             if (hasWheel) AddCheck("打包完整性", false, "runtime\\wheelhouse 还在，安装包会白白大 117MB");
 
             // 运行时清单：node / python / manifest 三件事合并成一条，不再单列两行
-            var nodeExe = Path.Combine(_sup.BaseDir, "runtime", "node.exe");
+            var nodeExe = RuntimePaths.NodeLikeExe(_sup.BaseDir);
+            var nodeLabel = RuntimePaths.IsBun(nodeExe) ? "Bun" : "Node";
             var manifest = Path.Combine(_sup.BaseDir, "runtime", "manifest.json");
-            var hasNode = File.Exists(nodeExe);
+            var hasNode = File.Exists(nodeExe) || RuntimePaths.OnPath(nodeExe);
             var hasPy = File.Exists(py);
             var missing = new List<string>();
-            if (!hasNode) missing.Add("runtime\\node.exe");
+            if (!hasNode) missing.Add("runtime\\node.exe 或 runtime\\bun.exe");
             if (!hasPy) missing.Add("runtime\\python\\python.exe");
             var detail = missing.Count > 0
                 ? "缺 " + string.Join(" 和 ", missing)
                 : (File.Exists(manifest)
-                    ? "node 与 python 都在，manifest.json 已就位"
-                    : "node 与 python 都在（旧版运行时包，无 manifest.json）");
+                    ? nodeLabel + " 与 python 都在，manifest.json 已就位"
+                    : nodeLabel + " 与 python 都在（旧版运行时包，无 manifest.json）");
             AddCheck("运行时清单", missing.Count == 0, detail);
         }
 
@@ -259,13 +260,14 @@ namespace WhaleLauncher.Views
         {
             if (_versionsLoaded) return;
             _versionsLoaded = true;
-            _nodeVersion = await VersionOf(Path.Combine(_sup.BaseDir, "runtime", "node.exe"), "--version");
-            _pythonVersion = await VersionOf(Path.Combine(_sup.BaseDir, "runtime", "python", "python.exe"), "-V");
+            // Bun 只支持 --version；Node 两个都行，统一用 --version 省一次分支。
+            _nodeVersion = await VersionOf(RuntimePaths.NodeLikeExe(_sup.BaseDir), "--version");
+            _pythonVersion = await VersionOf(RuntimePaths.PythonExe(_sup.BaseDir), "-V");
         }
 
         private static async Task<string> VersionOf(string exe, string arg)
         {
-            if (!File.Exists(exe)) return "（未找到）";
+            if (!File.Exists(exe) && !RuntimePaths.OnPath(exe)) return "（未找到）";
             try
             {
                 var psi = new ProcessStartInfo(exe, arg)
@@ -708,7 +710,7 @@ namespace WhaleLauncher.Views
         private static string BuildReadme(bool includeRaw)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("鲸鲸 · debug 日志包");
+            sb.AppendLine("助手 · debug 日志包");
             sb.AppendLine("==================================================");
             sb.AppendLine("这是排查问题用的 debug 日志包，不是给日常使用的日志。");
             sb.AppendLine("包含范围：当次启动 + 最近两次启动的归档（当前这次留尾部 3MB，归档各留尾部 1MB）");
@@ -732,7 +734,7 @@ namespace WhaleLauncher.Views
             sb.AppendLine();
             sb.AppendLine("关于脱敏：");
             sb.AppendLine("  ① 密钥类：键名匹配 apiKey / key / token / secret / password / cookie / session 的值换成 \"***\"；");
-            sb.AppendLine("  ② 隐私类：主人名字、别名、忽略名单、搭话白名单、账号、路径、地点、测试会话名换成 \"***\"；");
+            sb.AppendLine("  ② 隐私类：主要联系人名字、别名、忽略名单、搭话白名单、账号、路径、地点、测试会话名换成 \"***\"；");
             sb.AppendLine("  ③ 日志正文：sk-xxx / wxid_xxx / 群号 / Bearer token / 手机号 / 邮箱 / 本机用户路径会打码。");
             sb.AppendLine("  配置结构、非敏感字段和模型名都原样保留，方便对齐配置。");
             sb.AppendLine();
@@ -755,7 +757,7 @@ namespace WhaleLauncher.Views
             if (model.Length == 0) model = probe?.Model ?? "";
 
             var sb = new StringBuilder();
-            sb.AppendLine("鲸鲸 debug 日志包 · info");
+            sb.AppendLine("助手 debug 日志包 · info");
             sb.AppendLine("==================================================");
             sb.AppendLine("导出时间        : " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "（时区 " + TimeZoneInfo.Local.Id + "）");
             sb.AppendLine("导出范围        : 当次启动 + 最近两次启动的归档（当前留尾部 3MB，归档各留 1MB）");
@@ -772,7 +774,7 @@ namespace WhaleLauncher.Views
             sb.AppendLine("当前模型服务    : " + (provider.Length > 0 ? provider : "未知"));
             sb.AppendLine("当前模型名      : " + (model.Length > 0 ? model : "未知"));
             sb.AppendLine("看图模型名      : " + (vision.Length > 0 ? vision : "未知"));
-            sb.AppendLine("Node            : " + VersionOrUnknown(_nodeVersion));
+            sb.AppendLine("Bun/Node        : " + VersionOrUnknown(_nodeVersion));
             sb.AppendLine("Python          : " + VersionOrUnknown(_pythonVersion));
             sb.AppendLine("安装目录        : " + DriveOnly(_sup.BaseDir));
             sb.AppendLine("数据目录        : " + DriveOnly(_sup.DataDir));
@@ -974,9 +976,11 @@ namespace WhaleLauncher.Views
             sb.AppendLine(new string('-', 60));
 
             var candidates = new List<string>();
-            var local = Path.Combine(_sup.BaseDir, "runtime", "node.exe");
-            if (File.Exists(local)) candidates.Add(local);
-            candidates.Add("node");   // PATH 里的 node
+            var local = RuntimePaths.NodeLikeExe(_sup.BaseDir);
+            candidates.Add(local);   // 内置 node.exe / bun.exe，或 PATH 里的 node / bun
+            // 自检多试一个名字，失败无副作用
+            var other = RuntimePaths.IsBun(local) ? "node" : "bun";
+            if (!candidates.Contains(other)) candidates.Add(other);
 
             foreach (var exe in candidates)
             {
@@ -1032,7 +1036,7 @@ namespace WhaleLauncher.Views
                 }
             }
 
-            sb.AppendLine("没找到可用的 node（runtime\\node.exe 与 PATH 都没有），doctor 跳过。");
+            sb.AppendLine("没找到可用的 Node/Bun（runtime\\node.exe、runtime\\bun.exe 与 PATH 都没有），doctor 跳过。");
             return sb.ToString();
         }
 
@@ -1173,17 +1177,9 @@ namespace WhaleLauncher.Views
                 => $"{At:yyyy-MM-dd HH:mm}   {Sessions} 个聊天 / {Messages} 条消息   {Name}";
         }
 
-        private string NodeExe()
-        {
-            var local = Path.Combine(_sup.BaseDir, "runtime", "node", "node.exe");
-            return File.Exists(local) ? local : "node";
-        }
+        private string NodeExe() => RuntimePaths.NodeLikeExe(_sup.BaseDir);
 
-        private string PythonExe()
-        {
-            var local = Path.Combine(_sup.BaseDir, "runtime", "python", "python.exe");
-            return File.Exists(local) ? local : "python";
-        }
+        private string PythonExe() => RuntimePaths.PythonExe(_sup.BaseDir);
 
         private async Task<(int Code, string Output)> RunToolAsync(string exe, string args, int timeoutMs = 180000)
         {
@@ -1361,7 +1357,7 @@ namespace WhaleLauncher.Views
         private async void OnFactoryReset(object sender, RoutedEventArgs e)
         {
             if (!AppDialog.Confirm(Window.GetWindow(this),
-                "会清空：聊天记忆、API Key、人设调教、主人名单、网关令牌、所有设置。\n" +
+                "会清空：聊天记忆、API Key、人设调教、主要联系人名单、网关令牌、所有设置。\n" +
                 "清空前会先自动备份到 backup\\reset-时间戳\\，但恢复要自己手动捞。",
                 "重置全部（恢复出厂）", okText: "继续")) return;
 

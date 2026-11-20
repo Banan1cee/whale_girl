@@ -3,8 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const master = require('../src/core/master');
-const care = require('../src/services/care');
-const { ContactsCache, normalizeItem } = require('../src/services/contacts');
+const care = require('../src/modules/care');
+const { ContactsCache, normalizeItem } = require('../src/modules/wechat');
 
 const OWNER = 'wxid_test_bound_owner';
 const OTHER = 'wxid_test_same_name';

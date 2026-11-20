@@ -38,7 +38,7 @@ namespace WhaleLauncher
         internal string CompatibilityLabel => string.Join("；", AppRanges.Select(range =>
             (range.AppEpoch == 2 ? "正式版 · " : "旧版 · ")
             + (string.IsNullOrEmpty(range.MaxAppVersion)
-                ? $"鲸鲸 {range.MinAppVersion} 及以上" : $"鲸鲸 {range.MinAppVersion} – {range.MaxAppVersion}")));
+                ? $"助手 {range.MinAppVersion} 及以上" : $"助手 {range.MinAppVersion} – {range.MaxAppVersion}")));
     }
     internal sealed record PluginFeedback(int Comments, int Favorites);
     internal sealed record PluginPackage(PluginInfo Info, byte[] Module, string Prompt = null, string Persona = null);
@@ -522,7 +522,7 @@ namespace WhaleLauncher
         private bool Install(byte[] bytes, PluginInfo info, Func<PluginInfo, PluginInfo, bool> confirm = null)
         {
             if (!Compatible(info, UpdateManifestService.LocalVersion(_baseDir), UpdateManifestService.LocalEpoch(_baseDir)))
-                throw new InvalidDataException("插件适用的鲸鲸版本体系或版本范围与当前客户端不兼容");
+                throw new InvalidDataException("插件适用的助手版本体系或版本范围与当前客户端不兼容");
             var target = FileFor(info.Id, ".zip");
             PluginInfo current = null;
             if (Directory.Exists(_root)) EnsureRoot();
@@ -643,8 +643,9 @@ namespace WhaleLauncher
             if (authorizedAction != null)
                 input = await (host ?? throw new InvalidOperationException("此权限暂不可用"))(input);
 
-            var node = Path.Combine(_baseDir, "runtime", "node.exe");
-            if (!File.Exists(node)) throw new IOException("运行插件需要鲸鲸自带的 Node 运行时");
+            var node = RuntimePaths.NodeLikeExe(_baseDir);
+            if (!File.Exists(node) && !RuntimePaths.OnPath(node))
+                throw new IOException("运行插件需要本应用自带的 Node 运行时");
             var start = new ProcessStartInfo(node)
             {
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,

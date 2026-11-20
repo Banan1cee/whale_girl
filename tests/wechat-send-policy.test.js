@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { startServer } = require('../server');
-const { careTargets } = require('../src/services/care');
+const { careTargets } = require('../src/modules/care');
 
 const token = 'test-only-send-policy-token';
 const peer = 'wxid_test_policy_peer';

@@ -125,7 +125,7 @@ test('真在骂她（点名 / @ 她）还是要回', async () => {
   const { bot, cleanup } = makeBot();
   try {
     // 点名她的：不管有没有 @ 都算冲她
-    for (const line of ['鲸鲸你个智障', '机器人真垃圾']) {
+    for (const line of ['助手你个智障', '机器人真垃圾']) {
       const x = await bot.handle(groupMsg(line));
       assert.equal(
         x.action,

@@ -77,7 +77,7 @@ test('出包脚本会跑测试与发布自检，并从 zip 里复核内容', () 
   assert.match(text, /--test/, '要先跑测试');
   assert.match(text, /release-check\.js' --release|release-check\.js --release/, '要跑发布自检');
   assert.match(text, /ZipFile/, '要从 zip 里读文件复核');
-  assert.match(text, /src\/http\/routes\/vision\.js/, '要从 zip 里复核看图接口真的在包里（3.0.3 事故）');
+  assert.match(text, /src\/modules\/vision\/routes\.js/, '要从 zip 里复核看图接口真的在包里（3.0.3 事故）');
 });
 
 test('维护文档与 bug 台账在', () => {

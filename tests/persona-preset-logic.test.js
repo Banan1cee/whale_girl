@@ -22,6 +22,16 @@ const { DEFAULT_CONFIG } = require('../src/infra/config');
 
 const root = path.resolve(__dirname, '..');
 
+function writePreset(dir, name, id, extra = {}) {
+  const data = {
+    id, order: 1, name, description: '测试预设', age: 22,
+    privateMaxChars: 120, groupMaxChars: 70, historyTurns: 10, groupHistoryTurns: 5,
+    customPrompt: '测试自定义提示词。'.repeat(40),
+    ...extra,
+  };
+  fs.writeFileSync(path.join(dir, name), JSON.stringify(data));
+}
+
 function freshConfig() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-persona-'));
   return { paths: { dataDir: dir }, persona: {}, chat: {}, links: {}, group: {}, memory: {} };
@@ -56,19 +66,19 @@ test('改名会同步写进 config.json（桥接靠它更新群里 @ 称呼）',
   assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).persona.name, '小鱼', 'config.json 要跟着改名');
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'persona.json'), 'utf8')).name, '小鱼', '人设文件本身也要保留新名字');
   personaStore.clear(cfg);
-  assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).persona.name, '鲸鲸', '恢复默认要把 config.json 的名字也还原');
+  assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).persona.name, '助手', '恢复默认要把 config.json 的名字也还原');
 });
 
 test('导入预设会记下来源，保存接口也接受它', () => {
-  // 模块化之后路由在 src/http/routes/persona.js，不再堆在 server.js 里
-  const route = fs.readFileSync(path.join(root, 'src', 'http', 'routes', 'persona.js'), 'utf8');
-  const service = fs.readFileSync(path.join(root, 'src', 'services', 'persona.js'), 'utf8');
+  // 模块化之后路由在 src/modules/persona/routes.js，实现不再堆在服务层
+  const route = fs.readFileSync(path.join(root, 'src', 'modules', 'persona', 'routes.js'), 'utf8');
+  const service = fs.readFileSync(path.join(root, 'src', 'modules', 'persona', 'service.js'), 'utf8');
   assert.match(route, /patch\.sourcePreset\s*=\s*preset\.id/, '导入时要记 sourcePreset');
   assert.match(service, /body\.sourcePreset !== undefined/, '保存时接受来源预设');
 });
 
 test('预设预览接口：GET 只读不写，返回可填表的内容', () => {
-  const route = fs.readFileSync(path.join(root, 'src', 'http', 'routes', 'persona.js'), 'utf8');
+  const route = fs.readFileSync(path.join(root, 'src', 'modules', 'persona', 'routes.js'), 'utf8');
   assert.match(route, /router\.get\('\/api\/persona\/preset'/, '要有预览 GET');
   assert.match(route, /presets\.toPatch\(preset\)/, '预览要返回可填表的内容');
 });
@@ -87,18 +97,14 @@ test('预设标题不能当她的名字；只有 personaName 才能改名', () =
   }
   const patch = presets.toPatch({ name: '别拿标题当名字', personaName: '真正的名字' });
   assert.equal(patch.name, '真正的名字');
-  // 回归：大肥鱼预设要让项目识别链真的认识「大肥鱼」
-  const dafeiyu = presets.toPatch(presets.load(cfg, 'persona-dafeiyu'));
-  assert.equal(dafeiyu.name, '大肥鱼');
 });
 
 test('HTTP：预览不写盘；导入预设不打乱她的名字和外形', async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-preset-name-'));
   fs.writeFileSync(path.join(tmp, 'config.json'), JSON.stringify({ server: { port: 0, openBrowser: false }, watchConfig: false, log: { level: 'error' } }));
   fs.mkdirSync(path.join(tmp, 'assets', 'personas'), { recursive: true });
-  for (const name of ['persona-standard.json', 'persona-zhainan.json']) {
-    fs.copyFileSync(path.join(root, 'assets', 'personas', name), path.join(tmp, 'assets', 'personas', name));
-  }
+  writePreset(path.join(tmp, 'assets', 'personas'), 'persona-standard.json', 'persona-standard');
+  writePreset(path.join(tmp, 'assets', 'personas'), 'persona-zhainan.json', 'persona-zhainan');
   const { startServer } = require('../server');
   const inst = await startServer({ root: tmp, env: { WHALE_LOG_FILE: '' }, port: 0, openBrowser: false });
   t.after(() => inst.close());
@@ -113,16 +119,20 @@ test('HTTP：预览不写盘；导入预设不打乱她的名字和外形', asyn
   assert.equal(applied.persona.appearance, before.appearance, '外形不能丢');
 });
 
-test('各版人设预设的差异确实在 customPrompt 上（都写了内容且互不相同）', () => {
-  const dir = path.join(root, 'assets', 'personas');
+test('内置人设预设都写了足够长的 customPrompt', () => {
+  const dirs = [
+    path.join(root, 'assets', 'personas'),
+  ];
   const seen = new Map();
-  for (const f of fs.readdirSync(dir).filter((n) => /^persona-.*\.json$/i.test(n))) {
-    const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8').replace(/^\uFEFF/, ''));
-    const cp = String(data.customPrompt || '');
-    assert.ok(cp.length > 200, f + ' 的 customPrompt 太短，等于没有');
-    seen.set(f, cp);
+  for (const dir of dirs) {
+    for (const f of fs.readdirSync(dir).filter((n) => /^persona-.*\.json$/i.test(n))) {
+      const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8').replace(/^\uFEFF/, ''));
+      const cp = String(data.customPrompt || '');
+      assert.ok(cp.length > 200, f + ' 的 customPrompt 太短，等于没有');
+      seen.set(f, cp);
+    }
   }
-  assert.ok(seen.size >= 3, '至少要有三版预设');
+  assert.ok(seen.size >= 1, '至少要有内置人设预设');
   const texts = [...seen.values()];
   for (let i = 0; i < texts.length; i += 1) {
     for (let j = i + 1; j < texts.length; j += 1) {
@@ -148,5 +158,5 @@ test('恢复默认会清掉自定义提示词，回到正常人格', () => {
   personaStore.clear(cfg);
   assert.equal(cfg.persona.customPrompt, '', '恢复默认必须清掉自定义提示词');
   assert.equal(cfg.persona.sourcePreset, '', '恢复默认要清掉预设来源');
-  assert.match(cfg.persona.personality, /温柔/, '性格要回到出厂设定');
+  assert.equal(cfg.persona.personality, DEFAULT_CONFIG.persona.personality, '性格要回到出厂设定');
 });

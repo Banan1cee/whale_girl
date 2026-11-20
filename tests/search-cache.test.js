@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createCache } = require('../src/adapters/search/cache');
+const { createCache } = require('../src/modules/search/providers/cache');
 
 test('相同请求合并，一位取消不影响其他等待者，命中缓存保持原获取时间', async () => {
   const cache = createCache();

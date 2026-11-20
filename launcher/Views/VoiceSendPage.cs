@@ -52,10 +52,16 @@ public sealed class VoiceSendPage : UserControl
         page.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});
         page.RowDefinitions.Add(new RowDefinition{Height=new GridLength(1,GridUnitType.Star)});
 
-        var header=new DockPanel{LastChildFill=false,Margin=new Thickness(0,0,0,10)};
+        var header=new DockPanel{LastChildFill=false,Margin=new Thickness(0,0,0,12)};
         var title=new TextBlock{Text="语音发送",VerticalAlignment=VerticalAlignment.Center};
         title.SetResourceReference(StyleProperty,"H1");
-        DockPanel.SetDock(title,Dock.Left);header.Children.Add(title);
+        var subtitle=new TextBlock{Text="把文字回复转成语音，按概率自动发送或按需响应"};
+        subtitle.SetResourceReference(StyleProperty,"Small");
+        subtitle.Margin=new Thickness(0,4,0,0);
+        var titleStack=new StackPanel();
+        titleStack.Children.Add(title);
+        titleStack.Children.Add(subtitle);
+        DockPanel.SetDock(titleStack,Dock.Left);header.Children.Add(titleStack);
         var actions=new StackPanel{Orientation=Orientation.Horizontal};
         DockPanel.SetDock(actions,Dock.Right);header.Children.Add(actions);
         var reload=new Button{Content="⟳ 刷新"};

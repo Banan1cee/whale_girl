@@ -24,15 +24,15 @@ namespace WhaleLauncher
         {
             SetResourceReference(BackgroundProperty, "Bg");
             SetResourceReference(ForegroundProperty, "Text");
-            FontSize = 12.5;
+            FontSize = 13;
 
-            var root = new StackPanel { Margin = new Thickness(18, 16, 18, 14) };
+            var root = new StackPanel { Margin = new Thickness(20, 16, 20, 16) };
             Content = root;
 
             _preview = new Border
             {
                 Height = 54,
-                CornerRadius = new CornerRadius(10),
+                CornerRadius = new CornerRadius(8),
                 BorderThickness = new Thickness(1),
             };
             _preview.SetResourceReference(Border.BorderBrushProperty, "CardBorder");

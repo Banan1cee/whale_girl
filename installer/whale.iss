@@ -1,7 +1,7 @@
-﻿; 鲸鲸 4.0 — 安装脚本（Inno Setup 7）
+﻿; 助手 4.0 — 安装脚本（Inno Setup 7）
 ;
 ; 设计要点：
-;   1. 装到 %LOCALAPPDATA%\Programs\鲸鲸，**安装过程零 UAC**；
+;   1. 装到 %LOCALAPPDATA%\Programs\WhaleGirl，**安装过程零 UAC**；
 ;   2. 启动器（WhaleLauncher.exe）带 requireAdministrator 清单：微信是管理员，
 ;      桥接必须同级才能改 gate / 读进程；拖拽已用 ChangeWindowMessageFilterEx 放行；
 ;   3. runtime\wheelhouse 只是构建缓存，不进包（省 117MB）；
@@ -14,7 +14,7 @@
 ; 版本号从命令行传入：ISCC.exe --define=AppVersion=4.0.0 installer\whale.iss
 ; 签名由 CI 在编译前后调用 scripts/sign-windows.ps1 完成（见 docs/打包与签名.md）。
 
-#define AppName "鲸鲸"
+#define AppName "助手"
 #ifndef AppVersion
   #define AppVersion "4.0.0"
 #endif
@@ -25,12 +25,12 @@
 AppId={{7C1E2A54-9B3D-4E88-9A21-5D6F0C4B1A77}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppPublisher=鲸鲸
+AppPublisher=助手
 DefaultDirName={localappdata}\Programs\WhaleGirl
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-; 覆盖安装：升级时由 Restart Manager 检测占用，弹窗让用户关掉正在运行的鲸鲸再继续。
+; 覆盖安装：升级时由 Restart Manager 检测占用，弹窗让用户关掉正在运行的助手再继续。
 ; RestartApplications 必须 No —— 装完 [Run] 段已经会拉起启动器，让 Inno 再拉一次会开两个。
 UsePreviousAppDir=yes
 CloseApplications=yes
@@ -40,9 +40,9 @@ RestartApplications=no
 VersionInfoVersion={#AppVersion}
 VersionInfoProductVersion={#AppVersion}
 VersionInfoProductName={#AppName}
-VersionInfoCompany=鲸鲸
+VersionInfoCompany=助手
 VersionInfoDescription={#AppName} 安装程序
-VersionInfoCopyright=Copyright (C) 2026 鲸鲸
+VersionInfoCopyright=Copyright (C) 2026 助手
 OutputDir=..\artifacts\setup
 OutputBaseFilename=whale-girl-{#AppVersion}-setup
 Compression=lzma2/ultra64
@@ -74,6 +74,18 @@ Type: files; Name: "{app}\src\http\static.js"
 Type: files; Name: "{app}\src\adapters\bilibili.js"
 ; 虚拟声卡安装包从 runtime\vb-cable 挪到安装目录根部
 Type: filesandordirs; Name: "{app}\runtime\vb-cable"
+; 评估过但已放弃的 WinUI 3 启动器（自包含目录）会在旧安装目录留下 Windows App Runtime。
+; 发行回到 WPF 单文件后这份资产完全没用，升级时整目录清掉，不让它在用户机器上留 250MB。
+Type: filesandordirs; Name: "{app}\runtime\winappsdk"
+; 4.1.8 模块化：旧 HTTP 路由/共享服务/搜索适配器已重构进 src\modules\。
+; 覆盖安装不会自动删旧文件；这些目录整删后由 Files 段的 src\* 重建（index.js 与旧 CLI 都会重新带上）。
+Type: filesandordirs; Name: "{app}\src\http\routes"
+Type: filesandordirs; Name: "{app}\src\services"
+Type: filesandordirs; Name: "{app}\src\core\search"
+Type: filesandordirs; Name: "{app}\src\adapters\search"
+Type: files; Name: "{app}\src\adapters\vision.js"
+Type: files; Name: "{app}\src\adapters\websearch.js"
+Type: files; Name: "{app}\src\adapters\searchRouter.js"
 
 ; 注意：这里绝不能写 *.zip。CPython embeddable 的标准库就是
 ; runtime\python\python312.zip，排掉它用户装完 python 直接报
@@ -91,7 +103,7 @@ Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\docs\NOTICE.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\src\*"; DestDir: "{app}\src"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__\*,*.pyc"
 Source: "..\bridge\*"; DestDir: "{app}\bridge"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__\*,*.pyc"
-Source: "..\assets\personas\*"; DestDir: "{app}\assets\personas"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "persona-fight.json,persona-tieba.json"
+Source: "..\assets\personas\*"; DestDir: "{app}\assets\personas"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\assets\*.txt"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "clapback-fight.txt"
 Source: "..\assets\stickers\*"; DestDir: "{app}\assets\stickers"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\examples\*"; DestDir: "{app}\examples"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__\*,*.pyc"
@@ -223,12 +235,12 @@ begin
            '启动器如果打不开，请手动运行：' + Installer, mbInformation, MB_OK, IDOK);
 end;
 
-{ ── 升级 / 卸载前关掉正在运行的鲸鲸 ──────────────────────────────
+{ ── 升级 / 卸载前关掉正在运行的助手 ──────────────────────────────
   Setup 段的 CloseApplications=yes 走的是 Restart Manager，但两边权限对不上：
   启动器是 requestedExecutionLevel=requireAdministrator（提权运行），安装器是
   PrivilegesRequired=lowest（普通权限）。RM 停不掉完整性级别更高的进程，于是覆盖
   WhaleLauncher.exe 时停在「DeleteFile failed; code 5 拒绝访问」的重试框里，用户
-  只能自己关掉鲸鲸再点 Try again。
+  只能自己关掉助手再点 Try again。
 
   这里改成自己动手，顺序是「先检测、后提权」：没在运行就一个 UAC 都不弹；
   真在运行才用 runas 跑 taskkill /T，连同它拉起来的内核 node.exe 与桥接
@@ -287,7 +299,7 @@ begin
   if Result then Exit;
 
   { 提权再来一次。UAC 被取消时 ShellExec 返回 False，按「没杀掉」处理 }
-  Log('当前权限结束不了鲸鲸（多半是提权运行），改用 runas');
+  Log('当前权限结束不了助手（多半是提权运行），改用 runas');
   if not ShellExec('runas', ExpandConstant('{cmd}'), Params, '', SW_HIDE,
                    ewWaitUntilTerminated, ExitCode) then
     Exit;
@@ -304,25 +316,25 @@ begin
   if not IsAppRunning() then
   begin
     { 绝大多数情况走这里：没开着，零打扰地继续 }
-    Log('PrepareToInstall：鲸鲸没在运行，直接安装');
+    Log('PrepareToInstall：助手没在运行，直接安装');
     Exit;
   end;
 
-  Log('PrepareToInstall：检测到鲸鲸正在运行');
+  Log('PrepareToInstall：检测到助手正在运行');
   if not WizardSilent then
-    if SuppressibleMsgBox('检测到鲸鲸正在运行（旧版本）。' + #13#10#13#10 +
+    if SuppressibleMsgBox('检测到助手正在运行（旧版本）。' + #13#10#13#10 +
            '安装会先把它关掉——正在生成的回复会中断，聊天记忆和 Key 不受影响。' + #13#10 +
            '继续吗？', mbConfirmation, MB_OKCANCEL, IDOK) <> IDOK then
     begin
-      Result := '已取消：请先关闭鲸鲸，再运行安装包。';
+      Result := '已取消：请先关闭助手，再运行安装包。';
       Exit;
     end;
 
   if KillAppProcesses() then
-    Log('已关闭正在运行的鲸鲸')
+    Log('已关闭正在运行的助手')
   else
-    Result := '没能关闭正在运行的鲸鲸（' + AppExeName + '）。' + #13#10#13#10 +
-              '请手动退出鲸鲸（任务管理器结束 WhaleLauncher.exe）后重试。';
+    Result := '没能关闭正在运行的助手（' + AppExeName + '）。' + #13#10#13#10 +
+              '请手动退出助手（任务管理器结束 WhaleLauncher.exe）后重试。';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -387,7 +399,7 @@ begin
     if IsAppRunning() then
     begin
       if WizardSilent or
-         (SuppressibleMsgBox('鲸鲸正在运行，需要先关闭才能卸载。现在关闭并继续？',
+         (SuppressibleMsgBox('助手正在运行，需要先关闭才能卸载。现在关闭并继续？',
               mbConfirmation, MB_OKCANCEL, IDOK) = IDOK) then
         KillAppProcesses();
     end;

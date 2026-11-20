@@ -8,6 +8,9 @@ const { readJson } = require('../infra/jsonFile');
 
 /** 首次只为完全空的图库自动导入；已有图库由用户手动导入。 */
 async function installPresets(config, root = config.root || process.cwd(), { manual = false } = {}) {
+  // 这些图是特定角色的随包素材，不是通用表情包；默认不写进用户图库。
+  // 只有显式把 sticker.builtinPresets 设为 true 才导入（自动维护和手动导入都走这里）。
+  if (config?.sticker?.builtinPresets !== true) return 0;
   if (!stickers.isOn(config)) return 0;
   const assets = path.join(root, 'assets', 'stickers');
   const manifestFile = path.join(assets, 'manifest.json');

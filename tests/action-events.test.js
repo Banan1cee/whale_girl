@@ -12,7 +12,7 @@ const { Bot } = require('../src/pipeline/chat');
 const { assemblePrompt } = require('./support/prompt');
 const { DEFAULT_CONFIG, loadConfig } = require('../src/infra/config');
 const events = require('../src/core/events');
-const { StickerService } = require('../src/services/stickerService');
+const { StickerService } = require('../src/modules/stickers');
 const stickers = require('../src/adapters/stickers');
 
 const GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64');

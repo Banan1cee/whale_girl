@@ -80,7 +80,7 @@ namespace WhaleLauncher
         /// 独立 powershell 去装（启动器必须自退，exe 才换得掉）。
         ///
         /// 用 /SILENT 不用 /VERYSILENT：用户要看得见安装进度。两条 [Run] 都带 skipifsilent，
-        /// 所以静默装完不会自己拉起鲸鲸——apply.ps1 最后那句 Start-Process 不能省。
+        /// 所以静默装完不会自己拉起助手——apply.ps1 最后那句 Start-Process 不能省。
         /// </summary>
         private static async Task<ApplyOutcome> SetupAsync(string baseDir, string latest, IProgress<Progress> progress)
         {

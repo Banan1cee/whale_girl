@@ -10,7 +10,7 @@
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const websearch = require('../src/adapters/websearch');
+const websearch = require('../src/modules/search/websearch');
 
 test('口语问句清洗成可检索关键词，保留价格意图', () => {
   assert.equal(websearch.cleanQuery('最新 iPhone 多少钱'), 'iPhone 价格');
