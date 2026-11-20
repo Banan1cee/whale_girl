@@ -148,6 +148,12 @@ class SkillsKnowledgeService {
       }
       text = parts.join('\n').slice(0, MAX_KB_BYTES);
     } else {
+      // 仅检查 URL 字面量不够：域名可能解析到回环或内网地址。
+      let addresses;
+      try { addresses = await this.resolver(new URL(source.path).hostname, { all: true, verbatim: true }); }
+      catch { throw fail('网络知识库域名解析失败', 502); }
+      if (!Array.isArray(addresses) || !addresses.length || addresses.some(item => isPrivateHost(item.address)))
+        throw fail('为避免 SSRF，网络知识库域名不得解析到本机或内网地址');
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 8000);
       try {
