@@ -96,3 +96,20 @@ test('skill edits and deletions persist by stable id', () => {
     assert.throws(() => f.service.deleteSkill('notes'), /不存在/);
   } finally { f.close(); }
 });
+
+
+test('remote knowledge rejects a public-looking hostname that resolves to loopback', async () => {
+  const f = fixture();
+  try {
+    let requested = false;
+    const service = new SkillsKnowledgeService({ dataDir: f.dir,
+      resolver: async () => [{ address: '127.0.0.1', family: 4 }],
+      fetcher: async () => { requested = true; throw new Error('fetch must not run'); }
+    });
+    await assert.rejects(
+      service.testKnowledgeSource({ id: 'dns-rebind', type: 'remote', path: 'https://public.example/guide.md' }),
+      /DNS|内网/
+    );
+    assert.equal(requested, false);
+  } finally { f.close(); }
+});
