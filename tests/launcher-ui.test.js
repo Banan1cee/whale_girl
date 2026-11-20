@@ -36,7 +36,7 @@ test('统一提示、确认、输入和文本弹层不创建独立窗口', () =>
   assert.match(dialog, /SetName\(close, "关闭弹窗"\)/);
   for (const file of ['Views/SettingsPage.xaml.cs', 'Views/StickerPage.xaml.cs',
     'Views/PersonaPage.xaml.cs', 'Views/PluginMarketPage.xaml.cs', 'Views/DiagPage.xaml.cs',
-    'Views/BridgePage.xaml.cs', 'Views/ReminderPage.xaml.cs', 'ColorPickerWindow.cs']) {
+    'Views/BridgePage.xaml.cs', 'Views/ReminderPage.xaml.cs', 'Views/SkillsPage.xaml.cs', 'Views/KnowledgePage.xaml.cs', 'ColorPickerWindow.cs']) {
     assert.doesNotMatch(readLauncher(file), /ShowDialog\s*\(|new\s+(?:Microsoft\.Win32\.)?(?:OpenFileDialog|SaveFileDialog|Window)\b|:\s*Window\b/, file);
   }
   assert.match(readLauncher('AppFilePicker.cs'), /确认覆盖/);
@@ -423,4 +423,15 @@ test('图标接好了：csproj 的 exe 图标 + 窗口图标 + 安装包图标',
 
   const iss = read('installer/whale.iss');
   assert.match(iss, /SetupIconFile=\{#SrcDir\}\\launcher\\Assets\\app\.ico/, '安装包没有 SetupIconFile');
+});
+
+
+test('技能与知识库管理页已接入启动器导航', () => {
+  const main = readLauncher('MainWindow.xaml.cs');
+  assert.match(main, /Key = "技能"/);
+  assert.match(main, /Key = "知识库"/);
+  assert.match(main, /case "技能": return new SkillsPage\(_sup\)/);
+  assert.match(main, /case "知识库": return new KnowledgePage\(_sup\)/);
+  assert.match(readLauncher('Views/SkillsPage.xaml'), /自定义技能/);
+  assert.match(readLauncher('Views/KnowledgePage.xaml'), /知识库/);
 });
