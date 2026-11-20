@@ -34,7 +34,7 @@ function isPrivateHost(hostname) {
       || (p[0] === 203 && p[1] === 0 && p[2] === 113);
   }
   if (family === 6) {
-    const mapped = host.match(/^::ffff:(\\d+\\.\\d+\\.\\d+\\.\\d+)$/);
+    const mapped = host.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
     if (mapped) return isPrivateHost(mapped[1]);
     return host === '::1' || host === '::' || host.startsWith('fc') || host.startsWith('fd')
       || host.startsWith('fe80:') || host.startsWith('ff') || host.startsWith('2001:db8:');
