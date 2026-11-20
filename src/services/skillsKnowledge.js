@@ -54,7 +54,7 @@ class SkillsKnowledgeService {
     const skillData = this.readJson(this.skillsFile, { skills: [] });
     const sourceData = this.readJson(this.knowledgeFile, { sources: [] });
     this.skills = skillData && Array.isArray(skillData.skills) ? skillData.skills.filter(s =>
-      s && typeof s === 'object' && typeof s.id === 'string' && Array.isArray(s.keywords) && typeof s.content === 'string') : [];
+      s && typeof s === 'object' && typeof s.id === 'string' && Array.isArray(s.keywords) && s.keywords.every(k => typeof k === 'string') && typeof s.content === 'string') : [];
     this.sources = sourceData && Array.isArray(sourceData.sources) ? sourceData.sources.filter(s =>
       s && typeof s === 'object' && typeof s.id === 'string' && typeof s.type === 'string' && typeof s.path === 'string') : [];
   }
