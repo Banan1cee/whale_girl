@@ -38,6 +38,6 @@ namespace WhaleLauncher.Views
         private object Payload() => new { id = IdBox.Text.Trim(), type = (TypeBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "local", path = PathBox.Text.Trim(), enabled = EnabledBox.IsChecked == true };
         private async void OnTest(object sender, RoutedEventArgs e) { var res = await _sup.SaveConfigurationAsync("/api/knowledge/test", Payload()); StatusText.Text = res.Ok ? "测试加载成功。" : "加载失败：" + Api.Message(res); }
         private async void OnSave(object sender, RoutedEventArgs e) { var res = await _sup.SaveConfigurationAsync("/api/knowledge", Payload()); StatusText.Text = res.Ok ? "知识来源已保存并加载。" : "保存失败：" + Api.Message(res); if (res.Ok) await RefreshAsync(); }
-        private async void OnDelete(object sender, RoutedEventArgs e) { if (string.IsNullOrWhiteSpace(IdBox.Text)) return; var res = await _sup.SaveConfigurationAsync("/api/knowledge/" + Uri.EscapeDataString(IdBox.Text.Trim()) + "/delete", new { }); StatusText.Text = res.Ok ? "知识来源已删除。" : "删除失败：" + Api.Message(res); if (res.Ok) await RefreshAsync(); }
+        private async void OnDelete(object sender, RoutedEventArgs e) { if (string.IsNullOrWhiteSpace(IdBox.Text)) return; var res = await _sup.SaveConfigurationAsync("/api/knowledge/delete", new { id = IdBox.Text.Trim() }); StatusText.Text = res.Ok ? "知识来源已删除。" : "删除失败：" + Api.Message(res); if (res.Ok) await RefreshAsync(); }
     }
 }
