@@ -1,26 +1,29 @@
 {
   "port": 8790,
-  "stateRoot": "state",
+  "stateRoot": "",
   "bridgeToken": "",
   "dsh": {
     "command": "",
     "electronPath": "D:/DeepSeek Harness/DeepSeek Harness.exe",
     "binPath": "D:/DeepSeek Harness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js",
+    "sdkProfile": "relay-sdk",
     "env": {
-      "DEEPSEEK_API_KEY": "sk-在这里填，或从 D:/whale-girl/data/config.json 里取"
+      "DEEPSEEK_API_KEY": "sk-在这里填"
     }
   },
   "desk": {
     "timeoutMs": 120000,
-    "permissionMode": "workspace-write",
-    "approvalPolicy": "never",
-    "fallbackPermissionMode": "danger-full-access"
+    "permissionMode": "read-only",
+    "model": "deepseek-flash"
   },
   "worker": {
     "timeoutMs": 600000,
     "permissionMode": "workspace-write",
-    "approvalPolicy": "never",
-    "fallbackPermissionMode": "danger-full-access"
+    "fallbackPermissionMode": "danger-full-access",
+    "evalPermissionMode": "read-only",
+    "evalTimeoutMs": 45000,
+    "model": "deepseek-v4-pro",
+    "idleWatchMs": 1800000
   },
   "orders": {
     "confirmMode": "frontdesk",

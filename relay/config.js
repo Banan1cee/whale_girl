@@ -21,13 +21,23 @@ const DEFAULTS = {
     command: '',
     electronPath: 'D:/DeepSeek Harness/DeepSeek Harness.exe',
     binPath: 'D:/DeepSeek Harness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js',
+    sdkProfile: 'relay-sdk',
     env: {},
   },
-  // fallbackPermissionMode：DSH 的 Windows 沙箱要在工作区目录上写 ACL，某些卷（实测 D: 及部分非系统盘）
-  // 会以 SetNamedSecurityInfoW Win32 5 失败，workspace-write 直接不可用。此时本轮退回 fallback 模式，
-  // 并在进程内记住，避免每轮都先失败一次。想彻底不要沙箱就把 permissionMode 直接设成它。
-  desk: { timeoutMs: 120000, permissionMode: 'workspace-write', fallbackPermissionMode: 'danger-full-access', approvalPolicy: 'never' },
-  worker: { timeoutMs: 600000, permissionMode: 'workspace-write', fallbackPermissionMode: 'danger-full-access', approvalPolicy: 'never' },
+  // 前台用快模型（下单前必须回得快），工人用能扛活的模型。
+  // 权限是会话级 preset（会话里发 /permission <preset> 设置）；DSH 的 Windows 沙箱只在用户目录下能落地，
+  // 所以 stateRoot 不在用户目录时 server.js 会把 worker 自动切到 fallbackPermissionMode。
+  desk: { timeoutMs: 120000, permissionMode: 'read-only', model: 'deepseek-flash' },
+  worker: {
+    timeoutMs: 600000,
+    permissionMode: 'workspace-write',
+    fallbackPermissionMode: 'danger-full-access',
+    evalPermissionMode: 'read-only',
+    // 下单前的可行性判断必须快：要的是两三句话的结论，不是完整方案，所以卡 45 秒。
+    evalTimeoutMs: 45000,
+    model: 'deepseek-v4-pro',
+    idleWatchMs: 1800000,
+  },
   orders: { confirmMode: 'frontdesk', maxReplyChars: 1200, bubbleChars: 180 },
   owner: { chatId: '', paused: false },
 };

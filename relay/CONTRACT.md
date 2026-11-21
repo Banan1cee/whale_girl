@@ -46,40 +46,49 @@ relay/state/
 
 ## 4. 模块接口（谁调用谁、返回什么）
 
-### relay/lib/dsh.js —— 只负责“跑一轮 DSH”，不关心业务
+### relay/lib/sdk.js —— 常驻 DSH 运行时（一个工作目录一个进程）
+
+为什么不是 headless：headless 是「一轮一个进程」，进程退出后再想给它补充信息只能重开一轮。
+SDK 运行时是常驻的，一个进程里能开很多 session，而且 `session/prompt` 走的是 `agent.followup()`，
+可以在工人干活期间继续往里排消息（下一轮开始前送到），这是「客户中途插话」的实现基础。
+
+协议：stdio 上按换行分帧的 JSON-RPC 2.0。
 
 ```js
-resolveDsh() -> { command, args: string[], source }   // 找不到 CLI 时 throw，message 必须可操作
-runTurn({
-  cwd,                  // string，必填；决定 workspace 与 session 分组
-  prompt,               // string，必填；走 stdin
-  sessionId,            // string|null；null = 新 session，非空 = 续接
-  permissionMode,       // 'workspace-write' | 'read-only' | null
-  approvalPolicy,       // 'never' | null（headless 一律 'never'，避免无人应答卡死）
-  addDirs,              // string[]，可选
-  timeoutMs,            // 默认 180000
-  env,                  // 额外环境变量（DEEPSEEK_API_KEY 等）
-  onEvent,              // (event) => void，逐行回调，可选
-}) -> Promise<{
-  ok,                   // true 当且仅当 进程 exit 0 且 final.reason.kind === 'completed'
-  sessionId,            // 本次 session（新开就是新建的，续接就是传入的）
-  text,                 // final.text（trim 过）
-  reason,               // final.reason 原样
-  events,               // 解析后的所有事件
-  timedOut, durationMs, stderrTail, error,
-}>
+resolveRuntime(configDsh) -> { command, args, source, profile }
+createRuntime({ cwd, model, dsh, resolved, log }) -> {
+  start(),                                  // spawn + initialize（provider=deepseek-official）
+  prompt(sessionId, text, permission, { resume }),   // 排入一条用户消息；resume=true 先 session/resume
+  waitTurn(sessionId, turnBefore, timeoutMs),        // 等「这一轮结束」，返回 boolean
+  state(sessionId),                          // { running, turn, step, lastTool, lastAssistant, lastReason, injected }
+  close(), request(method, params)
+}
 ```
 
-硬性要求：超时必须杀掉**整棵进程树**（Windows 用 `taskkill /T /F`）；日志只打长度不打印正文；`--json` 与非 `--json` 都不能污染 stdout 解析。
+事件词表（`session.event` 里 event.type）：`turn/start`、`step/start`、`assistant/message`、
+`tool/call`、`tool/result`、`turn/end`、`agent/inbox/spliced`、`session/title`；
+状态走 `session.status {sessionId, status:'running'|'idle'}`。
 
-实现偏差（已核实，按此为准）：
+模型：API key 路由只认 `deepseek-flash` 与 `deepseek-v4-pro`。前台用 flash（快），工人用 pro（能扛活）。
 
-1. `resolveDsh(configDsh)` 收 `config.dsh` 段；另外支持 `RELAY_DSH_COMMAND/ELECTRON/BIN` 环境变量、PATH 上的 `dsh`、
-   桌面端默认安装位置兜底；返回值多两个字段 `electron` / `shell`。
-2. `runTurn` 额外接受 `opts.command` / `opts.argsPrefix`（测试注入假 CLI）与 `opts.dsh`（透传已解析的启动方式）。
-3. 失败时若传了 `sessionId`，返回的 `sessionId` 就是传入值（表示「这轮是续接的」）；调用方只应把 `ok=true` 的
-   结果当作「这一轮真的落盘了」，但 sessionId 本身在失败轮也可能有效（用于崩溃后续接）。
+权限：会话级 preset，用 `session/query` 发 `/permission <preset>` 设置；SDK 会话默认是 workspace-write。
 
+### relay/lib/agents.js —— 把运行时包装成两个角色
+
+```js
+createAgents({ config, log }) -> {
+  deskTurn({ chatId, sessionId, prompt, timeoutMs }) -> { ok, sessionId, text, error, timedOut, durationMs }
+  workerEval({ orderId, cwd, sessionId, prompt, timeoutMs }) -> { ok, sessionId, text, error }
+  workerStart({ orderId, cwd, sessionId, prompt }) -> { ok, sessionId }   // 只排队，不等待
+  workerInject(orderId, text) -> { ok }                                  // 运行中插话
+  workerState(orderId) -> { running, turn, step, lastTool, lastAssistant, injected }
+  workerWaitTurn(orderId, turnBefore, timeoutMs) -> { ok, turn, text, running }
+  workerSessionOf(orderId), close()
+}
+```
+
+硬性要求：前台一个常驻进程（session 按客户粘住）；工人一个订单一个常驻进程（cwd = 订单工作区）；
+`workerStart` 绝不等待；`workerInject` 绝不等待；日志只打长度和状态，不打正文。
 ### relay/lib/orders.js —— 只负责落盘
 
 ```js
@@ -163,7 +172,7 @@ worker 输出：
 | 归属 | 文件 |
 |---|---|
 | Lead | `relay/CONTRACT.md`、`relay/server.js`、`relay/lib/relay.js`、`relay/lib/protocol.js`、`relay/config.example.json`、`relay/.gitignore`、`relay/README.md`、根 `.gitignore`、`docs/` |
-| dsh-driver | `relay/lib/dsh.js`、`relay/tests/dsh.test.js`、`relay/tests/fixtures/fake-dsh.js` |
+| sdk-driver | `relay/lib/sdk.js`、`relay/lib/agents.js`（运行时与角色包装） |
 | order-store | `relay/lib/orders.js`、`relay/tests/orders.test.js` |
 | bridge-compat | `relay/lib/compat.js`、`relay/tests/compat.test.js`、`relay/docs/bridge-contract.md` |
 

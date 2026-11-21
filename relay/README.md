@@ -5,7 +5,7 @@
 
 ```
 node relay/server.js            # 中继：监听 127.0.0.1:8790
-bridge ──WHALE_BOT_URL──> relay ──dsh headless──> 前台 session / 工人 session
+bridge ──WHALE_BOT_URL──> relay ──常驻 DSH SDK 运行时──> 前台 session / 工人 session
 ```
 
 ## 1. 前置条件
@@ -28,7 +28,9 @@ cp relay/config.example.json relay/config.json
 | `dsh.env.DEEPSEEK_API_KEY` | 必填；密钥只写在 `relay/config.json`（已 gitignore），不要提交 |
 | `dsh.command` | 留空则自动探测：先找 `dsh` 命令，再用 `electronPath` 跑 `binPath`（asar 里的 CLI） |
 | `stateRoot` | 运行状态放哪。留空 = `%LOCALAPPDATA%\wc-auto-accept-orders\state`；填相对路径则相对 `relay/` |
-| `desk.timeoutMs` / `worker.timeoutMs` | 前台一轮 / 工人一轮的超时；工人默认 10 分钟 |
+| `desk.model` / `worker.model` | 模型名；API key 路由只认 `deepseek-flash` 与 `deepseek-v4-pro`，前台用 flash（快），工人用 pro |
+| `worker.evalTimeoutMs` | 下单前「问工程」的硬超时，默认 45 秒；超时就用前台那句话先顶住 |
+| `desk.timeoutMs` / `worker.timeoutMs` | 前台一轮 / 工人一轮的超时 |
 | `desk/worker.permissionMode` | `workspace-write`（有文件沙箱）或 `danger-full-access`（无沙箱） |
 | `orders.bubbleChars` | 单条微信消息上限，超了就拆成多条 bubbles（默认 180） |
 | `orders.confirmMode` | `frontdesk` 演示用；`owner` 生产用（老板 `#确认` 才开工） |
@@ -80,6 +82,18 @@ curl http://127.0.0.1:8790/healthz
 ```
 
 然后用自己的小号给机器人发一句「在吗」。中继日志里会出现 `webhook 完成`，微信里会收到前台的回复。
+
+## 4.5 时延契约：派单是分界线
+
+| 阶段 | 客户预期 | 实现 |
+|---|---|---|
+| **派单前**（谈需求、问价、问能不能做） | 必须快，几秒到几十秒 | 前台（flash）直接答；确需工程判断时问工人一轮**只判断不开工**的评估，硬超时 45 秒，超时就先用前台的话顶住，结论随后补发 |
+| **派单那一刻** | 时间标志 | 派单即开工；这一句立刻回客户，不等工人 |
+| **派单后**（干活中） | 有等待冗余 | 客户再说话 → 用 `session/prompt` 插进工人正在跑的那一轮（下一轮开始前它一定读到），同时前台按真实进度回答 |
+
+注意：DSH SDK 目前给到客户端的是 `followup`（排到下一轮），不是 `steer`（下一步就读）。
+所以工人被要求在每轮里收一个小切口、做完先汇报；插话通常在一两分钟内生效，而不是等整个项目做完。
+真要做到「当前工具调用结束就立刻读到」，需要 DSH 侧把 steer 暴露到 SDK 协议里，这一版没做到。
 
 ## 5. 在 DeepSeek Harness 里看两个角色在干什么
 
@@ -133,7 +147,6 @@ curl http://127.0.0.1:8790/healthz
 ```bash
 node relay/tests/protocol.test.js    # 标记解析与微信话术清洗
 node relay/tests/relay.test.js       # 一轮消息的编排顺序（假 dsh + 假订单库）
-node relay/tests/dsh.test.js         # 驱动层（假 CLI）
 node relay/tests/orders.test.js      # 订单落盘与锁
 node relay/tests/compat.test.js      # 桥接契约
 node relay/tests/server.test.js      # HTTP 入口联调（假 dsh）
@@ -147,7 +160,8 @@ relay/
   config.js          配置装载（config.json + 环境变量）
   lib/relay.js       编排：去重、排队、前台轮、工人轮、状态推进
   lib/protocol.js    人设与任务单、三个【标记】的解析、微信话术清洗
-  lib/dsh.js         dsh headless 驱动（进程、NDJSON、session 续接、超时）
+  lib/sdk.js         常驻 DSH SDK 运行时（JSON-RPC over stdio、事件、session 续接）
+  lib/agents.js      把运行时包装成「前台 / 工人」两个角色（评估、开工、插话、进度）
   lib/orders.js      订单落盘（order.md / thread.md / events.jsonl / 锁）
   lib/compat.js      桥接会用到的内核接口
   state/             运行时状态（gitignore）

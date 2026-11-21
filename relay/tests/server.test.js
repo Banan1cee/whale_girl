@@ -29,17 +29,25 @@ function makeConfig(over) {
   }, over || {});
 }
 
-function fakeDsh(text) {
+// 只替换掉真正的模型运行时；订单落盘、HTTP 契约、编排全用真的。
+function fakeAgents(text) {
+  let session = null;
   return {
-    runTurn: async () => ({
-      ok: true, sessionId: 'desk-fake', text: text || '【回复客户】在的，想做什么项目？',
-      reason: { kind: 'completed' }, events: [], timedOut: false, durationMs: 1, stderrTail: '', error: null,
-    }),
+    async deskTurn(job) {
+      session = job.sessionId || 'desk-fake';
+      return { ok: true, sessionId: session, text: text || '【回复客户】在的，想做什么项目？', durationMs: 1 };
+    },
+    async workerEval() { return { ok: true, sessionId: 'worker-fake', text: '能做' }; },
+    async workerStart() { return { ok: true, sessionId: 'worker-fake' }; },
+    async workerInject() { return { ok: true }; },
+    workerState() { return { running: false, turn: 0, step: 0, lastTool: '', lastAssistant: '', injected: 0 }; },
+    async workerWaitTurn() { return { ok: false }; },
+    close() {},
   };
 }
 
-function start(config, dsh) {
-  const built = createServer(config, { dsh: dsh || fakeDsh(), logger: silent });
+function start(config, agents) {
+  const built = createServer(config, { agents: agents || fakeAgents(), logger: silent });
   return new Promise((resolve) => {
     built.server.listen(0, '127.0.0.1', () => resolve({ port: built.server.address().port, built }));
   });

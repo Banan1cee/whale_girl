@@ -9,7 +9,8 @@ const { loadConfig } = require('./config');
 const { createOrders } = require('./lib/orders');
 const { createCompat } = require('./lib/compat');
 const { createRelay, createLogger } = require('./lib/relay');
-const dsh = require('./lib/dsh');
+const { createAgents } = require('./lib/agents');
+const sdk = require('./lib/sdk');
 
 const MAX_BODY = 32 * 1024 * 1024;
 
@@ -43,7 +44,8 @@ function createServer(config, deps) {
   const log = injected.logger || createLogger(config.logPath);
   const orders = injected.orders || createOrders({ root: config.stateRoot });
   const compat = injected.compat || createCompat({ config });
-  const relay = createRelay({ config, orders, dsh: injected.dsh || dsh, logger: log });
+  const agents = injected.agents || createAgents({ config, log });
+  const relay = createRelay({ config, orders, agents, logger: log });
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
@@ -92,7 +94,7 @@ function createServer(config, deps) {
       if (!res.headersSent) sendJson(res, 500, { ok: false, error: 'internal error' });
     }
   });
-  return { server, relay, orders, compat, log };
+  return { server, relay, orders, compat, agents, log };
 }
 
 // DSH 的 Windows 沙箱要给工作区目录写 ACL + 低完整性标签，实测只在用户目录（C:\Users\<你>\...）下成功：
@@ -119,7 +121,7 @@ function main() {
 
   const built = createServer(config);
   let dshInfo;
-  try { dshInfo = dsh.resolveDsh(config.dsh); } catch (err) { dshInfo = { source: 'unresolved', error: err.message }; }
+  try { dshInfo = sdk.resolveRuntime(config.dsh); } catch (err) { dshInfo = { source: 'unresolved', error: err.message }; }
 
   built.server.listen(config.port, '127.0.0.1', () => {
     console.log('relay 已启动');
@@ -127,13 +129,14 @@ function main() {
     console.log('  状态目录  ' + config.stateRoot);
     console.log('  前台工作区 ' + config.deskCwd);
     console.log('  配置      ' + config.file + (config.exists ? '' : '（不存在，用默认值）'));
-    console.log('  DSH 入口  ' + dshInfo.source + (dshInfo.error ? '（' + dshInfo.error + '）' : ''));
+    console.log('  DSH 入口  ' + dshInfo.source + ' / profile ' + (dshInfo.profile || config.dsh.sdkProfile) + (dshInfo.error ? '（' + dshInfo.error + '）' : ''));
     console.log('  确认模式  ' + config.orders.confirmMode + (config.owner.chatId ? '（老板会话已配）' : '（未配老板会话，指令不可用）'));
     console.log('把桥接的 WHALE_BOT_URL 指到 http://127.0.0.1:' + config.port + '/webhook/wechat 即可接管。');
   });
 
   const shutdown = () => {
     built.log.info('relay 收到退出信号');
+    try { built.agents.close(); } catch (err) { /* 运行时可能在启动中就挂了 */ }
     built.server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 3000);
   };
