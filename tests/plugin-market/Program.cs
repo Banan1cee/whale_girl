@@ -139,6 +139,26 @@ try
         Signature = "catalog-signature-present" };
     var personaCatalog = JsonSerializer.SerializeToUtf8Bytes(new[] { personaListing });
     Check(PluginMarket.ParseCatalog(personaCatalog, 1, "persona").Length == 1);
+    var countedUrl = PluginMarket.CountedDownloadUrl(personaListing);
+    var countedAsset = new { browser_download_url = countedUrl, state = "uploaded",
+        digest = "sha256:" + personaListing.Sha256, download_count = 42 };
+    byte[] PackageRelease(bool draft, params object[] assets) => JsonSerializer.SerializeToUtf8Bytes(new
+        { tag_name = "plugin-packages", draft, assets });
+    Check(PluginMarket.ParseDownloadCounts(PackageRelease(false, countedAsset), new[] { personaListing })[countedUrl] == 42);
+    Check(PluginMarket.ParseDownloadCounts(PackageRelease(false, countedAsset with { download_count = 0 }), new[] { personaListing })[countedUrl] == 0);
+    Check(PluginMarket.ParseDownloadCounts(PackageRelease(true, countedAsset), new[] { personaListing }).Count == 0);
+    Check(PluginMarket.ParseDownloadCounts(PackageRelease(false,
+        countedAsset with { digest = "sha256:" + new string('b', 64) },
+        countedAsset with { browser_download_url = "https://example.invalid/plugin.zip" },
+        countedAsset with { download_count = -1 }), new[] { personaListing }).Count == 0);
+    var favorites = PluginMarket.ParseFavoriteStates("""
+        {"favorites":[{"id":"text-counter","count":2,"favorited":true},{"id":"notes","count":0,"favorited":false}]}
+        """u8.ToArray());
+    Check(favorites["text-counter"] == new MarketFavorite("text-counter", 2, true));
+    Check(favorites["notes"].Count == 0 && !favorites["notes"].Favorited);
+    Reject(() => PluginMarket.ParseFavoriteStates("""
+        {"favorites":[{"id":"notes","count":0,"favorited":true}]}
+        """u8.ToArray()));
     Check(PluginMarket.ParseCatalog(personaCatalog, 1, "tool").Length == 0);
     Check(PluginMarket.ParseCatalog(personaCatalog, 3, "message").Length == 0);
     // 回归：市场还没签名时，条目没有 Signature 也必须能解析，否则整个市场会被过滤成空的。

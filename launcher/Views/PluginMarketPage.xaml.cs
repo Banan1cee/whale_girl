@@ -20,6 +20,8 @@ namespace WhaleLauncher.Views
         private readonly string _version;
         private PluginInfo[] _catalog = [];
         private Dictionary<int, PluginFeedback> _feedback = new();
+        private Dictionary<string, long> _downloads = new();
+        private Dictionary<string, MarketFavorite> _favorites = new();
         private string _category = "";
         private bool _showInstalled;
         private bool _busy;
@@ -59,14 +61,21 @@ namespace WhaleLauncher.Views
         {
             _catalog = await PluginMarket.CatalogAsync();
             Render();
-            if (_catalog.Any(info => info.DiscussionIssue > 0))
-            {
-                try { _feedback = await PluginMarket.FeedbackAsync(); }
-                catch (Exception ex) when (ex is HttpRequestException or InvalidDataException or JsonException
-                    or OperationCanceledException or InvalidOperationException or KeyNotFoundException) { }
-            }
+            var feedback = OptionalMarketData(() => PluginMarket.FeedbackAsync(_catalog));
+            var downloads = OptionalMarketData(() => PluginMarket.DownloadCountsAsync(_catalog));
+            var favorites = OptionalMarketData(() => _market.FavoritesAsync(_catalog.Select(plugin => plugin.Id)));
+            _feedback = await feedback ?? _feedback;
+            _downloads = await downloads ?? _downloads;
+            _favorites = await favorites ?? _favorites;
             return $"市场收录 {_catalog.Length} 个插件";
         });
+
+        private static async Task<T> OptionalMarketData<T>(Func<Task<T>> load) where T : class
+        {
+            try { return await load(); }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or JsonException
+                or OperationCanceledException or InvalidOperationException or KeyNotFoundException) { return null; }
+        }
 
         private void OnSearch(object sender, TextChangedEventArgs e) => Render();
         private void OnDiscover(object sender, RoutedEventArgs e) { _showInstalled = false; Render(); }
@@ -223,12 +232,12 @@ namespace WhaleLauncher.Views
                     else if (current == null || Version.Parse(info.Version) > Version.Parse(current.Version))
                         AddButton(buttons, current == null ? "安装" : "更新", async () =>
                         {
-                            await _market.InstallAsync(info);
+                            await _market.InstallAsync(info, _downloads.ContainsKey(PluginMarket.CountedDownloadUrl(info)));
                             return "已安装 v" + info.Version + "，可在「已安装」管理。";
                         });
                     else body.Children.Add(Small("已安装"));
                     var listing = _showInstalled ? _catalog.FirstOrDefault(p => p.Id == info.Id) : info;
-                    AddFeedback(body, listing?.DiscussionIssue ?? 0);
+                    if (listing != null) AddMarketActivity(body, listing);
                     if (column == 0) Cards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
                     Grid.SetRow(card, index / columns);
                     Grid.SetColumn(card, column);
@@ -244,25 +253,39 @@ namespace WhaleLauncher.Views
             catch (Exception ex) { Status.Text = "读取插件失败：" + ex.Message; }
         }
 
-        private void AddFeedback(Panel card, int issue)
+        private void AddMarketActivity(Panel card, PluginInfo listing)
         {
-            if (issue <= 0)
-            {
-                card.Children.Add(Small("评论与收藏 · 暂未开放"));
-                return;
-            }
-            _feedback.TryGetValue(issue, out var stats);
+            var issue = listing.DiscussionIssue;
+            var hasCount = _downloads.TryGetValue(PluginMarket.CountedDownloadUrl(listing), out var downloads);
             var row = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
             card.Children.Add(row);
-            AddButton(row, "评论 " + (stats?.Comments.ToString() ?? "—"), () => OpenFeedback(issue, "#new_comment_field"), false);
-            AddButton(row, "♡ 收藏 " + (stats?.Favorites.ToString() ?? "—"), () => OpenFeedback(issue, ""), false);
+            var count = Small("GitHub 下载 " + (hasCount ? downloads.ToString("N0") : "—"));
+            count.ToolTip = "GitHub 记录的本版本安装包下载次数，可能包含重复下载。旧地址和镜像下载不计入。";
+            count.Margin = new Thickness(0, 0, 8, 0);
+            count.VerticalAlignment = VerticalAlignment.Center;
+            row.Children.Add(count);
+
+            if (issue > 0)
+            {
+                _feedback.TryGetValue(issue, out var stats);
+                AddButton(row, "评论 " + (stats?.Comments.ToString() ?? "—"), () => OpenFeedback(issue), false);
+            }
+
+            _favorites.TryGetValue(listing.Id, out var favorite);
+            var favorited = favorite?.Favorited == true;
+            AddButton(row, (favorited ? "♥ 已收藏 " : "♡ 收藏 ") + (favorite?.Count.ToString("N0") ?? "—"), async () =>
+            {
+                var saved = await _market.SetFavoriteAsync(listing.Id, !favorited);
+                _favorites[listing.Id] = saved;
+                return saved.Favorited ? "已收藏" : "已取消收藏";
+            }, false);
         }
 
-        private static Task<string> OpenFeedback(int issue, string fragment)
+        private static Task<string> OpenFeedback(int issue)
         {
-            var url = $"https://github.com/Banan1cee/whale-girl-plugins/issues/{issue}{fragment}";
+            var url = $"https://github.com/Banan1cee/whale-girl-plugins/issues/{issue}#new_comment_field";
             using var browser = Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            return Task.FromResult("在 GitHub 登录后可以评论或点爱心。");
+            return Task.FromResult("在 GitHub 登录后可以评论。");
         }
 
         private async Task ShowPersonaSettings(PluginInfo info)
