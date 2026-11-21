@@ -193,6 +193,28 @@ class AttemptTests(SafeFixture):
             uia.send_text.assert_not_called()
             runtime.recover_uia.assert_not_called()
 
+    def test_sticker_experiment_can_send_text_when_native_uia_composer_is_blank(self):
+        runtime, g, uia, methods = self.runtime(background=True)
+        g.STICKER_TEST_ON = True
+        uia._chat_input.return_value = SimpleNamespace(GetValuePattern=lambda: SimpleNamespace(Value=''))
+        uia.send_text.return_value = True
+
+        self.assertTrue(methods['send_text'](runtime, 'fixture text', 'fixture-room', 'fixture-peer'))
+        uia.send_text.assert_called_once_with('fixture text')
+        self.bg.send.assert_not_called()
+        operation = importlib.import_module('send_attempt')
+        self.assertEqual(operation.last_result().status, 'submitted')
+
+    def test_native_uia_composer_draft_or_failed_read_never_allows_input(self):
+        for pattern in (Mock(return_value=SimpleNamespace(Value='fixture draft')),
+                        Mock(side_effect=RuntimeError('ValuePattern unavailable'))):
+            runtime, g, uia, methods = self.runtime()
+            uia._chat_input.return_value = SimpleNamespace(GetValuePattern=pattern)
+
+            self.assertFalse(methods['send_text'](runtime, 'fixture text', 'fixture-room', 'fixture-peer'))
+            uia.send_text.assert_not_called()
+            runtime.recover_uia.assert_not_called()
+
     def test_success_with_residue_never_presses_enter_again(self):
         runtime, g, uia, methods = self.runtime()
         control = uia._chat_input.return_value
