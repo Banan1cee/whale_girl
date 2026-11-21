@@ -72,7 +72,8 @@ function parseSummary(raw) {
   if (start < 0 || end <= start) return '';
   try {
     const obj = JSON.parse(textValue.slice(start, end + 1));
-    return String(obj.summary || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+    const value = typeof obj?.summary === 'string' ? obj.summary.replace(/\s+/g, ' ').trim() : '';
+    return value === '[object Object]' ? '' : value.slice(0, 400);
   } catch {
     return '';
   }
@@ -121,7 +122,8 @@ function trimSummary(chat, { now = Date.now(), summaryTokens = LIMITS.summaryTok
     guard += 1;
     const a = segments.shift();
     const b = segments.shift();
-    const folded = `更早：${[a, b].map((s) => String(s.text || '').slice(0, 60)).join('；')}`;
+    // 「更早：」是折叠标记，合并已经折叠过的段时不计入每段正文额度。
+    const folded = `更早：${[a, b].map((s) => String(s.text || '').replace(/^(?:更早：)+/, '').slice(0, 60)).join('；')}`;
     segments.unshift({
       text: folded,
       tokens: estimateTokens(folded),
@@ -151,12 +153,13 @@ function trimSummary(chat, { now = Date.now(), summaryTokens = LIMITS.summaryTok
 
 /** 写入一段摘要，并推进 coveredThroughSeq */
 function applySegment(chat, { text, fromSeq, toSeq, now = Date.now(), summaryTokens = LIMITS.summaryTokens }) {
-  const body = String(text || '').trim();
-  if (!body) return false;
+  const body = typeof text === 'string' ? text.trim().slice(0, 600) : '';
+  if (!body || body === '[object Object]' || !Number.isSafeInteger(fromSeq) ||
+      !Number.isSafeInteger(toSeq) || fromSeq < 1 || toSeq < fromSeq) return false;
   chat.summary.segments = Array.isArray(chat.summary.segments) ? chat.summary.segments : [];
   chat.summary.segments.push({
-    text: body.slice(0, 600),
-    tokens: estimateTokens(body.slice(0, 600)),
+    text: body,
+    tokens: estimateTokens(body),
     fromSeq,
     toSeq,
     at: now,
@@ -203,8 +206,7 @@ function compressSync(chat, { currentSeq = 0, now = Date.now(), hardTrigger, rec
       chat.pendingSummary = null;
       textValue = extractor.extractiveSummary(chunk, 220);
     }
-    if (!textValue) break;
-    applySegment(chat, { text: textValue, fromSeq, toSeq, now, summaryTokens });
+    if (!applySegment(chat, { text: textValue, fromSeq, toSeq, now, summaryTokens })) break;
     recent = recent.slice(chunk.length);
     tokens -= chunkTokens;
     compressed += chunkTokens;
@@ -243,7 +245,9 @@ async function compressAsync(chat, { currentSeq = 0, now = Date.now(), llm = nul
       if (requireLlm) return { before, after: before, compressed: 0, chunks: 0, failed: true };
       textValue = extractor.extractiveSummary(chunk, 220);
     }
-    applySegment(chat, { text: textValue, fromSeq, toSeq, now, summaryTokens });
+    if (!applySegment(chat, { text: textValue, fromSeq, toSeq, now, summaryTokens })) {
+      return { before, after: tokens, compressed, chunks, failed: true };
+    }
     recent = recent.slice(chunk.length);
     tokens -= chunkTokens;
     compressed += chunkTokens;
