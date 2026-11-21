@@ -41,6 +41,18 @@ class GroupSendResolutionTests(unittest.TestCase):
         env['db'].get_nickname.side_effect = RuntimeError('mock contact snapshot unavailable')
         self.assertEqual(env['ui_chat_name']('12345@chatroom'), '测试群')
 
+    def test_blank_contact_remark_does_not_hide_canonical_group_name(self):
+        env = self.environment(contact_name=' \u3000 ', group_name=' 测试群 ')
+        self.assertEqual(env['ui_chat_name']('12345@chatroom', '12345@chatroom'), '测试群')
+        env['db'].group_id_to_name.assert_called_once_with('12345@chatroom')
+
+    def test_missing_group_name_is_retried_after_named_contact_becomes_available(self):
+        env = self.environment(contact_name=' ', group_name='  ')
+        self.assertEqual(env['ui_chat_name']('12345@chatroom'), '')
+        self.assertEqual(env['name_cache'], {})
+        env['db'].get_nickname.return_value = '真实群备注'
+        self.assertEqual(env['ui_chat_name']('12345@chatroom'), '真实群备注')
+
     def test_internal_id_is_never_cached_as_a_group_name(self):
         env = self.environment(contact_name='12345@chatroom', group_name='12345@chatroom')
         self.assertEqual(env['ui_chat_name']('12345@chatroom'), '')

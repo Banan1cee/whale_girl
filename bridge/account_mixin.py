@@ -101,11 +101,11 @@ class AccountMixin:
                 # 上游 group_id_to_name 只读群 nick_name，空值会退回内部 ID。
                 # get_nickname 按精确 username 读取本地备注，群和联系人都适用。
                 try:
-                    name = self.db.get_nickname(username) or ''
+                    name = str(self.db.get_nickname(username) or '').strip()
                 except Exception:
                     pass
                 if not name or is_raw_chat_id(name):
-                    name = self.db.group_id_to_name(username) or ''
+                    name = str(self.db.group_id_to_name(username) or '').strip()
                 # last_sender 属于群成员，不能拿它打开群，否则可能发到私聊。
             else:
                 name = self.db.get_nickname(username) or ''
@@ -133,7 +133,7 @@ class AccountMixin:
             out.append(shown)
         if username and str(username).endswith('@chatroom'):
             try:
-                nm = self.db.group_id_to_name(username) or ''
+                nm = str(self.db.group_id_to_name(username) or '').strip()
             except Exception:
                 nm = ''
                 partial = True
