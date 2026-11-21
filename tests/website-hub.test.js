@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { buildSite, validateTips } = require('../scripts/build-website');
-const { collectPages } = require('../scripts/fetch-website-data');
+const { collectPages, marketDownloadSnapshot } = require('../scripts/fetch-website-data');
 
 const root = path.join(__dirname, '..');
 const release = (tag, extra = {}) => ({
@@ -30,8 +30,15 @@ async function main() {
     const latest = release('v4.1.0');
     const old = release('v3.60');
     const preview = release('v4.2.0-rc.1', { prerelease: true });
+    const asset = { name: 'text-counter-1.0.0.zip', state: 'uploaded', digest: `sha256:${'b'.repeat(64)}`,
+      browser_download_url: 'https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/text-counter-1.0.0.zip',
+      download_count: 0, uploader: { login: 'release-owner' } };
+    const checkedAt = '2026-11-13T08:00:00Z';
+    const marketDownloads = marketDownloadSnapshot(release('plugin-packages', {
+      assets: [asset, { ...asset, download_count: -1 }, { ...asset, digest: null }],
+    }), checkedAt);
     const data = { latest, stars: 1234, releases: [latest, old, preview, release('v9.0.0', { draft: true })],
-      fetchedAt: '2026-11-13T08:00:00Z', sourceCommit: 'a'.repeat(40), plugins: [{
+      fetchedAt: checkedAt, marketDownloads, sourceCommit: 'a'.repeat(40), plugins: [{
         Id: 'text-counter', Name: '<测试插件>', Author: 'Banan1cee', Api: 1, Version: '1.0.0',
         MinAppVersion: '4.1.0', Description: '真实目录内容。', Sha256: 'b'.repeat(64),
         Download: 'https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/packages/text-counter-1.0.0.zip',
@@ -39,6 +46,10 @@ async function main() {
       }] };
     buildSite({ root, output, data });
     const read = file => fs.readFileSync(path.join(output, file), 'utf8');
+    assert.deepEqual(JSON.parse(read('plugins/download-counts.json')), {
+      tag_name: 'plugin-packages', draft: false, fetchedAt: checkedAt,
+      assets: [{ browser_download_url: asset.browser_download_url, state: 'uploaded', digest: asset.digest, download_count: 0 }],
+    });
     const home = read('index.html');
     const archive = read('downloads/index.html');
     const oldPage = read('downloads/v3.60/index.html');

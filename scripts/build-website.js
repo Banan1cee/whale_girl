@@ -347,6 +347,9 @@ function buildSite({ root = path.resolve(__dirname, '..'), output, data, tips: s
   write('downloads/', '下载中心与历史版本', '鲸鲸 Windows 下载与完整发行历史，每个版本都有独立下载页。', downloads(releases, data.latest), 'downloads/');
   for (const item of releases) write(`downloads/${releaseSlug(item.tag_name)}/`, releaseTitle(item), '查看这个版本的更新说明与官方发行文件。', releasePage(item, data.latest), 'downloads/');
   write('plugins/', '插件市场', '浏览鲸鲸社区插件，了解来源、权限与兼容范围。', pluginsPage(plugins, data), 'plugins/');
+  if (data.marketDownloads) {
+    fs.writeFileSync(path.join(target, 'plugins', 'download-counts.json'), JSON.stringify(data.marketDownloads) + '\n');
+  }
   for (const item of plugins) write(`plugins/${item.Id}/`, item.Name, item.Description, pluginDetail(item, data), 'plugins/');
   write('support/', '支持团队创作', support.lead, supportPage(support), 'support/');
   write('support/transparency/', '打赏公示', '查看鲸鲸团队已核对发布的各渠道打赏记录。', tipsPage(tips, support), 'support/');

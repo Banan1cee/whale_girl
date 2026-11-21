@@ -1,0 +1,109 @@
+{
+  "tag_name": "plugin-packages",
+  "draft": false,
+  "fetchedAt": "2026-11-21T19:10:36.792Z",
+  "assets": [
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/breeze-sing-0.6.3.zip",
+      "state": "uploaded",
+      "digest": "sha256:55a23fad1c1fd35a51c3305526910b5090ab920263c6d44577409a6e6815e442",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/care-plus-0.7.1.zip",
+      "state": "uploaded",
+      "digest": "sha256:3db0ddb8532f9eb55711a612f5e992f54954733d8a7e5d4eaa472a03d5e6b04a",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/codebuddy-cli-model-1.2.0.zip",
+      "state": "uploaded",
+      "digest": "sha256:fcaf89d30971dff462916aa9aba67972ba481e1e58dff2b9817e4d7a58603315",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/context-notes-1.2.1.zip",
+      "state": "uploaded",
+      "digest": "sha256:8a4f1354e4a7344e7dda1a8f28512077578385eeb1cb5beae889dd3848e323e7",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/daily-digest-1.0.0.zip",
+      "state": "uploaded",
+      "digest": "sha256:6430638dc624fd2b2693218c4dda5433c7cd8ced1f39270bd0db96a48e45f878",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/deepseek-whale-persona-1.1.6.zip",
+      "state": "uploaded",
+      "digest": "sha256:903b37e51f4fe2f1c0df595ad8f300bb683d0aca43fe57c236fd1b5f3efbec50",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/deepseek-whale-sister-1.3.1.zip",
+      "state": "uploaded",
+      "digest": "sha256:0895fe8d37dc5fe241bdcd9203b64f96e50c2249c2d3f1251e2930d514ce89aa",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/followup-window-1.0.0.zip",
+      "state": "uploaded",
+      "digest": "sha256:d6b0383649f69ace2c51e1d79078bd749534453fc5ddd06172342a6eabdb9a2f",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/notes-1.4.4.zip",
+      "state": "uploaded",
+      "digest": "sha256:dbd25f69795d348515e9a632da653f7b6f1522840ed1461c2b8c32329b6e8888",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/ruiping-1.1.0.zip",
+      "state": "uploaded",
+      "digest": "sha256:72766ff950e06fcfbf48c30782b6b02734b52d8949095cfe9ce26e7d5a4a6cb3",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/ruiping-persona-1.1.0.zip",
+      "state": "uploaded",
+      "digest": "sha256:3733a276230ee689bb1e0bab4d82e041f9df8d89cea3dc132e388d55eb5e1992",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/smart-care-1.0.0.zip",
+      "state": "uploaded",
+      "digest": "sha256:7ca59d7ffa9edfeac8df900f475caa4674beba10164256424f8a7dea5c868dbf",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/text-counter-1.0.0.zip",
+      "state": "uploaded",
+      "digest": "sha256:ec4beaca9a16fb8d6c3c4fdfb702e3e99a483d5dc94b4f66b3e58cf7cb963e55",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/voice-tone-1.0.2.zip",
+      "state": "uploaded",
+      "digest": "sha256:368d71bbb18953f880815b038a12474ce29503cd229305cf9d88302c358365ad",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/voice-tone-1.0.3.zip",
+      "state": "uploaded",
+      "digest": "sha256:bdbbdf79e1d0a5781a826140cbe881ffcc41294cca199c32faa16c8f8b827fb9",
+      "download_count": 0
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/whale-dsh-bridge-1.0.0.zip",
+      "state": "uploaded",
+      "digest": "sha256:2832186c74a6343d515c54388f7dc930f0b5fd6baa1eb316cf5789474fff9601",
+      "download_count": 1
+    },
+    {
+      "browser_download_url": "https://github.com/Banan1cee/whale-girl-plugins/releases/download/plugin-packages/xmding-1.0.6.zip",
+      "state": "uploaded",
+      "digest": "sha256:022ce3164114579bb518b796e1d2a5ebb946e691f8f187395070f40201dff4e6",
+      "download_count": 1
+    }
+  ]
+}
