@@ -259,8 +259,8 @@ namespace WhaleLauncher.Views
             var hasCount = _downloads.Counts.TryGetValue(PluginMarket.CountedDownloadUrl(listing), out var downloads);
             var row = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
             card.Children.Add(row);
-            var count = Small("GitHub 下载 " + (hasCount ? downloads.ToString("N0") : "—"));
-            var statisticsNote = "GitHub 记录的本版本安装包下载次数，可能包含重复下载。旧地址和镜像下载不计入。";
+            var count = Small("发行包下载 " + (hasCount ? downloads.ToString("N0") : "—"));
+            var statisticsNote = "从本版本 ZIP 上传至 GitHub Release 后开始统计，可能包含重复下载。仓库原始文件和镜像的下载不计入。";
             count.ToolTip = hasCount && _downloads.SnapshotAt is { } fetchedAt
                 ? $"{statisticsNote} 快照更新于 {fetchedAt.ToLocalTime():yyyy-MM-dd HH:mm}。"
                 : statisticsNote;
