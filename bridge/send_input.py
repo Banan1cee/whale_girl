@@ -12,6 +12,13 @@ def input_value(uia):
         control = uia._chat_input()
         if control is None:
             return None
+        try:
+            # wechatauto 返回的是 uiautomation 控件，正文由 ValuePattern 提供。
+            value = control.GetValuePattern().Value
+            if isinstance(value, str):
+                return value
+        except Exception:
+            pass
         for name in ('get_value', 'value'):
             try:
                 value = getattr(control, name)

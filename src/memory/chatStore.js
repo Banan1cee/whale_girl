@@ -68,7 +68,7 @@ function normalizeState(raw) {
 }
 
 function normalizeSummary(raw, chatId) {
-  const segments = (Array.isArray(raw && raw.segments) ? raw.segments : [])
+  const storedSegments = (Array.isArray(raw && raw.segments) ? raw.segments : [])
     .filter((s) => s && typeof s.text === 'string' && s.text.trim())
     .map((s) => ({
       text: s.text.trim(),
@@ -77,13 +77,19 @@ function normalizeSummary(raw, chatId) {
       toSeq: Number(s.toSeq) || 0,
       at: Number(s.at) || 0,
     }));
-  const text = String((raw && raw.text) || '').trim() || segments.map((s) => s.text).join('\n');
+  const segments = storedSegments.filter((s) => s.text !== '[object Object]' && s.toSeq >= s.fromSeq);
+  const cached = typeof raw?.text === 'string' ? raw.text.trim() : '';
+  const damaged = cached === '[object Object]' || segments.length !== storedSegments.length;
+  const fromSegments = () => segments.map((s) => s.text).join('\n');
+  const text = damaged ? fromSegments() : cached || fromSegments();
+  const covered = Math.max(0, Number(raw?.coveredThroughSeq) || 0);
   return {
     chatId,
     episodeId: String((raw && raw.episodeId) || ''),
     text,
-    tokens: Number((raw && raw.tokens)) || estimateTokens(text),
-    coveredThroughSeq: Math.max(0, Number((raw && raw.coveredThroughSeq)) || 0),
+    tokens: (!damaged && Number(raw?.tokens)) || estimateTokens(text),
+    // 仅有损坏段时，从仍保留的原文重建。若有有效段，覆盖线不越过它们的末尾。
+    coveredThroughSeq: damaged ? Math.min(covered, segments.reduce((last, s) => Math.max(last, s.toSeq), 0)) : covered,
     segments,
     updatedAt: Number((raw && raw.updatedAt)) || Date.now(),
   };

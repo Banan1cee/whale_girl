@@ -83,6 +83,78 @@ test('旧文件保留：原 store.json 不动，legacy/ 有只读副本和说明
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 });
 });
 
+test('旧对象摘要保留正文，并使用实际覆盖的消息范围', (t) => {
+  const { dir, data, store: legacy } = legacyRoot();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 }));
+  const privateChat = legacy.sessions['wechat:u:wxid_a'];
+  privateChat.summary = { text: '较早的私聊摘要', uptoSeq: 1 };
+  delete privateChat.summaryUpto;
+  const group = legacy.sessions['wechat:g:g1'];
+  group.summary = { text: '保留群聊摘要' };
+  group.summaryUpto = 20;
+  const file = path.join(data, 'store.json');
+  fs.writeFileSync(file, JSON.stringify(legacy));
+  const store = new Store({ file, logger: null });
+  try {
+    for (const [id, text] of [
+      ['wechat:u:wxid_a', '较早的私聊摘要'],
+      ['wechat:g:g1', '保留群聊摘要'],
+    ]) {
+      const summary = store.chatStore.chats.get(id).summary;
+      assert.equal(summary.text, text);
+      assert.equal(summary.coveredThroughSeq, 1);
+      assert.deepEqual(summary.segments.map(({ fromSeq, toSeq }) => [fromSeq, toSeq]), [[1, 1]]);
+    }
+    assert.equal(store.chatStore.chats.get('wechat:u:wxid_a').messages.length, 2);
+  } finally {
+    store.close();
+  }
+});
+
+test('摘要没有有效覆盖时保留原文并跳过迁移摘要', (t) => {
+  const { dir, data, store: legacy } = legacyRoot();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 }));
+  const input = legacy.sessions['wechat:u:wxid_a'];
+  input.summary = { text: '无法核对范围的摘要', uptoSeq: 0 };
+  delete input.summaryUpto;
+  const file = path.join(data, 'store.json');
+  fs.writeFileSync(file, JSON.stringify(legacy));
+  const store = new Store({ file, logger: null });
+  try {
+    const chat = store.chatStore.chats.get('wechat:u:wxid_a');
+    assert.equal(chat.summary.text, '');
+    assert.equal(chat.summary.coveredThroughSeq, 0);
+    assert.deepEqual(chat.summary.segments, []);
+    assert.equal(chat.messages.length, 2);
+  } finally {
+    store.close();
+  }
+});
+
+test('重启时忽略已污染的旧摘要，并让已保留消息重新参与压缩', (t) => {
+  const { dir, data } = legacyRoot();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 }));
+  const file = path.join(data, 'store.json');
+  const id = 'wechat:u:wxid_a';
+  const first = new Store({ file, logger: null });
+  first.close();
+  const summaryFile = path.join(data, 'memory', 'chats', chatHash(id), 'summary.json');
+  fs.writeFileSync(summaryFile, JSON.stringify({
+    episodeId: 'legacy', text: '[object Object]', tokens: 5, coveredThroughSeq: 1,
+    segments: [{ text: '[object Object]', fromSeq: 1, toSeq: 1 }],
+  }));
+  const store = new Store({ file, logger: null });
+  try {
+    const chat = store.chatStore.chats.get(id);
+    assert.equal(chat.summary.text, '');
+    assert.equal(chat.summary.coveredThroughSeq, 0);
+    assert.deepEqual(chat.summary.segments, []);
+    assert.equal(chat.messages.length, 2);
+  } finally {
+    store.close();
+  }
+});
+
 test('幂等：第二次启动不会重复导消息 / 重复加偏好', () => {
   const { dir, data } = legacyRoot();
   const s1 = new Store({ file: path.join(data, 'store.json'), logger: null });

@@ -139,14 +139,20 @@ class QuoteDiscriminationTests(unittest.TestCase):
     VALID = ('<msg><appmsg><type>57</type><title>fixture reply</title>'
              '<refermsg><displayname>Fixture</displayname>'
              '<content>fixture original</content></refermsg></appmsg></msg>')
+    IMAGE = ('<msg><appmsg><type>57</type><title>这张图写了什么</title>'
+             '<refermsg><displayname>Fixture</displayname><type>3</type>'
+             '<svrid>9123456789012345601</svrid><msgid>4</msgid>'
+             '<content>&lt;msg&gt;&lt;img /&gt;&lt;/msg&gt;</content>'
+             '</refermsg></appmsg></msg>')
 
     def setUp(self):
         self.env = functions('bridge/receiver_mixin.py',
                              ['_nested_quote_text', 'parse_quote_content',
-                              'quote_content_text', 'on_message_inner'],
-                             {'html': html, 're': re})
+                              'quote_content_text', 'describe_quoted_image', 'on_message_inner'],
+                             {'html': html, 're': re,
+                              'run_media_with_timeout': lambda recognize, *_: recognize()})
 
-    def receive(self, content, mtype='文本', only_chats=()):
+    def receive(self, content, mtype='文本', only_chats=(), rows=(), chat='fixture-chat', send_allowed=True):
         post = Mock(return_value=SimpleNamespace(
             status_code=200, json=lambda: {'ok': True, 'action': 'ignore'}))
         log = Mock()
@@ -158,13 +164,19 @@ class QuoteDiscriminationTests(unittest.TestCase):
                 'mentioned_names': []}), LOCAL_HTTP=SimpleNamespace(post=post),
             CONN_STATE={'ok': True}, log=log, log_throttled=Mock(), log_error=Mock(),
             safe_name=str, safe_text=str, safe_id=str)
+        self.image = Mock(return_value='蓝底白字')
+        self.shard_rows = Mock(return_value=rows)
+        self.lookup = Mock(side_effect=lambda _chat, build: build('fixture-tables'))
         runtime = SimpleNamespace(
             me='fixture-self', token='', bot_url='fixture-kernel',
-            db=SimpleNamespace(get_nickname=lambda _: 'Fixture'),
+            db=SimpleNamespace(get_nickname=lambda _: 'Fixture', _run_msg_query=self.lookup,
+                               _shard_rows=self.shard_rows),
+            describe_image=self.image, send_policy_allows=Mock(return_value=send_allowed),
             display_name=lambda _: 'Fixture conversation',
-            self_identity_ids=lambda: {'fixture-self'}, dead_chats=set())
-        msg = {'username': 'fixture-chat', 'sender_username': 'fixture-peer',
-               'type': mtype, 'content': content, 'local_id': 1}
+            self_identity_ids=lambda: {'fixture-self'}, self_mention_names=lambda _: [], dead_chats=set())
+        runtime.describe_quoted_image = lambda *args: self.env['describe_quoted_image'](runtime, *args)
+        msg = {'username': chat, 'sender_username': 'fixture-peer',
+               'type': mtype, 'content': content, 'local_id': 1, 'shard': 'quote-shard'}
         self.env['on_message_inner'](runtime, msg, None)
         self.assertFalse(any(call.args and call.args[0] == '提交消息处理失败：'
                              for call in log.call_args_list), log.call_args_list)
@@ -194,7 +206,7 @@ class QuoteDiscriminationTests(unittest.TestCase):
         for text in cases:
             with self.subTest(text=text):
                 self.assertIsNone(self.env['parse_quote_content'](text))
-                self.assertIsNone(self.env['quote_content_text'](text))
+                self.assertIsNone(self.env['quote_content_text'](self.env['parse_quote_content'](text)))
 
     def test_valid_quotes_still_reach_kernel_with_original_sender(self):
         for mtype in ('文件', '链接', '卡片'):
@@ -215,6 +227,51 @@ class QuoteDiscriminationTests(unittest.TestCase):
         self.assertEqual(post.call_args.kwargs['json']['text'],
                          '分享了一个链接：fixture attachment https://example.invalid/fixture')
         self.receive(self.VALID, '文件', only_chats=('other-chat',)).assert_not_called()
+
+    def test_quoted_photo_uses_original_server_id_and_shard(self):
+        rows = [{'local_id': 17, 'shard': 'original-shard'}]
+        post = self.receive(self.IMAGE, '文件', rows=rows)
+
+        self.lookup.assert_called_once()
+        self.assertEqual(self.lookup.call_args.args[0], 'fixture-chat')
+        self.shard_rows.assert_called_once_with('fixture-tables', 'WHERE server_id=? AND local_type=3',
+                                                (9123456789012345601,), per_shard_limit=2)
+        self.image.assert_called_once_with({'username': 'fixture-chat', 'local_id': 17,
+                                            'shard': 'original-shard'})
+        self.assertEqual(post.call_args.kwargs['json']['text'],
+                         '（引用的图片，图里是：蓝底白字）这张图写了什么')
+
+    def test_group_quote_accepts_original_sender_prefix(self):
+        rows = [{'local_id': 17, 'shard': 'original-shard'}]
+        post = self.receive('fixture-peer:\n' + self.IMAGE, '文件', rows=rows, chat='test@chatroom')
+
+        self.lookup.assert_called_once()
+        self.assertEqual(self.lookup.call_args.args[0], 'test@chatroom')
+        self.assertEqual(post.call_args.kwargs['json']['chat_id'], 'test@chatroom')
+        self.assertIn('蓝底白字', post.call_args.kwargs['json']['text'])
+
+    def test_quoted_photo_with_no_unique_original_keeps_question(self):
+        for rows in ([], [{'local_id': 17, 'shard': ''}],
+                     [{'local_id': 17, 'shard': 'shard-one'}, {'local_id': 20, 'shard': 'shard-two'}]):
+            with self.subTest(rows=len(rows)):
+                post = self.receive(self.IMAGE, '文件', rows=rows)
+                self.image.assert_not_called()
+                self.assertEqual(post.call_args.kwargs['json']['text'],
+                                 '（引用了一张图片，但这边没取到图，无法确认内容）这张图写了什么')
+
+    def test_quoted_photo_does_not_use_local_id_from_xml_if_server_id_is_missing(self):
+        post = self.receive(self.IMAGE.replace('<svrid>9123456789012345601</svrid>', ''), '文件')
+        self.lookup.assert_not_called()
+        self.image.assert_not_called()
+        self.assertIn('没取到图', post.call_args.kwargs['json']['text'])
+
+    def test_quoted_photo_is_not_read_in_a_disallowed_chat(self):
+        self.receive(self.IMAGE, '文件', only_chats=('other-chat',)).assert_not_called()
+        self.lookup.assert_not_called()
+        self.image.assert_not_called()
+        self.receive(self.IMAGE, '文件', send_allowed=False)
+        self.lookup.assert_not_called()
+        self.image.assert_not_called()
 
 
 if __name__ == '__main__':

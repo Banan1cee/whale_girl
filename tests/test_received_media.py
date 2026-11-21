@@ -1,4 +1,5 @@
 import ast
+import base64
 import hashlib
 import io
 import os
@@ -56,7 +57,7 @@ class ReceivedMediaTests(unittest.TestCase):
         return env, post, sleeps
 
     def test_image_waits_for_cache_and_keeps_message_shard(self):
-        download = Mock(side_effect=[None, None, str(self.image)])
+        download = Mock(side_effect=[None, str(self.image)])
         env, post, sleeps = self.env(download)
         result = nested('describe_image', env)({'username': 'peer', 'local_id': 4, 'shard': 'shard2'})
         self.assertEqual(result, '蓝色图片')
@@ -64,11 +65,40 @@ class ReceivedMediaTests(unittest.TestCase):
         self.assertEqual(len(post.call_args_list), 1)
         self.assertTrue(all(call.kwargs['shard'] == 'shard2' for call in download.call_args_list))
 
+    def test_image_retries_full_before_using_thumbnail(self):
+        full = self.root / 'full.png'
+        Image.new('RGB', (640, 360), 'blue').save(full)
+        attempts = []
+
+        def download(_user, _local_id, *, tier, shard):
+            attempts.append((tier, shard))
+            if tier == 'best':
+                return str(self.image)
+            return str(full) if attempts.count(('full', 'shard2')) > 1 else None
+
+        env, post, sleeps = self.env(download)
+        msg = {'username': 'peer', 'local_id': 4, 'shard': 'shard2'}
+        self.assertEqual(nested('describe_image', env)(msg), '蓝色图片')
+        payload = base64.b64decode(post.call_args.kwargs['json']['image'])
+        with Image.open(io.BytesIO(payload)) as decoded:
+            self.assertEqual(decoded.size, (640, 360))
+        self.assertEqual(attempts, [('full', 'shard2'), ('full', 'shard2')])
+        self.assertEqual(sleeps, [0.5])
+
+    def test_image_falls_back_to_thumbnail_after_full_retry_budget(self):
+        download = Mock(side_effect=lambda *args, tier, **kwargs: str(self.image) if tier == 'best' else None)
+        env, post, sleeps = self.env(download)
+        self.assertEqual(nested('describe_image', env)({'username': 'peer', 'local_id': 4}), '蓝色图片')
+        self.assertEqual([request.kwargs['tier'] for request in download.call_args_list],
+                         ['full', 'full', 'full', 'full', 'best'])
+        self.assertEqual(sleeps, [0.5, 1, 2])
+        post.assert_called_once()
+
     def test_image_unavailable_stops_without_vision_request(self):
         download = Mock(return_value=None)
         env, post, sleeps = self.env(download)
         self.assertEqual(nested('describe_image', env)({'username': 'peer', 'local_id': 4}), '')
-        self.assertEqual(download.call_count, 8)
+        self.assertEqual(download.call_count, 5)
         self.assertEqual(sleeps, [0.5, 1, 2])
         post.assert_not_called()
 
