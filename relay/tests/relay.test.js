@@ -222,7 +222,7 @@ test('派单后客户补充需求：直接插进工人正在跑的那一轮', as
   const { relay, agents } = build(config, {
     desk: [
       { text: '【回复客户】好，我开工\n【派单】做首页' },
-      { text: '【回复客户】收到，我把它加进去' },
+      { text: '【回复客户】收到，我把它加进去\n【需求更新】- 首页标题改成「你好」' },
     ],
   });
   await relay.handleIncoming(msg('开始吧'));
@@ -231,6 +231,22 @@ test('派单后客户补充需求：直接插进工人正在跑的那一轮', as
   assert.ok(injectCall, '必须插话而不是排队等下一轮');
   assert.ok(injectCall.text.includes('首页标题改成'), '插话内容要带上客户原话');
   assert.strictEqual(res.reply, '收到，我把它加进去');
+});
+
+test('派单后只是问进度：前台直接回答，不去打扰工人', async () => {
+  const config = makeConfig();
+  const { relay, agents } = build(config, {
+    desk: [
+      { text: '【回复客户】好，我开工\n【派单】做首页' },
+      { text: '【回复客户】做到一半了，刚写完样式' },
+    ],
+  });
+  await relay.handleIncoming(msg('开始吧'));
+  const before = agents.calls.filter((c) => c.kind === 'inject').length;
+  const res = await relay.handleIncoming(msg('做到哪了', { msg_id: 'm9' }));
+  const after = agents.calls.filter((c) => c.kind === 'inject').length;
+  assert.strictEqual(after, before, '问进度不该给工人插话');
+  assert.strictEqual(res.reply, '做到一半了，刚写完样式');
 });
 
 test('派单后问进度：前台按真实工程状态回答，不去打扰工人', async () => {

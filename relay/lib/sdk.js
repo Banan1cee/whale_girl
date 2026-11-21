@@ -14,6 +14,7 @@
 // 通知：session.status {sessionId, status:'running'|'idle'}、session.event {event:{type,...}}
 
 const { spawn } = require('child_process');
+const net = require('net');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -22,6 +23,8 @@ const readline = require('readline');
 const DEFAULT_ELECTRON = 'D:/DeepSeek Harness/DeepSeek Harness.exe';
 const DEFAULT_BIN = 'D:/DeepSeek Harness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js';
 const DEFAULT_PROFILE = 'relay-sdk';
+// SDK 协议只给 followup（下一轮送达）；桌面端的 steer（下一步就读）要靠我们自己挂的插件开一个本地口。
+const DEFAULT_STEER_PATCH = path.join(__dirname, '..', 'sdk-plugin', 'steer.patch.yml');
 // API key 路由只认这两个模型名；pro 给工人，flash 给前台（前台要快）。
 const DEFAULT_DESK_MODEL = 'deepseek-flash';
 const DEFAULT_WORKER_MODEL = 'deepseek-v4-pro';
@@ -39,8 +42,10 @@ function resolveRuntime(configDsh) {
   const electron = String(cfg.electronPath || process.env.RELAY_DSH_ELECTRON || DEFAULT_ELECTRON);
   const bin = String(cfg.binPath || process.env.RELAY_DSH_BIN || DEFAULT_BIN);
   const profile = String(cfg.sdkProfile || DEFAULT_PROFILE);
+  const patch = String(cfg.steerPatch || DEFAULT_STEER_PATCH);
+  const patchArgs = fs.existsSync(patch) ? ['--patch', patch] : [];
   if (cfg.command) {
-    return { command: String(cfg.command), args: ['--profile', profile], source: 'config.command', profile };
+    return { command: String(cfg.command), args: ['--profile', profile].concat(patchArgs), source: 'config.command', profile, patch };
   }
   if (!fs.existsSync(electron)) {
     throw new Error('找不到 DeepSeek Harness 桌面端：' + electron + '（在 relay/config.json 的 dsh.electronPath 里改成实际路径）');
@@ -48,7 +53,46 @@ function resolveRuntime(configDsh) {
   if (!reachable(bin)) {
     throw new Error('找不到 dsh CLI：' + bin + '（改 relay/config.json 的 dsh.binPath，或装一个全局 dsh 并填 dsh.command）');
   }
-  return { command: electron, args: [bin, '--profile', profile], source: 'config.electron', profile };
+  return { command: electron, args: [bin, '--profile', profile].concat(patchArgs), source: 'config.electron', profile, patch };
+}
+
+// 往运行中的 agent 收件箱塞一条「下一步就读」的消息：连的是插件开在本地回环上的口。
+// 这里刻意不用 JSON-RPC 那条 stdio 通道——stdout 已经被协议独占，插件只能另开口。
+function steerVia(port, token, sessionId, text, timeoutMs) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(Object.assign({ durationMs: Date.now() - started }, value));
+    };
+    const socket = net.connect(Number(port), '127.0.0.1');
+    let buffer = '';
+    const timer = setTimeout(() => {
+      try { socket.destroy(); } catch (err) { /* ignore */ }
+      done({ ok: false, delivered: false, error: 'steer 超时' });
+    }, Math.max(1000, Number(timeoutMs) || 5000));
+    socket.setEncoding('utf8');
+    socket.on('connect', () => {
+      socket.write(JSON.stringify({ id: 1, op: 'steer', token: token || '', sessionId, text }) + '\n');
+    });
+    socket.on('data', (chunk) => {
+      buffer += chunk;
+      const i = buffer.indexOf('\n');
+      if (i < 0) return;
+      clearTimeout(timer);
+      try { socket.end(); } catch (err) { /* ignore */ }
+      let reply = null;
+      try { reply = JSON.parse(buffer.slice(0, i)); } catch (err) { reply = null; }
+      if (!reply) return done({ ok: false, delivered: false, error: 'steer 回包不是 JSON' });
+      done({ ok: reply.ok === true, delivered: reply.delivered === true, reason: reply.reason, error: reply.error });
+    });
+    socket.on('error', (err) => {
+      clearTimeout(timer);
+      done({ ok: false, delivered: false, error: err.message });
+    });
+  });
 }
 
 // 一个工作目录里的一个运行时进程。所有 session 共用它，但各自独立排队、独立状态。
@@ -62,6 +106,10 @@ function createRuntime(options) {
     ELECTRON_RUN_AS_NODE: '1',
     DSH_HOME: process.env.DSH_HOME || path.join(os.homedir(), '.dsh'),
   });
+  if (opts.steerPort) {
+    env.RELAY_STEER_PORT = String(opts.steerPort);
+    env.RELAY_STEER_TOKEN = String(opts.steerToken || '');
+  }
   const sessions = new Map();
   const waiters = [];
   const pending = new Map();
@@ -250,6 +298,11 @@ function createRuntime(options) {
     });
   }
 
+  function steer(sessionId, text) {
+    if (!opts.steerPort) return Promise.resolve({ ok: false, delivered: false, error: '没有启用 steer 通道' });
+    return steerVia(opts.steerPort, opts.steerToken, sessionId, text, 5000);
+  }
+
   function state(sessionId) {
     const st = sessionState(sessionId);
     return { running: st.running, turn: st.turn, step: st.step, lastTool: st.lastTool, lastAssistant: st.lastAssistant, lastReason: st.lastReason, injected: st.injected };
@@ -261,7 +314,7 @@ function createRuntime(options) {
     setTimeout(() => { try { if (child) child.kill(); } catch (err) { /* ignore */ } }, 500);
   }
 
-  return { start, prompt, resume, waitTurn, state, close, request, sessionState };
+  return { start, prompt, resume, waitTurn, state, close, request, sessionState, steer, steerPort: opts.steerPort };
 }
 
-module.exports = { createRuntime, resolveRuntime, DEFAULT_ELECTRON, DEFAULT_BIN, DEFAULT_PROFILE, DEFAULT_DESK_MODEL, DEFAULT_WORKER_MODEL };
+module.exports = { createRuntime, resolveRuntime, steerVia, DEFAULT_ELECTRON, DEFAULT_BIN, DEFAULT_PROFILE, DEFAULT_STEER_PATCH, DEFAULT_DESK_MODEL, DEFAULT_WORKER_MODEL };

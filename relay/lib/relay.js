@@ -81,6 +81,7 @@ function createRelay(opts) {
   const queue = createKeyedQueue();      // 一个客户一条线
   const deskQueue = createKeyedQueue();  // 前台 session 不能被两个进程同时写
   const watchers = new Map();            // orderId -> Promise
+  const workerOrders = new Map();         // worker sessionId -> orderId（工人事件落盘用）
   const bgTasks = new Set();
   const seen = new Map();
   const deskFile = config ? path.join(config.stateRoot, 'desk.json') : null;
@@ -116,6 +117,15 @@ function createRelay(opts) {
 
   function orderOf(result) {
     return result && result.order ? result.order : result;
+  }
+
+  // 工人的原始事件写进订单目录的 worker.jsonl：排查「它到底读到没读到插话」时全靠这个。
+  if (agents && typeof agents.setWorkerEventSink === 'function') {
+    agents.setWorkerEventSink((sessionId, event) => {
+      const orderId = workerOrders.get(sessionId);
+      if (!orderId) return;
+      try { orders.appendWorkerEvent(orderId, event); } catch (err) { /* 落盘失败不能影响运行时 */ }
+    });
   }
 
   function respond(text) {
@@ -292,7 +302,8 @@ function createRelay(opts) {
       order.workerSessionId = res.sessionId;
       orders.updateOrder(order.orderId, { workerSessionId: res.sessionId });
     }
-    orders.appendEvent(order.orderId, { type: 'dispatch_start', ok: Boolean(res && res.ok) });
+    if (res && res.sessionId) workerOrders.set(res.sessionId, order.orderId);
+    orders.appendEvent(order.orderId, { type: 'dispatch_start', ok: Boolean(res && res.ok), via: res && res.via });
     if (!res || !res.ok) {
       log.error('开工失败', { orderId: order.orderId, error: (res && res.error) || 'unknown' });
       return { ok: false, error: (res && res.error) || 'unknown' };
@@ -304,7 +315,7 @@ function createRelay(opts) {
   async function injectToWorker(order, text) {
     const res = await agents.workerInject(order.orderId, text);
     if (res && res.ok) {
-      orders.appendEvent(order.orderId, { type: 'inject', chars: text.length });
+      orders.appendEvent(order.orderId, { type: 'inject', chars: text.length, via: res.via || 'unknown' });
       ensureWatcher(order);
     } else {
       log.warn('插话失败', { orderId: order.orderId, error: res && res.error });
@@ -392,6 +403,18 @@ function createRelay(opts) {
     if (desk.requirements.length) {
       orders.appendRequirement(order.orderId, desk.requirements);
       log.info('需求更新', { orderId: order.orderId, count: desk.requirements.length });
+    }
+
+    // 0) 已经开工了：客户说的任何新要求/新问题都插进正在跑的那一轮，不再重新派单。
+    //    问进度这种纯问答不需要打扰工人，前台按真实状态直接答。
+    if (order.status === 'working') {
+      const needsWorker = Boolean(desk.evaluate) || Boolean(desk.dispatch) || desk.requirements.length > 0;
+      if (needsWorker) {
+        const detail = [text, desk.evaluate ? '（前台要你回答：' + desk.evaluate + '）' : ''].filter(Boolean).join('\n');
+        await injectToWorker(order, '客户补充（前台已记档，请一并处理）：' + detail);
+        log.info('开工中插话', { orderId: order.orderId, chars: detail.length });
+      }
+      return withPending(order, respond(desk.reply || '收到，我把它加进手里的事了。'));
     }
 
     // 1) 开工。派单就是时间标志：这一刻起客户有等待冗余，回复不用再等工人。

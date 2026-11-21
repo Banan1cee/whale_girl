@@ -22,6 +22,8 @@ const DEFAULTS = {
     electronPath: 'D:/DeepSeek Harness/DeepSeek Harness.exe',
     binPath: 'D:/DeepSeek Harness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js',
     sdkProfile: 'relay-sdk',
+    // 每个运行时进程挂一个本地 steer 插件口，从这里开始编号（8792、8793…）
+    steerPortBase: 8791,
     env: {},
   },
   // 前台用快模型（下单前必须回得快），工人用能扛活的模型。

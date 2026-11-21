@@ -25,7 +25,17 @@ function createAgents(options) {
   const log = opts.log || { info() {}, warn() {}, error() {} };
   const factory = opts.createRuntime || createRuntime;
   const resolved = opts.resolved || resolveRuntime(config.dsh);
+  // 每个运行时进程都要一个独立的本地口（插件监听在回环上）；token 由本次启动随机生成。
+  const steerBase = Number(config.dsh && config.dsh.steerPortBase) || 8791;
+  const steerToken = crypto.randomUUID();
+  let nextSteerPort = steerBase + 1;
+  function takeSteerPort() {
+    const port = nextSteerPort;
+    nextSteerPort += 1;
+    return port;
+  }
   let deskRuntime = null;
+  let workerEventSink = opts.onWorkerEvent || null;
   const workers = new Map();
 
   function ensureDesk() {
@@ -36,6 +46,8 @@ function createAgents(options) {
         dsh: config.dsh,
         resolved,
         log,
+        steerPort: takeSteerPort(),
+        steerToken,
       });
     }
     return deskRuntime;
@@ -51,6 +63,11 @@ function createAgents(options) {
           dsh: config.dsh,
           resolved,
           log,
+          steerPort: takeSteerPort(),
+          steerToken,
+          onEvent: (sessionId, event) => {
+            if (workerEventSink) workerEventSink(sessionId, event);
+          },
         }),
         sessionId: null,
         cwd,
@@ -106,6 +123,12 @@ function createAgents(options) {
     const sessionId = job.sessionId || w.sessionId || newSessionId();
     w.sessionId = sessionId;
     try {
+      // 已经在跑就别再排一轮：直接把任务插进当前这一轮。
+      if (w.runtime.state(sessionId).running) {
+        const steered = await w.runtime.steer(sessionId, job.prompt);
+        if (steered && steered.delivered) return { ok: true, sessionId, via: 'steer' };
+        log.warn('开工时工人正在跑，steer 没送到，改为排队', { orderId: job.orderId, error: steered && steered.error });
+      }
       await w.runtime.prompt(sessionId, job.prompt, config.worker.permissionMode, { resume: Boolean(job.sessionId) });
       return { ok: true, sessionId };
     } catch (err) {
@@ -113,13 +136,19 @@ function createAgents(options) {
     }
   }
 
-  // 运行中插话：走的是 followup，当前工具调用一结束模型就读到。
+  // 运行中插话：工人正在跑就用 steer（当前工具调用结束、下一步立刻读到）；
+  // 已经闲下来了就退回普通 prompt —— 反正它马上会开始新的一轮。
   async function workerInject(orderId, text) {
     const w = workers.get(orderId);
     if (!w || !w.sessionId) return { ok: false, error: '工人还没开工' };
     try {
+      if (w.runtime.state(w.sessionId).running) {
+        const steered = await w.runtime.steer(w.sessionId, text);
+        if (steered && steered.delivered) return { ok: true, via: 'steer' };
+        log.warn('steer 没送到，退回下一轮排队', { orderId, error: steered && steered.error });
+      }
       await w.runtime.prompt(w.sessionId, text, config.worker.permissionMode);
-      return { ok: true };
+      return { ok: true, via: 'followup' };
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -154,6 +183,7 @@ function createAgents(options) {
     workerState,
     workerWaitTurn,
     workerSessionOf: (orderId) => { const w = workers.get(orderId); return w ? w.sessionId : null; },
+    setWorkerEventSink: (fn) => { workerEventSink = fn; },
     close,
     resolved,
   };

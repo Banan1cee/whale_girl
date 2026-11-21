@@ -1,0 +1,9 @@
+# 挂载 relay 自己的 steer 插件：SDK 协议只给了 followup（下一轮送达），
+# 桌面端的「下一步就读」是 agent.steer()，这里把它开一个本地 TCP 口给 relay 用。
+# 插件路径相对本 patch 文件解析（loader 会把 inserted 的相对 name 锚定在 patch 旁边）。
+- insert:
+    - id: relay-steer
+      name: './steer.mjs'
+      config:
+        port: !!js Number(process.env.RELAY_STEER_PORT || 8791)
+        token: !!js process.env.RELAY_STEER_TOKEN || ''

@@ -91,9 +91,17 @@ curl http://127.0.0.1:8790/healthz
 | **派单那一刻** | 时间标志 | 派单即开工；这一句立刻回客户，不等工人 |
 | **派单后**（干活中） | 有等待冗余 | 客户再说话 → 用 `session/prompt` 插进工人正在跑的那一轮（下一轮开始前它一定读到），同时前台按真实进度回答 |
 
-注意：DSH SDK 目前给到客户端的是 `followup`（排到下一轮），不是 `steer`（下一步就读）。
-所以工人被要求在每轮里收一个小切口、做完先汇报；插话通常在一两分钟内生效，而不是等整个项目做完。
-真要做到「当前工具调用结束就立刻读到」，需要 DSH 侧把 steer 暴露到 SDK 协议里，这一版没做到。
+**插话是真插话**：DSH 的 SDK 协议只暴露了 `followup`（排到下一轮），而桌面端那种「当前工具调用结束、
+下一步就读」走的是 `agent.steer()`（收件箱的 next-step 队列）。所以 relay 自己挂了一个 DSH 插件
+（`relay/sdk-plugin/steer.mjs`），在运行时进程里直接拿到 live agent 调 `steer()`，对 relay 开一个本地回环 TCP 口。
+
+- 挂载方式：启动运行时加 `--patch relay/sdk-plugin/steer.patch.yml`（patch 里用 `insert` 追加一个插件条目，
+  插件路径相对 patch 文件解析），不改 DSH 安装本身；
+- 每个运行时进程一个独立端口（`dsh.steerPortBase` 起编号）+ 本次启动随机生成的 token；
+- 工人正在跑 → 走 steer；已经闲下来 → 退回普通 prompt（反正它马上会开新一轮）。
+
+实测：派单后 30 秒插一句「每页页脚加 © 2026 Truman Studio」，工人当前工具调用结束后下一步就读到了，
+五个页面成品里都有这行，且它出现在 `worker.jsonl` 的 user/message 里、**早于** turn/end。
 
 ## 5. 在 DeepSeek Harness 里看两个角色在干什么
 
@@ -149,7 +157,8 @@ node relay/tests/protocol.test.js    # 标记解析与微信话术清洗
 node relay/tests/relay.test.js       # 一轮消息的编排顺序（假 dsh + 假订单库）
 node relay/tests/orders.test.js      # 订单落盘与锁
 node relay/tests/compat.test.js      # 桥接契约
-node relay/tests/server.test.js      # HTTP 入口联调（假 dsh）
+node relay/tests/server.test.js      # HTTP 入口联调（假 agents）
+node relay/tests/sdk.test.js         # steer 本地口与运行时启动参数
 ```
 
 ## 9. 目录
@@ -162,6 +171,7 @@ relay/
   lib/protocol.js    人设与任务单、三个【标记】的解析、微信话术清洗
   lib/sdk.js         常驻 DSH SDK 运行时（JSON-RPC over stdio、事件、session 续接）
   lib/agents.js      把运行时包装成「前台 / 工人」两个角色（评估、开工、插话、进度）
+  sdk-plugin/        DSH 插件：把 agent.steer() 开成本地 TCP 口，+ 挂载它的 patch
   lib/orders.js      订单落盘（order.md / thread.md / events.jsonl / 锁）
   lib/compat.js      桥接会用到的内核接口
   state/             运行时状态（gitignore）
