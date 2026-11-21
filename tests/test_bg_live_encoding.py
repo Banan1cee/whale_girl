@@ -21,7 +21,8 @@ class LiveEncodingTests(unittest.TestCase):
                           drop_linebreaks=False, short_first=False, stale_reads=0, replace_while_reading=False,
                           probes=[], input_tick=123, foreground=4242, manual_draft=False,
                           other_app_input=False, raise_on_clear=False, switch_on_send=False,
-                          probe_lag=0, probe_lost=False, uia_ok=False, touch_during_probe=False)
+                          probe_lag=0, probe_lost=False, uia_ok=False, touch_during_probe=False,
+                          click_lost=False, clicks=0, send_button=None)
         state = self.state
 
         class Sender:
@@ -59,6 +60,9 @@ class LiveEncodingTests(unittest.TestCase):
                 pass
 
             def click_screen(self, *xy):
+                state['clicks'] += 1
+                if state['click_lost']:
+                    return
                 state['sent'].append(state['text'])
                 state['text'] = ''
                 if state['switch_on_send']:
@@ -75,7 +79,8 @@ class LiveEncodingTests(unittest.TestCase):
                 value = ''
             if state['modes'] and state['replace_while_reading']:
                 state['text'] += '手动输入'
-            return dict(nodes=[1] * 200, edit=object(), value=value, send_xy=(1, 2), chat=state['chat'])
+            return dict(nodes=[1] * 200, edit=object(), value=value, send_xy=(1, 2),
+                        send_button=state['send_button'], chat=state['chat'])
 
         def clear(*args):
             if state['raise_on_clear']:
@@ -122,6 +127,54 @@ class LiveEncodingTests(unittest.TestCase):
 
     def send(self, **kwargs):
         return bg.send('鲸鲸测试', chat='测试群', hwnd=4242, **kwargs)
+
+    def test_background_uses_send_button_pattern_when_posted_click_would_be_lost(self):
+        self.state.update(actual='utf16', click_lost=True)
+
+        def invoke():
+            self.state['sent'].append(self.state['text'])
+            self.state['text'] = ''
+
+        activate = Mock(side_effect=invoke)
+        self.state['send_button'] = SimpleNamespace(
+            IsEnabled=True, GetInvokePattern=lambda: SimpleNamespace(Invoke=activate))
+        self.assertEqual(self.send(), (True, 'sent'))
+        self.assertEqual(self.state['sent'], ['鲸鲸测试'])
+        self.assertEqual(self.state['clicks'], 0)
+        activate.assert_called_once_with()
+
+    def test_missing_invoke_pattern_keeps_coordinate_path(self):
+        self.state.update(actual='utf16', send_button=SimpleNamespace(
+            IsEnabled=True, GetInvokePattern=Mock(side_effect=RuntimeError('pattern unavailable'))))
+        self.assertEqual(self.send(), (True, 'sent'))
+        self.assertEqual(self.state['clicks'], 1)
+
+    def test_invoke_exception_preserves_draft_and_prevents_second_submission(self):
+        activate = Mock(side_effect=RuntimeError('no response after invoking'))
+        self.state.update(actual='utf16', send_button=SimpleNamespace(
+            IsEnabled=True, GetInvokePattern=lambda: SimpleNamespace(Invoke=activate)))
+        self.assertEqual(self.send(), (False, 'input_dirty'))
+        self.assertEqual(self.state['text'], '鲸鲸测试')
+        self.assertEqual(self.state['clicks'], 0)
+        activate.assert_called_once_with()
+
+    def test_invoke_without_clearing_input_reports_residue_without_retrying(self):
+        activate = Mock()
+        self.state.update(actual='utf16', send_button=SimpleNamespace(
+            IsEnabled=True, GetInvokePattern=lambda: SimpleNamespace(Invoke=activate)))
+        self.assertEqual(self.send(), (False, 'residue_left'))
+        self.assertEqual(self.state['text'], '鲸鲸测试')
+        self.assertEqual(self.state['clicks'], 0)
+        activate.assert_called_once_with()
+
+    def test_disabled_send_button_does_not_submit(self):
+        lookup = Mock()
+        self.state.update(actual='utf16', send_button=SimpleNamespace(
+            IsEnabled=False, GetInvokePattern=lookup))
+        self.assertEqual(self.send(), (False, 'input_dirty'))
+        self.assertEqual(self.state['text'], '鲸鲸测试')
+        self.assertEqual(self.state['clicks'], 0)
+        lookup.assert_not_called()
 
     def test_hot_switch_both_directions_uses_content_and_updates_cache(self):
         self.assertEqual(self.send(), (True, 'sent'))

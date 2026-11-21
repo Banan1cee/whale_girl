@@ -1070,13 +1070,13 @@ def norm_chat_name(text):
 
 
 def read_ui(hwnd):
-    """读控件：输入框（含当前会话名）、发送按钮中心点、会话列表行。
+    """读控件：输入框（含当前会话名）、发送按钮、会话列表行。
 
-    返回 dict：`{"ctrl", "nodes", "edit", "chat", "value", "send_xy", "rows"}`；
+    返回 dict：`{"ctrl", "nodes", "edit", "chat", "value", "send_button", "send_xy", "rows"}`；
     树没物化时 `nodes` 为空、其余为 None / 空列表。
     """
     info = {"ctrl": None, "nodes": [], "edit": None, "chat": None,
-            "value": None, "send_xy": None, "rows": [], "tabs": []}
+            "value": None, "send_button": None, "send_xy": None, "rows": [], "tabs": []}
     if not hwnd:
         return info
     try:
@@ -1128,6 +1128,7 @@ def read_ui(hwnd):
                 r = c.BoundingRectangle
                 info["send_xy"] = (r.left + (r.right - r.left) // 2,
                                    r.top + (r.bottom - r.top) // 2)
+                info["send_button"] = c
                 break
         except Exception:
             continue
@@ -1569,10 +1570,27 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                 sender.end_input()
                 log("后台通道：打完字找不到发送按钮，草稿可能残留在输入框")
                 return False, "input_dirty"
-            if not operation.begin_effect('background_click'):
+            button = info.get("send_button")
+            invoke = None
+            if button is not None:
+                if not button.IsEnabled:
+                    sender.end_input()
+                    log("后台通道：正文回读正确，但发送按钮仍不可用，保留草稿")
+                    return False, "input_dirty"
+                # 微信可以收到窗口点击消息却不触发按钮。支持 UIA Invoke 时直接调用控件。
+                try:
+                    invoke = button.GetInvokePattern().Invoke
+                except Exception:
+                    pass  # 获取接口没有提交消息，可以继续走坐标点击。
+            stage = 'background_invoke' if invoke is not None else 'background_click'
+            if not operation.begin_effect(stage):
                 raise SendPreparationStopped('background submission stopped')
-            sender.click_screen(*xy)
-            operation.record('submitted', 'background_click')
+            log("后台通道：尝试提交（%s）" % stage)
+            if invoke is not None:
+                invoke()
+            else:
+                sender.click_screen(*xy)
+            operation.record('submitted', stage)
             if not expected.isascii():
                 _remember_char_mode(hwnd, mode, log)
             time.sleep(TIMING["afterClick"])

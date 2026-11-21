@@ -459,8 +459,12 @@ class SenderMixin:
         resolved = self.ui_chat_name(chat_username, chat_display_name)
         if not resolved:
             G.log('[delivery] stage=resolve_target result=failed reason=chat_name_unresolved chat=%s' % G.safe_id(chat_username or chat_display_name))
+            hint = ('请为该群设置可搜索的群名或群备注'
+                    if str(chat_username or chat_display_name).lower().endswith('@chatroom')
+                    else '请为该联系人设置可搜索的备注')
             G.log_throttled('send-no-name-' + str(chat_username or chat_display_name)[:18],
-                            '发送跳过：%s 只拿到了内部 id，微信会话列表和搜索框都不认，先给 TA 加个备注再试' % G.safe_id(chat_username or chat_display_name),
+                            '发送跳过：%s 没有可核对的会话名称，%s后重试'
+                            % (G.safe_id(chat_username or chat_display_name), hint),
                             ttl=600)
             return False
         chat_display_name = resolved
