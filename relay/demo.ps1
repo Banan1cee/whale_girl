@@ -1,4 +1,4 @@
-#relay 演示脚本：起中继、验一遍、再把桥接指过来。
+﻿#relay 演示脚本：起中继、验一遍、再把桥接指过来。
 #只做“把两个进程按正确顺序拉起来”这件事，参数化得越少越不容易用错。
 param(
   [switch]$Smoke,                       # 只起中继并本地发一条假消息，不碰微信
@@ -31,7 +31,7 @@ if (-not (Test-Relay)) {
     Start-Sleep -Milliseconds 250
     if (Test-Relay) { break }
   }
-  if (-not (Test-Relay)) { Write-Host '中继没起来，到 relay/state/relay.log 看原因。' -ForegroundColor Red; exit 1 }
+  if (-not (Test-Relay)) { Write-Host '中继没起来，到 state/relay.log 看原因。' -ForegroundColor Red; exit 1 }
   Write-Host '中继已启动。' -ForegroundColor Green
 } else {
   $relay = $null
@@ -41,8 +41,10 @@ if (-not (Test-Relay)) {
 try {
   if ($Smoke) {
     Write-Host '本地发一条假消息（会真的跑一轮前台，需要 key）…'
-    $body = @{ chat_id = 'wxid_smoke'; text = $Message; msg_id = "smoke-$(Get-Date -Format HHmmss)"; nickname = '自测'; chat_type = 'private'; at_me = $true } | ConvertTo-Json
-    $reply = Invoke-RestMethod -Uri "$base/webhook/wechat" -Method Post -Body $body -ContentType 'application/json' -TimeoutSec 600
+    $payload = @{ chat_id = 'wxid_smoke'; text = $Message; msg_id = "smoke-$(Get-Date -Format HHmmss)"; nickname = '自测'; chat_type = 'private'; at_me = $false } | ConvertTo-Json
+    # PowerShell 5.1 会把字符串按 ANSI 发出去，中文到 relay 就是乱码，必须先转成 UTF-8 字节。
+    $bytes = [Text.Encoding]::UTF8.GetBytes($payload)
+    $reply = Invoke-RestMethod -Uri "$base/webhook/wechat" -Method Post -Body $bytes -ContentType 'application/json; charset=utf-8' -TimeoutSec 600
     Write-Host ('前台回复：' + $reply.reply) -ForegroundColor Cyan
     exit 0
   }

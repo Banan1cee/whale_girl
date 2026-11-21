@@ -90,8 +90,17 @@ curl http://127.0.0.1:8790/healthz
 | 前台 | `relay/state/desk` | 每条客户消息、前台的思考和措辞 |
 | 工人 | `relay/state/orders/<orderId>/workspace` | 派单内容、工具调用、产出的文件 |
 
-打开桌面端，在左侧工作区列表里选对应目录，点开 session 就能看到完整对话（含思考和工具调用）。
-如果列表里还没出现，刷新一下界面（新工作区是磁盘上的目录，桌面端不一定实时监听）。
+**实测口径（重要）**：桌面端不会把这些目录自动注册成"工作区"，它们出现在左侧栏的 **「未分组」** 里，
+标题是自动生成的、可能显示"未命名"。所以按下面的顺序找：
+
+1. 桌面端 **Ctrl+R 刷新**（或重开会话列表）；
+2. 左侧「未分组」里按时间找最新的几条（前台和工人的会话是这一两分钟内产生的）；
+3. 想精确定位就用 session id 搜索：
+   - 前台 session id：`<stateRoot>/desk.json` 里 `{ "<chat_id>": "session-..." }`
+   - 工人 session id：`<stateRoot>/orders/<orderId>/order.json` 里的 `workerSessionId`
+4. 打开后能看到这一轮完整的用户消息、思考、工具调用和输出；工人 session 的 cwd 就是该订单的 `workspace`。
+
+如果只想看"谁对谁说了什么"，`thread.md` 比 GUI 更快（它把前台派单、工人汇报、前台转述按顺序记下来了）。
 
 工人每轮的原始 NDJSON 事件另存于 `relay/state/orders/<orderId>/worker.jsonl`；给人看的对话在 `thread.md`。
 
