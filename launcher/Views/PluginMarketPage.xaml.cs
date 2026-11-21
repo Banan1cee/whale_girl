@@ -20,7 +20,7 @@ namespace WhaleLauncher.Views
         private readonly string _version;
         private PluginInfo[] _catalog = [];
         private Dictionary<int, PluginFeedback> _feedback = new();
-        private Dictionary<string, long> _downloads = new();
+        private MarketDownloadStats _downloads = new(new());
         private Dictionary<string, MarketFavorite> _favorites = new();
         private string _category = "";
         private bool _showInstalled;
@@ -232,7 +232,7 @@ namespace WhaleLauncher.Views
                     else if (current == null || Version.Parse(info.Version) > Version.Parse(current.Version))
                         AddButton(buttons, current == null ? "安装" : "更新", async () =>
                         {
-                            await _market.InstallAsync(info, _downloads.ContainsKey(PluginMarket.CountedDownloadUrl(info)));
+                            await _market.InstallAsync(info, _downloads.Counts.ContainsKey(PluginMarket.CountedDownloadUrl(info)));
                             return "已安装 v" + info.Version + "，可在「已安装」管理。";
                         });
                     else body.Children.Add(Small("已安装"));
@@ -256,11 +256,14 @@ namespace WhaleLauncher.Views
         private void AddMarketActivity(Panel card, PluginInfo listing)
         {
             var issue = listing.DiscussionIssue;
-            var hasCount = _downloads.TryGetValue(PluginMarket.CountedDownloadUrl(listing), out var downloads);
+            var hasCount = _downloads.Counts.TryGetValue(PluginMarket.CountedDownloadUrl(listing), out var downloads);
             var row = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
             card.Children.Add(row);
             var count = Small("GitHub 下载 " + (hasCount ? downloads.ToString("N0") : "—"));
-            count.ToolTip = "GitHub 记录的本版本安装包下载次数，可能包含重复下载。旧地址和镜像下载不计入。";
+            var statisticsNote = "GitHub 记录的本版本安装包下载次数，可能包含重复下载。旧地址和镜像下载不计入。";
+            count.ToolTip = hasCount && _downloads.SnapshotAt is { } fetchedAt
+                ? $"{statisticsNote} 快照更新于 {fetchedAt.ToLocalTime():yyyy-MM-dd HH:mm}。"
+                : statisticsNote;
             count.Margin = new Thickness(0, 0, 8, 0);
             count.VerticalAlignment = VerticalAlignment.Center;
             row.Children.Add(count);

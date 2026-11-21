@@ -151,6 +151,16 @@ try
         countedAsset with { digest = "sha256:" + new string('b', 64) },
         countedAsset with { browser_download_url = "https://example.invalid/plugin.zip" },
         countedAsset with { download_count = -1 }), new[] { personaListing }).Count == 0);
+    var downloadedAt = new DateTimeOffset(2026, 11, 21, 12, 0, 0, TimeSpan.Zero);
+    var snapshot = JsonSerializer.SerializeToUtf8Bytes(new
+    {
+        tag_name = "plugin-packages", draft = false, fetchedAt = downloadedAt,
+        assets = new[] { countedAsset with { download_count = 0 } }
+    });
+    var downloadStats = PluginMarket.ParseDownloadSnapshot(snapshot, new[] { personaListing });
+    Check(downloadStats.SnapshotAt == downloadedAt && downloadStats.Counts[countedUrl] == 0);
+    Check(PluginMarket.ParseDownloadSnapshot(snapshot,
+        new[] { personaListing with { Sha256 = new string('b', 64) } }).Counts.Count == 0);
     var favorites = PluginMarket.ParseFavoriteStates("""
         {"favorites":[{"id":"text-counter","count":2,"favorited":true},{"id":"notes","count":0,"favorited":false}]}
         """u8.ToArray());

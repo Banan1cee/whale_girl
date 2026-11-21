@@ -41,6 +41,7 @@ namespace WhaleLauncher
                 ? $"鲸鲸 {range.MinAppVersion} 及以上" : $"鲸鲸 {range.MinAppVersion} – {range.MaxAppVersion}")));
     }
     internal sealed record PluginFeedback(int Comments);
+    internal sealed record MarketDownloadStats(Dictionary<string, long> Counts, DateTimeOffset? SnapshotAt = null);
     internal sealed record MarketFavorite(string Id, long Count, bool Favorited);
     internal sealed record PluginPackage(PluginInfo Info, byte[] Module, string Prompt = null, string Persona = null);
 
@@ -51,6 +52,9 @@ namespace WhaleLauncher
         private const string MarketApi = "https://api.github.com/repos/Banan1cee/whale-girl-plugins";
         private const string PackageReleaseTag = "plugin-packages";
         private const string PackageReleaseUrl = "https://github.com/Banan1cee/whale-girl-plugins/releases/download/" + PackageReleaseTag + "/";
+        private const string DownloadSnapshotUrl = "https://bot.zyyc.cc/plugins/download-counts.json";
+        private const string DownloadSnapshotResource = "WhaleLauncher.PluginDownloadCounts.json";
+        private const int DownloadStatisticsLimit = 2 * 1024 * 1024;
         private const string FavoritesUrl = "https://whalegirl-market-favorites.chrisgao0312.workers.dev/api/favorites";
 
         // 市场签名暂时隐藏：验签代码、内置公钥和签名工具都保留，恢复时把这里改成 true 即可。
@@ -296,7 +300,7 @@ namespace WhaleLauncher
             {
                 var allowedHost = uri.Host is "raw.githubusercontent.com" or "github.com" or "release-assets.githubusercontent.com"
                     or "objects.githubusercontent.com" or "cdn.jsdelivr.net" or "gh-proxy.com" or "ghfast.top"
-                    || (feedback && uri.Host == "api.github.com");
+                    || (feedback && (uri.Host == "api.github.com" || uri.AbsoluteUri == DownloadSnapshotUrl));
                 if (uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort || uri.UserInfo.Length != 0 || !allowedHost)
                     throw new InvalidDataException("插件下载地址须使用 GitHub HTTPS");
                 using var response = await Http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
@@ -409,21 +413,43 @@ namespace WhaleLauncher
 
         internal static string CountedDownloadUrl(PluginInfo plugin) => $"{PackageReleaseUrl}{plugin.Id}-{plugin.Version}.zip";
 
-        internal static async Task<Dictionary<string, long>> DownloadCountsAsync(IEnumerable<PluginInfo> catalog)
+        internal static async Task<MarketDownloadStats> DownloadCountsAsync(PluginInfo[] catalog)
         {
-            try
+            foreach (var url in new[] { $"{MarketApi}/releases/tags/{PackageReleaseTag}", DownloadSnapshotUrl })
             {
-                var release = await DownloadAsync($"{MarketApi}/releases/tags/{PackageReleaseTag}", 2 * 1024 * 1024,
-                    feedback: true, stopOnNotFound: true);
-                return ParseDownloadCounts(release, catalog);
+                try
+                {
+                    var bytes = await DownloadOnce(url, DownloadStatisticsLimit, feedback: true);
+                    var stats = url == DownloadSnapshotUrl ? ParseDownloadSnapshot(bytes, catalog)
+                        : new MarketDownloadStats(ParseDownloadCounts(bytes, catalog));
+                    if (stats.Counts.Count > 0) return stats;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException
+                    or OperationCanceledException or JsonException or InvalidOperationException or KeyNotFoundException)
+                { /* 直连限流时读官网，官网快照不可用时读启动器内置快照。 */ }
             }
-            catch (DownloadMissingException) { return new(); }
+
+            using var snapshot = typeof(PluginMarket).Assembly.GetManifestResourceStream(DownloadSnapshotResource);
+            return snapshot == null ? new(new()) : ParseDownloadSnapshot(ReadLimited(snapshot, DownloadStatisticsLimit), catalog);
+        }
+
+        internal static MarketDownloadStats ParseDownloadSnapshot(byte[] snapshot, IEnumerable<PluginInfo> catalog)
+        {
+            using var payload = JsonDocument.Parse(snapshot);
+            var root = payload.RootElement;
+            if (!root.GetProperty("fetchedAt").TryGetDateTimeOffset(out var fetchedAt))
+                throw new InvalidDataException("下载统计时间无效");
+            return new(ParseDownloadCounts(root, catalog), fetchedAt);
         }
 
         internal static Dictionary<string, long> ParseDownloadCounts(byte[] release, IEnumerable<PluginInfo> catalog)
         {
             using var payload = JsonDocument.Parse(release);
-            var root = payload.RootElement;
+            return ParseDownloadCounts(payload.RootElement, catalog);
+        }
+
+        private static Dictionary<string, long> ParseDownloadCounts(JsonElement root, IEnumerable<PluginInfo> catalog)
+        {
             var known = catalog.ToDictionary(CountedDownloadUrl, plugin => "sha256:" + plugin.Sha256);
             var counts = new Dictionary<string, long>();
             if (root.GetProperty("tag_name").GetString() != PackageReleaseTag || root.GetProperty("draft").GetBoolean())
