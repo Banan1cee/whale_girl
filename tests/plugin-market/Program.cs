@@ -139,6 +139,14 @@ try
         Signature = "catalog-signature-present" };
     var personaCatalog = JsonSerializer.SerializeToUtf8Bytes(new[] { personaListing });
     Check(PluginMarket.ParseCatalog(personaCatalog, 1, "persona").Length == 1);
+    var favorites = PluginMarket.ParseFavoriteStates("""
+        {"favorites":[{"id":"text-counter","count":2,"favorited":true},{"id":"notes","count":0,"favorited":false}]}
+        """u8.ToArray());
+    Check(favorites["text-counter"] == new MarketFavorite("text-counter", 2, true));
+    Check(favorites["notes"].Count == 0 && !favorites["notes"].Favorited);
+    Reject(() => PluginMarket.ParseFavoriteStates("""
+        {"favorites":[{"id":"notes","count":0,"favorited":true}]}
+        """u8.ToArray()));
     Check(PluginMarket.ParseCatalog(personaCatalog, 1, "tool").Length == 0);
     Check(PluginMarket.ParseCatalog(personaCatalog, 3, "message").Length == 0);
     // 回归：市场还没签名时，条目没有 Signature 也必须能解析，否则整个市场会被过滤成空的。

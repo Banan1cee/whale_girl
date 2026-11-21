@@ -103,6 +103,11 @@ function readSnapshot(root, env = process.env) {
 
 if (require.main === module) {
   (async () => {
+    if (process.argv[2] === '--preview-preset') {
+      const config = loadConfig({ root: process.cwd(), readOnly: true });
+      const patch = presets.toPatch(presets.load(config, process.argv[3]));
+      return patch ? { ok: true, patch } : { ok: false, error: '没有可预览的人设预设' };
+    }
     if (process.argv[2] !== '--save') return readSnapshot(process.cwd());
     const chunks = [];
     for await (const chunk of process.stdin) chunks.push(chunk);

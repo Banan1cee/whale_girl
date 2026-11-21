@@ -1,0 +1,13 @@
+{
+  "name": "whalegirl-market-favorites",
+  "main": "dist/server/index.mjs",
+  "compatibility_date": "2026-11-22",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "whalegirl-market-favorites",
+      "database_id": "<database ID returned by Cloudflare>",
+      "migrations_dir": "drizzle"
+    }
+  ]
+}

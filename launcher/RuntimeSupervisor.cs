@@ -79,6 +79,8 @@ namespace WhaleLauncher
         public bool UpdateBlocked { get; set; }
         private LocalConfiguration _localConfiguration;
         private readonly System.Threading.SemaphoreSlim _configurationWrites = new(1, 1);
+        internal int PersonaRevision { get; private set; }
+        internal void NotifyPersonaChanged() => PersonaRevision++;
         private ContactDirectory _contacts;
         /// <summary>联系人缓存 / 搜索的统一入口，各页面共用，避免重复请求和搜索规则漂移。</summary>
         public ContactDirectory Contacts => _contacts ??= new ContactDirectory(this);
@@ -89,11 +91,18 @@ namespace WhaleLauncher
                 ? $"http://127.0.0.1:{port}" : null;
         }
 
-        public async Task<ApiResult> ReadConfigurationAsync(string path)
+        public async Task<ApiResult> ReadConfigurationAsync(string path, bool forceRefresh = false)
         {
             var url = await ConfigurationServiceUrlAsync();
             return url != null ? await Api.Get(url, path)
-                : await (_localConfiguration ??= new LocalConfiguration(BaseDir)).ReadAsync(path);
+                : await (_localConfiguration ??= new LocalConfiguration(BaseDir)).ReadAsync(path, forceRefresh);
+        }
+
+        internal async Task<ApiResult> PreviewPersonaPresetAsync(string id)
+        {
+            var url = await ConfigurationServiceUrlAsync();
+            return url != null ? await Api.Get(url, "/api/persona/preset?id=" + Uri.EscapeDataString(id))
+                : await (_localConfiguration ??= new LocalConfiguration(BaseDir)).PreviewPersonaPresetAsync(id);
         }
 
         public async Task<ApiResult> SaveConfigurationAsync(string path, object body)

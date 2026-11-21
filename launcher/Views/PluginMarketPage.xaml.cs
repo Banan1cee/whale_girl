@@ -20,6 +20,7 @@ namespace WhaleLauncher.Views
         private readonly string _version;
         private PluginInfo[] _catalog = [];
         private Dictionary<int, PluginFeedback> _feedback = new();
+        private Dictionary<string, MarketFavorite> _favorites = new();
         private string _category = "";
         private bool _showInstalled;
         private bool _busy;
@@ -59,14 +60,19 @@ namespace WhaleLauncher.Views
         {
             _catalog = await PluginMarket.CatalogAsync();
             Render();
-            if (_catalog.Any(info => info.DiscussionIssue > 0))
-            {
-                try { _feedback = await PluginMarket.FeedbackAsync(); }
-                catch (Exception ex) when (ex is HttpRequestException or InvalidDataException or JsonException
-                    or OperationCanceledException or InvalidOperationException or KeyNotFoundException) { }
-            }
+            var feedback = OptionalMarketData(() => PluginMarket.FeedbackAsync(_catalog));
+            var favorites = OptionalMarketData(() => _market.FavoritesAsync(_catalog.Select(plugin => plugin.Id)));
+            _feedback = await feedback ?? _feedback;
+            _favorites = await favorites ?? _favorites;
             return $"市场收录 {_catalog.Length} 个插件";
         });
+
+        private static async Task<T> OptionalMarketData<T>(Func<Task<T>> load) where T : class
+        {
+            try { return await load(); }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or JsonException
+                or OperationCanceledException or InvalidOperationException or KeyNotFoundException) { return null; }
+        }
 
         private void OnSearch(object sender, TextChangedEventArgs e) => Render();
         private void OnDiscover(object sender, RoutedEventArgs e) { _showInstalled = false; Render(); }
@@ -100,9 +106,14 @@ namespace WhaleLauncher.Views
             if (file == null) return;
             await WithStatus(async () =>
             {
-                var installed = await Task.Run(() => _market.InstallLocal(file,
-                    (info, current) => Dispatcher.Invoke(() => ConfirmLocalInstall(info, current))));
+                PluginInfo selected = null;
+                var installed = await Task.Run(() => _market.InstallLocal(file, (info, current) => Dispatcher.Invoke(() =>
+                {
+                    selected = info;
+                    return ConfirmLocalInstall(info, current);
+                })));
                 if (!installed) return "已取消安装。";
+                if (selected?.IsPersona == true) _sup.NotifyPersonaChanged();
                 _showInstalled = true;
                 _category = "";
                 Search.Clear();
@@ -196,14 +207,16 @@ namespace WhaleLauncher.Views
                                 + "\n授权持续到停用插件。是否启用？", "启用消息插件", okText: "启用"))
                                 return Task.FromResult("已取消启用");
                             _market.SetEnabled(info.Id, !enabled, fullAccessApproved: info.IsJavaScript);
+                            if (info.IsPersona) _sup.NotifyPersonaChanged();
                             return Task.FromResult(enabled ? "已停用" : info.IsJavaScript
                                 ? "插件已授权；还需打开 JavaScript 总开关并启动内核。" : info.IsPersona
-                                ? "已启用，点击「设置」可预览和应用人设。"
+                                ? "已启用，可在人设页选择，也可点「设置」预览和应用。"
                                 : "已启用，点击「设置」即可使用。");
                         });
                         AddButton(buttons, "卸载", () =>
                         {
                             _market.Uninstall(info.Id);
+                            if (info.IsPersona) _sup.NotifyPersonaChanged();
                             return Task.FromResult("已卸载");
                         }, false);
                         var settings = new Button { Content = "设置", Style = (Style)FindResource("Ghost"),
@@ -224,11 +237,12 @@ namespace WhaleLauncher.Views
                         AddButton(buttons, current == null ? "安装" : "更新", async () =>
                         {
                             await _market.InstallAsync(info);
+                            if (info.IsPersona) _sup.NotifyPersonaChanged();
                             return "已安装 v" + info.Version + "，可在「已安装」管理。";
                         });
                     else body.Children.Add(Small("已安装"));
                     var listing = _showInstalled ? _catalog.FirstOrDefault(p => p.Id == info.Id) : info;
-                    AddFeedback(body, listing?.DiscussionIssue ?? 0);
+                    if (listing != null) AddMarketActivity(body, listing);
                     if (column == 0) Cards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
                     Grid.SetRow(card, index / columns);
                     Grid.SetColumn(card, column);
@@ -244,37 +258,43 @@ namespace WhaleLauncher.Views
             catch (Exception ex) { Status.Text = "读取插件失败：" + ex.Message; }
         }
 
-        private void AddFeedback(Panel card, int issue)
+        private void AddMarketActivity(Panel card, PluginInfo listing)
         {
-            if (issue <= 0)
-            {
-                card.Children.Add(Small("评论与收藏 · 暂未开放"));
-                return;
-            }
-            _feedback.TryGetValue(issue, out var stats);
+            var issue = listing.DiscussionIssue;
             var row = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
             card.Children.Add(row);
-            AddButton(row, "评论 " + (stats?.Comments.ToString() ?? "—"), () => OpenFeedback(issue, "#new_comment_field"), false);
-            AddButton(row, "♡ 收藏 " + (stats?.Favorites.ToString() ?? "—"), () => OpenFeedback(issue, ""), false);
+            if (issue > 0)
+            {
+                _feedback.TryGetValue(issue, out var stats);
+                AddButton(row, "评论 " + (stats?.Comments.ToString() ?? "—"), () => OpenFeedback(issue), false);
+            }
+
+            _favorites.TryGetValue(listing.Id, out var favorite);
+            var favorited = favorite?.Favorited == true;
+            AddButton(row, (favorited ? "♥ 已收藏 " : "♡ 收藏 ") + (favorite?.Count.ToString("N0") ?? "—"), async () =>
+            {
+                var saved = await _market.SetFavoriteAsync(listing.Id, !favorited);
+                _favorites[listing.Id] = saved;
+                return saved.Favorited ? "已收藏" : "已取消收藏";
+            }, false);
         }
 
-        private static Task<string> OpenFeedback(int issue, string fragment)
+        private static Task<string> OpenFeedback(int issue)
         {
-            var url = $"https://github.com/Banan1cee/whale-girl-plugins/issues/{issue}{fragment}";
+            var url = $"https://github.com/Banan1cee/whale-girl-plugins/issues/{issue}#new_comment_field";
             using var browser = Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            return Task.FromResult("在 GitHub 登录后可以评论或点爱心。");
+            return Task.FromResult("在 GitHub 登录后可以评论。");
         }
 
         private async Task ShowPersonaSettings(PluginInfo info)
         {
             var panel = new StackPanel();
             panel.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80), Style = (Style)FindResource("H1") });
-            var hint = Small(_sup.NodeRunning ? "正在加载预览…" : "请先启动内核，再打开设置预览和应用。");
+            var hint = Small("正在加载预览…");
             panel.Children.Add(hint);
             ShowDetail(panel);
-            if (!_sup.NodeRunning) return;
             var id = "market-" + info.Id;
-            var preview = await Api.Get(_sup.Url, "/api/persona/preset?id=" + Uri.EscapeDataString(id));
+            var preview = await _sup.PreviewPersonaPresetAsync(id);
             if (!preview.Ok)
             {
                 hint.Text = "预览失败：" + Api.Message(preview);
@@ -313,7 +333,8 @@ namespace WhaleLauncher.Views
                 apply.IsEnabled = false;
                 try
                 {
-                    var result = await Api.PostJson(_sup.Url, "/api/persona/preset", new { id });
+                    var result = await _sup.SaveConfigurationAsync("/api/persona/preset", new { id });
+                    if (result.Ok) _sup.NotifyPersonaChanged();
                     hint.Text = result.Ok ? "已应用人设。" : "应用失败：" + Api.Message(result);
                 }
                 finally { apply.IsEnabled = true; }

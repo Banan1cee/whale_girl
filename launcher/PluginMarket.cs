@@ -40,13 +40,16 @@ namespace WhaleLauncher
             + (string.IsNullOrEmpty(range.MaxAppVersion)
                 ? $"鲸鲸 {range.MinAppVersion} 及以上" : $"鲸鲸 {range.MinAppVersion} – {range.MaxAppVersion}")));
     }
-    internal sealed record PluginFeedback(int Comments, int Favorites);
+    internal sealed record PluginFeedback(int Comments);
+    internal sealed record MarketFavorite(string Id, long Count, bool Favorited);
     internal sealed record PluginPackage(PluginInfo Info, byte[] Module, string Prompt = null, string Persona = null);
 
     internal sealed class PluginMarket
     {
         internal const string CatalogUrl = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index.json";
         internal const string DigestAction = "chat.summary";
+        private const string MarketApi = "https://api.github.com/repos/Banan1cee/whale-girl-plugins";
+        private const string FavoritesUrl = "https://whalegirl-market-favorites.chrisgao0312.workers.dev/api/favorites";
 
         // 市场签名暂时隐藏：验签代码、内置公钥和签名工具都保留，恢复时把这里改成 true 即可。
         // 关闭时目录不再拉取 .sig、条目里的 Signature 只解析不校验，卡片也不显示签名状态，
@@ -381,20 +384,100 @@ namespace WhaleLauncher
                 && Regex.IsMatch(i.Sha256 ?? "", @"\A[0-9a-fA-F]{64}\z")).ToArray();
         }
 
-        internal static async Task<Dictionary<int, PluginFeedback>> FeedbackAsync()
+        internal static async Task<Dictionary<int, PluginFeedback>> FeedbackAsync(IEnumerable<PluginInfo> catalog)
         {
-            const string url = "https://api.github.com/repos/Banan1cee/whale-girl-plugins/issues?state=open&per_page=100";
-            using var payload = JsonDocument.Parse(await DownloadAsync(url, 1024 * 1024, feedback: true));
+            var remaining = catalog.Select(plugin => plugin.DiscussionIssue).Where(number => number > 0).ToHashSet();
             var feedback = new Dictionary<int, PluginFeedback>();
-            foreach (var issue in payload.RootElement.EnumerateArray())
+            for (var page = 1; remaining.Count > 0; page++)
             {
-                if (issue.TryGetProperty("pull_request", out _)) continue;
-                var number = issue.GetProperty("number").GetInt32();
-                var comments = issue.GetProperty("comments").GetInt32();
-                var favorites = issue.GetProperty("reactions").GetProperty("heart").GetInt32();
-                feedback[number] = new PluginFeedback(comments, favorites);
+                var url = $"{MarketApi}/issues?state=all&per_page=100&page={page}";
+                using var payload = JsonDocument.Parse(await DownloadAsync(url, 1024 * 1024, feedback: true));
+                foreach (var issue in payload.RootElement.EnumerateArray())
+                {
+                    if (issue.TryGetProperty("pull_request", out _)) continue;
+                    var number = issue.GetProperty("number").GetInt32();
+                    if (!remaining.Remove(number)) continue;
+                    var comments = issue.GetProperty("comments").GetInt32();
+                    feedback[number] = new PluginFeedback(comments);
+                }
+                if (payload.RootElement.GetArrayLength() < 100) break;
             }
             return feedback;
+        }
+
+        internal async Task<Dictionary<string, MarketFavorite>> FavoritesAsync(IEnumerable<string> ids)
+        {
+            var favorites = new Dictionary<string, MarketFavorite>(StringComparer.Ordinal);
+            foreach (var batch in ids.Where(ValidId).Distinct().Chunk(64))
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get,
+                    FavoritesUrl + "?ids=" + Uri.EscapeDataString(string.Join(",", batch)));
+                var states = await SendFavoriteRequest(request);
+                foreach (var id in batch)
+                {
+                    if (!states.TryGetValue(id, out var state)) throw new InvalidDataException("收藏统计缺少插件数据");
+                    favorites.Add(id, state);
+                }
+            }
+            return favorites;
+        }
+
+        internal async Task<MarketFavorite> SetFavoriteAsync(string id, bool favorited)
+        {
+            if (!ValidId(id)) throw new InvalidDataException("插件 ID 无效");
+            using var request = new HttpRequestMessage(HttpMethod.Put, FavoritesUrl)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { id, favorited }), Encoding.UTF8, "application/json")
+            };
+            var states = await SendFavoriteRequest(request);
+            if (!states.TryGetValue(id, out var state) || state.Favorited != favorited)
+                throw new InvalidDataException("未收到收藏确认");
+            return state;
+        }
+
+        private async Task<Dictionary<string, MarketFavorite>> SendFavoriteRequest(HttpRequestMessage request)
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", FavoriteInstallationKey());
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (!response.IsSuccessStatusCode) throw new HttpRequestException("暂时无法连接收藏服务，请稍后重试");
+            await response.Content.LoadIntoBufferAsync(32 * 1024, timeout.Token);
+            return ParseFavoriteStates(await response.Content.ReadAsByteArrayAsync(timeout.Token));
+        }
+
+        internal static Dictionary<string, MarketFavorite> ParseFavoriteStates(byte[] json)
+        {
+            using var payload = JsonDocument.Parse(json);
+            var states = new Dictionary<string, MarketFavorite>(StringComparer.Ordinal);
+            foreach (var item in payload.RootElement.GetProperty("favorites").EnumerateArray())
+            {
+                var id = item.GetProperty("id").GetString();
+                var count = item.GetProperty("count").GetInt64();
+                var favorited = item.GetProperty("favorited").GetBoolean();
+                if (!ValidId(id) || count < 0 || (favorited && count == 0) || !states.TryAdd(id, new(id, count, favorited)))
+                    throw new InvalidDataException("收藏统计格式无效");
+            }
+            return states;
+        }
+
+        private string FavoriteInstallationKey()
+        {
+            EnsureRoot();
+            var file = FileFor("market-favorites", ".key");
+            if (!File.Exists(file))
+            {
+                var temporary = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    File.WriteAllText(temporary, Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32)));
+                    try { File.Move(temporary, file); }
+                    catch (IOException) when (File.Exists(file)) { }
+                }
+                finally { File.Delete(temporary); }
+            }
+            var key = File.ReadAllText(FileFor("market-favorites", ".key"));
+            if (!Regex.IsMatch(key, @"\A[0-9a-f]{64}\z")) throw new InvalidDataException("本地收藏凭据无效");
+            return key;
         }
 
         private string FileFor(string id, string suffix)

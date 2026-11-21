@@ -17,17 +17,19 @@ namespace WhaleLauncher
 
         public LocalConfiguration(string root) { _root = root; }
 
-        public Task<ApiResult> ReadAsync(string path) => RunAsync(path, null);
+        public Task<ApiResult> ReadAsync(string path, bool forceRefresh = false) => RunAsync(path, null, forceRefresh);
+        public Task<ApiResult> PreviewPersonaPresetAsync(string id) => RunAsync(null, null, presetId: id);
 
         public Task<ApiResult> SaveAsync(string path, object body)
             => RunAsync(path, JsonSerializer.Serialize(new { path, body }));
 
-        private async Task<ApiResult> RunAsync(string path, string request)
+        private async Task<ApiResult> RunAsync(string path, string request, bool forceRefresh = false, string presetId = null)
         {
             await _gate.WaitAsync();
             try
             {
-                if (request != null || _snapshot.ValueKind != JsonValueKind.Object || DateTime.UtcNow - _loadedAt > TimeSpan.FromSeconds(2))
+                if (request != null || presetId != null || forceRefresh || _snapshot.ValueKind != JsonValueKind.Object
+                    || DateTime.UtcNow - _loadedAt > TimeSpan.FromSeconds(2))
                 {
                     var node = Path.Combine(_root, "runtime", "node.exe");
                     var info = new ProcessStartInfo
@@ -46,11 +48,16 @@ namespace WhaleLauncher
                         info.StandardInputEncoding = new UTF8Encoding(false);
                         _snapshot = default;
                     }
+                    if (presetId != null)
+                    {
+                        info.ArgumentList.Add("--preview-preset");
+                        info.ArgumentList.Add(presetId);
+                    }
                     var command = await ProcessRunner.RunAsync(info, request, TimeSpan.FromSeconds(8));
                     if (!command.Success) throw new IOException("无法读取本地配置，请检查配置文件格式与目录权限。");
                     var text = command.Output;
                     using var doc = JsonDocument.Parse(text);
-                    if (request != null)
+                    if (request != null || presetId != null)
                     {
                         var result = new ApiResult { Root = doc.RootElement.Clone() };
                         result.Ok = result.Bool("ok");
