@@ -28,6 +28,7 @@ namespace WhaleLauncher.Views
         private bool _loading;
         private bool _loaded;
         private bool _loadedOnline;
+        private int _loadedPersonaRevision = -1;
         private bool _loadInProgress;
         private bool _applyingPreset;
         private long _editRevision;
@@ -73,7 +74,7 @@ namespace WhaleLauncher.Views
         public async Task RefreshAsync()
         {
             if (_applyingPreset) return;
-            if (_loaded && _loadedOnline == _sup.NodeRunning)
+            if (_loaded && _loadedOnline == _sup.NodeRunning && _loadedPersonaRevision == _sup.PersonaRevision)
             {
                 // 状态定时器每两秒调用此方法，不能反复回填表单。
                 return;
@@ -87,9 +88,12 @@ namespace WhaleLauncher.Views
             if (_loadInProgress) return;
             _loadInProgress = true;
             var revision = _editRevision;
+            var personaRevision = _sup.PersonaRevision;
+            var online = _sup.NodeRunning;
             try
             {
-            var res = await _sup.ReadConfigurationAsync("/api/persona");
+            var res = await _sup.ReadConfigurationAsync("/api/persona",
+                forceRefresh: _loadedPersonaRevision != personaRevision);
             if (!res.Ok) { SaveState.Text = res.Error; return; }
 
             var set = await _sup.ReadConfigurationAsync("/api/settings");
@@ -162,9 +166,9 @@ namespace WhaleLauncher.Views
             _savedRevision = revision;
             _loaded = true;
 
-            await LoadPresetsAsync(_currentPresetId);
+            if (await LoadPresetsAsync(_currentPresetId)) _loadedPersonaRevision = personaRevision;
             await LoadMemoryChatsAsync();
-            _loadedOnline = _sup.NodeRunning;
+            _loadedOnline = online;
             SaveState.Text = _loadedOnline ? "" : "可保存到本地 · 启动后生效";
             PresetSaved.Text = "";
             }
@@ -281,10 +285,10 @@ namespace WhaleLauncher.Views
             return lines.Count;
         }
 
-        private async Task LoadPresetsAsync(string currentId = "")
+        private async Task<bool> LoadPresetsAsync(string currentId = "")
         {
             var res = await _sup.ReadConfigurationAsync("/api/persona/presets");
-            if (!res.Ok) return;
+            if (!res.Ok) return false;
             var items = new List<PresetItem>();
             var arr = res.Prop("presets");
             if (arr.ValueKind == JsonValueKind.Array)
@@ -326,6 +330,7 @@ namespace WhaleLauncher.Views
             }
             else PresetSaved.Text = "presets 目录里没有人设版本。";
             UpdatePresetButtons();
+            return true;
         }
 
         private void UpdatePresetButtons()

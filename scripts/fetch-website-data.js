@@ -6,22 +6,6 @@ const { describeError } = require('../src/infra/errors');
 const APP = 'Banan1cee/whale_girl';
 const MARKET = 'Banan1cee/whale-girl-plugins';
 const INDEXES = ['index.json', 'index-v2.json', 'index-v3.json', 'index-v4.json', 'index-personas.json'];
-const MARKET_RELEASE = 'plugin-packages';
-
-function marketDownloadSnapshot(release, fetchedAt = new Date().toISOString()) {
-  if (release?.tag_name !== MARKET_RELEASE || release.draft !== false || !Array.isArray(release.assets)) {
-    throw new Error('插件安装包发行数据无效');
-  }
-  const prefix = `https://github.com/${MARKET}/releases/download/${MARKET_RELEASE}/`;
-  const assets = release.assets.filter(asset => typeof asset?.name === 'string'
-    && /^[a-z0-9][a-z0-9.-]*\.zip$/.test(asset.name)
-    && asset.browser_download_url === prefix + asset.name && asset.state === 'uploaded'
-    && /^sha256:[a-f0-9]{64}$/i.test(asset.digest) && Number.isSafeInteger(asset.download_count)
-    && asset.download_count >= 0).map(({ browser_download_url, state, digest, download_count }) =>
-    ({ browser_download_url, state, digest, download_count }));
-  if (!assets.length) throw new Error('插件发行版没有可统计的安装包');
-  return { tag_name: MARKET_RELEASE, draft: false, fetchedAt, assets };
-}
 
 async function collectPages(readPage) {
   const result = [];
@@ -57,13 +41,11 @@ async function getJson(url, token) {
 
 async function fetchData(token = process.env.GH_TOKEN) {
   const api = name => `https://api.github.com/repos/${name}`;
-  const [latest, releases, head, repository, marketDownloads] = await Promise.all([
+  const [latest, releases, head, repository] = await Promise.all([
     getJson(`${api(APP)}/releases/latest`, token),
     collectPages(page => getJson(`${api(APP)}/releases?per_page=100&page=${page}`, token)),
     getJson(`${api(MARKET)}/commits/main`, token),
     getJson(api(APP), token),
-    getJson(`${api(MARKET)}/releases/tags/${MARKET_RELEASE}`, token).then(release => marketDownloadSnapshot(release))
-      .catch(error => { console.warn('插件下载快照暂不可用', describeError(error)); return null; }),
   ]);
   if (!/^[a-f0-9]{40}$/.test(head.sha)) throw new Error('插件市场源码 commit 无效');
   const catalogs = await Promise.all(INDEXES.map(async index => {
@@ -72,8 +54,7 @@ async function fetchData(token = process.env.GH_TOKEN) {
     return items.map(item => ({ ...item, SourceIndex: index }));
   }));
   if (!Number.isSafeInteger(repository.stargazers_count) || repository.stargazers_count < 0) throw new Error('GitHub Star 数量无效');
-  return { latest, releases, stars: repository.stargazers_count, plugins: catalogs.flat(), sourceCommit: head.sha,
-    fetchedAt: new Date().toISOString(), marketDownloads };
+  return { latest, releases, stars: repository.stargazers_count, plugins: catalogs.flat(), sourceCommit: head.sha, fetchedAt: new Date().toISOString() };
 }
 
 if (require.main === module) {
@@ -86,4 +67,4 @@ if (require.main === module) {
   }).catch(error => { console.error(describeError(error)); process.exitCode = 1; });
 }
 
-module.exports = { collectPages, fetchData, marketDownloadSnapshot };
+module.exports = { collectPages, fetchData };

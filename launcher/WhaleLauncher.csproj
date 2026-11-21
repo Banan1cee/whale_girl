@@ -43,7 +43,6 @@
     <EmbeddedResource Include="..\scripts\vb-cable-pack45.json" LogicalName="WhaleLauncher.VbCablePack45.json" />
     <EmbeddedResource Include="..\docs\插件安全检测.md" LogicalName="WhaleLauncher.PluginSecurityGuide.md" />
     <EmbeddedResource Include="Assets\minimax-voices.json" LogicalName="WhaleLauncher.MiniMaxVoices.json" />
-    <EmbeddedResource Include="Assets\plugin-download-counts.json" LogicalName="WhaleLauncher.PluginDownloadCounts.json" />
   </ItemGroup>
 
   <!--

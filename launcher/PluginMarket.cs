@@ -41,7 +41,6 @@ namespace WhaleLauncher
                 ? $"鲸鲸 {range.MinAppVersion} 及以上" : $"鲸鲸 {range.MinAppVersion} – {range.MaxAppVersion}")));
     }
     internal sealed record PluginFeedback(int Comments);
-    internal sealed record MarketDownloadStats(Dictionary<string, long> Counts, DateTimeOffset? SnapshotAt = null);
     internal sealed record MarketFavorite(string Id, long Count, bool Favorited);
     internal sealed record PluginPackage(PluginInfo Info, byte[] Module, string Prompt = null, string Persona = null);
 
@@ -50,11 +49,6 @@ namespace WhaleLauncher
         internal const string CatalogUrl = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index.json";
         internal const string DigestAction = "chat.summary";
         private const string MarketApi = "https://api.github.com/repos/Banan1cee/whale-girl-plugins";
-        private const string PackageReleaseTag = "plugin-packages";
-        private const string PackageReleaseUrl = "https://github.com/Banan1cee/whale-girl-plugins/releases/download/" + PackageReleaseTag + "/";
-        private const string DownloadSnapshotUrl = "https://bot.zyyc.cc/plugins/download-counts.json";
-        private const string DownloadSnapshotResource = "WhaleLauncher.PluginDownloadCounts.json";
-        private const int DownloadStatisticsLimit = 2 * 1024 * 1024;
         private const string FavoritesUrl = "https://whalegirl-market-favorites.chrisgao0312.workers.dev/api/favorites";
 
         // 市场签名暂时隐藏：验签代码、内置公钥和签名工具都保留，恢复时把这里改成 true 即可。
@@ -300,7 +294,7 @@ namespace WhaleLauncher
             {
                 var allowedHost = uri.Host is "raw.githubusercontent.com" or "github.com" or "release-assets.githubusercontent.com"
                     or "objects.githubusercontent.com" or "cdn.jsdelivr.net" or "gh-proxy.com" or "ghfast.top"
-                    || (feedback && (uri.Host == "api.github.com" || uri.AbsoluteUri == DownloadSnapshotUrl));
+                    || (feedback && uri.Host == "api.github.com");
                 if (uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort || uri.UserInfo.Length != 0 || !allowedHost)
                     throw new InvalidDataException("插件下载地址须使用 GitHub HTTPS");
                 using var response = await Http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
@@ -409,63 +403,6 @@ namespace WhaleLauncher
                 if (payload.RootElement.GetArrayLength() < 100) break;
             }
             return feedback;
-        }
-
-        internal static string CountedDownloadUrl(PluginInfo plugin) => $"{PackageReleaseUrl}{plugin.Id}-{plugin.Version}.zip";
-
-        internal static async Task<MarketDownloadStats> DownloadCountsAsync(PluginInfo[] catalog)
-        {
-            foreach (var url in new[] { $"{MarketApi}/releases/tags/{PackageReleaseTag}", DownloadSnapshotUrl })
-            {
-                try
-                {
-                    var bytes = await DownloadOnce(url, DownloadStatisticsLimit, feedback: true);
-                    var stats = url == DownloadSnapshotUrl ? ParseDownloadSnapshot(bytes, catalog)
-                        : new MarketDownloadStats(ParseDownloadCounts(bytes, catalog));
-                    if (stats.Counts.Count > 0) return stats;
-                }
-                catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException
-                    or OperationCanceledException or JsonException or InvalidOperationException or KeyNotFoundException)
-                { /* 直连限流时读官网，官网快照不可用时读启动器内置快照。 */ }
-            }
-
-            using var snapshot = typeof(PluginMarket).Assembly.GetManifestResourceStream(DownloadSnapshotResource);
-            return snapshot == null ? new(new()) : ParseDownloadSnapshot(ReadLimited(snapshot, DownloadStatisticsLimit), catalog);
-        }
-
-        internal static MarketDownloadStats ParseDownloadSnapshot(byte[] snapshot, IEnumerable<PluginInfo> catalog)
-        {
-            using var payload = JsonDocument.Parse(snapshot);
-            var root = payload.RootElement;
-            if (!root.GetProperty("fetchedAt").TryGetDateTimeOffset(out var fetchedAt))
-                throw new InvalidDataException("下载统计时间无效");
-            return new(ParseDownloadCounts(root, catalog), fetchedAt);
-        }
-
-        internal static Dictionary<string, long> ParseDownloadCounts(byte[] release, IEnumerable<PluginInfo> catalog)
-        {
-            using var payload = JsonDocument.Parse(release);
-            return ParseDownloadCounts(payload.RootElement, catalog);
-        }
-
-        private static Dictionary<string, long> ParseDownloadCounts(JsonElement root, IEnumerable<PluginInfo> catalog)
-        {
-            var known = catalog.ToDictionary(CountedDownloadUrl, plugin => "sha256:" + plugin.Sha256);
-            var counts = new Dictionary<string, long>();
-            if (root.GetProperty("tag_name").GetString() != PackageReleaseTag || root.GetProperty("draft").GetBoolean())
-                return counts;
-
-            foreach (var asset in root.GetProperty("assets").EnumerateArray())
-            {
-                var url = asset.GetProperty("browser_download_url").GetString();
-                if (url != null && known.TryGetValue(url, out var digest)
-                    && asset.GetProperty("state").GetString() == "uploaded"
-                    && asset.TryGetProperty("digest", out var actual) && actual.ValueKind == JsonValueKind.String
-                    && string.Equals(actual.GetString(), digest, StringComparison.OrdinalIgnoreCase)
-                    && asset.GetProperty("download_count").TryGetInt64(out var count) && count >= 0)
-                    counts[url] = count;
-            }
-            return counts;
         }
 
         internal async Task<Dictionary<string, MarketFavorite>> FavoritesAsync(IEnumerable<string> ids)
@@ -641,20 +578,9 @@ namespace WhaleLauncher
             }
         }
 
-        internal async Task InstallAsync(PluginInfo listing, bool countGitHubDownload = false)
+        internal async Task InstallAsync(PluginInfo listing)
         {
-            byte[] bytes;
-            try
-            {
-                bytes = countGitHubDownload
-                    ? await DownloadOnce(CountedDownloadUrl(listing), PackageLimit, stopOnNotFound: true)
-                    : await DownloadAsync(listing.Download, PackageLimit);
-            }
-            catch (Exception ex) when (countGitHubDownload && ex is (IOException or HttpRequestException
-                or OperationCanceledException or InvalidDataException))
-            {
-                bytes = await DownloadAsync(listing.Download, PackageLimit);
-            }
+            var bytes = await DownloadAsync(listing.Download, PackageLimit);
             // 签名暂时隐藏：恢复 MarketSignatureEnabled 后，条目里带了 Signature 就必须验过。
             if (MarketSignatureEnabled && !string.IsNullOrWhiteSpace(listing.Signature) && !PluginTrust.Verify(bytes, listing.Signature))
                 throw new InvalidDataException("插件包签名无效，已拒绝安装");

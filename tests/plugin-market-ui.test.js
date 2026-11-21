@@ -58,6 +58,18 @@ test('本地安装提示来源和替换版本，人设页应用市场预设须�
   assert.match(persona, /StartsWith\("market-", StringComparison\.Ordinal\)[\s\S]*AppDialog\.Confirm\([\s\S]*\) return;\s+var res/);
 });
 
+test('市场人设的启用和应用会刷新人设页，设置可在内核停着时使用', () => {
+  const market = read('launcher/Views/PluginMarketPage.xaml.cs');
+  const persona = read('launcher/Views/PersonaPage.xaml.cs');
+  const preview = market.slice(market.indexOf('private async Task ShowPersonaSettings('), market.indexOf('private void ShowDetail('));
+  assert.match(market, /SetEnabled\(info\.Id, !enabled[^\n]*\n\s*if \(info\.IsPersona\) _sup\.NotifyPersonaChanged/);
+  assert.match(preview, /_sup\.PreviewPersonaPresetAsync\(id\)/);
+  assert.match(preview, /SaveConfigurationAsync\("\/api\/persona\/preset"[^\n]*\n\s*if \(result\.Ok\) _sup\.NotifyPersonaChanged/);
+  assert.doesNotMatch(preview, /NodeRunning/);
+  assert.match(persona, /_loadedPersonaRevision == _sup\.PersonaRevision/);
+  assert.match(persona, /forceRefresh: _loadedPersonaRevision != personaRevision/);
+});
+
 test('市场签名暂时隐藏，验签代码、公钥和签名工具保留', () => {
   const market = read('launcher/PluginMarket.cs');
   const trust = read('launcher/PluginTrust.cs');

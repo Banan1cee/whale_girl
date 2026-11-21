@@ -20,7 +20,6 @@ namespace WhaleLauncher.Views
         private readonly string _version;
         private PluginInfo[] _catalog = [];
         private Dictionary<int, PluginFeedback> _feedback = new();
-        private MarketDownloadStats _downloads = new(new());
         private Dictionary<string, MarketFavorite> _favorites = new();
         private string _category = "";
         private bool _showInstalled;
@@ -62,10 +61,8 @@ namespace WhaleLauncher.Views
             _catalog = await PluginMarket.CatalogAsync();
             Render();
             var feedback = OptionalMarketData(() => PluginMarket.FeedbackAsync(_catalog));
-            var downloads = OptionalMarketData(() => PluginMarket.DownloadCountsAsync(_catalog));
             var favorites = OptionalMarketData(() => _market.FavoritesAsync(_catalog.Select(plugin => plugin.Id)));
             _feedback = await feedback ?? _feedback;
-            _downloads = await downloads ?? _downloads;
             _favorites = await favorites ?? _favorites;
             return $"市场收录 {_catalog.Length} 个插件";
         });
@@ -109,9 +106,14 @@ namespace WhaleLauncher.Views
             if (file == null) return;
             await WithStatus(async () =>
             {
-                var installed = await Task.Run(() => _market.InstallLocal(file,
-                    (info, current) => Dispatcher.Invoke(() => ConfirmLocalInstall(info, current))));
+                PluginInfo selected = null;
+                var installed = await Task.Run(() => _market.InstallLocal(file, (info, current) => Dispatcher.Invoke(() =>
+                {
+                    selected = info;
+                    return ConfirmLocalInstall(info, current);
+                })));
                 if (!installed) return "已取消安装。";
+                if (selected?.IsPersona == true) _sup.NotifyPersonaChanged();
                 _showInstalled = true;
                 _category = "";
                 Search.Clear();
@@ -205,14 +207,16 @@ namespace WhaleLauncher.Views
                                 + "\n授权持续到停用插件。是否启用？", "启用消息插件", okText: "启用"))
                                 return Task.FromResult("已取消启用");
                             _market.SetEnabled(info.Id, !enabled, fullAccessApproved: info.IsJavaScript);
+                            if (info.IsPersona) _sup.NotifyPersonaChanged();
                             return Task.FromResult(enabled ? "已停用" : info.IsJavaScript
                                 ? "插件已授权；还需打开 JavaScript 总开关并启动内核。" : info.IsPersona
-                                ? "已启用，点击「设置」可预览和应用人设。"
+                                ? "已启用，可在人设页选择，也可点「设置」预览和应用。"
                                 : "已启用，点击「设置」即可使用。");
                         });
                         AddButton(buttons, "卸载", () =>
                         {
                             _market.Uninstall(info.Id);
+                            if (info.IsPersona) _sup.NotifyPersonaChanged();
                             return Task.FromResult("已卸载");
                         }, false);
                         var settings = new Button { Content = "设置", Style = (Style)FindResource("Ghost"),
@@ -232,7 +236,8 @@ namespace WhaleLauncher.Views
                     else if (current == null || Version.Parse(info.Version) > Version.Parse(current.Version))
                         AddButton(buttons, current == null ? "安装" : "更新", async () =>
                         {
-                            await _market.InstallAsync(info, _downloads.Counts.ContainsKey(PluginMarket.CountedDownloadUrl(info)));
+                            await _market.InstallAsync(info);
+                            if (info.IsPersona) _sup.NotifyPersonaChanged();
                             return "已安装 v" + info.Version + "，可在「已安装」管理。";
                         });
                     else body.Children.Add(Small("已安装"));
@@ -256,18 +261,8 @@ namespace WhaleLauncher.Views
         private void AddMarketActivity(Panel card, PluginInfo listing)
         {
             var issue = listing.DiscussionIssue;
-            var hasCount = _downloads.Counts.TryGetValue(PluginMarket.CountedDownloadUrl(listing), out var downloads);
             var row = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
             card.Children.Add(row);
-            var count = Small("发行包下载 " + (hasCount ? downloads.ToString("N0") : "—"));
-            var statisticsNote = "从本版本 ZIP 上传至 GitHub Release 后开始统计，可能包含重复下载。仓库原始文件和镜像的下载不计入。";
-            count.ToolTip = hasCount && _downloads.SnapshotAt is { } fetchedAt
-                ? $"{statisticsNote} 快照更新于 {fetchedAt.ToLocalTime():yyyy-MM-dd HH:mm}。"
-                : statisticsNote;
-            count.Margin = new Thickness(0, 0, 8, 0);
-            count.VerticalAlignment = VerticalAlignment.Center;
-            row.Children.Add(count);
-
             if (issue > 0)
             {
                 _feedback.TryGetValue(issue, out var stats);
@@ -295,12 +290,11 @@ namespace WhaleLauncher.Views
         {
             var panel = new StackPanel();
             panel.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80), Style = (Style)FindResource("H1") });
-            var hint = Small(_sup.NodeRunning ? "正在加载预览…" : "请先启动内核，再打开设置预览和应用。");
+            var hint = Small("正在加载预览…");
             panel.Children.Add(hint);
             ShowDetail(panel);
-            if (!_sup.NodeRunning) return;
             var id = "market-" + info.Id;
-            var preview = await Api.Get(_sup.Url, "/api/persona/preset?id=" + Uri.EscapeDataString(id));
+            var preview = await _sup.PreviewPersonaPresetAsync(id);
             if (!preview.Ok)
             {
                 hint.Text = "预览失败：" + Api.Message(preview);
@@ -339,7 +333,8 @@ namespace WhaleLauncher.Views
                 apply.IsEnabled = false;
                 try
                 {
-                    var result = await Api.PostJson(_sup.Url, "/api/persona/preset", new { id });
+                    var result = await _sup.SaveConfigurationAsync("/api/persona/preset", new { id });
+                    if (result.Ok) _sup.NotifyPersonaChanged();
                     hint.Text = result.Ok ? "已应用人设。" : "应用失败：" + Api.Message(result);
                 }
                 finally { apply.IsEnabled = true; }

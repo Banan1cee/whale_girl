@@ -62,6 +62,28 @@ test('短进程只输出有效配置 JSON，不启动聊天服务；配置变化
   assert.equal(fs.existsSync(path.join(root, 'data/server-port.txt')), false);
 });
 
+test('停着内核也能预览并应用刚启用的人设包，停用后无法再次预览', (t) => {
+  const root = fixture(t);
+  const script = path.resolve(__dirname, '../src/services/launcherSnapshot.js');
+  const id = 'market-gentle';
+  const run = (args, input) => JSON.parse(execFileSync(process.execPath, [script, ...args], {
+    cwd: root, encoding: 'utf8', timeout: 15000, input,
+  }));
+  const preview = () => run(['--preview-preset', id]);
+  assert.equal(preview().ok, false);
+  fs.mkdirSync(path.join(root, 'data/plugins'));
+  write(root, 'data/plugins/gentle.persona.json', { schemaVersion: 1, name: '温和人设', version: '1.0.0',
+    personaName: '小鱼', personality: '沉静', customPrompt: '' });
+  assert.equal(preview().patch.name, '小鱼');
+  assert.ok(run([])['/api/persona/presets'].presets.some(p => p.id === id));
+  assert.equal(run(['--save'], JSON.stringify({ path: '/api/persona/preset', body: { id } })).ok, true);
+  assert.equal(run([])['/api/persona'].persona.sourcePreset, id);
+  fs.unlinkSync(path.join(root, 'data/plugins/gentle.persona.json'));
+  assert.equal(preview().ok, false);
+  assert.ok(!run([])['/api/persona/presets'].presets.some(p => p.id === id));
+  assert.equal(fs.existsSync(path.join(root, 'data/server-port.txt')), false);
+});
+
 
 test('offline saves persist model, persona and Moments settings without launching the service', (t) => {
   const root = fixture(t);
