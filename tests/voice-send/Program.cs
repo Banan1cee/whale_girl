@@ -16,6 +16,7 @@ class Program {
  VbCableChecks.Run(dir);
  await StreamingWaveChecks.Run(dir);
  await ProviderChecks.Run(dir);
+ await DeepSeekChecks.Run(dir);
  await LatencyChecks.Run(dir);
  await AutoVoiceChecks.Run(dir);
  ExperimentalVoiceChecks.Run(dir);
