@@ -344,9 +344,14 @@ function importSession({ chatStore, key, session, sourceName, now, logger, dryRu
 
   const applied = applyNotes({ chat, chatStore, plan, now });
 
-  const summaryText = String(session.summary || '').trim();
-  const covered = Math.min(messages.length, Math.max(0, Number(session.summaryUpto) || 0));
-  if (summaryText) {
+  const legacySummary = session.summary;
+  const legacyText = typeof legacySummary === 'string' ? legacySummary : legacySummary?.text;
+  const summaryText = typeof legacyText === 'string' ? legacyText.trim() : '';
+  const legacyCoverage = [legacySummary?.uptoSeq, session.summaryUpto]
+    .filter((seq) => typeof seq === 'number' || typeof seq === 'string')
+    .map(Number).find((seq) => Number.isSafeInteger(seq) && seq > 0);
+  const covered = Math.min(messages.length, legacyCoverage || 0);
+  if (summaryText && summaryText !== '[object Object]' && covered > 0) {
     chat.summary = {
       chatId,
       episodeId: 'legacy',

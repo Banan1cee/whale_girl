@@ -213,13 +213,12 @@ async function closeEpisode({ chat, chatStore, llm = null, logger = null, now = 
     // coverage 由 applySegment 在摘要真正写入后推进，失败时 recent 仍能看到原文。
     // 关闭不等于失忆：这一段的最终摘要留在 summary 里（后续事件段继续合并，上限 900 token），
     // 原文仍在 messages.jsonl；只是不再占 prompt 的 recent 缓冲。
-    if (summaryText) {
-      compression.applySegment(chat, {
-        text: summaryText,
-        fromSeq: ep.messageSeqFrom,
-        toSeq: ep.messageSeqTo,
-        now,
-      });
+    if (compression.applySegment(chat, {
+      text: summaryText,
+      fromSeq: ep.messageSeqFrom,
+      toSeq: ep.messageSeqTo,
+      now,
+    })) {
       chat.summary.episodeId = ep.id;
     }
     if (chat.meta.episode && chat.meta.episode.id === ep.id) chat.meta.episode = null;
