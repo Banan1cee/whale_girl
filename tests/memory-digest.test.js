@@ -109,6 +109,37 @@ test('摘要超过 900：合并最旧段，不直接丢事实', () => {
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 });
 });
 
+test('连续折叠旧摘要只保留一层更早前缀', () => {
+  const chat = { summary: { segments: [], coveredThroughSeq: 0 } };
+  for (let seq = 1; seq <= 8; seq++) {
+    const text = ('旧事' + seq).repeat(40);
+    assert.equal(compression.applySegment(chat, { text, fromSeq: seq, toSeq: seq, summaryTokens: 100 }), true);
+  }
+  assert.match(chat.summary.segments[0].text, /^更早：(?!更早：)/);
+  assert.equal(chat.summary.coveredThroughSeq, 8);
+  assert.ok(chat.summary.tokens <= 100);
+});
+
+test('对象和无效范围的摘要不推进原文覆盖线', () => {
+  const chat = { summary: { segments: [], coveredThroughSeq: 0 } };
+  for (const segment of [
+    { text: { text: '无效对象' }, fromSeq: 1, toSeq: 2 },
+    { text: '[object Object]', fromSeq: 1, toSeq: 2 },
+    { text: '区间反向', fromSeq: 2, toSeq: 1 },
+    { text: '非整数区间', fromSeq: 1, toSeq: 1.5 },
+  ]) {
+    assert.equal(compression.applySegment(chat, segment), false);
+  }
+  assert.deepEqual(chat.summary, { segments: [], coveredThroughSeq: 0 });
+});
+
+test('模型返回对象而非字符串时不会写入摘要', async () => {
+  const result = await compression.llmSummary([{ role: 'user', text: '测试' }], {
+    async complete() { return '{"summary":{"text":"无效对象"}}'; },
+  });
+  assert.equal(result, '');
+});
+
 test('llmSummary：能从代码块里抠出摘要；格式不对返回空', async () => {
   const ok = await compression.llmSummary([{ role: 'user', name: '小海', text: '在吗' }], {
     isMock: false,
