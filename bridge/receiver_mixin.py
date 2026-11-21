@@ -108,13 +108,14 @@ def _nested_quote_text(quoted):
 
 
 def parse_quote_content(content):
-    """把微信的引用消息 XML 拆成 (被引用者, 被引用正文, 这次新打的字)。
+    """拆出被引用者、原文、新回复和被引用图片的服务器 ID。
 
     微信的引用回复是 appmsg（57<<32|49，类型名落到「文件/链接/卡片」），正文
     是一条没有 <url> 的 XML，原来的处理找不到链接就把整条丢掉 —— 用户「引用一句
     再回」时机器人像没收到。这里取 <refermsg> 里的昵称和原话，再取出引用者这次
     真正打的字：老版本在最后一个 </msg> 之后，微信 4.x 放在 <title> 里。
 
+    图片 ID 为 '' 表示引用了图片但未提供 ID，为 None 表示普通引用。
     没有完整引用结构或类型不符时返回 None，交给原来的类型分支处理。
     """
     if '<refermsg' not in str(content or ''):
@@ -135,7 +136,8 @@ def parse_quote_content(content):
     if len(apps) > 1:
         return None
     envelope = apps[0] if apps else root
-    if len(envelope.findall('refermsg')) != 1:
+    references = envelope.findall('refermsg')
+    if len(references) != 1:
         return None
     quote_type = envelope.findtext('type')
     if quote_type is not None and quote_type.strip() != '57':
@@ -152,15 +154,22 @@ def parse_quote_content(content):
     tail = html.unescape(content.rsplit('</msg>', 1)[-1]).strip() if '</msg>' in content else ''
     title = re.search(r'<title>(.*?)</title>', content, re.S)
     reply = tail or (html.unescape(title.group(1)).strip() if title else '')
-    return quoted_by, quoted, reply
+    reference = references[0]
+    image_id = reference.findtext('svrid', '').strip() if reference.findtext('type', '').strip() == '3' else None
+    return quoted_by, quoted, reply, image_id
 
 
-def quote_content_text(content):
-    """引用消息转成给模型看的正文；没有可用的引用内容时返回空串。"""
-    parsed = parse_quote_content(content)
-    if parsed is None:
+def quote_content_text(quote, image_description=None):
+    """检查资格时只用图片占位，识别结果只在提交给内核前放入正文。"""
+    if quote is None:
         return None
-    quoted_by, quoted, reply = parsed
+    quoted_by, quoted, reply, image_id = quote
+    if image_id is not None:
+        if image_description:
+            return '（引用的图片，图里是：%s）%s' % (image_description, reply)
+        if image_description is not None:
+            return '（引用了一张图片，但这边没取到图，无法确认内容）' + reply
+        return '（引用了一张图片）' + reply
     if not quoted and not reply:
         return ''
     if quoted and reply:
@@ -296,6 +305,9 @@ class ReceiverMixin:
             key_missing = False
             for _attempt in range(4):
                 for _tier in ('full', 'best'):
+                    # 缩略图通常先落盘。重试窗口内只取清晰档，密钥不可用时直接走兜底。
+                    if _tier == 'best' and _attempt < 3 and not key_missing:
+                        break
                     try:
                         path = self._get_media().download_image(user, int(lid), tier=_tier, shard=shard)
                     except Exception as _e:
@@ -420,6 +432,25 @@ class ReceiverMixin:
                 msg['_media_fail'] = type(e).__name__
             G.log_throttled('img-exc:' + type(e).__name__, '图片识别失败：', repr(e))
             return ''
+
+    def describe_quoted_image(self, username, image_id):
+        """只在当前会话内精确匹配原图，再把原图的分片和本地行号交给看图。"""
+        if not re.fullmatch(r'-?[0-9]{1,19}', image_id):
+            return ''
+        server_id = int(image_id)
+        if not (-(1 << 63) <= server_id < (1 << 63)) or not server_id:
+            return ''
+
+        def find_original(tables):
+            return self.db._shard_rows(tables, 'WHERE server_id=? AND local_type=3',
+                                       (server_id,), per_shard_limit=2)
+
+        rows = self.db._run_msg_query(username, find_original) or []
+        # local_id 会跨分片撞号。缺失分片或找到了多条时，不能猜是哪张图。
+        if len(rows) != 1 or not rows[0]['shard'] or not rows[0]['local_id']:
+            return ''
+        row = rows[0]
+        return self.describe_image({'username': username, 'local_id': row['local_id'], 'shard': row['shard']})
 
     def image_ui_fallback(self, msg):
         """核实当前账号后，在限时子进程内读取目标消息的微信预览。"""
@@ -665,13 +696,19 @@ class ReceiverMixin:
                 content = '（对方发了一条语音，说的是：%s）' % said
             # 引用回复：微信存的是 appmsg XML（类型名落到「文件/链接/卡片」），
             # 原来的分支找不到 <url> 就把整条丢掉。这里先拆出被引用原话和新打的字。
-            _quote_text = quote_content_text(content) if mtype not in ('文本', '语音', '图片', '表情', '动画表情') else None
-            _quote_parsed = _quote_text is not None
+            quote = None
+            if mtype not in ('文本', '语音', '图片', '表情', '动画表情'):
+                quote_source = content
+                if username.endswith('@chatroom') and sender and content.startswith(sender + ':'):
+                    quote_source = content[len(sender) + 1:].lstrip()
+                quote = parse_quote_content(quote_source)
+            _quote_parsed = quote is not None
+            image_ref = quote[3] if _quote_parsed else None
             if _quote_parsed:
-                if not _quote_text:
+                content = quote_content_text(quote)
+                if not content:
                     skipped('引用消息里没有可读内容')
                     return
-                content = _quote_text
             if not _quote_parsed and mtype not in ('文本', '语音', '图片', '表情', '动画表情'):
                 if '移出群聊' in content or '移出' in content:
                     self.dead_chats.add(username)
@@ -723,7 +760,7 @@ class ReceiverMixin:
             # 的第二张会被当成「重复消息」丢掉。所以占位文本按消息 id 查重，
             # 只挡微信真的把同一条消息重复投递的情况。
             _guard_text = content
-            if media_placeholder:
+            if media_placeholder or image_ref is not None:
                 _guard_text = '%s#%s:%s' % (content, msg.get('shard') or '', msg.get('local_id'))
             if G.duplicate_guard(username, sender, _guard_text):
                 G.log('跳过重复消息：', G.safe_name(nickname), '：', G.safe_text(content))
@@ -780,6 +817,13 @@ class ReceiverMixin:
             except Exception:
                 _ids = set()
             _payload_names = [n for n in (_names or []) if n not in _ids]
+            if image_ref is not None:
+                description = ''
+                if self.send_policy_allows(username, self.display_name(username)):
+                    description = run_media_with_timeout(lambda: self.describe_quoted_image(username, image_ref),
+                                                         '图片', msg, G.log)
+                    G.log('引用图片读取：%s' % ('已识别' if description else '未取到或未识别'))
+                content = quote_content_text(quote, description)
             payload = {'chat_id': username, 'chat_type': 'group' if is_group else 'private', 'user_id': sender or 'unknown', 'senderId': sender or 'unknown', 'sender_id': sender or 'unknown', 'senderName': nickname, 'nickname': nickname, 'text': content, 'msg_id': '%s:%s:%s' % (username, msg.get('shard') or '', msg.get('local_id')), 'at_me': addressed, 'mentioned_names': _mentioned_names, 'self_names': _payload_names, 'chat_title': self.display_name(username) if is_group else ''}
             try:
                 headers = {'x-whale-bridge': '1'}

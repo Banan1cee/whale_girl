@@ -31,7 +31,7 @@ class ParseQuoteContentTests(unittest.TestCase):
         return self.env['parse_quote_content'](content)
 
     def text(self, content):
-        return self.env['quote_content_text'](content)
+        return self.env['quote_content_text'](self.parse(content))
 
     def test_wechat4_reply_uses_title_for_new_text(self):
         content = (
@@ -41,7 +41,7 @@ class ParseQuoteContentTests(unittest.TestCase):
             '<chatusr>wxid_b</chatusr><displayname>鲸鲸</displayname>'
             '<content>晚安啦</content><msgid>999</msgid></refermsg></appmsg></msg>'
         )
-        self.assertEqual(self.parse(content), ('鲸鲸', '晚安啦', '你怎么不回我'))
+        self.assertEqual(self.parse(content), ('鲸鲸', '晚安啦', '你怎么不回我', None))
         self.assertEqual(self.text(content), '（引用鲸鲸「晚安啦」）你怎么不回我')
 
     def test_old_format_takes_text_after_last_msg_tag(self):
@@ -49,7 +49,7 @@ class ParseQuoteContentTests(unittest.TestCase):
             '<msg><appmsg><type>57</type><refermsg><displayname>阿明</displayname>'
             '<content>今天吃啥</content></refermsg></appmsg></msg>那就吃面'
         )
-        self.assertEqual(self.parse(content), ('阿明', '今天吃啥', '那就吃面'))
+        self.assertEqual(self.parse(content), ('阿明', '今天吃啥', '那就吃面', None))
         self.assertEqual(self.text(content), '（引用阿明「今天吃啥」）那就吃面')
 
     def test_nested_quote_is_unwrapped_to_plain_text(self):
@@ -60,14 +60,14 @@ class ParseQuoteContentTests(unittest.TestCase):
         content = ('<msg><appmsg><title>收到</title><refermsg>'
                    '<displayname>阿明</displayname><content>%s</content>'
                    '</refermsg></appmsg></msg>' % inner)
-        self.assertEqual(self.parse(content), ('阿明', '带伞', '收到'))
+        self.assertEqual(self.parse(content), ('阿明', '带伞', '收到', None))
         self.assertEqual(self.text(content), '（引用阿明「带伞」）收到')
 
     def test_reply_without_quoted_text_still_reaches_the_model(self):
         content = ('<msg><appmsg><title>在吗</title><refermsg>'
                    '<displayname>鲸鲸</displayname><content></content>'
                    '</refermsg></appmsg></msg>')
-        self.assertEqual(self.parse(content), ('鲸鲸', '', '在吗'))
+        self.assertEqual(self.parse(content), ('鲸鲸', '', '在吗', None))
         self.assertEqual(self.text(content), '在吗')
 
     def test_quote_without_new_text_keeps_the_quoted_line_only(self):
