@@ -438,8 +438,6 @@ def _ensure_tree(hwnd, log=None, unhide=True, want_edit=False, wake=True):
     log = log or _noop
 
     info = read_ui(hwnd)
-    if _tree_ok(info, want_edit):
-        return info
     if wake and len(info["nodes"]) <= 1:
         log("后台通道：控件树只有 %d 个节点，直接唤醒微信（跳过 SPI/gate 空转）"
             % len(info["nodes"]))
@@ -447,7 +445,6 @@ def _ensure_tree(hwnd, log=None, unhide=True, want_edit=False, wake=True):
             info = read_ui(hwnd)
             if _tree_ok(info, want_edit):
                 log("后台通道：控件树已物化（Ctrl+Alt+W 唤醒），%d 个节点" % len(info["nodes"]))
-                return info
 
     if unhide:
         try:
@@ -458,10 +455,10 @@ def _ensure_tree(hwnd, log=None, unhide=True, want_edit=False, wake=True):
                 fg1 = user32.GetForegroundWindow()
                 log("后台通道：窗口原来隐藏/最小化，已用「显示但不激活」拉出来（前台 %s → %s%s）"
                     % (fg0, fg1, "，没抢" if fg0 == fg1 else "，**被抢了**"))
+                info = read_ui(hwnd)
         except Exception as e:
             log("后台通道：显示窗口失败 %r" % (e,))
 
-    info = read_ui(hwnd)
     if _tree_ok(info, want_edit):
         return info
     if want_edit and info["edit"] is None and len(info["nodes"]) >= MIN_NODES:
@@ -505,6 +502,23 @@ def tree_hint(nodes):
 
 
 # ---------------------------------------------------------------- 发送端（文档 §5.1）
+def _click_point_on_window(hwnd, xy):
+    """最小化时 UIA 可能保留旧矩形。只使用落在实际窗口和某块屏幕内的点。"""
+    if xy is None:
+        return False
+    try:
+        import win32api
+        import win32gui
+        if win32gui.IsIconic(hwnd) or not win32gui.IsWindowVisible(hwnd):
+            return False
+        x, y = xy
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+        return (left <= x < right and top <= y < bottom
+                and bool(win32api.MonitorFromPoint((x, y), 0)))
+    except Exception:
+        return False
+
+
 class WeChatSender:
     """只做三件事：点、写、收尾。全部不抢前台。"""
 
@@ -534,6 +548,8 @@ class WeChatSender:
           维护 `m_mouseInside`，窗口被遮挡时系统不会送这两个消息，省略
           mousemove 时点击会被直接丢弃。
         """
+        if not _click_point_on_window(self.hwnd, (sx, sy)):
+            raise ValueError("background click point is outside the displayed window")
         pt = wintypes.POINT(int(sx), int(sy))
         if not DPI_AWARE:
             # DPI 不感知：把物理坐标压回逻辑坐标，否则 150% 缩放下会点偏 1.5 倍
@@ -668,6 +684,42 @@ def _mode_from_versions(candidates):
     return ""
 
 
+def _running_wechat_versions(hwnd):
+    """按可信度读取已加载 DLL 目录、当前 EXE 版本资源和当前 EXE 目录。"""
+    import psutil
+    import win32process
+    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+    try:
+        exe = psutil.Process(pid).exe() or ""
+    except Exception:
+        exe = ""
+    versions = []
+    try:
+        from wechatauto.accessibility import AccessibilityGate
+        mod = AccessibilityGate._weixin_dll_module(pid)
+        if mod and mod[2]:
+            versions.append(os.path.basename(os.path.dirname(mod[2])))
+    except Exception:
+        pass
+    versions.append(_exe_version(exe))
+    if exe:
+        versions.append(os.path.basename(os.path.dirname(exe)))
+    return exe, versions
+
+
+def _running_wechat_version(hwnd):
+    # 选择发送方式时不能借用磁盘上残留的旧版/新版目录，也不以输入编码猜版本。
+    try:
+        _, versions = _running_wechat_versions(hwnd)
+        for value in versions:
+            version = _version_tuple(value)
+            if version >= (4, 0):
+                return version
+    except Exception:
+        pass
+    return ()
+
+
 def _detect_char_mode_by_version(hwnd=0):
     """按微信版本决定用哪种编码：4.2+ 用 UTF-16 码元，老版本仍然用 GBK 字节。
 
@@ -682,32 +734,10 @@ def _detect_char_mode_by_version(hwnd=0):
     """
     try:
         import os as _os
-        import psutil
-        import win32process
         h = int(hwnd or 0) or find_hwnd()
         if not h:
             return "gbk"
-        _, pid = win32process.GetWindowThreadProcessId(h)
-        exe = ""
-        try:
-            exe = psutil.Process(pid).exe() or ""
-        except Exception:
-            exe = ""
-
-        ordered = []
-        # 1) 已加载的 Weixin.dll
-        try:
-            from wechatauto.accessibility import AccessibilityGate
-            mod = AccessibilityGate._weixin_dll_module(pid)
-            if mod and mod[2]:
-                ordered.append(_os.path.basename(_os.path.dirname(mod[2])))
-        except Exception:
-            pass
-        # 2) 正在跑的 exe 的版本资源
-        ordered.append(_exe_version(exe))
-        # 3) exe 目录名
-        if exe:
-            ordered.append(_os.path.basename(_os.path.dirname(exe)))
+        exe, ordered = _running_wechat_versions(h)
         mode = _mode_from_versions(ordered)
         if mode:
             return mode
@@ -1118,7 +1148,9 @@ def read_ui(hwnd):
         except Exception:
             pass
         try:                                  # 文档 §11 第 2 步：能读出 Value 说明树是对的
-            info["value"] = info["edit"].GetValuePattern().Value or ""
+            value = info["edit"].GetValuePattern().Value
+            if isinstance(value, str):
+                info["value"] = value
         except Exception:
             info["value"] = None
 
@@ -1126,6 +1158,8 @@ def read_ui(hwnd):
         try:
             if (c.Name or "").strip() == SEND_BUTTON_NAME and "Button" in c.ControlTypeName:
                 r = c.BoundingRectangle
+                if r.right <= r.left or r.bottom <= r.top:
+                    continue
                 info["send_xy"] = (r.left + (r.right - r.left) // 2,
                                    r.top + (r.bottom - r.top) // 2)
                 info["send_button"] = c
@@ -1406,8 +1440,9 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
 
     | reason | ok | 含义 |
     | --- | --- | --- |
-    | sent / sent_partial / sent_unverified | ✅ | 发出去了（partial=丢了 emoji 之类） |
-    | no_window / minimized | ❌ | 微信没登录 / 最小化（最小化时不能物化，也不去还原） |
+    | sent / sent_partial | ✅ | 提交后原输入框清空（partial=跳过了不能编码的字） |
+    | sent_unverified | ✅ | 已尝试提交，无法核对原输入框，禁止重发 |
+    | no_window / minimized / send_point_unavailable | ❌ | 找不到窗口 / 未能恢复最小化 / 发送按钮离屏 |
     | tree_not_ready / no_input_field | ❌ | 控件树没物化 / 当前不在聊天页 |
     | chat_not_found | ❌ | 会话不在列表里（退回前台通道搜索） |
     | no_send_button / input_not_empty | ❌ | 找不到按钮 / 输入框里还有草稿 |
@@ -1453,6 +1488,8 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
     with _WriteGuard():
         try:
             info = _ensure_tree(hwnd, log=log, unhide=unhide, want_edit=bool(chat))
+            if user32.IsIconic(hwnd):
+                return False, "minimized"
             if len(info["nodes"]) < MIN_NODES:
                 return False, "tree_not_ready"
 
@@ -1469,6 +1506,13 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                 return False, "no_input_field"
             if info["send_xy"] is None:
                 return False, "no_send_button"
+            # 4.2.0.53 的 UIA Invoke 有时正常返回却不提交。只对已知版本选坐标，
+            # 某些微信窗口的后台坐标消息会丢（#190），其它版本保留原有控件优先。
+            prefer_click = (info.get("send_button") is not None
+                            and _running_wechat_version(hwnd) == (4, 2, 0, 53))
+            if ((prefer_click or info.get("send_button") is None)
+                    and not _click_point_on_window(hwnd, info["send_xy"])):
+                return False, "send_point_unavailable"
             # 硬闸：点开的那一行必须真是目标会话。以前只校验「点中的行名 == 当前会话」，
             # 名字只是「包含」关系（群A / 群A2）也会放行 —— 正文就发到别的群了。
             if chat:
@@ -1577,11 +1621,15 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                     sender.end_input()
                     log("后台通道：正文回读正确，但发送按钮仍不可用，保留草稿")
                     return False, "input_dirty"
-                # 微信可以收到窗口点击消息却不触发按钮。支持 UIA Invoke 时直接调用控件。
-                try:
-                    invoke = button.GetInvokePattern().Invoke
-                except Exception:
-                    pass  # 获取接口没有提交消息，可以继续走坐标点击。
+                if not prefer_click:
+                    try:
+                        invoke = button.GetInvokePattern().Invoke
+                    except Exception:
+                        pass  # 获取接口没有提交消息，可以继续走坐标点击。
+            if invoke is None and not _click_point_on_window(hwnd, xy):
+                sender.end_input()
+                log("后台通道：发送按钮移出可用窗口范围，保留草稿")
+                return False, "input_dirty"
             stage = 'background_invoke' if invoke is not None else 'background_click'
             if not operation.begin_effect(stage):
                 raise SendPreparationStopped('background submission stopped')
@@ -1598,11 +1646,10 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
 
             partial = "sent_partial" if skipped else "sent"
             if not verify:
-                return True, partial
+                return True, "sent_unverified"
 
             # 发出去了没有：输入框清空 = 走了。空框可能是 '\n'，按 _is_blank 判
-            # （M1）；读不到（None）按「已发送」处理，免得退回前台通道再打一遍、
-            # 聊天里出现两句一样的话。
+            # （M1）；读不到（None）只记为未知，不能换通道再发一遍。
             deadline = min(time.monotonic() + 2.0, operation.started + operation.budget)
             while time.monotonic() < deadline:
                 info = read_ui(hwnd)

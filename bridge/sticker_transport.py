@@ -534,9 +534,20 @@ def guarded_send(gui, uia, hwnd, aliases, path, root, db, username, gate,
         # Mark uncertain BEFORE calling a side-effectful function (it can partially act then raise).
         touched = True
         gui._input.key(0x56, ctrl=True)  # one Ctrl+V; no select-all/delete or paste retry
-        sleep(0.4)
-        control = guard()
-        value = desktop.value(control) if control is not None else None
+        # 群聊缩略图可能晚于私聊出现。只等待已粘贴的同一份附件，不重放粘贴。
+        # 每轮核对原账号、窗口、会话和焦点，一旦读到非预期草稿就立即停止。
+        value = None
+        deadline = time.monotonic() + 2.5
+        for _ in range(25):
+            if time.monotonic() >= deadline:
+                break
+            sleep(0.1)
+            control = guard()
+            if control is None:
+                break
+            value = desktop.value(control)
+            if isinstance(value, str) and not _is_blank(value):
+                break
         draft_observed = isinstance(value, str) and not _is_blank(value)
         if not _is_attachment(value):
             return result('unconfirmed', 'no exact attachment draft evidence; Enter not pressed; clear draft manually; do not retry',
@@ -548,10 +559,10 @@ def guarded_send(gui, uia, hwnd, aliases, path, root, db, username, gate,
                           draft_may_remain=True, draft_observed=draft_observed)
         _post = desktop.value(control)
         if not _is_attachment(_post):
-            # 带上实际读到的值，才能判断是「微信把附件又转成文字」还是「读不到」
+            evidence = 'unreadable' if _post is None else 'empty' if _is_blank(_post) else 'other draft'
             return result('unconfirmed',
-                          'send gates changed after paste (input reads %r); Enter not pressed; clear draft manually; do not retry'
-                          % (str(_post)[:40],),
+                          'send gates changed after paste (input: %s); Enter not pressed; clear draft manually; do not retry'
+                          % evidence,
                           draft_may_remain=True, draft_observed=draft_observed)
         attempted_enter = True
         gui._input.key(0x0D)  # exactly one Enter, never Ctrl+Enter or retry

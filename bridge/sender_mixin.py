@@ -53,7 +53,8 @@ class SenderMixin:
         self.BG_STATS['tried'] += 1
         self.BG_STATS['last'] = why
         self.BG_STATS['lastAt'] = G.time.time()
-        G.log('[delivery] stage=background result=%s reason=%s' % ('submitted' if ok else 'failed', why))
+        status = 'uncertain' if why == 'sent_unverified' else 'submitted' if ok else 'failed'
+        G.log('[delivery] stage=background result=%s reason=%s' % (status, why))
         if why == 'chat_mismatch':
             operation.record('identity_mismatch', why)
             raise G.ChatIdentityError('后台通道：当前会话不是目标 %s' % G.safe_name(chat_display_name))
@@ -79,7 +80,8 @@ class SenderMixin:
         if not operation.can_continue() and not operation.effect_started:
             return False
         safe_before_input = {'empty', 'no_window', 'minimized', 'tree_not_ready', 'chat_not_found',
-                             'no_input_field', 'no_send_button', 'gbk_unsupported', 'uipi_denied', 'input_unreadable'}
+                             'no_input_field', 'no_send_button', 'send_point_unavailable',
+                             'gbk_unsupported', 'uipi_denied', 'input_unreadable'}
         if why not in safe_before_input:
             operation.effect_started = True
             operation.record('uncertain', str(why))
@@ -129,7 +131,7 @@ class SenderMixin:
         if u is None:
             operation.record('not_sent', 'uia_unavailable')
             return False
-        if G.BACKGROUND_SEND and (not G.STICKER_TEST_ON):
+        if G.BACKGROUND_SEND:
             self.install_quiet_uia(u)
         keys = self.aliases_for(username, who) if username else [who]
         try:
@@ -483,7 +485,7 @@ class SenderMixin:
                 return False
             t_start = G.time.time()
             allow_mark_dead = True
-            if not G.STICKER_TEST_ON and G.BG_SEND.get('enabled', True):
+            if G.BACKGROUND_SEND and G.BG_SEND.get('enabled', True):
                 G.SEND_STATE['start'] = G.time.time()
                 try:
                     if self.bg_send(text, chat_display_name, chat_username):
@@ -526,22 +528,32 @@ class SenderMixin:
                     from send_input import is_blank, input_value
                     if not operation.reserve('quote'):
                         return operation.result.handled
-                    u = self.gui._get_uia()
-                    if u is None:
-                        raise G.ChatIdentityError('引用回复读不到当前会话')
-                    self._require_chat_identity(u, chat_display_name, self.aliases_for(chat_username, chat_display_name), '引用')
-                    if not is_blank(input_value(u)):
-                        raise G.DraftDirtyError('引用回复输入框有草稿或不可读')
-                    if not bind_runtime_identity(operation, self, chat_username):
-                        raise G.ChatIdentityError('引用准备期间账号或目标改变')
-                    if (not self.account_send_allowed('引用复核') or not self.send_policy_allows(chat_username, chat_display_name)
-                            or not self.sticker_quarantine_allows(chat_username, chat_display_name)):
-                        operation.record('cancelled', 'quote_gate_changed')
-                        return False
-                    # 不传 target_text：走上游 1.2.10 的「引用最近一条」路径
-                    # （UIA 行控件 + 像素重心），图片/表情/换行也不会 OCR 匹配失败。
-                    if self.with_window_on_top(lambda: operation.opaque('quote', lambda: self.gui.quote_msg(
-                            text, who=chat_display_name, verify=False))):
+
+                    def quote_in_target():
+                        u = self.gui._get_uia()
+                        if u is None:
+                            raise G.ChatIdentityError('引用回复读不到当前会话')
+                        keys = self.aliases_for(chat_username, chat_display_name) or [chat_display_name]
+                        if u.current_chat() not in keys:
+                            if not operation.can_continue() or not u.open_chat(keys):
+                                raise G.ChatIdentityError('引用回复无法打开目标会话')
+                        self._require_chat_identity(u, chat_display_name, keys, '引用')
+                        if not is_blank(input_value(u)):
+                            raise G.DraftDirtyError('引用回复输入框有草稿或不可读')
+                        if not bind_runtime_identity(operation, self, chat_username):
+                            raise G.ChatIdentityError('引用准备期间账号或目标改变')
+                        if (not self.account_send_allowed('引用复核') or not self.send_policy_allows(chat_username, chat_display_name)
+                                or not self.sticker_quarantine_allows(chat_username, chat_display_name)):
+                            operation.record('cancelled', 'quote_gate_changed')
+                            return False
+                        window = self.snapshot_win_state()
+                        if not window['hwnd'] or window['fg'] != window['hwnd']:
+                            operation.record('cancelled', 'quote_foreground_lost')
+                            return False
+                        # 已打开并核对会话。传 who 会触发上游再次搜索，让核对的结果失效。
+                        return operation.opaque('quote', lambda: self.gui.quote_msg(text, verify=False))
+
+                    if self.with_window_on_top(quote_in_target, require_foreground=True):
                         G.log('引用回复阶段=%s（仅处理，不声明确认送达）' % operation.result.status, display)
                         return True
                     G.log('引用回复未确认浮层/发送，回退普通发送：', display)
@@ -583,7 +595,7 @@ class SenderMixin:
                             if operation.result.status == 'uncertain':
                                 G.log('重新激活后的发送结果不确定，禁止重发：', display)
                             else:
-                                G.log('重新激活 UIA 后发送成功（仅已提交，未确认送达）→ %s' % display)
+                                G.log('重新激活 UIA 后已提交（未确认送达）→ %s' % display)
                             return True
                     except (G.ChatIdentityError, G.DraftDirtyError) as e:
                         operation.record('identity_mismatch' if isinstance(e, G.ChatIdentityError) else 'draft_dirty', type(e).__name__)

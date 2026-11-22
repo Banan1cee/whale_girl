@@ -212,7 +212,155 @@ class TransportTest(unittest.TestCase):
     def test_confirmed_only_after_one_paste_one_enter_and_outgoing_delta(self):
         self.assertEqual(self.send(), {'status': 'confirmed', 'error': ''})
         self.assertEqual(self.keys, [0x56, 0x0D])
+
+    def test_slow_attachment_materializes_after_half_a_second(self):
+        elapsed = 0.0
+        self.on_paste = lambda: setattr(self.desktop, 'input_value', '')
+
+        def sleep(delay):
+            nonlocal elapsed
+            if self.keys == [0x56]:
+                elapsed += delay
+                if elapsed >= 0.6:
+                    self.desktop.input_value = '\ufffc'
+
+        self.assertEqual(self.send(sleep=sleep)['status'], 'confirmed')
+        self.assertEqual(self.keys, [0x56, 0x0D])
         self.assertEqual(set(self.db.queries), {'peer'})
+
+    def run_reply_sequence(self, *, group=False, sticker_only=False, fail_text=False,
+                           lose_focus=False, draft='', receipt=True):
+        """Exercise the reply, text, claim and attachment code on one fake window."""
+        from contextlib import nullcontext
+        from send_state import ChatIdentityError, DraftDirtyError
+        from test_bg_live_encoding import LiveEncodingTests, bg
+        from test_user_flows import BridgeUserFlows, Response
+
+        live = LiveEncodingTests()
+        self.addCleanup(live.doCleanups)
+        live.setUp()
+        window = live.state
+        hwnd = self.gui.main_hwnd
+        invoke = Mock()
+        window.update(actual='utf16', chat='Peer', foreground=200, node_count=76,
+                      text=draft, click_lost=fail_text, send_button=SimpleNamespace(
+                          IsEnabled=True, GetInvokePattern=lambda: SimpleNamespace(Invoke=invoke)))
+        self.desktop.foreground = lambda handle: window['foreground'] == handle
+        self.desktop.value = lambda control: window['text'] or self.desktop.input_value
+        self.desktop.has_focus = False
+        self.desktop.focus.side_effect = lambda control: setattr(self.desktop, 'has_focus', True)
+        self.gui.use_window = Mock(return_value=True)
+        self.gui._uia = self.uia
+        username = 'fixture@chatroom' if group else 'peer'
+        self.db.contacts[0]['username'] = username
+        if not receipt:
+            self.on_enter = lambda: None
+        self.on_paste = lambda: setattr(self.desktop, 'input_value', '')
+        delays = []
+
+        def sleep(delay):
+            delays.append(delay)
+            if lose_focus:
+                window['foreground'] = 300
+            elif len(delays) >= (7 if group else 1):
+                self.desktop.input_value = '\ufffc'
+
+        job = {'id': 'ticket', 'generation': 'g1', 'path': self.path,
+               'chat': 'Peer', 'chatUsername': username, 'status': 'sending'}
+        body = {'ok': True, 'action': 'reply', 'reply': '收到', 'sticker': job,
+                'stickerOnly': sticker_only}
+        env, _, _, _, logs = BridgeUserFlows.env(self, Response(body))
+        posts = []
+
+        def post(url, *, json, **kwargs):
+            kind = url.rsplit('/', 1)[-1]
+            posts.append((kind, json, tuple(window['sent']), window['foreground']))
+            if kind == 'wechat':
+                return Response(body)
+            return Response({'ok': True, 'item': dict(job, status='cancelled') if kind == 'cancel' else job})
+
+        api = SimpleNamespace(post=post, get=lambda *a, **k: Response({
+            'ok': True, 'enabled': True, 'generation': 'g1', 'jobs': [job]}))
+        env.update(
+            LOCAL_HTTP=api, db=self.db, display_name=lambda _: 'Peer', self_mention_names=lambda _: [],
+            BACKGROUND_SEND=True, BG_SEND={'enabled': True},
+            BG_STATS=dict(disabled=False, cooldownUntil=0, tried=0, treeFails=0, ok=0),
+            ChatIdentityError=ChatIdentityError, DraftDirtyError=DraftDirtyError,
+            _bg_hwnd=lambda: hwnd, aliases_for=lambda *_: ['Peer'],
+            account_send_allowed=lambda *_: True, group_is_alive=lambda _: True,
+            chat_paused=lambda _: False, send_policy_allows=lambda *_: True,
+            _SendStateScope=nullcontext, SEND_STATE={}, send_lock=threading.Lock(), gui_lock=threading.Lock(),
+            fail_streak={}, log_error=lambda *a: logs.append(a), log_warn=lambda *a: logs.append(a),
+            CONFIG_PATH='unused', ACCOUNT_WANTED='',
+            read_enabled_config=lambda _: {'sticker': {'dir': self.directory}},
+            sticker_base='http://fake.invalid', sticker_headers={},
+            sticker_result=transport.result, sticker_draft_quarantine={},
+            quarantined_input_value=lambda *_: self.desktop.value(self.control),
+            sticker_input_is_blank=transport._is_blank,
+            ACCOUNT=dict(verified=True, hwnd=hwnd, pid=42), WindowsDesktop=lambda: self.desktop,
+            wechat_window_alive=lambda: True, sticker_account_evidence_allowed=lambda: True,
+            gui=self.gui, foreground_is_fullscreen=lambda: False,
+            resolve_sticker_target=transport.resolve_target, sticker_alias_match=transport.alias_match,
+            snapshot_win_state=lambda: window['foreground'],
+            force_foreground=Mock(side_effect=lambda handle: window.update(foreground=handle)),
+            restore_win_state=Mock(side_effect=lambda previous: window.update(foreground=previous)),
+            _compat_mod=lambda: SimpleNamespace(pinned_window=lambda: hwnd),
+            guarded_sticker_send=lambda *a, **k: transport.guarded_send(
+                *a, **k, sleep=sleep, confirm_timeout=0, image_check=lambda *_: None),
+            new_window_driver=Mock(side_effect=AssertionError('unexpected foreground text route')),
+        )
+        bridge_functions({'on_message_inner', 'send_text', 'bg_send', 'sticker_config_now', 'sticker_gate',
+                          'claim_and_send_sticker', 'cancel_reply_sticker', 'send_sticker',
+                          'sticker_quarantine_allows', 'sticker_activity_allowed'}, env)
+        win = SimpleNamespace(IsWindow=lambda h: h == hwnd, GetForegroundWindow=lambda: window['foreground'],
+                              IsWindowVisible=lambda _: True, IsIconic=lambda _: False)
+        with patch.dict(sys.modules, bg_sender=bg, win32gui=win,
+                        win32process=SimpleNamespace(GetWindowThreadProcessId=lambda _: (1, 42))), \
+                patch.object(bg, 'configure'), patch.object(bg, '_running_wechat_version', return_value=(4, 2, 0, 53)):
+            env['on_message_inner'](dict(BridgeUserFlows.message(self), username=username), None)
+
+        self.assertEqual([entry[0] for entry in posts],
+                         ['wechat', 'cancel'] if fail_text or draft else ['wechat', 'claim', 'ack'], logs)
+        self.assertEqual(window['clicks'], 0 if sticker_only or draft else 1, logs)
+        invoke.assert_not_called()
+        env['new_window_driver'].assert_not_called()
+        if fail_text or draft:
+            self.assertEqual(window['text'], draft or '收到')
+            self.assertEqual(self.keys, [])
+            self.gui.copy_files_to_clipboard.assert_not_called()
+            env['force_foreground'].assert_not_called()
+            self.assertEqual(posts[-1][1]['chatUsername'], username)
+            return
+        self.assertEqual(posts[1][2:], (() if sticker_only else ('收到',), 200))
+        self.assertEqual(self.keys, [0x56] if lose_focus else [0x56, 0x0D])
+        self.gui.copy_files_to_clipboard.assert_called_once()
+        self.desktop.focus.assert_called_once_with(self.control)
+        self.assertEqual(set(self.db.queries), {username})
+        self.assertEqual(posts[-1][1]['status'], 'confirmed' if receipt and not lose_focus else 'unconfirmed')
+        self.assertEqual(window['foreground'], 300 if lose_focus else 200)
+        self.assertEqual(env['restore_win_state'].call_count, 0 if lose_focus else 1)
+        self.assertEqual(set(env['sticker_draft_quarantine']), {username} if lose_focus or not receipt else set())
+
+    def test_reply_sequence_private_text_then_sticker(self):
+        self.run_reply_sequence()
+
+    def test_reply_sequence_group_text_then_delayed_sticker(self):
+        self.run_reply_sequence(group=True)
+
+    def test_reply_sequence_sticker_only_skips_text(self):
+        self.run_reply_sequence(sticker_only=True)
+
+    def test_reply_sequence_text_residue_cancels_sticker(self):
+        self.run_reply_sequence(fail_text=True)
+
+    def test_reply_sequence_existing_draft_is_preserved(self):
+        self.run_reply_sequence(draft='还没打完')
+
+    def test_reply_sequence_window_switch_stops_after_paste(self):
+        self.run_reply_sequence(lose_focus=True)
+
+    def test_reply_sequence_missing_receipt_does_not_replay(self):
+        self.run_reply_sequence(receipt=False)
 
     def test_shipped_driver_public_handle_can_send_without_private_metadata(self):
         driver = shipped_uia(100)
@@ -526,7 +674,7 @@ def _referenced_names(definitions):
 
 
 class BridgeContractTest(unittest.TestCase):
-    def test_sticker_switch_forces_foreground_even_with_background_configured(self):
+    def test_only_explicit_foreground_request_forces_text_window(self):
         action = Mock(return_value=True)
         foreground = Mock(return_value=False)
         restore = Mock()
@@ -535,11 +683,10 @@ class BridgeContractTest(unittest.TestCase):
             'force_send_foreground': foreground,
             'snapshot_win_state': lambda: 'snapshot', 'restore_win_state': restore,
         })
-        self.assertFalse(scope['with_window_on_top'](action))
+        self.assertFalse(scope['with_window_on_top'](action, require_foreground=True))
         action.assert_not_called()
         foreground.assert_called_once_with(action, require_foreground=True)
         restore.assert_called_once_with('snapshot')
-        scope['STICKER_TEST_ON'] = False
         foreground.reset_mock()
         self.assertTrue(scope['with_window_on_top'](action))
         action.assert_called_once()
