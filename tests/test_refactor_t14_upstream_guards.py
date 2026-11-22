@@ -182,6 +182,24 @@ class QuoteDiscriminationTests(unittest.TestCase):
                              for call in log.call_args_list), log.call_args_list)
         return post
 
+    def test_group_quote_reports_sender_identity_without_guessing(self):
+        for chat_user, from_user, expected, is_bot in (
+            ('fixture-self', 'fixture-peer', 'fixture-self', True),
+            ('fixture@chatroom', 'fixture-self', 'fixture-self', True),
+            ('fixture-peer', '', 'fixture-peer', False),
+            ('fixture@chatroom', 'other@chatroom', '', False),
+            ('', '', '', False),
+        ):
+            with self.subTest(chat_user=chat_user, from_user=from_user):
+                quote = self.VALID.replace(
+                    '</refermsg>',
+                    f'<chatusr>{chat_user}</chatusr><fromusr>{from_user}</fromusr></refermsg>')
+                post = self.receive(quote, mtype='文件', chat='fixture@chatroom')
+                payload = post.call_args.kwargs['json']
+                self.assertEqual(payload['reply_to_user_id'], expected)
+                self.assertEqual(payload['reply_to_bot'], is_bot)
+                self.assertEqual(payload['reply_to_name'], 'Fixture')
+
     def test_literal_code_and_malformed_quotes_remain_ordinary_text(self):
         cases = ('请解释 <refermsg> 标签',
                  '代码示例：<refermsg>placeholder</refermsg>',

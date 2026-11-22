@@ -107,7 +107,7 @@ def _nested_quote_text(quoted):
     return quoted
 
 
-def parse_quote_content(content):
+def parse_quote_content(content, *, include_sender=False):
     """拆出被引用者、原文、新回复和被引用图片的服务器 ID。
 
     微信的引用回复是 appmsg（57<<32|49，类型名落到「文件/链接/卡片」），正文
@@ -156,14 +156,21 @@ def parse_quote_content(content):
     reply = tail or (html.unescape(title.group(1)).strip() if title else '')
     reference = references[0]
     image_id = reference.findtext('svrid', '').strip() if reference.findtext('type', '').strip() == '3' else None
-    return quoted_by, quoted, reply, image_id
+    parsed = (quoted_by, quoted, reply, image_id)
+    if not include_sender:
+        return parsed
+    for tag in ('chatusr', 'fromusr'):
+        sender = reference.findtext(tag, '').strip()
+        if sender and not sender.endswith('@chatroom'):
+            return (*parsed, sender)
+    return (*parsed, '')
 
 
 def quote_content_text(quote, image_description=None):
     """检查资格时只用图片占位，识别结果只在提交给内核前放入正文。"""
     if quote is None:
         return None
-    quoted_by, quoted, reply, image_id = quote
+    quoted_by, quoted, reply, image_id = quote[:4]
     if image_id is not None:
         if image_description:
             return '（引用的图片，图里是：%s）%s' % (image_description, reply)
@@ -701,7 +708,7 @@ class ReceiverMixin:
                 quote_source = content
                 if username.endswith('@chatroom') and sender and content.startswith(sender + ':'):
                     quote_source = content[len(sender) + 1:].lstrip()
-                quote = parse_quote_content(quote_source)
+                quote = parse_quote_content(quote_source, include_sender=True)
             _quote_parsed = quote is not None
             image_ref = quote[3] if _quote_parsed else None
             if _quote_parsed:
@@ -825,6 +832,11 @@ class ReceiverMixin:
                     G.log('引用图片读取：%s' % ('已识别' if description else '未取到或未识别'))
                 content = quote_content_text(quote, description)
             payload = {'chat_id': username, 'chat_type': 'group' if is_group else 'private', 'user_id': sender or 'unknown', 'senderId': sender or 'unknown', 'sender_id': sender or 'unknown', 'senderName': nickname, 'nickname': nickname, 'text': content, 'msg_id': '%s:%s:%s' % (username, msg.get('shard') or '', msg.get('local_id')), 'at_me': addressed, 'mentioned_names': _mentioned_names, 'self_names': _payload_names, 'chat_title': self.display_name(username) if is_group else ''}
+            if _quote_parsed:
+                quoted_sender = quote[4]
+                payload['reply_to_user_id'] = quoted_sender
+                payload['reply_to_bot'] = bool(quoted_sender and quoted_sender in _ids)
+                payload['reply_to_name'] = G.fix_garbled(quote[0])
             try:
                 headers = {'x-whale-bridge': '1'}
                 if self.token:
