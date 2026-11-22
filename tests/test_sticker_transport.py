@@ -884,7 +884,7 @@ class BridgeContractTest(unittest.TestCase):
         window = {'foreground': 200}
         desktop.foreground = lambda hwnd: window['foreground'] == hwnd
         env['WindowsDesktop'] = Mock(return_value=desktop)
-        env['force_foreground'].side_effect = lambda _: window.update(foreground=100) or True
+        env['force_foreground'].side_effect = lambda _: window.update(foreground=100) or False
         outcome = env['send_sticker']('fake.png', 'Peer', 'peer', 'g1', 'one-shot')
         self.assertEqual(outcome['status'], 'confirmed')
         env['force_foreground'].assert_called_once_with(100)

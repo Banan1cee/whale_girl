@@ -83,7 +83,8 @@ class StickerMixin:
                 if not desktop.foreground(hwnd):
                     snap = self.snapshot_win_state()
                     # 4.1.7 的表情包路径只尝试一次激活，并以实际前台窗口为准。
-                    if not self.force_foreground(hwnd) or not desktop.foreground(hwnd):
+                    self.force_foreground(hwnd)
+                    if not desktop.foreground(hwnd):
                         G.log_throttled('sticker-window-not-ready',
                                         '[sticker] stage=foreground result=failed reason=window_not_ready',
                                         ttl=60)
