@@ -13,6 +13,7 @@ async function careForChat(runtime, chatId) {
   const name = String(personaCfg.ownerName || '主人');
   const hour = time.hourOfDay(Date.now(), time.resolveTimeZone(runtime.config));
   let recent = [];
+  let recentCare = [];
   if (chatId) {
     // 会话 key 可能是私聊（wechat:u:<id>）也可能是群（wechat:g:<id>），两边都试
     for (const key of [`wechat:u:${chatId}`, `wechat:g:${chatId}`, chatId]) {
@@ -22,6 +23,8 @@ async function careForChat(runtime, chatId) {
           recent = msgs
             .filter((m) => m && m.text)
             .map((m) => `${m.role === 'user' ? '对方' : (personaCfg.name || '我')}：${String(m.text).slice(0, 60)}`);
+          recentCare = runtime.store.recentCareMessages(key, 5)
+            .map((m) => `${personaCfg.name || '我'}：${String(m.text).slice(0, 60)}`);
           break;
         }
       } catch {
@@ -33,7 +36,7 @@ async function careForChat(runtime, chatId) {
     return { ok: true, text: care.pickTemplate(), mock: true, hour };
   }
   try {
-    const { system, user } = care.buildCarePrompt({ persona: personaCfg, recent, name, hour });
+    const { system, user } = care.buildCarePrompt({ persona: personaCfg, recent, recentCare, name, hour });
     const raw = await runtime.llm.complete({ system, turns: [{ role: 'user', content: user }] });
     const text = care.cleanCareText(raw) || care.pickTemplate();
     return { ok: true, text, mock: false, hour };

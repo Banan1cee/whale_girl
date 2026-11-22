@@ -343,6 +343,18 @@ class Store {
     return chat.messages.slice(-Math.max(0, Number(limit) || 0));
   }
 
+  recentCareMessages(key, limit = 3) {
+    const chat = this.chatStore.ensureChat(key);
+    const count = Math.max(0, Math.min(10, Number(limit) || 0));
+    if (!count) return [];
+    return chat.messages
+      .filter((message) => message.role === 'assistant'
+        && typeof message.msgId === 'string'
+        && message.msgId.startsWith('care:')
+        && message.text)
+      .slice(-count);
+  }
+
   /**
    * 当前说话人的卡 + 这个 chat 的最近原文 + 摘要 + 相关事件。
    *

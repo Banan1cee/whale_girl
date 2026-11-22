@@ -98,6 +98,46 @@ test('L2 幂等：同一个 episode 关两次，事件只写一条', async () =>
   cleanup(dir);
 });
 
+test('跨午夜关闭 episode 时事件日期沿用最后一条消息的日期', async () => {
+  const { store, dir } = tempStore();
+  try {
+    const key = 'wechat:u:midnight';
+    const lastMessageAt = new Date(2026, 10, 16, 23, 55).getTime();
+    const closedAt = new Date(2026, 10, 17, 0, 30).getTime();
+    store.appendMessage(key, { role: 'user', name: '小海', uid: 'u1', text: '今天加班很累', ts: lastMessageAt - 5 * 60000 });
+    store.appendMessage(key, { role: 'assistant', name: '鲸鲸', text: '辛苦了，早点休息', ts: lastMessageAt });
+
+    const result = await store.closeEpisode(key, { llm: fakeLlm, now: closedAt });
+    assert.equal(result.closed, true);
+    const chat = store.chatStore.chats.get(key);
+    const card = store.chatStore.getCard(chat, 'u1');
+    assert.equal(personCard.activeEvents(card)[0].date, episode.dateString(lastMessageAt));
+    assert.notEqual(personCard.activeEvents(card)[0].date, episode.dateString(closedAt));
+  } finally {
+    store.close();
+    cleanup(dir);
+  }
+});
+
+test('片段消息时间无效时事件日期回退到 lastMessageAt', async () => {
+  const { store, dir } = tempStore();
+  try {
+    const key = 'wechat:u:missing-ts';
+    const lastMessageAt = new Date(2026, 10, 16, 23, 55).getTime();
+    const closedAt = new Date(2026, 10, 17, 0, 30).getTime();
+    store.appendMessage(key, { role: 'user', name: '小海', uid: 'u1', text: '今天加班很累', ts: lastMessageAt });
+    const chat = store.chatStore.chats.get(key);
+    chat.messages[0].ts = Number.NaN;
+
+    await store.closeEpisode(key, { llm: fakeLlm, now: closedAt });
+    const card = store.chatStore.getCard(chat, 'u1');
+    assert.equal(personCard.activeEvents(card)[0].date, episode.dateString(lastMessageAt));
+  } finally {
+    store.close();
+    cleanup(dir);
+  }
+});
+
 test('话题切换：聊了 6 条后明确换话题 → 关闭', async () => {
   const { store, dir } = tempStore();
   const key = 'wechat:g:g1';

@@ -153,7 +153,7 @@ function pickTemplate(rng = Math.random) {
  * 生成「主动搭话」用的提示词。
  * 参考最近聊过什么：别重复、接着话头问，比干巴巴一句「在干啥」自然。
  */
-function buildCarePrompt({ persona = {}, recent = [], name = '', hour = null } = {}) {
+function buildCarePrompt({ persona = {}, recent = [], recentCare = [], name = '', hour = null } = {}) {
   const who = String(persona.name || '鲸鲸');
   const master = String(persona.ownerName || '主人');
   const lines = [
@@ -164,6 +164,7 @@ function buildCarePrompt({ persona = {}, recent = [], name = '', hour = null } =
     '要求：',
     '- 一句话，8~20 个字，像真人随手发的一条微信。',
     '- 可以是「在干啥呢」「忙完了没，累不累」这种感觉，但不要每次都说同一句。',
+    '- 避开最近主动搭话用过的相同或近似开场，不要只替换一两个字。',
     '- 可以顺着最近聊的内容接一句，但别翻旧账、别追问隐私。',
     '- 不要自我介绍，不要说「我是 AI / 模型」，不要解释为什么找他。',
     '- 不要用颜文字堆砌，最多一个；不要用「~」。',
@@ -173,9 +174,10 @@ function buildCarePrompt({ persona = {}, recent = [], name = '', hour = null } =
     const part = hour < 6 ? '凌晨' : hour < 11 ? '早上' : hour < 14 ? '中午' : hour < 18 ? '下午' : hour < 23 ? '晚上' : '深夜';
     lines.push(`- 现在是${part}，语气跟这个时间搭一点。`);
   }
-  const user = recent.length
-    ? '最近你们聊的（旧→新，只用来参考语气和话题，别复述）：\n' + recent.slice(-8).join('\n')
-    : '你们有一阵没说话了。';
+  const sections = [];
+  if (recent.length) sections.push('最近你们聊的（旧→新，只用来参考语气和话题，别复述）：\n' + recent.slice(-8).join('\n'));
+  if (recentCare.length) sections.push('最近主动搭话用过的开场（旧→新，只用于避免重复）：\n' + recentCare.slice(-5).join('\n'));
+  const user = sections.length ? sections.join('\n\n') : '你们有一阵没说话了。';
   return { system: lines.join('\n'), user };
 }
 

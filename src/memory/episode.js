@@ -25,6 +25,22 @@ function dateString(ts) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+function episodeDate(messages, ep, fallbackTs) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const raw = messages[i] && messages[i].ts;
+    if (raw === null || raw === undefined || raw === '') continue;
+    const ts = Number(raw);
+    if (Number.isFinite(ts) && Number.isFinite(new Date(ts).getTime())) return dateString(ts);
+  }
+  const rawLastMessageAt = ep && ep.lastMessageAt;
+  const lastMessageAt = Number(rawLastMessageAt);
+  if (rawLastMessageAt !== null && rawLastMessageAt !== undefined && rawLastMessageAt !== ''
+    && Number.isFinite(lastMessageAt) && Number.isFinite(new Date(lastMessageAt).getTime())) {
+    return dateString(lastMessageAt);
+  }
+  return dateString(fallbackTs);
+}
+
 function episodeStart(chat, { now = Date.now(), seq = chat.meta.nextSeq } = {}) {
   chat.meta.episodeSeq = (Number(chat.meta.episodeSeq) || 0) + 1;
   const d = new Date(now);
@@ -118,7 +134,7 @@ async function closeEpisode({ chat, chatStore, llm = null, logger = null, now = 
   try {
     const messages = episodeMessages(chat, ep);
     const speakers = speakersOf(messages);
-    const date = dateString(now);
+    const date = episodeDate(messages, ep, now);
     const allUids = speakers.map((s) => s.uid);
     const extracted = await extractor.extractEpisode({ messages, llm, speakers, logger, now });
     if (chat.deleted) return { closed: false, reason: 'deleted', episodeId: ep.id };

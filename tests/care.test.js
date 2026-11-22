@@ -127,6 +127,15 @@ test('提示词带上时间和称呼，且明确禁止暴露 AI 身份', () => {
   assert.match(user, /今天加班/, '要带上最近的聊天上下文');
 });
 
+test('主动搭话提示词包含本会话旧开场并要求避免近似重复', () => {
+  const { system, user } = care.buildCarePrompt({
+    recentCare: ['鲸鲸：忙完了吗？', '鲸鲸：今天累不累？'],
+  });
+  assert.match(system, /相同或近似开场/);
+  assert.match(user, /忙完了吗/);
+  assert.match(user, /今天累不累/);
+});
+
 test('careDue 各分支都带 sentToday / maxPerDay（状态页与桥接要用）', () => {
   const now = new Date(2026, 0, 1, 3, 0, 0).getTime(); // 凌晨 3 点，落在窗口外
   const closed = care.careDue(
