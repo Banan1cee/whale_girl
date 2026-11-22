@@ -37,7 +37,7 @@
                 <!-- 第 1 行：开关 / 测试标题，左右对齐 -->
                 <WrapPanel Grid.Row="0" Grid.Column="0">
                     <CheckBox x:Name="ChkEnabled" Content="启用表情包" VerticalAlignment="Center" Click="OnToggleEnabled" />
-                    <TextBlock Text="开启后，微信会先尝试前台发送" Style="{StaticResource Small}"
+                    <TextBlock Text="仅前台发送" Style="{StaticResource Small}"
                                Margin="10,0,0,0" VerticalAlignment="Center" />
                     <TextBlock x:Name="DirHint" Style="{StaticResource Small}" Margin="14,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                 </WrapPanel>
@@ -46,7 +46,7 @@
 
                 <!-- 第 2 行：两边的说明，只讲怎么用，不讲实现原理 -->
                 <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,8,16,0"
-                           Text="只有微信窗口在前台、账号校验通过时才会真的发；关掉开关会立刻取消排队的发送。"
+                           Text="发表情包时会尝试切到已核验的微信窗口。关闭后会立即取消排队的发送。"
                            Style="{StaticResource Small}" TextWrapping="Wrap" />
                 <TextBlock Grid.Row="1" Grid.Column="2" Margin="16,4,0,0"
                            Text="会向微信发一条真实消息，可能短暂切换窗口。排队不代表送达，结果未确认时别重复发。"

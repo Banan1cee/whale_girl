@@ -275,7 +275,7 @@ class DefaultSafetyTests(unittest.TestCase):
         g = SimpleNamespace(BACKGROUND_SEND=scope['BACKGROUND_SEND'], STICKER_TEST_ON=False,
                             ChatIdentityError=self.identity_error, log=Mock())
         call = load_function('bridge/window_mixin.py', 'with_window_on_top', {'G': g})
-        return runtime, lambda fn: call(runtime, fn), events, snapshot
+        return runtime, lambda fn, **kwargs: call(runtime, fn, **kwargs), events, snapshot
 
     def test_background_default_configured_and_restore(self):
         for config, expected in (({}, True), ({'wechat': {}}, True),
@@ -331,12 +331,15 @@ class DefaultSafetyTests(unittest.TestCase):
             send_lock=nullcontext(), gui_lock=nullcontext(), send_policy_allows=Mock(return_value=True),
             sticker_quarantine_allows=Mock(return_value=True), fail_streak={}, bg_send=Mock(return_value=False),
             gui=SimpleNamespace(quote_msg=Mock(return_value=True), _get_uia=Mock(return_value=SimpleNamespace(
+                current_chat=lambda: 'fixture-chat',
                 _chat_input=lambda: SimpleNamespace(value='')))),
             bind_gui_window=Mock(), uia_send=Mock(return_value=True), with_window_on_top=window)
         runtime._require_chat_identity = Mock()
         runtime._input_value = Mock(return_value='')
         runtime.aliases_for = Mock(return_value=['fixture-chat'])
-        g = SimpleNamespace(QUOTE_REPLY=scope['QUOTE_REPLY'], STICKER_TEST_ON=False,
+        runtime.snapshot_win_state.return_value = {'hwnd': 1, 'fg': 1}
+        runtime.snapshot_win_state.side_effect = None
+        g = SimpleNamespace(QUOTE_REPLY=scope['QUOTE_REPLY'], BACKGROUND_SEND=scope['BACKGROUND_SEND'],
             BG_SEND=scope['BG_SEND'], SEND_STATE={}, _SendStateScope=lambda _: nullcontext(),
             time=SimpleNamespace(time=lambda: 10000), log=Mock(), log_error=Mock(), log_throttled=Mock(),
             safe_name=lambda _: 'fixture-chat', ChatIdentityError=self.identity_error,
@@ -349,7 +352,7 @@ class DefaultSafetyTests(unittest.TestCase):
             runtime.bg_send.assert_not_called()
             runtime.uia_send.assert_not_called()
         elif requested and scope['QUOTE_REPLY']:
-            runtime.gui.quote_msg.assert_called_once_with('fixture text', who='fixture-chat', verify=False)
+            runtime.gui.quote_msg.assert_called_once_with('fixture text', verify=False)
             runtime.uia_send.assert_not_called()
         else:
             runtime.gui.quote_msg.assert_not_called()

@@ -25,11 +25,11 @@ test('每次发送都会问一次 UIA 引擎，让它有机会自愈', () => {
   assert.match(fn, /UIA_CACHE\[['"]u['"]\] = u/);
 });
 
-test('发送失败后会强制重新热激活并重试一次（不用重启桥接）', () => {
+test('发送准备失败时可重新热激活，提交后仍等待送达确认', () => {
   assert.match(bridge, /def recover_uia/);
   assert.match(bridge, /gui\._get_uia\(refresh=True\)/, 'refresh=True 才会重写 gate byte');
   assert.match(bridge, /recover_uia\(['"]发送失败['"]\)/, '发送失败时要调用它');
-  assert.match(bridge, /重新激活 UIA 后发送成功/);
+  assert.match(bridge, /重新激活 UIA 后已提交（未确认送达）/);
 });
 
 test('收消息线程死了会被自动拉起并上报', () => {
@@ -176,7 +176,7 @@ test('默认后台发送，发完把窗口状态还原（电脑可以正常用�
   // 顺序：先记状态 → 单次业务回调 → finally 还原；准备恢复由共享预算决定。
   const win = bridge.slice(bridge.indexOf('def with_window_on_top')).replace(/\r\n/g, '\n');
   const body = win.slice(0, win.indexOf('\n    def ') > 0 ? win.indexOf('\n    def ') : win.length);
-  assert.match(body, /if restore_after:/, '表情包关闭且配置允许时走后台分支');
+  assert.match(body, /if restore_after:/, '文字配置允许时走后台分支');
   assert.ok(body.indexOf('snapshot_win_state()') < body.indexOf('force_send_foreground(fn)'),
     '必须先记状态，再尝试发送');
   assert.match(body, /finally:\s*\n(\s+.*\n)*?\s+restore_win_state\(snap\)/, '还原要放在 finally，失败也要还回去');

@@ -74,7 +74,8 @@ class SafeFixture(unittest.TestCase):
             gui=SimpleNamespace(_get_uia=Mock(return_value=uia), quote_msg=Mock(return_value=False), at_member=Mock(return_value=False)),
             UIA_CACHE={'u': uia}, wechat_window_alive=Mock(return_value=True), install_quiet_uia=Mock(),
             aliases_for=Mock(return_value=['fixture-room']), _input_value=Mock(return_value=''), bind_gui_window=Mock(),
-            recover_uia=Mock(return_value=True), snapshot_win_state=Mock(return_value='fixture-snapshot'), restore_win_state=Mock(),
+            recover_uia=Mock(return_value=True),
+            snapshot_win_state=Mock(return_value={'hwnd': 123, 'fg': 123, 'iconic': False}), restore_win_state=Mock(),
             force_send_foreground=Mock(side_effect=lambda fn, **kwargs: fn()), _bg_hwnd=Mock(return_value=123),
             BG_STATS={'disabled': False, 'cooldownUntil': 0, 'tried': 0, 'last': '', 'lastAt': 0, 'ok': 0, 'treeFails': 0})
         methods = {name: load(path, name, {'G': g}) for path, name in (
@@ -124,7 +125,7 @@ class AttemptTests(SafeFixture):
                     with self.assertRaises(type(effect)):
                         runtime.with_window_on_top(action)
                 action.assert_called_once()
-                runtime.restore_win_state.assert_called_once_with('fixture-snapshot')
+                runtime.restore_win_state.assert_called_once_with(runtime.snapshot_win_state.return_value)
                 runtime.force_send_foreground.assert_not_called()
 
     def test_known_preparation_failure_can_recover_before_one_effect(self):
@@ -194,7 +195,7 @@ class AttemptTests(SafeFixture):
             runtime.recover_uia.assert_not_called()
 
     def test_sticker_experiment_can_send_text_when_native_uia_composer_is_blank(self):
-        runtime, g, uia, methods = self.runtime(background=True)
+        runtime, g, uia, methods = self.runtime(background=False)
         g.STICKER_TEST_ON = True
         uia._chat_input.return_value = SimpleNamespace(GetValuePattern=lambda: SimpleNamespace(Value=''))
         uia.send_text.return_value = True
@@ -204,6 +205,45 @@ class AttemptTests(SafeFixture):
         self.bg.send.assert_not_called()
         operation = importlib.import_module('send_attempt')
         self.assertEqual(operation.last_result().status, 'submitted')
+
+    def test_sticker_experiment_does_not_disable_background_text(self):
+        runtime, g, uia, methods = self.runtime(background=True)
+        g.STICKER_TEST_ON = True
+        self.bg.send.return_value = True, 'sent'
+        self.assertTrue(methods['send_text'](runtime, 'fixture text', 'fixture-room', 'fixture-peer'))
+        self.bg.send.assert_called_once()
+        runtime.force_send_foreground.assert_not_called()
+        uia.send_text.assert_not_called()
+
+    def test_quote_opens_target_before_typing_in_another_chat(self):
+        runtime, g, uia, methods = self.runtime()
+        g.QUOTE_REPLY = True
+        uia.current_chat.return_value = 'fixture-other'
+
+        def open_chat(_keys):
+            uia.current_chat.return_value = 'fixture-room'
+            return True
+
+        uia.open_chat.side_effect = open_chat
+        self.assertTrue(methods['send_text'](runtime, 'fixture text', 'fixture-room', 'fixture-peer', quote_latest=True))
+        uia.open_chat.assert_called_once_with(['fixture-room'])
+        runtime.gui.quote_msg.assert_called_once()
+
+    def test_quote_rejects_wrong_chat_even_if_open_reports_success(self):
+        runtime, g, uia, methods = self.runtime()
+        g.QUOTE_REPLY = True
+        uia.current_chat.return_value = 'fixture-other'
+        self.assertFalse(methods['send_text'](runtime, 'fixture text', 'fixture-room', 'fixture-peer', quote_latest=True))
+        uia.open_chat.assert_called_once()
+        runtime.gui.quote_msg.assert_not_called()
+
+    def test_quote_stops_when_user_leaves_foreground_during_preparation(self):
+        runtime, g, uia, methods = self.runtime()
+        g.QUOTE_REPLY = True
+        runtime.snapshot_win_state.side_effect = [{'hwnd': 123, 'fg': 123}, {'hwnd': 123, 'fg': 321}]
+        self.assertFalse(methods['send_text'](runtime, 'fixture text', 'fixture-room', 'fixture-peer', quote_latest=True))
+        runtime.gui.quote_msg.assert_not_called()
+        uia.send_text.assert_not_called()
 
     def test_native_uia_composer_draft_or_failed_read_never_allows_input(self):
         for pattern in (Mock(return_value=SimpleNamespace(Value='fixture draft')),
@@ -404,6 +444,7 @@ class BackgroundBoundaryTests(SafeFixture):
         module._ensure_tree = lambda *args, **kwargs: dict(value)
         module.open_chat = lambda *args, **kwargs: True
         module.read_ui = lambda *args, **kwargs: dict(value)
+        module._click_point_on_window = lambda *args: True
         module._input_snapshot = lambda: (123, 1)
         module._draft_may_have_changed = lambda *args: False
         module._remember_char_mode = Mock()

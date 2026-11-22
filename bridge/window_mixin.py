@@ -197,7 +197,7 @@ class WindowMixin:
         hwnd = int(self.ACCOUNT.get('hwnd') or 0)
         if not hwnd:
             if require_foreground:
-                G.log('表情包前台模式：找不到已选微信窗口，本次未发送')
+                G.log('前台发送：找不到已选微信窗口，本次未发送')
                 return False
             hwnd = self.find_weixin_hwnd()
         was_topmost = False
@@ -232,7 +232,7 @@ class WindowMixin:
                     activate(hwnd)
                     G.time.sleep(0.2)
             if require_foreground and win32gui.GetForegroundWindow() != hwnd:
-                G.log('表情包前台模式：微信未进入前台，本次未发送')
+                G.log('前台发送：微信未进入前台，本次未发送')
                 return False
             return fn()
         finally:
@@ -244,7 +244,7 @@ class WindowMixin:
             except Exception:
                 pass
 
-    def with_window_on_top(self, fn):
+    def with_window_on_top(self, fn, *, require_foreground=False):
         """发送前确保能发出去。
 
         默认**不长期占用前台**（backgroundSend=true）：
@@ -252,13 +252,13 @@ class WindowMixin:
           2. 准备失败的恢复由发送层统一预算决定，本包装器不重播业务回调；
           3. 不管成功失败，**发完都把窗口状态还原**（该最小化的重新最小化、前台还给原来的窗口），
              这样你在用电脑时最多看到它闪一下。
+        引用等明确需要鼠标焦点的操作显式要求前台。
         把 wechat.backgroundSend 设成 false 就退回以前的「每次先抢前台、发完不管」。
         """
-        force_front = G.STICKER_TEST_ON
         restore_after = G.BACKGROUND_SEND
         snap = self.snapshot_win_state() if restore_after else None
         try:
-            if force_front:
+            if require_foreground:
                 return self.force_send_foreground(fn, require_foreground=True)
             if restore_after:
                 return fn()

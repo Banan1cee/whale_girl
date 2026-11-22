@@ -368,6 +368,13 @@ test('时间输入统一走 TimeField：日记用 Clock，搭话用 Ranges，设
   assert.ok(settings.includes('Path = "env.timezone"'), '设置页缺少全局时区');
 });
 
+test('表情包前台发送提示与文字发送模式分别标明', () => {
+  const stickers = readLauncher('Views/StickerPage.xaml');
+  const bridge = readLauncher('Views/BridgePage.xaml');
+  assert.match(stickers, /Text="仅前台发送"/);
+  assert.match(bridge, /Text="文字发送方式"/);
+});
+
 test('表情包「打开总目录」在离线/功能关闭时也能落到 data\\stickers，并用 explorer 参数打开', () => {
   const code = readLauncher('Views/StickerPage.xaml.cs');
   assert.match(code, /Path\.Combine\(_sup\.DataDir,\s*"stickers"\)/, '根目录要有本地兜底，不能只依赖内核');

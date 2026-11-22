@@ -22,7 +22,7 @@ class LiveEncodingTests(unittest.TestCase):
                           probes=[], input_tick=123, foreground=4242, manual_draft=False,
                           other_app_input=False, raise_on_clear=False, switch_on_send=False,
                           probe_lag=0, probe_lost=False, uia_ok=False, touch_during_probe=False,
-                          click_lost=False, clicks=0, send_button=None)
+                          click_lost=False, clicks=0, send_button=None, click_point_valid=True, node_count=200)
         state = self.state
 
         class Sender:
@@ -79,7 +79,7 @@ class LiveEncodingTests(unittest.TestCase):
                 value = ''
             if state['modes'] and state['replace_while_reading']:
                 state['text'] += '手动输入'
-            return dict(nodes=[1] * 200, edit=object(), value=value, send_xy=(1, 2),
+            return dict(nodes=[1] * state['node_count'], edit=object(), value=value, send_xy=(1, 2),
                         send_button=state['send_button'], chat=state['chat'])
 
         def clear(*args):
@@ -105,6 +105,8 @@ class LiveEncodingTests(unittest.TestCase):
             ('open_chat', lambda *a, **k: True), ('_WriteGuard', nullcontext),
             ('_clear_composer', clear), ('_detect_char_mode_by_version', lambda h=0: 'utf16'),
             ('_last_input_tick', lambda: state['input_tick']),
+            ('_click_point_on_window', lambda _hwnd, _xy: state['click_point_valid']),
+            ('_running_wechat_version', lambda _hwnd: ()),
             ('_uia_write', uia_write),
         ]:
             p = patch.object(bg, name, replacement)
@@ -147,6 +149,27 @@ class LiveEncodingTests(unittest.TestCase):
         self.state.update(actual='utf16', send_button=SimpleNamespace(
             IsEnabled=True, GetInvokePattern=Mock(side_effect=RuntimeError('pattern unavailable'))))
         self.assertEqual(self.send(), (True, 'sent'))
+        self.assertEqual(self.state['clicks'], 1)
+
+    def test_wechat_42053_silent_invoke_uses_one_coordinate_submission(self):
+        invoke = Mock()
+        self.state.update(actual='utf16', node_count=76, send_button=SimpleNamespace(
+            IsEnabled=True, GetInvokePattern=lambda: SimpleNamespace(Invoke=invoke)))
+        with patch.object(bg, '_running_wechat_version', return_value=(4, 2, 0, 53)):
+            self.assertEqual(self.send(), (True, 'sent'))
+        self.assertEqual(self.state['sent'], ['鲸鲸测试'])
+        self.assertEqual(self.state['clicks'], 1)
+        invoke.assert_not_called()
+
+    def test_offscreen_coordinate_path_stops_before_writing(self):
+        self.state.update(actual='utf16', click_point_valid=False)
+        self.assertEqual(self.send(), (False, 'send_point_unavailable'))
+        self.assertEqual(self.state['modes'], [])
+        self.assertEqual(self.state['clicks'], 0)
+
+    def test_disabling_verification_does_not_claim_confirmation(self):
+        self.state.update(actual='utf16', click_lost=True)
+        self.assertEqual(self.send(verify=False), (True, 'sent_unverified'))
         self.assertEqual(self.state['clicks'], 1)
 
     def test_invoke_exception_preserves_draft_and_prevents_second_submission(self):
@@ -392,7 +415,7 @@ class DirtyDraftPipelineTests(unittest.TestCase):
             with self.subTest(reason=reason):
                 draft_error = type('DraftDirtyError', (RuntimeError,), {})
                 fallback = Mock(side_effect=AssertionError('不能进入会抢前台的下一条发送通道'))
-                env = dict(time=time, BG_SEND={'enabled': True},
+                env = dict(time=time, BACKGROUND_SEND=True, BG_SEND={'enabled': True},
                     BG_STATS=dict(disabled=False, cooldownUntil=0, tried=0),
                     _bg_hwnd=lambda: 4242, log=Mock(), log_error=Mock(),
                     DraftDirtyError=draft_error, ChatIdentityError=type('ChatIdentityError', (RuntimeError,), {}),
@@ -460,6 +483,25 @@ class InputChannelTests(unittest.TestCase):
         self.assertEqual(len(info['nodes']), 200)
         wake.assert_called_once()
         enable.assert_not_called()
+
+    def test_readable_minimized_tree_is_restored_before_return(self):
+        healthy = dict(nodes=[1] * 76, edit=object(), value='', send_xy=(1, 2),
+                       chat='测试群', rows=[], tabs=[])
+        with patch.object(bg, 'read_ui', return_value=healthy), \
+                patch.object(bg.user32, 'IsIconic', return_value=True), \
+                patch.object(bg.user32, 'IsWindowVisible', return_value=True), \
+                patch.object(bg.user32, 'GetForegroundWindow', return_value=123), \
+                patch.object(bg.user32, 'ShowWindow') as show, \
+                patch.object(bg.time, 'sleep'):
+            self.assertIs(bg._ensure_tree(4242), healthy)
+        show.assert_called_once_with(4242, bg.SW_SHOWNOACTIVATE)
+
+    def test_missing_native_value_is_not_an_empty_input(self):
+        edit = SimpleNamespace(AutomationId=bg.CHAT_INPUT_AID, Name='测试群',
+                               GetValuePattern=lambda: SimpleNamespace(Value=None))
+        with patch.object(bg, '_uia', return_value=SimpleNamespace(ControlFromHandle=lambda _hwnd: object())), \
+                patch.object(bg, '_descendants', return_value=[edit]):
+            self.assertIsNone(bg.read_ui(4242)['value'])
 
     def test_tree_shell_stays_quiet_when_wake_is_disabled(self):
         shell = dict(nodes=[1], edit=None, value=None, send_xy=None, chat=None, rows=[], tabs=[])
