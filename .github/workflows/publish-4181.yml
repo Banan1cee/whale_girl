@@ -1,0 +1,34 @@
+name: publish-4181
+
+# 一次性：把 run 44997804420 的发布产物上传到 v4.1.8.1 Release。
+# 产物在 Actions 存储上，普通网络下载不到，只能由 runner 直接推送。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    name: 上传安装包到 Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ASSET: whale-girl-release-4.1.8.1
+      SOURCE_RUN: '44997804420'
+      TAG: v4.1.8.1
+    steps:
+      - name: 下载该次构建的发布产物
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" --name "$ASSET" --dir dist
+          ls -l dist
+      - name: 上传到 Release
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+      - name: 回读确认
+        run: gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | "\(.name)\t\(.size)"'
