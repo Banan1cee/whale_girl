@@ -89,7 +89,7 @@ namespace WhaleLauncher.Views
                 _sup.Line -= OnLine;
                 _sup.Line += OnLine;
                 if (!_drain.IsEnabled) _drain.Start();
-                await LoadConfigAsync();
+                await LoadConfigAsync(forceRefresh: true);
                 await RefreshAsync();
             };
         }
@@ -426,17 +426,18 @@ namespace WhaleLauncher.Views
         private void OnRestartBridge(object sender, RoutedEventArgs e) => _sup.RestartBridge();
 
         // ── 配置读写 ────────────────────────────────────────────
-        private async Task LoadConfigAsync()
+        private async Task LoadConfigAsync(bool forceRefresh = false)
         {
-            if (_configLoaded) return;
+            if (_loading || (_configLoaded && !forceRefresh)) return;
+            _loading = true;
             try
             {
-                var result = await _sup.ReadConfigurationAsync("/api/config");
+                var result = await _sup.ReadConfigurationAsync("/api/config", forceRefresh);
                 if (!result.Ok) return;
                 var cfg = result.Prop("config");
                 if (!cfg.TryGetProperty("wechat", out var wx) || wx.ValueKind != JsonValueKind.Object) return;
 
-                _loading = true;
+                var momentsForeground = JsonRead.Bool(JsonRead.Prop(cfg, "moments"), "publishFeatureEnabled");
                 ChkGuard.IsChecked = JsonRead.Bool(wx, "accountGuard");
                 ChkQuote.IsChecked = JsonRead.Bool(wx, "quoteReply");
 
@@ -465,7 +466,9 @@ namespace WhaleLauncher.Views
                 CmbSend.Items.Add("自动：后台优先，失败回前台");
                 CmbSend.Items.Add("仅前台：剪贴板粘贴");
                 CmbSend.Items.Add("后台严格：不回退前台");
-                CmbSend.SelectedIndex = !enabled ? 1 : (fallback ? 0 : 2);
+                CmbSend.SelectedIndex = momentsForeground || !enabled ? 1 : (fallback ? 0 : 2);
+                CmbSend.IsEnabled = !momentsForeground;
+                ForegroundLockHint.Visibility = momentsForeground ? Visibility.Visible : Visibility.Collapsed;
                 _configLoaded = true;
             }
             catch { /* 内核没起 */ }
@@ -509,7 +512,7 @@ namespace WhaleLauncher.Views
 
         private async void OnSendModeChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (_loading || CmbSend.SelectedIndex < 0) return;
+            if (_loading || !CmbSend.IsEnabled || CmbSend.SelectedIndex < 0) return;
             var idx = CmbSend.SelectedIndex;
             await PatchAsync(new Dictionary<string, object>
             {

@@ -1433,7 +1433,8 @@ _MODE_LOGGED = set()
 
 
 def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
-         strip_unencodable=True, verify=True, unhide=True, char_mode="auto"):
+         strip_unencodable=True, verify=True, unhide=True, char_mode="auto",
+         *, allow_legacy_invoke=True):
     """一步发完：物化 → 切会话 → 伪焦点打字 → 点发送 → 回读确认。
 
     返回 `(ok, reason)`。`reason` 是稳定枚举：
@@ -1443,6 +1444,7 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
     | sent / sent_partial | ✅ | 提交后原输入框清空（partial=跳过了不能编码的字） |
     | sent_unverified | ✅ | 已尝试提交，无法核对原输入框，禁止重发 |
     | no_window / minimized / send_point_unavailable | ❌ | 找不到窗口 / 未能恢复最小化 / 发送按钮离屏 |
+    | foreground_required | ❌ | 尚未切会话或输入，旧版后台 Invoke 交由自动模式改走前台 |
     | tree_not_ready / no_input_field | ❌ | 控件树没物化 / 当前不在聊天页 |
     | chat_not_found | ❌ | 会话不在列表里（退回前台通道搜索） |
     | no_send_button / input_not_empty | ❌ | 找不到按钮 / 输入框里还有草稿 |
@@ -1473,6 +1475,11 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
         hwnd = 0
     if not hwnd:
         return False, "no_window"
+    version = _running_wechat_version(hwnd)
+    prefer_click = not version or version >= (4, 2)
+    if not prefer_click and not allow_legacy_invoke:
+        log("后台通道：输入前改用前台（wechatVersion=%s）" % ".".join(map(str, version)))
+        return False, "foreground_required"
     try:
         if user32.IsIconic(hwnd) and not unhide:
             # 文档 §8.5：最小化时不物化。unhide=True 时用「显示但不激活」拉出来，
@@ -1506,10 +1513,7 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                 return False, "no_input_field"
             if info["send_xy"] is None:
                 return False, "no_send_button"
-            # 4.2.0.53 的 UIA Invoke 有时正常返回却不提交。只对已知版本选坐标，
-            # 某些微信窗口的后台坐标消息会丢（#190），其它版本保留原有控件优先。
-            prefer_click = (info.get("send_button") is not None
-                            and _running_wechat_version(hwnd) == (4, 2, 0, 53))
+            # 严格后台仍保留旧版 Invoke，以兼容 #190 的坐标消息丢失。
             if ((prefer_click or info.get("send_button") is None)
                     and not _click_point_on_window(hwnd, info["send_xy"])):
                 return False, "send_point_unavailable"
@@ -1522,10 +1526,10 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                 if not ok_same:
                     return False, "chat_mismatch"
             # 空框 UIA 读出来是 '\n'，按真值判会误报 input_not_empty（M1）；
-            # 读不到（None）维持原语义：当作没草稿，继续发。
+            # 读不到（None）时无法核验空框。
             if info["value"] is not None and not _is_blank(info["value"]):
                 if _composer_text(info["value"]) in _PROBE_TEXTS:
-                    log("后台通道：输入框里是编码探测留下的「鲸」，删掉后再发（不是用户草稿）")
+                    log("后台通道：输入框内容与编码探测相同，无法确认来源，保留草稿")
                 return False, "input_not_empty"
             if info["value"] is None:
                 # 还没输入时可以安全退回 Unicode 剪贴板通道；输入之后则不能盲目重发。
@@ -1633,7 +1637,8 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
             stage = 'background_invoke' if invoke is not None else 'background_click'
             if not operation.begin_effect(stage):
                 raise SendPreparationStopped('background submission stopped')
-            log("后台通道：尝试提交（%s）" % stage)
+            version_label = ".".join(map(str, version)) if version else "unknown"
+            log("后台通道：尝试提交（%s，wechatVersion=%s）" % (stage, version_label))
             if invoke is not None:
                 invoke()
             else:
@@ -1679,7 +1684,8 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
 
 
 def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
-         strip_unencodable=True, verify=True, unhide=True, char_mode="auto"):
+         strip_unencodable=True, verify=True, unhide=True, char_mode="auto",
+         *, allow_legacy_invoke=True):
     """Compatible tuple entry; share the caller's logical preparation budget."""
     try:
         from send_attempt import logical_operation, SendPreparationStopped
@@ -1689,7 +1695,8 @@ def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
         if operation.steps == 0 and not operation.reserve('background'):
             return False, 'error:SendPreparationStopped'
         try:
-            outcome = _send_once(text, chat, hwnd, log, char_gap, strip_unencodable, verify, unhide, char_mode)
+            outcome = _send_once(text, chat, hwnd, log, char_gap, strip_unencodable, verify, unhide, char_mode,
+                                 allow_legacy_invoke=allow_legacy_invoke)
         except SendPreparationStopped:
             return False, 'error:SendPreparationStopped'
         ok, reason = outcome

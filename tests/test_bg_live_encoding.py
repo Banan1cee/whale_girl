@@ -106,7 +106,7 @@ class LiveEncodingTests(unittest.TestCase):
             ('_clear_composer', clear), ('_detect_char_mode_by_version', lambda h=0: 'utf16'),
             ('_last_input_tick', lambda: state['input_tick']),
             ('_click_point_on_window', lambda _hwnd, _xy: state['click_point_valid']),
-            ('_running_wechat_version', lambda _hwnd: ()),
+            ('_running_wechat_version', lambda _hwnd: (4, 1, 13, 10)),
             ('_uia_write', uia_write),
         ]:
             p = patch.object(bg, name, replacement)
@@ -145,20 +145,32 @@ class LiveEncodingTests(unittest.TestCase):
         self.assertEqual(self.state['clicks'], 0)
         activate.assert_called_once_with()
 
+    def test_auto_legacy_route_never_navigates_or_writes_to_background(self):
+        with patch.object(bg, '_running_wechat_version', return_value=(4, 1, 15, 13)), \
+                patch.object(bg, '_ensure_tree') as prepare, patch.object(bg, 'open_chat') as navigate:
+            self.assertEqual(self.send(allow_legacy_invoke=False), (False, 'foreground_required'))
+        prepare.assert_not_called()
+        navigate.assert_not_called()
+        self.assertEqual(self.state['modes'], [])
+        self.assertEqual(self.state['clicks'], 0)
+
     def test_missing_invoke_pattern_keeps_coordinate_path(self):
         self.state.update(actual='utf16', send_button=SimpleNamespace(
             IsEnabled=True, GetInvokePattern=Mock(side_effect=RuntimeError('pattern unavailable'))))
         self.assertEqual(self.send(), (True, 'sent'))
         self.assertEqual(self.state['clicks'], 1)
 
-    def test_wechat_42053_silent_invoke_uses_one_coordinate_submission(self):
+    def test_wechat_42_and_unreadable_versions_avoid_silent_invoke(self):
         invoke = Mock()
         self.state.update(actual='utf16', node_count=76, send_button=SimpleNamespace(
             IsEnabled=True, GetInvokePattern=lambda: SimpleNamespace(Invoke=invoke)))
-        with patch.object(bg, '_running_wechat_version', return_value=(4, 2, 0, 53)):
-            self.assertEqual(self.send(), (True, 'sent'))
-        self.assertEqual(self.state['sent'], ['鲸鲸测试'])
-        self.assertEqual(self.state['clicks'], 1)
+        versions = ((4, 2, 0, 13), (4, 2, 0, 53), ())
+        for version in versions:
+            with self.subTest(version=version), patch.object(bg, '_running_wechat_version', return_value=version):
+                self.state.update(clicks=0, text='', sent=[])
+                self.assertEqual(self.send(), (True, 'sent'))
+                self.assertEqual(self.state['sent'], ['鲸鲸测试'])
+                self.assertEqual(self.state['clicks'], 1)
         invoke.assert_not_called()
 
     def test_offscreen_coordinate_path_stops_before_writing(self):
