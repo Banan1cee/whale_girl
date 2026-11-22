@@ -229,7 +229,7 @@ class TransportTest(unittest.TestCase):
         self.assertEqual(set(self.db.queries), {'peer'})
 
     def run_reply_sequence(self, *, group=False, sticker_only=False, fail_text=False,
-                           lose_focus=False, draft='', receipt=True):
+                           lose_focus=False, draft='', receipt=True, wechat_version=(4, 2, 0, 53)):
         """Exercise the reply, text, claim and attachment code on one fake window."""
         from contextlib import nullcontext
         from send_state import ChatIdentityError, DraftDirtyError
@@ -316,7 +316,7 @@ class TransportTest(unittest.TestCase):
                               IsWindowVisible=lambda _: True, IsIconic=lambda _: False)
         with patch.dict(sys.modules, bg_sender=bg, win32gui=win,
                         win32process=SimpleNamespace(GetWindowThreadProcessId=lambda _: (1, 42))), \
-                patch.object(bg, 'configure'), patch.object(bg, '_running_wechat_version', return_value=(4, 2, 0, 53)):
+                patch.object(bg, 'configure'), patch.object(bg, '_running_wechat_version', return_value=wechat_version):
             env['on_message_inner'](dict(BridgeUserFlows.message(self), username=username), None)
 
         self.assertEqual([entry[0] for entry in posts],
@@ -346,6 +346,12 @@ class TransportTest(unittest.TestCase):
 
     def test_reply_sequence_group_text_then_delayed_sticker(self):
         self.run_reply_sequence(group=True)
+
+    def test_reply_sequence_wechat_42013_then_sticker(self):
+        self.run_reply_sequence(wechat_version=(4, 2, 0, 13))
+
+    def test_reply_sequence_unreadable_version_then_sticker(self):
+        self.run_reply_sequence(group=True, wechat_version=())
 
     def test_reply_sequence_sticker_only_skips_text(self):
         self.run_reply_sequence(sticker_only=True)

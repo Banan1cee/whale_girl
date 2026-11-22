@@ -1506,10 +1506,10 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                 return False, "no_input_field"
             if info["send_xy"] is None:
                 return False, "no_send_button"
-            # 4.2.0.53 的 UIA Invoke 有时正常返回却不提交。只对已知版本选坐标，
-            # 某些微信窗口的后台坐标消息会丢（#190），其它版本保留原有控件优先。
-            prefer_click = (info.get("send_button") is not None
-                            and _running_wechat_version(hwnd) == (4, 2, 0, 53))
+            # 4.2 的 Invoke 可能正常返回却未提交。也要兼容运行版本读不到的新客户端。
+            # 确认是旧版时保留 Invoke 优先，以免回归 #190 的后台坐标丢失问题。
+            version = _running_wechat_version(hwnd)
+            prefer_click = not version or version >= (4, 2)
             if ((prefer_click or info.get("send_button") is None)
                     and not _click_point_on_window(hwnd, info["send_xy"])):
                 return False, "send_point_unavailable"
@@ -1522,10 +1522,10 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                 if not ok_same:
                     return False, "chat_mismatch"
             # 空框 UIA 读出来是 '\n'，按真值判会误报 input_not_empty（M1）；
-            # 读不到（None）维持原语义：当作没草稿，继续发。
+            # 读不到（None）时无法核验空框。
             if info["value"] is not None and not _is_blank(info["value"]):
                 if _composer_text(info["value"]) in _PROBE_TEXTS:
-                    log("后台通道：输入框里是编码探测留下的「鲸」，删掉后再发（不是用户草稿）")
+                    log("后台通道：输入框内容与编码探测相同，无法确认来源，保留草稿")
                 return False, "input_not_empty"
             if info["value"] is None:
                 # 还没输入时可以安全退回 Unicode 剪贴板通道；输入之后则不能盲目重发。
@@ -1633,7 +1633,8 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
             stage = 'background_invoke' if invoke is not None else 'background_click'
             if not operation.begin_effect(stage):
                 raise SendPreparationStopped('background submission stopped')
-            log("后台通道：尝试提交（%s）" % stage)
+            version_label = ".".join(map(str, version)) if version else "unknown"
+            log("后台通道：尝试提交（%s，wechatVersion=%s）" % (stage, version_label))
             if invoke is not None:
                 invoke()
             else:

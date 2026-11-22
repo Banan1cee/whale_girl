@@ -21,6 +21,8 @@ class SenderMixin:
         if not G.BG_SEND.get('enabled', True) or self.BG_STATS['disabled']:
             return False
         if clock() < self.BG_STATS['cooldownUntil']:
+            if self.BG_STATS.get('last') == 'residue_left':
+                operation.record('not_sent', 'background_residue_cooldown')
             return False
         if not operation.reserve('background'):
             return operation.result.handled
@@ -68,6 +70,8 @@ class SenderMixin:
             operation.record('draft_dirty', why)
             raise G.DraftDirtyError('本次输入中断或清理未确认，已暂停发送，请检查目标输入框（input_dirty）')
         if why == 'residue_left':
+            # 本条的提交结果不确定。短暂绕开后台只适用于后续新消息。
+            self.BG_STATS['cooldownUntil'] = clock() + 120
             operation.record('draft_dirty', why)
             raise G.DraftDirtyError('已尝试点击发送但输入框未清空，请先核对微信是否已收到，避免重复补发（residue_left）')
         if ok:
@@ -105,7 +109,7 @@ class SenderMixin:
             G.log('后台通道：%s 不在会话列表里，改用会搜索的通道' % G.safe_name(chat_display_name))
         return False
 
-    def uia_send(self, text, who, username=''):
+    def uia_send(self, text, who, username='', *, require_foreground=False):
         """UIA 单次不透明调用；True 表示已处理，不等于确认送达。"""
         from send_attempt import operation_for_call, bind_runtime_identity
         from send_input import is_blank, input_value
@@ -166,6 +170,11 @@ class SenderMixin:
                 return False
             if not is_blank(input_value(u)):
                 raise G.DraftDirtyError('UIA 输入框有草稿或不可读，本条不输入')
+            if require_foreground or getattr(G, 'MOMENTS_FORCE_FOREGROUND', False):
+                window = self.snapshot_win_state()
+                if not window['hwnd'] or window['fg'] != window['hwnd']:
+                    operation.record('cancelled', 'uia_foreground_lost')
+                    return False
             handled = operation.opaque('uia_send_text', lambda: u.send_text(text))
             if operation.result.status == 'submitted' and not is_blank(input_value(u)):
                 operation.record('uncertain', 'uia_composer_unverified_after_submit')
@@ -485,6 +494,7 @@ class SenderMixin:
                 return False
             t_start = G.time.time()
             allow_mark_dead = True
+            residue_fallback = False
             if G.BACKGROUND_SEND and G.BG_SEND.get('enabled', True):
                 G.SEND_STATE['start'] = G.time.time()
                 try:
@@ -515,6 +525,7 @@ class SenderMixin:
                     allow_mark_dead = False
                     G.log_error('后台通道失败且已关闭前台兜底，这条不发：', display)
                     return False
+                residue_fallback = operation.result.reason == 'background_residue_cooldown'
             if not operation.can_continue():
                 return operation.result.handled
             with self.gui_lock:
@@ -570,9 +581,16 @@ class SenderMixin:
                 uia_available = self.gui._get_uia() is not None
             except Exception:
                 uia_available = False
+
+            def send_uia():
+                if residue_fallback:
+                    return self.uia_send(text, chat_display_name, chat_username, require_foreground=True)
+                return self.uia_send(text, chat_display_name, chat_username)
+
             G.SEND_STATE['start'] = G.time.time()
             try:
-                if self.with_window_on_top(lambda: prepared_adapter(operation, 'uia', lambda: self.uia_send(text, chat_display_name, chat_username))):
+                if self.with_window_on_top(lambda: prepared_adapter(operation, 'uia', send_uia),
+                                           require_foreground=residue_fallback):
                     self.fail_streak.pop(chat_username, None)
                     G.log('UIA 已处理，阶段=%s（不等于确认送达）' % operation.result.status)
                     return True
@@ -590,7 +608,8 @@ class SenderMixin:
             if operation.reserve('recovery'):
                 if self.recover_uia('发送失败'):
                     try:
-                        if self.with_window_on_top(lambda: prepared_adapter(operation, 'uia_recovery', lambda: self.uia_send(text, chat_display_name, chat_username))):
+                        if self.with_window_on_top(lambda: prepared_adapter(operation, 'uia_recovery', send_uia),
+                                                   require_foreground=residue_fallback):
                             self.fail_streak.pop(chat_username, None)
                             if operation.result.status == 'uncertain':
                                 G.log('重新激活后的发送结果不确定，禁止重发：', display)
@@ -608,7 +627,7 @@ class SenderMixin:
                         G.log('重新激活后仍未准备好：', type(e).__name__)
             if not operation.can_continue():
                 return operation.result.handled
-            if operation.reserve('foreground_preparation'):
+            if not residue_fallback and operation.reserve('foreground_preparation'):
                 try:
                     # The previous attempts are proved pre-input failures.
                     # Preparation may now move the window, then invoke once.

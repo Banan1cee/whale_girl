@@ -375,6 +375,19 @@ test('表情包前台发送提示与文字发送模式分别标明', () => {
   assert.match(bridge, /Text="文字发送方式"/);
 });
 
+test('开启朋友圈发表后桥接显示仅前台并锁定，关闭后恢复原选项', () => {
+  const moments = readLauncher('Views/MomentsPage.xaml');
+  const bridge = readLauncher('Views/BridgePage.xaml.cs');
+  const view = readLauncher('Views/BridgePage.xaml');
+  assert.match(moments, /启用朋友圈发表（强制前台）/);
+  assert.match(view, /朋友圈已开启，微信强制前台发送/);
+  assert.match(bridge, /JsonRead\.Bool\(JsonRead\.Prop\(cfg, "moments"\), "publishFeatureEnabled"\)/);
+  assert.match(bridge, /CmbSend\.SelectedIndex = momentsForeground \|\| !enabled \? 1 : \(fallback \? 0 : 2\)/);
+  assert.match(bridge, /CmbSend\.IsEnabled = !momentsForeground/);
+  assert.match(bridge, /await LoadConfigAsync\(forceRefresh: true\)/);
+  assert.match(bridge, /if \(_loading \|\| !CmbSend\.IsEnabled \|\| CmbSend\.SelectedIndex < 0\) return/);
+});
+
 test('表情包「打开总目录」在离线/功能关闭时也能落到 data\\stickers，并用 explorer 参数打开', () => {
   const code = readLauncher('Views/StickerPage.xaml.cs');
   assert.match(code, /Path\.Combine\(_sup\.DataDir,\s*"stickers"\)/, '根目录要有本地兜底，不能只依赖内核');

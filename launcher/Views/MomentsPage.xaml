@@ -30,10 +30,12 @@
                 <TextBlock Text="发表会操作当前微信窗口。定时发表会参考近期微信群聊和私聊，包含与主人的聊天。"
                            Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,10" />
                 <WrapPanel>
-                    <CheckBox x:Name="ChkPublishFeature" Content="启用朋友圈发表（总开关）" Margin="0,0,16,0" />
+                    <CheckBox x:Name="ChkPublishFeature" Content="启用朋友圈发表（强制前台）" Margin="0,0,16,0" />
                     <CheckBox x:Name="ChkPublish" Content="定时自动发表" Margin="0,0,16,0" />
                     <CheckBox x:Name="ChkPublishImage" Content="按情绪配一张图片" />
                 </WrapPanel>
+                <TextBlock Text="开启并保存后，微信消息一律前台发送。关闭朋友圈发表后恢复原发送方式。"
+                           Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" />
                 <WrapPanel Margin="0,8,0,0">
                     <TextBlock Text="每隔（小时）" Style="{StaticResource Label}" VerticalAlignment="Center" />
                     <TextBox x:Name="TxtPublishInterval" Width="56" Text="6" Margin="6,0,16,0" />

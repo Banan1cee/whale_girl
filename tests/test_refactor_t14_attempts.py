@@ -167,6 +167,52 @@ class AttemptTests(SafeFixture):
                 self.bg.send.assert_called_once()
                 uia.send_text.assert_not_called()
 
+    def test_background_residue_stops_once_then_auto_uses_foreground_for_new_text(self):
+        runtime, g, uia, methods = self.runtime(background=True)
+        self.bg.send.return_value = (False, 'residue_left')
+        uia.send_text.return_value = True
+        send = lambda text: methods['send_text'](runtime, text, 'fixture-room', 'fixture-peer')
+        self.assertFalse(send('first reply'))
+        runtime.force_send_foreground.assert_not_called()
+        uia.send_text.assert_not_called()
+        uia._chat_input.return_value.value = 'first reply'
+        self.assertFalse(send('second reply'))
+        uia.send_text.assert_not_called()
+        uia._chat_input.return_value.value = ''
+        self.assertTrue(send('third reply'))
+        self.bg.send.assert_called_once()
+        uia.send_text.assert_called_once_with('third reply')
+        self.assertTrue(runtime.force_send_foreground.call_args.kwargs['require_foreground'])
+        self.mono[0] += 121
+        self.bg.send.return_value = (True, 'sent')
+        self.assertTrue(send('new reply after cooldown'))
+        self.assertEqual(self.bg.send.call_count, 2)
+        uia.send_text.assert_called_once_with('third reply')
+
+    def test_background_strict_residue_never_activates_foreground(self):
+        runtime, g, uia, methods = self.runtime(background=True)
+        g.BG_SEND['fallback'] = False
+        self.bg.send.return_value = (False, 'residue_left')
+        for text in ('first reply', 'next reply'):
+            self.assertFalse(methods['send_text'](runtime, text, 'fixture-room', 'fixture-peer'))
+        self.bg.send.assert_called_once()
+        runtime.force_send_foreground.assert_not_called()
+        uia.send_text.assert_not_called()
+
+    def test_moments_forced_mode_requires_foreground_before_any_text_input(self):
+        runtime, g, uia, methods = self.runtime(background=True)
+        g.BACKGROUND_SEND = False
+        g.MOMENTS_FORCE_FOREGROUND = True
+        uia.send_text.return_value = True
+        runtime.snapshot_win_state.return_value = {'hwnd': 123, 'fg': 124}
+        self.assertFalse(methods['send_text'](runtime, 'fixture text', 'fixture-room', 'fixture-peer'))
+        self.bg.send.assert_not_called()
+        uia.send_text.assert_not_called()
+        self.assertTrue(runtime.force_send_foreground.call_args.kwargs['require_foreground'])
+        runtime.snapshot_win_state.return_value['fg'] = 123
+        self.assertTrue(methods['send_text'](runtime, 'next text', 'fixture-room', 'fixture-peer'))
+        uia.send_text.assert_called_once_with('next text')
+
     def test_quote_and_mention_opaque_failures_are_not_plain_text_fallbacks(self):
         runtime, g, uia, methods = self.runtime()
         g.QUOTE_REPLY = True

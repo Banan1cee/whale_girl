@@ -255,7 +255,9 @@ class WindowMixin:
         引用等明确需要鼠标焦点的操作显式要求前台。
         把 wechat.backgroundSend 设成 false 就退回以前的「每次先抢前台、发完不管」。
         """
-        restore_after = G.BACKGROUND_SEND
+        moments_foreground = getattr(G, 'MOMENTS_FORCE_FOREGROUND', False)
+        require_foreground = require_foreground or moments_foreground
+        restore_after = G.BACKGROUND_SEND or moments_foreground
         snap = self.snapshot_win_state() if restore_after else None
         try:
             if require_foreground:

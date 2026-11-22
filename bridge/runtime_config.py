@@ -46,6 +46,7 @@ def runtime_snapshot(config, environ=None):
     master = _section(persona, 'master')
     features = _section(config, 'features')
     sticker = _section(config, 'sticker')
+    moments_foreground = _section(config, 'moments').get('publishFeatureEnabled') is True
     level = str(_section(config, 'log').get('level') or 'info').strip().lower()
     workers = max(1, min(16, as_int(w.get('pipelineWorkers', 4) or 4, 4)))
     if env.get('WHALE_PIPELINE_WORKERS'):
@@ -86,7 +87,8 @@ def runtime_snapshot(config, environ=None):
         'MESSAGE_SETTLE_MS': message_settle_ms, 'GROUP_MAX_BATCH_WAIT_MS': group_max_wait_ms,
         'QUOTE_REPLY': as_bool(w.get('quoteReply', False), False),
         'KEYBOARD_FALLBACK': as_bool(w.get('keyboardFallback', True), True),
-        'BACKGROUND_SEND': as_bool(w.get('backgroundSend', True), True),
+        'BACKGROUND_SEND': not moments_foreground and as_bool(w.get('backgroundSend', True), True),
+        'MOMENTS_FORCE_FOREGROUND': moments_foreground,
         'BG_SEND': parse_bg_send(w), 'PIPELINE_WORKERS': workers,
         'PIPELINE_QUEUE_LIMIT': max(1, min(32, as_int(w.get('pipelineQueueLimit', 8) or 8, 8))),
         'ACCOUNT_GUARD': as_bool(w.get('accountGuard', True), True),

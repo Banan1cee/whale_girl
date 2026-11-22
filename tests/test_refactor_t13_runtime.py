@@ -176,6 +176,19 @@ class ConfigSnapshotTests(unittest.TestCase):
         self.assertTrue(scope['VOICE_ENABLED'])
         self.assertEqual(scope['MASTER_WXID'], '')
 
+    def test_moments_publish_switch_overrides_and_restores_text_send_mode(self):
+        config = {'wechat': {'bgSend': {'enabled': True, 'fallbackToForeground': False}}}
+        scope = self.scope(config)
+        self.assertTrue(scope['BACKGROUND_SEND'])
+        for enabled in (True, False, True, False):
+            updated = dict(config, moments={'publishFeatureEnabled': enabled, 'publishEnabled': False})
+            self.assertTrue(scope['reload_config'](config=updated))
+            self.assertIs(scope['MOMENTS_FORCE_FOREGROUND'], enabled)
+            self.assertIs(scope['BACKGROUND_SEND'], not enabled)
+            self.assertTrue(scope['BG_SEND']['enabled'])
+            self.assertFalse(scope['BG_SEND']['fallback'])
+        scope['restart_for_config_change'].assert_not_called()
+
     def test_invalid_shape_does_not_partially_publish(self):
         before = {'wechat': {'quoteReply': True}}
         scope = self.scope(before)

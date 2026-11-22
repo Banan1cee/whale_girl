@@ -108,6 +108,8 @@
                     <ComboBox x:Name="CmbSend" Width="210" FontSize="12" VerticalAlignment="Center"
                               SelectionChanged="OnSendModeChanged" />
                 </WrapPanel>
+                <TextBlock x:Name="ForegroundLockHint" Text="朋友圈已开启，微信强制前台发送。"
+                           Style="{StaticResource Small}" Margin="0,6,0,0" Visibility="Collapsed" />
                 <TextBlock x:Name="SwitchHint" Style="{StaticResource Small}" Margin="0,6,0,0"
                            Text="引用回复会让每条多等好几秒。文字发送方式改了会立刻写回配置。" />
 
