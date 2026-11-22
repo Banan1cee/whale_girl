@@ -167,7 +167,7 @@ class AttemptTests(SafeFixture):
                 self.bg.send.assert_called_once()
                 uia.send_text.assert_not_called()
 
-    def test_background_residue_stops_once_then_auto_uses_foreground_for_new_text(self):
+    def test_background_residue_stops_once_then_auto_keeps_foreground_after_idle(self):
         runtime, g, uia, methods = self.runtime(background=True)
         self.bg.send.return_value = (False, 'residue_left')
         uia.send_text.return_value = True
@@ -183,11 +183,32 @@ class AttemptTests(SafeFixture):
         self.bg.send.assert_called_once()
         uia.send_text.assert_called_once_with('third reply')
         self.assertTrue(runtime.force_send_foreground.call_args.kwargs['require_foreground'])
-        self.mono[0] += 121
+        self.mono[0] += 900
         self.bg.send.return_value = (True, 'sent')
-        self.assertTrue(send('new reply after cooldown'))
+        self.assertTrue(send('new reply after idle'))
+        self.bg.send.assert_called_once()
+        self.assertEqual([call.args[0] for call in uia.send_text.call_args_list],
+                         ['third reply', 'new reply after idle'])
+        runtime._bg_hwnd.return_value = 456
+        self.assertTrue(send('new window reply'))
         self.assertEqual(self.bg.send.call_count, 2)
-        uia.send_text.assert_called_once_with('third reply')
+        self.assertEqual(self.bg.send.call_args.kwargs['hwnd'], 456)
+
+    def test_auto_uses_verified_foreground_when_legacy_invoke_would_be_needed(self):
+        runtime, g, uia, methods = self.runtime(background=True)
+        g.QUOTE_REPLY = True
+        self.bg.send.return_value = (False, 'foreground_required')
+        uia.send_text.return_value = True
+        for text in ('first reply', 'new reply after idle'):
+            self.assertTrue(methods['send_text'](runtime, text, 'fixture-room', 'fixture-peer', quote_latest=True))
+            self.mono[0] += 900
+        self.assertEqual([call.args[0] for call in uia.send_text.call_args_list],
+                         ['first reply', 'new reply after idle'])
+        self.assertTrue(all(call.kwargs['require_foreground']
+                            for call in runtime.force_send_foreground.call_args_list))
+        self.assertEqual(runtime.force_send_foreground.call_count, 2)
+        runtime.gui.quote_msg.assert_not_called()
+        self.assertFalse(self.bg.send.call_args.kwargs['allow_legacy_invoke'])
 
     def test_background_strict_residue_never_activates_foreground(self):
         runtime, g, uia, methods = self.runtime(background=True)
@@ -196,6 +217,7 @@ class AttemptTests(SafeFixture):
         for text in ('first reply', 'next reply'):
             self.assertFalse(methods['send_text'](runtime, text, 'fixture-room', 'fixture-peer'))
         self.bg.send.assert_called_once()
+        self.assertTrue(self.bg.send.call_args.kwargs['allow_legacy_invoke'])
         runtime.force_send_foreground.assert_not_called()
         uia.send_text.assert_not_called()
 

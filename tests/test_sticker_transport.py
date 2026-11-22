@@ -229,7 +229,8 @@ class TransportTest(unittest.TestCase):
         self.assertEqual(set(self.db.queries), {'peer'})
 
     def run_reply_sequence(self, *, group=False, sticker_only=False, fail_text=False,
-                           lose_focus=False, draft='', receipt=True, wechat_version=(4, 2, 0, 53)):
+                           lose_focus=False, draft='', receipt=True, wechat_version=(4, 2, 0, 53),
+                           foreground_text=False):
         """Exercise the reply, text, claim and attachment code on one fake window."""
         from contextlib import nullcontext
         from send_state import ChatIdentityError, DraftDirtyError
@@ -312,6 +313,27 @@ class TransportTest(unittest.TestCase):
         bridge_functions({'on_message_inner', 'send_text', 'bg_send', 'sticker_config_now', 'sticker_gate',
                           'claim_and_send_sticker', 'cancel_reply_sticker', 'send_sticker',
                           'sticker_quarantine_allows', 'sticker_activity_allowed'}, env)
+        if foreground_text:
+            from send_attempt import operation_for_call
+
+            def activate_text(action, *, require_foreground):
+                self.assertTrue(require_foreground)
+                window['foreground'] = hwnd
+                return action()
+
+            def submit_text(text, shown, canonical, *, require_foreground):
+                self.assertTrue(require_foreground)
+                self.assertTrue(self.desktop.foreground(hwnd))
+                self.assertEqual((shown, canonical), ('Peer', username))
+                operation = operation_for_call()
+                self.assertTrue(operation.reserve('uia'))
+                return operation.opaque('uia_send_text', lambda: window['sent'].append(text) or True)
+
+            self.gui._get_uia = lambda: self.uia
+            env.update(bind_gui_window=lambda gui: None,
+                       force_send_foreground=Mock(side_effect=activate_text),
+                       uia_send=Mock(side_effect=submit_text))
+            bridge_functions({'with_window_on_top'}, env)
         win = SimpleNamespace(IsWindow=lambda h: h == hwnd, GetForegroundWindow=lambda: window['foreground'],
                               IsWindowVisible=lambda _: True, IsIconic=lambda _: False)
         with patch.dict(sys.modules, bg_sender=bg, win32gui=win,
@@ -321,7 +343,7 @@ class TransportTest(unittest.TestCase):
 
         self.assertEqual([entry[0] for entry in posts],
                          ['wechat', 'cancel'] if fail_text or draft else ['wechat', 'claim', 'ack'], logs)
-        self.assertEqual(window['clicks'], 0 if sticker_only or draft else 1, logs)
+        self.assertEqual(window['clicks'], 0 if sticker_only or draft or foreground_text else 1, logs)
         invoke.assert_not_called()
         env['new_window_driver'].assert_not_called()
         if fail_text or draft:
@@ -338,7 +360,7 @@ class TransportTest(unittest.TestCase):
         self.assertEqual(set(self.db.queries), {username})
         self.assertEqual(posts[-1][1]['status'], 'confirmed' if receipt and not lose_focus else 'unconfirmed')
         self.assertEqual(window['foreground'], 300 if lose_focus else 200)
-        self.assertEqual(env['restore_win_state'].call_count, 0 if lose_focus else 1)
+        self.assertEqual(env['restore_win_state'].call_count, int(foreground_text) + int(not lose_focus))
         self.assertEqual(set(env['sticker_draft_quarantine']), {username} if lose_focus or not receipt else set())
 
     def test_reply_sequence_private_text_then_sticker(self):
@@ -349,6 +371,9 @@ class TransportTest(unittest.TestCase):
 
     def test_reply_sequence_wechat_42013_then_sticker(self):
         self.run_reply_sequence(wechat_version=(4, 2, 0, 13))
+
+    def test_reply_sequence_wechat_411513_foreground_text_then_sticker(self):
+        self.run_reply_sequence(wechat_version=(4, 1, 15, 13), foreground_text=True)
 
     def test_reply_sequence_unreadable_version_then_sticker(self):
         self.run_reply_sequence(group=True, wechat_version=())

@@ -1433,7 +1433,8 @@ _MODE_LOGGED = set()
 
 
 def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
-         strip_unencodable=True, verify=True, unhide=True, char_mode="auto"):
+         strip_unencodable=True, verify=True, unhide=True, char_mode="auto",
+         *, allow_legacy_invoke=True):
     """一步发完：物化 → 切会话 → 伪焦点打字 → 点发送 → 回读确认。
 
     返回 `(ok, reason)`。`reason` 是稳定枚举：
@@ -1443,6 +1444,7 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
     | sent / sent_partial | ✅ | 提交后原输入框清空（partial=跳过了不能编码的字） |
     | sent_unverified | ✅ | 已尝试提交，无法核对原输入框，禁止重发 |
     | no_window / minimized / send_point_unavailable | ❌ | 找不到窗口 / 未能恢复最小化 / 发送按钮离屏 |
+    | foreground_required | ❌ | 尚未切会话或输入，旧版后台 Invoke 交由自动模式改走前台 |
     | tree_not_ready / no_input_field | ❌ | 控件树没物化 / 当前不在聊天页 |
     | chat_not_found | ❌ | 会话不在列表里（退回前台通道搜索） |
     | no_send_button / input_not_empty | ❌ | 找不到按钮 / 输入框里还有草稿 |
@@ -1473,6 +1475,11 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
         hwnd = 0
     if not hwnd:
         return False, "no_window"
+    version = _running_wechat_version(hwnd)
+    prefer_click = not version or version >= (4, 2)
+    if not prefer_click and not allow_legacy_invoke:
+        log("后台通道：输入前改用前台（wechatVersion=%s）" % ".".join(map(str, version)))
+        return False, "foreground_required"
     try:
         if user32.IsIconic(hwnd) and not unhide:
             # 文档 §8.5：最小化时不物化。unhide=True 时用「显示但不激活」拉出来，
@@ -1506,10 +1513,7 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
                 return False, "no_input_field"
             if info["send_xy"] is None:
                 return False, "no_send_button"
-            # 4.2 的 Invoke 可能正常返回却未提交。也要兼容运行版本读不到的新客户端。
-            # 确认是旧版时保留 Invoke 优先，以免回归 #190 的后台坐标丢失问题。
-            version = _running_wechat_version(hwnd)
-            prefer_click = not version or version >= (4, 2)
+            # 严格后台仍保留旧版 Invoke，以兼容 #190 的坐标消息丢失。
             if ((prefer_click or info.get("send_button") is None)
                     and not _click_point_on_window(hwnd, info["send_xy"])):
                 return False, "send_point_unavailable"
@@ -1680,7 +1684,8 @@ def _send_once(text, chat=None, hwnd=0, log=None, char_gap=0.04,
 
 
 def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
-         strip_unencodable=True, verify=True, unhide=True, char_mode="auto"):
+         strip_unencodable=True, verify=True, unhide=True, char_mode="auto",
+         *, allow_legacy_invoke=True):
     """Compatible tuple entry; share the caller's logical preparation budget."""
     try:
         from send_attempt import logical_operation, SendPreparationStopped
@@ -1690,7 +1695,8 @@ def send(text, chat=None, hwnd=0, log=None, char_gap=0.04,
         if operation.steps == 0 and not operation.reserve('background'):
             return False, 'error:SendPreparationStopped'
         try:
-            outcome = _send_once(text, chat, hwnd, log, char_gap, strip_unencodable, verify, unhide, char_mode)
+            outcome = _send_once(text, chat, hwnd, log, char_gap, strip_unencodable, verify, unhide, char_mode,
+                                 allow_legacy_invoke=allow_legacy_invoke)
         except SendPreparationStopped:
             return False, 'error:SendPreparationStopped'
         ok, reason = outcome

@@ -20,9 +20,14 @@ class SenderMixin:
         clock = getattr(G.time, 'monotonic', elapsed_time.monotonic)
         if not G.BG_SEND.get('enabled', True) or self.BG_STATS['disabled']:
             return False
+        hwnd = self._bg_hwnd()
+        if not hwnd:
+            return False
+        allow_foreground = G.BG_SEND.get('fallback', True)
+        if allow_foreground and self.BG_STATS.get('residueHwnd') == hwnd:
+            operation.record('not_sent', 'background_residue_session')
+            return False
         if clock() < self.BG_STATS['cooldownUntil']:
-            if self.BG_STATS.get('last') == 'residue_left':
-                operation.record('not_sent', 'background_residue_cooldown')
             return False
         if not operation.reserve('background'):
             return operation.result.handled
@@ -35,9 +40,6 @@ class SenderMixin:
                 self.BG_STATS['disabled'] = True
                 G.log('后台通道：模块导入失败，本次运行内关闭这条通道：', repr(e))
                 return False
-        hwnd = self._bg_hwnd()
-        if not hwnd:
-            return False
         try:
             bg_sender.configure(G.BG_SEND, state_file=G.os.path.join(G.ROOT, 'data', 'wechat-encoding.json'))
         except Exception:
@@ -48,7 +50,12 @@ class SenderMixin:
             keys = [chat_display_name]
         t0 = clock()
         try:
-            ok, why = bg_sender.send(text, chat=keys, hwnd=hwnd, log=G.log, char_gap=G.BG_SEND.get('charGap', 0.04), strip_unencodable=G.BG_SEND.get('strip', True), verify=G.BG_SEND.get('verify', True), unhide=G.BG_SEND.get('unhide', True), char_mode=G.BG_SEND.get('charMode') or 'auto')
+            ok, why = bg_sender.send(text, chat=keys, hwnd=hwnd, log=G.log,
+                                     char_gap=G.BG_SEND.get('charGap', 0.04),
+                                     strip_unencodable=G.BG_SEND.get('strip', True),
+                                     verify=G.BG_SEND.get('verify', True), unhide=G.BG_SEND.get('unhide', True),
+                                     char_mode=G.BG_SEND.get('charMode') or 'auto',
+                                     allow_legacy_invoke=not allow_foreground)
         except Exception as e:
             ok, why = (False, 'exception:' + type(e).__name__)
             G.log_warn('后台通道异常：', repr(e))
@@ -70,8 +77,10 @@ class SenderMixin:
             operation.record('draft_dirty', why)
             raise G.DraftDirtyError('本次输入中断或清理未确认，已暂停发送，请检查目标输入框（input_dirty）')
         if why == 'residue_left':
-            # 本条的提交结果不确定。短暂绕开后台只适用于后续新消息。
-            self.BG_STATS['cooldownUntil'] = clock() + 120
+            # 等待不会修好同一窗口的后台提交。前台兜底只适用于后续新消息。
+            self.BG_STATS['residueHwnd'] = hwnd
+            if not allow_foreground:
+                self.BG_STATS['cooldownUntil'] = clock() + 120
             operation.record('draft_dirty', why)
             raise G.DraftDirtyError('已尝试点击发送但输入框未清空，请先核对微信是否已收到，避免重复补发（residue_left）')
         if ok:
@@ -85,7 +94,7 @@ class SenderMixin:
             return False
         safe_before_input = {'empty', 'no_window', 'minimized', 'tree_not_ready', 'chat_not_found',
                              'no_input_field', 'no_send_button', 'send_point_unavailable',
-                             'gbk_unsupported', 'uipi_denied', 'input_unreadable'}
+                             'gbk_unsupported', 'uipi_denied', 'input_unreadable', 'foreground_required'}
         if why not in safe_before_input:
             operation.effect_started = True
             operation.record('uncertain', str(why))
@@ -494,7 +503,7 @@ class SenderMixin:
                 return False
             t_start = G.time.time()
             allow_mark_dead = True
-            residue_fallback = False
+            foreground_fallback = False
             if G.BACKGROUND_SEND and G.BG_SEND.get('enabled', True):
                 G.SEND_STATE['start'] = G.time.time()
                 try:
@@ -525,7 +534,9 @@ class SenderMixin:
                     allow_mark_dead = False
                     G.log_error('后台通道失败且已关闭前台兜底，这条不发：', display)
                     return False
-                residue_fallback = operation.result.reason == 'background_residue_cooldown'
+                foreground_fallback = operation.result.reason in ('foreground_required', 'background_residue_session')
+                if foreground_fallback:
+                    G.log('[delivery] stage=foreground result=prepare reason=%s' % operation.result.reason)
             if not operation.can_continue():
                 return operation.result.handled
             with self.gui_lock:
@@ -533,7 +544,9 @@ class SenderMixin:
                     G.log('初始化微信窗口驱动…（会抢一下焦点，约 5~10 秒）')
                     self.gui = self.new_window_driver()
             self.bind_gui_window(self.gui)
-            if quote_latest and G.QUOTE_REPLY:
+            # 兜底的目标是送出正文。引用定位失败和已经尝试发送在旧驱动里
+            # 都可能返回不确定，进入引用动作后无法安全地回退为普通文字。
+            if quote_latest and G.QUOTE_REPLY and not foreground_fallback:
                 G.SEND_STATE['start'] = G.time.time()
                 try:
                     from send_input import is_blank, input_value
@@ -583,14 +596,14 @@ class SenderMixin:
                 uia_available = False
 
             def send_uia():
-                if residue_fallback:
+                if foreground_fallback:
                     return self.uia_send(text, chat_display_name, chat_username, require_foreground=True)
                 return self.uia_send(text, chat_display_name, chat_username)
 
             G.SEND_STATE['start'] = G.time.time()
             try:
                 if self.with_window_on_top(lambda: prepared_adapter(operation, 'uia', send_uia),
-                                           require_foreground=residue_fallback):
+                                           require_foreground=foreground_fallback):
                     self.fail_streak.pop(chat_username, None)
                     G.log('UIA 已处理，阶段=%s（不等于确认送达）' % operation.result.status)
                     return True
@@ -609,7 +622,7 @@ class SenderMixin:
                 if self.recover_uia('发送失败'):
                     try:
                         if self.with_window_on_top(lambda: prepared_adapter(operation, 'uia_recovery', send_uia),
-                                                   require_foreground=residue_fallback):
+                                                   require_foreground=foreground_fallback):
                             self.fail_streak.pop(chat_username, None)
                             if operation.result.status == 'uncertain':
                                 G.log('重新激活后的发送结果不确定，禁止重发：', display)
@@ -627,7 +640,7 @@ class SenderMixin:
                         G.log('重新激活后仍未准备好：', type(e).__name__)
             if not operation.can_continue():
                 return operation.result.handled
-            if not residue_fallback and operation.reserve('foreground_preparation'):
+            if not foreground_fallback and operation.reserve('foreground_preparation'):
                 try:
                     # The previous attempts are proved pre-input failures.
                     # Preparation may now move the window, then invoke once.
