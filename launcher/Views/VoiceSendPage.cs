@@ -80,6 +80,7 @@ public sealed class VoiceSendPage : UserControl
         experimental.SetResourceReference(StyleProperty,"DarkCheck");
         gateBody.Children.Add(experimental);
         gateBody.Children.Add(Note("把正常回复转成语音：按概率自动发，或者响应对方明确要的语音。关掉开关会立刻停止新的语音任务，已经发出去的消息不会撤回。"));
+        gateBody.Children.Add(Note("录制并发送语音时，微信需要保持在前台，键盘焦点会切到微信。"));
         body.Children.Add(gate);
         body.Children.Add(panel);
 

@@ -884,14 +884,8 @@ class BridgeContractTest(unittest.TestCase):
         window = {'foreground': 200}
         desktop.foreground = lambda hwnd: window['foreground'] == hwnd
         env['WindowsDesktop'] = Mock(return_value=desktop)
-        env['force_foreground'].return_value = False
-        env['time'].sleep = Mock(side_effect=lambda _: window.update(foreground=100))
-        win = SimpleNamespace(IsWindow=lambda hwnd: hwnd == 100,
-                              GetForegroundWindow=lambda: window['foreground'],
-                              IsWindowVisible=lambda hwnd: True, IsIconic=lambda hwnd: False)
-        process = SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 42))
-        with patch.dict(sys.modules, win32gui=win, win32process=process):
-            outcome = env['send_sticker']('fake.png', 'Peer', 'peer', 'g1', 'one-shot')
+        env['force_foreground'].side_effect = lambda _: window.update(foreground=100) or True
+        outcome = env['send_sticker']('fake.png', 'Peer', 'peer', 'g1', 'one-shot')
         self.assertEqual(outcome['status'], 'confirmed')
         env['force_foreground'].assert_called_once_with(100)
         env['snapshot_win_state'].assert_called_once()
@@ -903,14 +897,15 @@ class BridgeContractTest(unittest.TestCase):
         desktop = FakeDesktop()
         desktop.in_foreground = False
         env['WindowsDesktop'] = Mock(return_value=desktop)
-        env['force_foreground'].return_value = False
+        # The OS can report success without placing the window in front.
+        env['force_foreground'].return_value = True
         win = SimpleNamespace(IsWindow=lambda hwnd: hwnd == 100, GetForegroundWindow=lambda: 200,
                               IsWindowVisible=lambda hwnd: True, IsIconic=lambda hwnd: False)
         process = SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 42))
         api = SimpleNamespace(GetAsyncKeyState=lambda key: 0, keybd_event=Mock())
         with patch.dict(sys.modules, win32gui=win, win32process=process, win32api=api):
             self.assertEqual(env['send_sticker']('fake.png', 'Peer', 'peer', 'g1', 'one-shot')['status'], 'failed')
-        self.assertEqual(env['force_foreground'].call_count, 2)
+        env['force_foreground'].assert_called_once_with(100)
         env['restore_win_state'].assert_not_called()
         env['guarded_sticker_send'].assert_not_called()
 
@@ -920,18 +915,11 @@ class BridgeContractTest(unittest.TestCase):
         desktop = FakeDesktop()
         desktop.foreground = lambda hwnd: state['foreground'] == hwnd
         env['WindowsDesktop'] = Mock(return_value=desktop)
-        env['time'].sleep = Mock(side_effect=lambda _: state.update(foreground=300))
-        win = SimpleNamespace(IsWindow=lambda hwnd: hwnd == 100,
-                              GetForegroundWindow=lambda: state['foreground'],
-                              IsWindowVisible=lambda hwnd: True, IsIconic=lambda hwnd: False)
-        process = SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 42))
-        api = SimpleNamespace(GetAsyncKeyState=lambda key: 0, keybd_event=Mock())
-        with patch.dict(sys.modules, win32gui=win, win32process=process, win32api=api):
-            self.assertEqual(env['send_sticker']('fake.png', 'Peer', 'peer', 'g1', 'one-shot')['status'], 'failed')
+        env['force_foreground'].side_effect = lambda _: state.update(foreground=300) or True
+        self.assertEqual(env['send_sticker']('fake.png', 'Peer', 'peer', 'g1', 'one-shot')['status'], 'failed')
         env['force_foreground'].assert_called_once_with(100)
         env['restore_win_state'].assert_not_called()
         env['guarded_sticker_send'].assert_not_called()
-        api.keybd_event.assert_not_called()
 
     def test_bridge_opens_exact_target_then_verifies_title(self):
         env = self.send_environment()

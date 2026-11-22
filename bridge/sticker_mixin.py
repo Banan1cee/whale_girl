@@ -64,7 +64,7 @@ class StickerMixin:
             return False
 
     def send_sticker(self, path, chat_display_name, chat_username='', generation='', job_id=''):
-        """一次性、无导航的图片粘贴；只能向已在前台打开且聚焦的精确会话发送。"""
+        """切到已核验的微信窗口，再向已聚焦的目标会话发送一次附件。"""
         if not job_id or not self.sticker_gate(generation, job_id):
             return G.sticker_result('cancelled', 'stickers are disabled or generation expired')
         with self.send_lock, G._SendStateScope(len(str(path or ''))):
@@ -82,24 +82,10 @@ class StickerMixin:
                 desktop = G.WindowsDesktop()
                 if not desktop.foreground(hwnd):
                     snap = self.snapshot_win_state()
-                    from moments_window import activate_verified_window
-
-                    def activation_allowed():
-                        return (bool(self.ACCOUNT.get('verified'))
-                                and int(self.ACCOUNT.get('hwnd') or 0) == hwnd
-                                and self.sticker_config_now() is not None
-                                and self.sticker_activity_allowed(chat_username))
-
-                    evidence = {}
-                    ready = activate_verified_window(
-                        self, hwnd, int(self.ACCOUNT.get('pid') or 0), activation_allowed,
-                        pause=G.time.sleep, probe=evidence.update)
-                    if not ready or not desktop.foreground(hwnd):
+                    # 4.1.7 的表情包路径只尝试一次激活，并以实际前台窗口为准。
+                    if not self.force_foreground(hwnd) or not desktop.foreground(hwnd):
                         G.log_throttled('sticker-window-not-ready',
-                                        '[sticker] stage=foreground result=failed reason=window_not_ready'
-                                        ' attempts=%d visible=%d iconic=%d same_process=%d'
-                                        % (evidence.get('attempts', 0), evidence.get('visible', False),
-                                           evidence.get('iconic', False), evidence.get('sameProcess', False)),
+                                        '[sticker] stage=foreground result=failed reason=window_not_ready',
                                         ttl=60)
                         return G.sticker_result('failed', 'could not bring the WeChat window to the foreground')
                     G.log_throttled('sticker-foreground', '表情包：微信不在前台，先切过去（发完会把窗口还原）', ttl=120)

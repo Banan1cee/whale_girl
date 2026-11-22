@@ -189,6 +189,9 @@
                             <Button x:Name="BtnSponsor" Content="赞助" Style="{StaticResource Ghost}"
                                     Margin="6,0,0,0" Padding="9,3" FontSize="11" Click="OnOpenSponsor"
                                     ToolTip="在爱发电支持鲸鲸团队；纯自愿，不影响软件使用" />
+                            <Button x:Name="BtnVersionHistory" Content="历史版本" Style="{StaticResource Ghost}"
+                                    Margin="6,0,0,0" Padding="9,3" FontSize="11" Click="OnOpenVersionHistory"
+                                    ToolTip="查看 GitHub 已公开的 Windows 安装包" />
                         </StackPanel>
                         <Button x:Name="BtnUpdate" Content="检查更新" Style="{StaticResource Ghost}"
                                 HorizontalAlignment="Left" Padding="9,3" FontSize="11" Margin="0,0,0,2"
