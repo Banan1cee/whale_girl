@@ -155,6 +155,27 @@ test('侧栏有官网和赞助入口，链接直连公开地址', () => {
   assert.match(code, /ProcessStartInfo\(url\)\s*\{\s*UseShellExecute\s*=\s*true\s*\}/, '链接应交给系统默认浏览器');
 });
 
+test('左下角历史版本从 GitHub 分页读取，只展示已上传的安装包', () => {
+  const view = readLauncher('MainWindow.xaml');
+  const code = readLauncher('MainWindow.xaml.cs');
+  const panel = readLauncher('Views/VersionHistoryPanel.cs');
+  const footer = view.split('DockPanel.Dock="Bottom" Margin="12,10,0,0"')[1].split('<ListBox x:Name="Nav"')[0];
+  assert.match(footer, /Content="历史版本"[^>]*Click="OnOpenVersionHistory"/);
+  assert.match(code, /OnOpenVersionHistory[\s\S]*AppDialog\.ShowContent\("历史版本", new VersionHistoryPanel/);
+  assert.match(panel, /"https:\/\/api\.github\.com\/repos\/" \+ Repository \+ "\/releases"/);
+  assert.match(panel, /GetArrayLength\(\) < 100/);
+  assert.match(panel, /JsonRead\.Str\(asset, "state"\) == "uploaded"/);
+  assert.match(panel, /name\.EndsWith\("-setup\.exe"[\s\S]*name\.EndsWith\("\.msi"/);
+  assert.match(panel, /if \(files\.Count == 0\) continue/);
+  assert.doesNotMatch(panel, /zipball|tarball|\/archive\//);
+});
+
+test('表情包、发送方式与语音开关提示前台焦点占用', () => {
+  assert.match(readLauncher('Views/StickerPage.xaml'), /发表情包会切到微信前台并占用键盘焦点/);
+  assert.match(readLauncher('Views/BridgePage.xaml'), /发表情包、录制语音及发表朋友圈会切到微信前台并占用焦点/);
+  assert.match(readLauncher('Views/VoiceSendPage.cs'), /录制并发送语音时，微信需要保持在前台/);
+});
+
 test('背景模糊与透明度可调，玻璃面板 + 自动蒙版保证文字可读', () => {
   const main = readLauncher('MainWindow.xaml');
   const code = readLauncher('MainWindow.xaml.cs');

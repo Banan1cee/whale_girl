@@ -567,6 +567,9 @@ namespace WhaleLauncher
 
         private void OnOpenSponsor(object sender, RoutedEventArgs e) => OpenExternal(SponsorPage, "打开赞助页面失败");
 
+        private void OnOpenVersionHistory(object sender, RoutedEventArgs e)
+            => AppDialog.ShowContent("历史版本", new VersionHistoryPanel(url => OpenExternal(url, "打开安装包下载失败")));
+
         private void OpenExternal(string url, string failureTitle)
         {
             try

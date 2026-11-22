@@ -108,6 +108,8 @@
                     <ComboBox x:Name="CmbSend" Width="210" FontSize="12" VerticalAlignment="Center"
                               SelectionChanged="OnSendModeChanged" />
                 </WrapPanel>
+                <TextBlock Text="发表情包、录制语音及发表朋友圈会切到微信前台并占用焦点。开启朋友圈发表后，微信消息统一前台发送。"
+                           Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" />
                 <TextBlock x:Name="ForegroundLockHint" Text="朋友圈已开启，微信强制前台发送。"
                            Style="{StaticResource Small}" Margin="0,6,0,0" Visibility="Collapsed" />
                 <TextBlock x:Name="SwitchHint" Style="{StaticResource Small}" Margin="0,6,0,0"
