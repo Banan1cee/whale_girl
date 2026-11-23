@@ -13,7 +13,7 @@ using NAudio.CoreAudioApi;
 
 namespace WhaleLauncher.Views;
 
-public sealed class VoiceSendPage : UserControl
+public sealed class VoiceSendPage : UserControl, IPageSectionHost
 {
     readonly CheckBox experimental=new(){Content="启用语音发送（实验性）",IsChecked=false};
     readonly StackPanel panel=new(){Visibility=Visibility.Collapsed};
@@ -40,6 +40,22 @@ public sealed class VoiceSendPage : UserControl
     bool loading;
     bool testing;
     sealed record Device(string Id,string Name){public override string ToString()=>Name;}
+
+    // ── 区块元数据（P2）：引导和四张卡都在 panel 里，是同 Panel 直接子节点，才允许排序。
+    //    实验开关与两条风险说明在 panel 外且没有声明，区块配置碰不到；Key、保存、测试都在不可隐藏的卡里。 ──
+    static readonly PageSectionDescriptor[] VoiceSections =
+    {
+        new PageSectionDescriptor("guide", "使用引导", canHide: true, canMove: true),
+        new PageSectionDescriptor("reply", "回复方式", canHide: false, canMove: true),
+        new PageSectionDescriptor("model", "模型与音色", canHide: false, canMove: true),
+        new PageSectionDescriptor("audio", "声卡与测试", canHide: false, canMove: true),
+        new PageSectionDescriptor("driver", "虚拟声卡驱动", canHide: true, canMove: true),
+    };
+    readonly List<PageSectionBinding> sectionBindings=new();
+
+    string IPageSectionHost.PageId => "voice";
+    IReadOnlyList<PageSectionDescriptor> IPageSectionHost.SectionDescriptors => VoiceSections;
+    IReadOnlyList<PageSectionBinding> IPageSectionHost.SectionBindings => sectionBindings;
 
     public VoiceSendPage(RuntimeSupervisor sup)
     {
@@ -84,8 +100,9 @@ public sealed class VoiceSendPage : UserControl
         body.Children.Add(gate);
         body.Children.Add(panel);
 
-        panel.Children.Add(VoiceSendGuide.Create(()=>driverButton?.BringIntoView()));
-        Card("回复方式","每条完整回复抽一次，不是「每四条必发一次」；0% 不随机发，只响应明确的语音要求。");
+        var guide=VoiceSendGuide.Create(()=>driverButton?.BringIntoView());
+        panel.Children.Add(guide);
+        var replyCard=Card("回复方式","每条完整回复抽一次，不是「每四条必发一次」；0% 不随机发，只响应明确的语音要求。");
         var pair=new Grid{Margin=new Thickness(0,8,0,0)};
         pair.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(150)});
         pair.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(1,GridUnitType.Star)});
@@ -101,7 +118,7 @@ public sealed class VoiceSendPage : UserControl
         groups.Margin=new Thickness(0,0,24,0);scopes.Children.Add(groups);scopes.Children.Add(privates);current.Children.Add(scopes);
         current.Children.Add(Note("快捷键须和微信「发语音」完全一致，教程用的是 Ctrl+Tab；录音和松手由程序完成。"));
 
-        Card("模型与音色","选择语音厂商后填写对应的 Key。各厂商独立保存模型、音色和密钥；合成使用该厂商账户额度。");
+        var modelCard=Card("模型与音色","选择语音厂商后填写对应的 Key。各厂商独立保存模型、音色和密钥；合成使用该厂商账户额度。");
         provider.ItemsSource=SpeechProviders.All;
         Add("语音厂商",provider);
         providerHint.SetResourceReference(StyleProperty,"Small");current.Children.Add(providerHint);
@@ -152,7 +169,7 @@ public sealed class VoiceSendPage : UserControl
         current.Children.Add(Button("高级：手动填写模型 / 音色 ID",_=>{advanced.Visibility=advanced.Visibility==Visibility.Visible?Visibility.Collapsed:Visibility.Visible;return Task.CompletedTask;},null,flat:true));
         AddTo(advanced,"模型 ID",model);AddTo(advanced,"音色 ID",voice);
 
-        Card("声卡与测试","微信麦克风选 CABLE Output，本页播放端选 CABLE Input。录音期间请保持目标微信会话，切换会话会中止。");
+        var audioCard=Card("声卡与测试","微信麦克风选 CABLE Output，本页播放端选 CABLE Input。录音期间请保持目标微信会话，切换会话会中止。");
         var deviceRow=new Grid{Margin=new Thickness(0,8,0,0)};
         deviceRow.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(1,GridUnitType.Star)});
         deviceRow.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
@@ -178,7 +195,7 @@ public sealed class VoiceSendPage : UserControl
         current.Children.Add(Note("测试会先保存当前配置，再给文件传输助手发送「"+VoiceSendTest.Text+"」；排队不代表送达，结果未确认时别重复发。"));
         current.Children.Add(testStatus);
 
-        Card("虚拟声卡驱动","运行包只附带官方安装文件；解压、打开启动器和打开实验开关都不会替你安装 Windows 驱动。");
+        var driverCard=Card("虚拟声卡驱动","运行包只附带官方安装文件；解压、打开启动器和打开实验开关都不会替你安装 Windows 驱动。");
         driverButton=Button("安装 VB-CABLE 官方驱动",_=>{
             string exe=Path.Combine(root,"VB-CABLE虚拟声卡","VBCABLE_Setup_x64.exe");
             // 兼容 4.0.4 及更早安装位置（老安装包把它埋在 runtime\vb-cable）
@@ -197,6 +214,15 @@ public sealed class VoiceSendPage : UserControl
             result.Margin=new Thickness(0,6,0,0);
             result.SetResourceReference(ForegroundProperty,"Muted");
         }
+        sectionBindings.AddRange(new[]
+        {
+            new PageSectionBinding("guide",guide),
+            new PageSectionBinding("reply",replyCard),
+            new PageSectionBinding("model",modelCard),
+            new PageSectionBinding("audio",audioCard),
+            new PageSectionBinding("driver",driverCard),
+        });
+
         Load();experimental.Checked+=Toggle;experimental.Unchecked+=Toggle;
         provider.SelectionChanged+=(_,_)=>{
             if(loading||provider.SelectedItem is not SpeechProviders.Provider p||p.Id==providerId)return;
@@ -225,7 +251,7 @@ public sealed class VoiceSendPage : UserControl
             note.SetResourceReference(StyleProperty,"Small");return note;
         }
         // 一张卡 = H2 小标题 + 说明 + 一组字段，间距和其它页的卡片一致
-        void Card(string heading,string hint=null)
+        Border Card(string heading,string hint=null)
         {
             var card=new Border{Padding=new Thickness(16,12,16,12),Margin=new Thickness(0,0,0,12)};
             card.SetResourceReference(StyleProperty,"Card");
@@ -233,7 +259,7 @@ public sealed class VoiceSendPage : UserControl
             var title=new TextBlock{Text=heading,Margin=new Thickness(0,0,0,2)};
             title.SetResourceReference(StyleProperty,"H2");inner.Children.Add(title);
             if(hint!=null)inner.Children.Add(Note(hint));
-            panel.Children.Add(card);current=inner;
+            panel.Children.Add(card);current=inner;return card;
         }
         StackPanel Field(string label,Control control)
         {

@@ -44,7 +44,7 @@ namespace WhaleLauncher.Views
         public override string ToString() => Label ?? Key ?? "";
     }
 
-    public partial class SettingsPage : UserControl, IRefreshable
+    public partial class SettingsPage : UserControl, IRefreshable, IPageSectionHost
     {
         private readonly RuntimeSupervisor _sup;
         private readonly ConfigSaver _saver;
@@ -142,11 +142,44 @@ namespace WhaleLauncher.Views
         {
             SectionsHost.Children.Clear();
 
-            AddSection(BuildModelSection());
-            AddSection(BuildAdminSpellSection());
-            AddSection(BuildAdvancedSection());
-            AddSection(BuildAppearanceSection());
+            _sectionApi = BuildModelSection();
+            _sectionAdmin = BuildAdminSpellSection();
+            _sectionAdvanced = BuildAdvancedSection();
+            _sectionAppearance = BuildAppearanceSection();
+            AddSection(_sectionApi);
+            AddSection(_sectionAdmin);
+            AddSection(_sectionAdvanced);
+            AddSection(_sectionAppearance);
+            // 区块顺序/显隐由宿主按元数据应用；SectionsHost 只装这四张卡，所以允许排序。
+            _sectionBindings = new List<PageSectionBinding>
+            {
+                new PageSectionBinding("api", _sectionApi),
+                new PageSectionBinding("admin-spell", _sectionAdmin),
+                new PageSectionBinding("advanced", _sectionAdvanced),
+                new PageSectionBinding("appearance", _sectionAppearance),
+            };
         }
+
+        // ── 区块元数据（P2）：稳定 ID 由宿主拥有，显示名只给预览/诊断 ──
+        private static readonly PageSectionDescriptor[] SettingsSections =
+        {
+            // API 接入是主功能，外观是页级样式/主题的唯一入口：两者都不可隐藏，
+            // 否则配置能把恢复入口藏起来。
+            new PageSectionDescriptor("api", "API 接入", canHide: false, canMove: true),
+            new PageSectionDescriptor("admin-spell", "管理员魔咒", canHide: true, canMove: true),
+            new PageSectionDescriptor("advanced", "高级模式", canHide: true, canMove: true),
+            new PageSectionDescriptor("appearance", "外观", canHide: false, canMove: true),
+        };
+
+        private Border _sectionApi;
+        private Border _sectionAdmin;
+        private Border _sectionAdvanced;
+        private Border _sectionAppearance;
+        private IReadOnlyList<PageSectionBinding> _sectionBindings = Array.Empty<PageSectionBinding>();
+
+        string IPageSectionHost.PageId => "settings";
+        IReadOnlyList<PageSectionDescriptor> IPageSectionHost.SectionDescriptors => SettingsSections;
+        IReadOnlyList<PageSectionBinding> IPageSectionHost.SectionBindings => _sectionBindings;
 
         /// <summary>卡片直接按顺序堆进单列滚动区。</summary>
         private void AddSection(Border card)
@@ -451,36 +484,15 @@ namespace WhaleLauncher.Views
                 Margin = new Thickness(0, 6, 0, 0),
             };
             var themePreview = new StackPanel { Visibility = Visibility.Collapsed, Margin = new Thickness(0, 8, 0, 0) };
-            LauncherTheme pendingTheme = null;
-
-            var themeImport = new Button { Content = "导入主题包…", Style = (Style)FindResource("Ghost") };
-            var themeApply = new Button
-            {
-                Content = "应用并保存",
-                Style = (Style)FindResource("Primary"),
-                Margin = new Thickness(8, 0, 0, 0),
-                IsEnabled = false,
-            };
-            var themeCancel = new Button
-            {
-                Content = "取消预览",
-                Style = (Style)FindResource("Ghost"),
-                Margin = new Thickness(8, 0, 0, 0),
-                Visibility = Visibility.Collapsed,
-            };
             var themeDisable = new Button
             {
-                Content = "停用并恢复内置",
+                Content = "去插件市场管理主题",
                 Style = (Style)FindResource("Ghost"),
-                Margin = new Thickness(8, 0, 0, 0),
             };
             var themeActions = new WrapPanel();
-            themeActions.Children.Add(themeImport);
-            themeActions.Children.Add(themeApply);
-            themeActions.Children.Add(themeCancel);
             themeActions.Children.Add(themeDisable);
-            body.Children.Add(Row("主题包", themeActions,
-                "只认 JSON 数据：配色、字体字号、圆角、间距和普通弹窗底色。不能改布局、左导航，也不会接管授权 / 更新 / 安全确认。", true));
+            body.Children.Add(Row("当前主题", themeActions,
+                "主题由「插件市场 → 已安装」统一安装、启用、停用和卸载；这里只预览当前主题，不提供独立停用入口。", true));
             body.Children.Add(themeStatus);
             body.Children.Add(themePreview);
 
@@ -536,11 +548,9 @@ namespace WhaleLauncher.Views
 
             void RefreshTheme()
             {
-                // 选中但当前不可用时也要能停用（否则只能手动删文件）。
-                themeDisable.IsEnabled = Appearance.HasThemePackage || File.Exists(Appearance.ThemeFilePath);
                 if (Appearance.HasTheme)
                 {
-                    themeStatus.Text = "当前主题：" + Appearance.ActiveThemeName + "。停用后立刻回到内置外观，文件同时删除。";
+                    themeStatus.Text = "当前主题：" + Appearance.ActiveThemeName + "。请到插件市场卡片停用或卸载。";
                 }
                 else if (Appearance.HasThemePackage)
                 {
@@ -548,75 +558,181 @@ namespace WhaleLauncher.Views
                     // 整包退回内置外观，并把原因说清楚，调回可用组合后会自动恢复。
                     themeStatus.Text = "主题「" + Appearance.ActiveThemeName + "」当前不可用："
                         + Appearance.ThemeUnavailableReason
-                        + "\n已使用内置外观；把配色 / 背景调回可用组合后它会自动恢复，也可以直接停用删除。";
+                        + "\n已使用内置外观；把配色 / 背景调回可用组合后它会自动恢复，也可以到插件市场停用或卸载。";
                 }
                 else
                 {
-                    themeStatus.Text = "当前使用内置外观。导入后先预览，确认才会应用；不合格的包不会改动现有配色。";
+                    themeStatus.Text = "当前使用内置外观。请在「插件市场 → 已安装」安装并启用主题；这里只预览当前主题。";
                 }
             }
 
-            themeImport.Click += (_, __) =>
-            {
-                var file = AppFilePicker.Open("选择鲸鲸主题包", ".json");
-                if (file == null) return;
-                if (LauncherThemes.TryLoadFile(file, out var theme, out var error))
-                {
-                    pendingTheme = theme;
-                    themeApply.IsEnabled = true;
-                    themeCancel.Visibility = Visibility.Visible;
-                    RenderThemePreview(theme);
-                    themeStatus.Text = "已通过校验，确认后才会生效并保存到 data 目录。";
-                }
-                else
-                {
-                    pendingTheme = null;
-                    themeApply.IsEnabled = false;
-                    themeCancel.Visibility = Visibility.Collapsed;
-                    RenderThemePreview(null);
-                    themeStatus.Text = "未导入：" + error;
-                }
-            };
-
-            themeApply.Click += (_, __) =>
-            {
-                if (pendingTheme == null) return;
-                if (!Appearance.SetThemePackage(pendingTheme, out var error))
-                {
-                    themeStatus.Text = "应用失败：" + error;
-                    return;
-                }
-                pendingTheme = null;
-                themeApply.IsEnabled = false;
-                themeCancel.Visibility = Visibility.Collapsed;
-                RenderThemePreview(null);
-                themeStatus.Text = error.Length > 0 ? error : "已应用并保存。";
-            };
-
-            themeCancel.Click += (_, __) =>
-            {
-                pendingTheme = null;
-                themeApply.IsEnabled = false;
-                themeCancel.Visibility = Visibility.Collapsed;
-                RenderThemePreview(null);
-                RefreshTheme();
-            };
 
             themeDisable.Click += (_, __) =>
             {
-                if (!Appearance.ClearThemePackage(out var error))
+                // 外观页不再提供独立停用/安装；统一跳到插件卡片管理。
+                if (Window.GetWindow(this)?.FindName("Nav") is ListBox nav)
+                    foreach (var item in nav.Items)
+                        if (item?.GetType().GetProperty("Key")?.GetValue(item) as string == "插件市场")
+                        {
+                            nav.SelectedItem = item;
+                            break;
+                        }
+            };
+
+            RenderThemePreview(Appearance.ActiveTheme);
+            RefreshTheme();
+
+            // ── 页面样式（P1）：独立 JSON，只含稳定页面 ID 与密度/字号两个有界比例，
+            //    不含颜色、控件、布局或资源键；停用即回默认，主题包格式保持原样。 ──
+            var pageStatus = new TextBlock
+            {
+                Style = (Style)FindResource("Small"),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 6, 0, 0),
+            };
+            var pagePreview = new StackPanel { Visibility = Visibility.Collapsed, Margin = new Thickness(0, 8, 0, 0) };
+            LauncherPageProfile pendingProfile = null;
+
+            var pageImport = new Button { Content = "导入页面样式…", Style = (Style)FindResource("Ghost") };
+            var pageApply = new Button
+            {
+                Content = "应用并保存",
+                Style = (Style)FindResource("Primary"),
+                Margin = new Thickness(8, 0, 0, 0),
+                IsEnabled = false,
+            };
+            var pageCancel = new Button
+            {
+                Content = "取消预览",
+                Style = (Style)FindResource("Ghost"),
+                Margin = new Thickness(8, 0, 0, 0),
+                Visibility = Visibility.Collapsed,
+            };
+            var pageDisable = new Button
+            {
+                Content = "停用并恢复默认",
+                Style = (Style)FindResource("Ghost"),
+                Margin = new Thickness(8, 0, 0, 0),
+            };
+            var pageActions = new WrapPanel();
+            pageActions.Children.Add(pageImport);
+            pageActions.Children.Add(pageApply);
+            pageActions.Children.Add(pageCancel);
+            pageActions.Children.Add(pageDisable);
+            body.Children.Add(Row("页面样式", pageActions,
+                "只认稳定页面 ID 与密度 / 字号两个有界比例，不含颜色、控件或布局；授权、更新和安全确认不受它影响。", true));
+            body.Children.Add(pageStatus);
+            body.Children.Add(pagePreview);
+
+            void RenderPagePreview(LauncherPageProfile profile)
+            {
+                pagePreview.Children.Clear();
+                if (profile == null)
                 {
-                    // 文件删不掉时主题重启后仍会生效，不能假装已停用。
-                    themeStatus.Text = "停用失败：" + error;
+                    pagePreview.Visibility = Visibility.Collapsed;
                     return;
                 }
-                pendingTheme = null;
-                themeApply.IsEnabled = false;
-                themeCancel.Visibility = Visibility.Collapsed;
-                RenderThemePreview(null);
-                hint.Text = "已停用主题包，恢复内置外观。";
-                hint.Foreground = (Brush)FindResource("Dim");
-                RefreshTheme();
+                var rows = new List<string>();
+                foreach (var id in LauncherPageProfiles.PageIds)
+                {
+                    if (!profile.Pages.TryGetValue(id, out var style)) continue;
+                    var parts = new List<string>();
+                    if (style.HasDensity) parts.Add("密度 " + Math.Round(style.Density * 100) + "%");
+                    if (style.HasFontScale) parts.Add("字号 " + Math.Round(style.FontScale * 100) + "%");
+                    rows.Add(id + " · " + string.Join(" · ", parts));
+                }
+                pagePreview.Children.Add(new TextBlock
+                {
+                    Text = "预览 · " + rows.Count + " 个页面",
+                    Style = (Style)FindResource("H2"),
+                });
+                foreach (var row in rows)
+                {
+                    pagePreview.Children.Add(new TextBlock
+                    {
+                        Text = "· " + row,
+                        Style = (Style)FindResource("Small"),
+                        Margin = new Thickness(0, 3, 0, 0),
+                    });
+                }
+                pagePreview.Visibility = Visibility.Visible;
+            }
+
+            void RefreshPageProfile()
+            {
+                pageDisable.IsEnabled = PageAppearance.HasProfile || File.Exists(PageAppearance.ProfileFilePath);
+                if (!PageAppearance.HasProfile)
+                {
+                    pageStatus.Text = File.Exists(PageAppearance.ProfileFilePath)
+                        ? "页级样式文件存在但当前不可用，已全部按默认外观显示；可停用删除后重新导入。"
+                        : "当前使用统一外观。页面样式只影响单个页面的密度和字号，不改弹窗与更新提示。";
+                    return;
+                }
+                var ids = PageAppearance.ConfiguredPageIds;
+                pageStatus.Text = "已启用页级样式：" + string.Join("、", ids) + "（" + ids.Count + " 个页面）。"
+                    + (PageAppearance.SectionWarnings.Count > 0 ? " 区块设置 " + PageAppearance.SectionWarnings.Count + " 条被忽略。" : "");
+            }
+
+            pageImport.Click += (_, __) =>
+            {
+                var file = AppFilePicker.Open("选择页面样式文件", ".json");
+                if (file == null) return;
+                if (LauncherPageProfiles.TryLoadFile(file, out var profile, out var error))
+                {
+                    pendingProfile = profile;
+                    pageApply.IsEnabled = true;
+                    pageCancel.Visibility = Visibility.Visible;
+                    RenderPagePreview(profile);
+                    pageStatus.Text = "已通过校验，确认后才会应用并保存到 data 目录。";
+                }
+                else
+                {
+                    pendingProfile = null;
+                    pageApply.IsEnabled = false;
+                    pageCancel.Visibility = Visibility.Collapsed;
+                    RenderPagePreview(null);
+                    pageStatus.Text = "未导入：" + error;
+                }
+            };
+
+            pageApply.Click += (_, __) =>
+            {
+                if (pendingProfile == null) return;
+                if (!PageAppearance.SetProfile(pendingProfile, out var error))
+                {
+                    pageStatus.Text = "应用失败：" + error;
+                    return;
+                }
+                pendingProfile = null;
+                pageApply.IsEnabled = false;
+                pageCancel.Visibility = Visibility.Collapsed;
+                RenderPagePreview(null);
+                RefreshPageProfile();
+                pageStatus.Text = "已应用并保存；切到的页面会立即生效。";
+            };
+
+            pageCancel.Click += (_, __) =>
+            {
+                pendingProfile = null;
+                pageApply.IsEnabled = false;
+                pageCancel.Visibility = Visibility.Collapsed;
+                RenderPagePreview(null);
+                RefreshPageProfile();
+            };
+
+            pageDisable.Click += (_, __) =>
+            {
+                if (!PageAppearance.ClearProfile(out var error))
+                {
+                    // 删不掉文件时重启后它还会生效，不能假装停用。
+                    pageStatus.Text = "停用失败：" + error;
+                    return;
+                }
+                pendingProfile = null;
+                pageApply.IsEnabled = false;
+                pageCancel.Visibility = Visibility.Collapsed;
+                RenderPagePreview(null);
+                RefreshPageProfile();
             };
 
             void Refresh()
@@ -653,6 +769,7 @@ namespace WhaleLauncher.Views
                     ? "当前使用纯色背景。"
                     : "当前：" + Appearance.Backdrop;
                 RefreshTheme();
+                RefreshPageProfile();
             }
 
             pick.Click += (_, __) =>
@@ -2757,13 +2874,3 @@ namespace WhaleLauncher.Views
         }
     }
 }
-
-
-
-
-
-
-
-
-
-

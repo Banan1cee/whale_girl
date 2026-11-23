@@ -35,10 +35,12 @@ namespace WhaleLauncher
             {
                 Appearance.Load();
                 Appearance.LoadThemePackage();
+                PageAppearance.Load();
                 Trace("loaded theme=" + Appearance.Theme + " backdrop=" + Appearance.Backdrop + " has=" + Appearance.HasBackdrop
                     + " package=" + (Appearance.HasThemePackage ? Appearance.ActiveThemeName : "-")
                     + " active=" + Appearance.HasTheme
-                    + (Appearance.ThemeUnavailableReason.Length > 0 ? " reason=" + Appearance.ThemeUnavailableReason : ""));
+                    + (Appearance.ThemeUnavailableReason.Length > 0 ? " reason=" + Appearance.ThemeUnavailableReason : "")
+                    + " pages=" + (PageAppearance.HasProfile ? string.Join(",", PageAppearance.ConfiguredPageIds) : "-"));
                 Appearance.ApplyTheme();
                 Trace("theme applied");
 

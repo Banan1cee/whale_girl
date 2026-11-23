@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -235,13 +236,24 @@ namespace WhaleLauncher
         }
 
         /// <summary>启动时读回上次保存的主题。文件被改坏就直接当没有，绝不影响内置外观。</summary>
-        internal static LauncherTheme LoadActive(string path)
+        internal static LauncherTheme LoadActive(string path) => LoadActive(path, out _);
+
+        internal static LauncherTheme LoadActive(string path, out string owner)
         {
+            owner = "";
             try
             {
                 if (!File.Exists(path)) return null;
-                if (new FileInfo(path).Length > MaxBytes) return null;
-                return Parse(File.ReadAllBytes(path));
+                if (new FileInfo(path).Length > MaxBytes + 512) return null;
+                var bytes = File.ReadAllBytes(path);
+                using var document = JsonDocument.Parse(StrictUtf8.GetString(bytes));
+                var root = document.RootElement;
+                if (!root.TryGetProperty("pluginId", out var id)) return Parse(bytes);
+                if (root.EnumerateObject().Count() != 2 || id.ValueKind != JsonValueKind.String
+                    || !IsValidId(id.GetString() ?? "") || !root.TryGetProperty("theme", out var payload)) return null;
+                var theme = Parse(StrictUtf8.GetBytes(payload.GetRawText()));
+                owner = id.GetString();
+                return theme;
             }
             catch
             {
@@ -250,14 +262,20 @@ namespace WhaleLauncher
         }
 
         /// <summary>原子写入规范化后的主题；写失败只是这次没记住，不影响已经生效的外观。</summary>
-        internal static bool Save(string path, LauncherTheme theme)
+        internal static bool Save(string path, LauncherTheme theme, string owner = "")
         {
-            if (theme == null) return false;
+            if (theme == null || (owner.Length > 0 && !IsValidId(owner))) return false;
             string staging = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path) ?? AppContext.BaseDirectory);
-                File.WriteAllBytes(staging, ToJsonBytes(theme));
+                var bytes = ToJsonBytes(theme);
+                if (owner.Length > 0)
+                {
+                    using var payload = JsonDocument.Parse(bytes);
+                    bytes = JsonSerializer.SerializeToUtf8Bytes(new { pluginId = owner, theme = payload.RootElement });
+                }
+                File.WriteAllBytes(staging, bytes);
                 File.Move(staging, path, true);
                 return true;
             }
@@ -328,6 +346,22 @@ namespace WhaleLauncher
                 writer.WriteEndObject();
             }
             return stream.ToArray();
+        }
+
+        /// <summary>主题的规范形式摘要：用于插件卡片判断当前生效的是不是这份已安装主题。</summary>
+        internal static string Digest(LauncherTheme theme) =>
+            theme == null ? "" : Convert.ToHexString(SHA256.HashData(ToJsonBytes(theme))).ToLowerInvariant();
+
+        /// <summary>只覆盖外观 token 的摘要（忽略 id/name/author/version），用于旧主题迁移后的启用态匹配。</summary>
+        internal static string VisualDigest(LauncherTheme theme)
+        {
+            if (theme == null) return "";
+            var text = new StringBuilder();
+            foreach (var token in ColorTokens) text.Append(token).Append('=').Append(theme.ColorOr(token, "")).Append(';');
+            text.Append("font=").Append(theme.FontFamily).Append('|').Append(theme.FontScale.ToString(CultureInfo.InvariantCulture));
+            text.Append("metrics=").Append(theme.Corner).Append('|').Append(theme.Spacing.ToString(CultureInfo.InvariantCulture));
+            text.Append("dialog=").Append(theme.DialogSurface).Append('|').Append(theme.DialogBorder).Append('|').Append(theme.DialogCorner);
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString()))).ToLowerInvariant();
         }
 
         /// <summary>

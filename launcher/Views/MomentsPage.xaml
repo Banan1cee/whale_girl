@@ -15,16 +15,16 @@
             </Grid.RowDefinitions>
 
         <!-- 页头与其它页面保持一致：H1 在左，说明在右 -->
-        <DockPanel Grid.Row="0" LastChildFill="False">
+        <DockPanel x:Name="SectionHeader" Grid.Row="0" LastChildFill="False">
             <TextBlock DockPanel.Dock="Left" Text="朋友圈" Style="{StaticResource H1}" VerticalAlignment="Center" />
             <TextBlock DockPanel.Dock="Right" Text="本地缓存 · 手动互动" Style="{StaticResource Small}"
                        VerticalAlignment="Center" />
         </DockPanel>
 
-        <TextBlock Grid.Row="1" Style="{StaticResource Small}" Margin="0,8,0,14" TextWrapping="Wrap"
+        <TextBlock x:Name="SectionIntro" Grid.Row="1" Style="{StaticResource Small}" Margin="0,8,0,14" TextWrapping="Wrap"
                    Text="读取使用当前桥接账号的本地缓存，未浏览过的动态可能不在缓存里；互动会短暂操作微信窗口，执行后请在微信中确认。" />
 
-        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="18,14" Margin="0,0,0,12">
+        <Border x:Name="SectionPublish" Grid.Row="2" Style="{StaticResource Card}" Padding="18,14" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="自动发表朋友圈（OCR 实验）" Style="{StaticResource H2}" />
                 <TextBlock Text="发表会操作当前微信窗口。定时发表会参考近期微信群聊和私聊，包含与主人的聊天。"
@@ -45,14 +45,14 @@
                     <Button x:Name="BtnTestPublish" Content="立即发表一条" Style="{StaticResource Ghost}" Margin="8,0,0,0" />
                     <Button x:Name="BtnRefreshPublish" Content="刷新状态" Style="{StaticResource Ghost}" Margin="8,0,0,0" />
                 </WrapPanel>
-                <TextBlock Text="立即发表会根据近期聊天生成文案，不占自动发表额度。按文案心情从开心、傲娇或炸毛目录选图。间隔支持小数小时，每日上限填 0 表示不限。"
+                <TextBlock x:Name="PublishHelpText" Text="立即发表会根据近期聊天生成文案，不占自动发表额度。按文案心情从开心、傲娇或炸毛目录选图。间隔支持小数小时，每日上限填 0 表示不限。"
                            Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" />
                 <WrapPanel Margin="0,8,0,0">
                     <Button x:Name="BtnPublishHappy" Content="开心图片目录" Style="{StaticResource Ghost}" Margin="0,0,6,0" />
                     <Button x:Name="BtnPublishCute" Content="傲娇图片目录" Style="{StaticResource Ghost}" Margin="0,0,6,0" />
                     <Button x:Name="BtnPublishAngry" Content="炸毛图片目录" Style="{StaticResource Ghost}" />
                 </WrapPanel>
-                <TextBlock Text="内置配图与表情包使用相同的开心、傲娇、炸毛图片，每类 9 张，自动添加。也可加入 PNG / JPG，单张最多 8 MB。找不到对应图片时按纯文字发表；微信界面无法核验时跳过这条。"
+                <TextBlock x:Name="ImageHelpText" Text="内置配图与表情包使用相同的开心、傲娇、炸毛图片，每类 9 张，自动添加。也可加入 PNG / JPG，单张最多 8 MB。找不到对应图片时按纯文字发表；微信界面无法核验时跳过这条。"
                            Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,7,0,0" />
                 <TextBlock x:Name="PublishStatus" Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,5,0,0" />
             </StackPanel>
@@ -65,7 +65,7 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="18,16" Margin="0,0,6,0">
+            <Border x:Name="SectionRead" Grid.Column="0" Style="{StaticResource Card}" Padding="18,16" Margin="0,0,6,0">
                 <StackPanel>
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -90,14 +90,14 @@
 
                     <Button x:Name="BtnRead" Content="读取最近 20 条" Style="{StaticResource Primary}"
                             HorizontalAlignment="Left" Margin="0,16,0,0" />
-                    <TextBlock Text="本页不保存历史，离开页面即清空输入；读取结果会留一份最近快照给主人问答。"
+                    <TextBlock x:Name="ReadHelpText" Text="本页不保存历史，离开页面即清空输入；读取结果会留一份最近快照给主人问答。"
                                Style="{StaticResource Small}" Margin="0,10,0,0" TextWrapping="Wrap" />
 
                     <Border Height="1" Background="{DynamicResource Line}" Margin="0,14,0,12" />
                     <CheckBox x:Name="ChkAutoLike" Content="自动点赞（模型判断）"
                               VerticalAlignment="Center" Click="OnAutoLikeChanged"
                               ToolTip="只对积极、非求助/丧事、正文足够长的动态判断；每天有次数上限，执行后不重试" />
-                    <TextBlock Text="模型只决定点不点；广告、求助、讣告、负面情绪和纯图片动态会跳过。"
+                    <TextBlock x:Name="AutoLikeHelpText" Text="模型只决定点不点；广告、求助、讣告、负面情绪和纯图片动态会跳过。"
                                Style="{StaticResource Small}" Margin="0,4,0,0" TextWrapping="Wrap" />
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                         <TextBlock Text="自动读取" Style="{StaticResource Small}" VerticalAlignment="Center" />
@@ -113,7 +113,7 @@
                 </StackPanel>
             </Border>
 
-            <Border Grid.Column="1" Style="{StaticResource Card}" Padding="18,16" Margin="6,0,0,0">
+            <Border x:Name="SectionInteract" Grid.Column="1" Style="{StaticResource Card}" Padding="18,16" Margin="6,0,0,0">
                 <StackPanel>
                     <TextBlock Text="手动互动" Style="{StaticResource H2}" />
                     <TextBlock Text="用左侧的正文关键词定位目标；执行后不会自动重试"
@@ -153,7 +153,7 @@
         </Grid>
 
         <!-- 下半：读取结果 -->
-        <Border Grid.Row="4" Style="{StaticResource Card}" Margin="0,12,0,0" Height="280">
+        <Border x:Name="SectionResult" Grid.Row="4" Style="{StaticResource Card}" Margin="0,12,0,0" Height="280">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />

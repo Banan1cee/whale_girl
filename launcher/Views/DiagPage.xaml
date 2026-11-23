@@ -11,7 +11,7 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,12">
+        <DockPanel x:Name="SectionHeader" Grid.Row="0" LastChildFill="False" Margin="0,0,0,12">
             <TextBlock DockPanel.Dock="Left" Text="诊断" Style="{StaticResource H1}" VerticalAlignment="Center" />
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="⟳ 重新自检" Style="{StaticResource Ghost}" Click="OnRecheck" />
@@ -34,7 +34,7 @@
             </Grid.ColumnDefinitions>
 
             <!-- 自检 -->
-            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="14,10">
+            <Border x:Name="SectionChecks" Grid.Column="0" Style="{StaticResource Card}" Padding="14,10">
                 <DockPanel>
                     <TextBlock DockPanel.Dock="Top" Text="自检" Style="{StaticResource H2}" Margin="0,0,0,6" />
                     <StackPanel x:Name="CheckHost" />
@@ -42,7 +42,7 @@
             </Border>
 
             <!-- 内核日志 -->
-            <Border Grid.Column="2" Style="{StaticResource Card}" Padding="0">
+            <Border x:Name="SectionLogs" Grid.Column="2" Style="{StaticResource Card}" Padding="0">
                 <DockPanel>
                     <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="10,7">
                         <DockPanel LastChildFill="False">
@@ -69,20 +69,6 @@
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              VirtualizingStackPanel.IsVirtualizing="True"
                              VirtualizingPanel.VirtualizationMode="Recycling">
-                        <ListBox.ItemContainerStyle>
-                            <Style TargetType="ListBoxItem">
-                                <Setter Property="Padding" Value="0" />
-                                <Setter Property="Template">
-                                    <Setter.Value>
-                                        <ControlTemplate TargetType="ListBoxItem">
-                                            <Border Background="Transparent" Padding="10,1">
-                                                <ContentPresenter />
-                                            </Border>
-                                        </ControlTemplate>
-                                    </Setter.Value>
-                                </Setter>
-                            </Style>
-                        </ListBox.ItemContainerStyle>
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Grid>
@@ -112,14 +98,14 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="14,10">
+            <Border x:Name="SectionPaths" Grid.Column="0" Style="{StaticResource Card}" Padding="14,10">
                 <StackPanel>
                     <TextBlock Text="路径与占用" Style="{StaticResource Label}" Margin="0,0,0,6" />
                     <StackPanel x:Name="PathsHost" />
                 </StackPanel>
             </Border>
 
-            <Border Grid.Column="2" Style="{StaticResource Card}" Padding="14,10">
+            <Border x:Name="SectionRuntime" Grid.Column="2" Style="{StaticResource Card}" Padding="14,10">
                 <StackPanel>
                     <TextBlock Text="运行与通道" Style="{StaticResource Label}" Margin="0,0,0,6" />
                     <TextBlock x:Name="RuntimeInfo" Style="{StaticResource Value}" FontSize="12" TextWrapping="Wrap" />
@@ -128,7 +114,7 @@
         </Grid>
 
         <!-- 数据维护：备份 / 恢复 / 重置（都是本机操作，不用再开 bat） -->
-        <Border Grid.Row="3" Style="{StaticResource Card}" Padding="14,10" Margin="0,12,0,0">
+        <Border x:Name="SectionMaintenance" Grid.Row="3" Style="{StaticResource Card}" Padding="14,10" Margin="0,12,0,0">
             <DockPanel>
                 <TextBlock DockPanel.Dock="Left" Text="数据维护" Style="{StaticResource Label}"
                            VerticalAlignment="Center" Margin="0,0,14,0" />

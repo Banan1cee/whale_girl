@@ -516,6 +516,7 @@ const themeSource = readLauncher('LauncherTheme.cs');
 const appearanceSource = readLauncher('Appearance.cs');
 const settingsSource = readLauncher('Views/SettingsPage.xaml.cs');
 const dialogSource = readLauncher('AppDialog.cs');
+const marketSource = readLauncher('Views/PluginMarketPage.xaml.cs');
 
 test('主题包是独立的纯 JSON 数据源：不扩插件协议、不加载执行体、不碰 WPF', () => {
   assert.ok(fs.existsSync(path.join(launcher, 'LauncherTheme.cs')), '缺少主题包解析器 launcher/LauncherTheme.cs');
@@ -556,17 +557,29 @@ test('主题包字段有硬上限，未知字段整包拒绝', () => {
   assert.match(appearanceSource, /Path\.Combine\(AppContext\.BaseDirectory, "data", LauncherThemes\.FileName\)/);
 });
 
-test('外观面板有导入、预览、确认、停用，停用失败要如实显示', () => {
-  for (const text of ['导入主题包…', '应用并保存', '取消预览', '停用并恢复内置']) {
-    assert.ok(settingsSource.includes(text), '外观面板缺少按钮：' + text);
+test('外观页只预览当前主题并跳转插件市场，安装与启停统一由插件卡片管理', () => {
+  // 外观页保留预览和入口跳转，不再提供独立的导入 / 应用 / 停用。
+  for (const text of ['去插件市场管理主题', '主题由「插件市场 → 已安装」统一安装、启用、停用和卸载', '这里只预览当前主题']) {
+    assert.ok(settingsSource.includes(text), '外观页缺少新入口文案：' + text);
   }
-  assert.ok(settingsSource.includes('LauncherThemes.TryLoadFile('), '导入要先做校验');
-  assert.ok(settingsSource.includes('Appearance.SetThemePackage('), '应用要走 Appearance');
-  assert.ok(settingsSource.includes('Appearance.ClearThemePackage(out var error)'), '停用要处理删除失败');
-  assert.ok(settingsSource.includes('RenderThemePreview(theme)'), '导入后要先预览');
+  assert.ok(settingsSource.includes('RenderThemePreview('), '外观页要保留当前主题预览');
   assert.ok(settingsSource.includes('LauncherThemes.ColorTokens'), '预览要按语义 token 展示色块');
-  // 删除失败时不能显示成“已停用”
-  assert.ok(settingsSource.includes('停用失败：'), '停用失败必须显示原因');
+  for (const retired of ['导入主题包…', '停用并恢复内置', 'LauncherThemes.TryLoadFile(',
+    'Appearance.SetThemePackage(', 'Appearance.ClearThemePackage(']) {
+    assert.equal(settingsSource.includes(retired), false, '外观页不该再有独立主题管理：' + retired);
+  }
+
+  // 插件市场卡片负责安装（含旧版独立主题迁移）、启用/停用和卸载。
+  for (const anchor of ['ThemeActive(info)', 'Appearance.SetThemePackage(', 'Appearance.ClearThemePackage(',
+    'Appearance.SetThemeOwner(', 'MigrateLegacyTheme(', 'InstallThemePackage(', '纯数据主题']) {
+    assert.ok(marketSource.includes(anchor), '插件市场缺少主题管理锚点：' + anchor);
+  }
+  for (const action of ['"启用"', '"停用"', '"卸载"']) {
+    assert.ok(marketSource.includes(action), '主题卡片缺少操作入口：' + action);
+  }
+  assert.match(marketSource, /info\.IsTheme[\s\S]{0,1200}Appearance\.ClearThemePackage/,
+    '主题卡片的停用要恢复内置外观');
+  assert.ok(marketSource.includes('外观设置页只提供预览，管理统一走插件卡片'), '启用结果要说明管理入口');
 });
 
 test('授权、更新、安全确认的弹窗用局部内置资源与主题隔离', () => {

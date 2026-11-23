@@ -17,6 +17,20 @@ namespace WhaleLauncher
     {
         private static readonly string SettingsPath =
             Path.Combine(AppContext.BaseDirectory, "data", "launcher-ui.json");
+        private static string _themeOwner = "";
+        internal static string ThemeOwner => _themeOwner;
+
+        static Appearance()
+        {
+            PluginMarket.ThemeValidator = bytes => LauncherThemes.Parse(bytes).Id;
+        }
+
+        internal static bool SetThemeOwner(string pluginId)
+        {
+            if (_theme == null || string.IsNullOrEmpty(pluginId) || !LauncherThemes.Save(ThemeFilePath, _theme, pluginId)) return false;
+            _themeOwner = pluginId;
+            return true;
+        }
 
         public static string Theme { get; private set; } = "dark";
         public static string Backdrop { get; private set; } = "";
@@ -77,6 +91,8 @@ namespace WhaleLauncher
 
         public static string ActiveThemeName => _theme?.Name ?? "";
         public static string ThemeFilePath => Path.Combine(AppContext.BaseDirectory, "data", LauncherThemes.FileName);
+        /// <summary>当前已加载的主题（可能因对比度约束暂未生效）；插件卡片用它判断是否处于启用态。</summary>
+        internal static LauncherTheme ActiveTheme => _theme;
 
         /// <summary>内置字体族：和 MainWindow.xaml 的 Window.FontFamily 保持同一份默认值。</summary>
         public const string DefaultFontFamily = "Microsoft YaHei UI, Segoe UI";
@@ -771,7 +787,7 @@ namespace WhaleLauncher
         /// </summary>
         public static void LoadThemePackage()
         {
-            _theme = LauncherThemes.LoadActive(ThemeFilePath);
+            _theme = LauncherThemes.LoadActive(ThemeFilePath, out _themeOwner);
             _themeActive = false;
             _themeReason = "";
             _paletteReady = false;
@@ -782,7 +798,7 @@ namespace WhaleLauncher
         /// 通过后先把文件原子写盘，最后才提交内存状态：任何一步失败都保持原外观，
         /// 不存在“报告成功但只生效一半”或“重启后换了另一套”的情况。
         /// </summary>
-        internal static bool SetThemePackage(LauncherTheme theme, out string error)
+        internal static bool SetThemePackage(LauncherTheme theme, out string error, string owner = "")
         {
             error = "";
             var problem = ValidateForApply(theme);
@@ -791,13 +807,14 @@ namespace WhaleLauncher
                 error = problem;
                 return false;
             }
-            if (!LauncherThemes.Save(ThemeFilePath, theme))
+            if (!LauncherThemes.Save(ThemeFilePath, theme, owner))
             {
                 error = "没能写进 data 目录，已保持原外观；请检查目录权限或磁盘空间。";
                 return false;
             }
 
             _theme = theme;
+            _themeOwner = owner;
             InvalidatePalette();
             ApplyTheme();
             Changed?.Invoke();
@@ -823,6 +840,7 @@ namespace WhaleLauncher
             _theme = null;
             _themeActive = false;
             _themeReason = "";
+            _themeOwner = "";
             InvalidatePalette();
             ApplyTheme();
             Changed?.Invoke();

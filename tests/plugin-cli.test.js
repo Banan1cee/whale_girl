@@ -90,6 +90,37 @@ test('manifest version bounds and simulated call availability follow the shared 
   assert.match(run(cwd, 'validate', 'registry-demo').stderr, /description/);
 });
 
+test('settingsSchema 的 title/description 注解有界且只影响展示', t => {
+  const cwd = workspace(t);
+  ok(run(cwd, 'init', 'annotated', '--template', 'reply-enhancer'));
+  const filename = path.join(cwd, 'annotated', 'plugin.json');
+  const manifest = JSON.parse(fs.readFileSync(filename, 'utf8'));
+  const save = value => fs.writeFileSync(filename, JSON.stringify(value));
+  const withSchema = schema => ({ ...manifest, settingsSchema: schema });
+  const reject = (schema, reason) => {
+    save(withSchema(schema));
+    const result = run(cwd, 'validate', 'annotated');
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, reason);
+  };
+
+  // 旧包（没有注解）在新校验下照常通过。
+  save(manifest);
+  ok(run(cwd, 'validate', 'annotated'));
+  // 对象区块与字段都可以带注解。
+  save(withSchema({
+    type: 'object', title: '回复设置', description: '只影响展示',
+    properties: { tone: { type: 'string', title: '语气', description: '简短说明' } },
+  }));
+  ok(run(cwd, 'validate', 'annotated'));
+
+  reject({ type: 'object', title: '', properties: {} }, /不能为空/);
+  reject({ type: 'object', title: 't'.repeat(41), properties: {} }, /不能超过 40/);
+  reject({ type: 'object', description: 'd'.repeat(201), properties: {} }, /不能超过 200/);
+  reject({ type: 'object', title: 'a\u0001b', properties: {} }, /控制字符/);
+  reject({ type: 'object', description: 42, properties: {} }, /必须是字符串/);
+});
+
 test('strict validation rejects unknown fields, unsupported modes and duplicate declarations', t => {
   const cwd = workspace(t);
   ok(run(cwd, 'init', 'strict-demo', '--template', 'reply-enhancer'));

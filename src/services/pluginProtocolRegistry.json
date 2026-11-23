@@ -2,12 +2,20 @@
   "format": "whale-plugin/1",
   "runtime": "node-full",
   "levelNames": {
+    "0": "0 级 · 纯数据主题（无执行体、无权限）",
     "1": "1 级 · 受限 Wasm（整数工具）",
     "2": "2 级 · 受限 Wasm（文本工具）",
     "3": "3 级 · 受限 Wasm（回复草稿）",
     "4": "4 级 · Node.js（完整系统权限）"
   },
   "levels": {
+    "0": {
+      "runtime": "theme-data",
+      "entry": "theme.json",
+      "providers": [],
+      "calls": [],
+      "maxEntryBytes": 65536
+    },
     "1": {
       "runtime": "wasm-restricted",
       "entry": "plugin.wasm",
@@ -1231,7 +1239,9 @@
       "minimum",
       "maximum",
       "minLength",
-      "maxLength"
+      "maxLength",
+      "title",
+      "description"
     ],
     "maxDepth": 8,
     "allowedTypes": [
@@ -1240,6 +1250,18 @@
       "integer",
       "number",
       "boolean"
-    ]
+    ],
+    "annotations": {
+      "title": 40,
+      "description": 200,
+      "forbiddenRanges": [
+        [0, 31],
+        [127, 127],
+        [1564, 1564],
+        [8206, 8207],
+        [8234, 8238],
+        [8294, 8297]
+      ]
+    }
   }
 }

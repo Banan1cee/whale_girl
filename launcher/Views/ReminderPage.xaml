@@ -11,7 +11,7 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" LastChildFill="False">
+        <DockPanel x:Name="SectionHeader" Grid.Row="0" LastChildFill="False">
             <TextBlock DockPanel.Dock="Left" Text="主动与提醒" Style="{StaticResource H1}" VerticalAlignment="Center" />
             <Button x:Name="BtnRefresh" DockPanel.Dock="Right" Content="⟳ 刷新"
                     Style="{StaticResource Ghost}" HorizontalAlignment="Right" Click="OnRefresh" />
@@ -27,7 +27,7 @@
                       HorizontalScrollBarVisibility="Disabled" FocusVisualStyle="{x:Null}">
             <StackPanel Margin="0,0,10,0">
 
-                <Border Style="{StaticResource Card}" Padding="0" Margin="0,0,0,12">
+                <Border x:Name="SectionDiary" Style="{StaticResource Card}" Padding="0" Margin="0,0,0,12">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -128,7 +128,7 @@
                 </Border>
 
                 <!-- 提醒规则：字段语义和「主动搭话」一致，但这是提醒自己的配置 -->
-                <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                <Border x:Name="SectionRules" Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
                     <StackPanel>
                         <TextBlock Text="提醒规则" Style="{StaticResource H2}" Margin="0,0,0,6" />
                         <TextBlock Text="和主动搭话同一套规则语义，但配置独立：当日次数用完、或刚聊过（按下面设置）就不发，也不会推迟补发。提醒不限制时间段 —— 你定几点就几点发。"
@@ -163,7 +163,7 @@
                 </Border>
 
                 <!-- 主动搭话：和提醒同一页，省得在两处来回对规则 -->
-                <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                <Border x:Name="SectionCare" Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
                     <StackPanel>
                         <DockPanel LastChildFill="False" Margin="0,0,0,6">
                             <TextBlock Text="主动搭话" Style="{StaticResource H2}" DockPanel.Dock="Left"
@@ -224,7 +224,7 @@
                 </Border>
 
                 <!-- 提醒列表：跟着整页滚，不再自己套一层滚动（嵌套滚动会让滚轮打架） -->
-                <Border Style="{StaticResource Card}" Padding="10" MinHeight="180">
+                <Border x:Name="SectionList" Style="{StaticResource Card}" Padding="10" MinHeight="180">
                     <Grid>
                         <ItemsControl x:Name="ReminderList">
                             <ItemsControl.ItemTemplate>

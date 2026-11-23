@@ -19,6 +19,7 @@
     { "id": "launcher-lifecycle", "platform": "win32", "projects": ["tests/launcher/Checks/Checks.csproj"], "buildProjects": ["tests/launcher/FakeBridge/FakeBridge.csproj"], "commands": [["{powershell}", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/test-launcher.ps1"]] },
     { "id": "config-path", "projects": ["tests/config-path/Checks.csproj"], "commands": [["dotnet", "run", "--project", "tests/config-path/Checks.csproj", "-c", "Release", "--artifacts-path", "artifacts/config-path"]] },
     { "id": "launcher-dialog-smoke", "platform": "win32", "projects": ["tests/launcher/DialogSmoke/DialogSmoke.csproj"], "commands": [["dotnet", "run", "--project", "tests/launcher/DialogSmoke/DialogSmoke.csproj", "-c", "Release", "--artifacts-path", "artifacts/dialog-smoke"]] },
-    { "id": "launcher-theme-checks", "projects": ["tests/launcher/ThemeChecks/ThemeChecks.csproj"], "commands": [["dotnet", "run", "--project", "tests/launcher/ThemeChecks/ThemeChecks.csproj", "-c", "Release", "--artifacts-path", "artifacts/theme-checks"]] }
+    { "id": "launcher-theme-checks", "projects": ["tests/launcher/ThemeChecks/ThemeChecks.csproj"], "commands": [["dotnet", "run", "--project", "tests/launcher/ThemeChecks/ThemeChecks.csproj", "-c", "Release", "--artifacts-path", "artifacts/theme-checks"]] },
+    { "id": "launcher-page-section-checks", "platform": "win32", "projects": ["tests/launcher/PageSectionChecks/PageSectionChecks.csproj"], "commands": [["dotnet", "run", "--project", "tests/launcher/PageSectionChecks/PageSectionChecks.csproj", "-c", "Release", "--artifacts-path", "artifacts/page-section-checks"]] }
   ]
 }

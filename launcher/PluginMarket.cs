@@ -34,6 +34,7 @@ namespace WhaleLauncher
     {
         internal bool IsPersona => Api == 1 && Kind == "persona";
         internal bool IsUnified => Api == 5 && Kind == "plugin" && Level is >= 1 and <= 4;
+        internal bool IsTheme => Api == 5 && Kind == "theme" && Level == 0;
         internal bool RequiresFullAccess => IsUnified && Level == 4;
         internal bool RequiresChatAccess => IsUnified && Level == 3 && Provides?.ContainsKey("chat.reply@1") == true;
         internal int EffectiveAppEpoch => AppEpoch == 0 ? 1 : AppEpoch;
@@ -45,11 +46,13 @@ namespace WhaleLauncher
                 ? $"鲸鲸 {range.MinAppVersion} 及以上" : $"鲸鲸 {range.MinAppVersion} – {range.MaxAppVersion}")));
     }
     internal sealed record PluginFeedback(int Comments, int Favorites);
-    internal sealed record PluginPackage(PluginInfo Info, byte[] Module, string Prompt = null, string Persona = null, byte[] RawManifest = null);
+    internal sealed record PluginPackage(PluginInfo Info, byte[] Module, string Prompt = null, string Persona = null, byte[] RawManifest = null, byte[] ThemeBytes = null);
 
     internal sealed class PluginMarket
     {
         internal const string DigestAction = "chat.summary";
+        /// <summary>主题包的完整校验入口（由启动器 Appearance 注入）；测试夹具没有启动器界面时为 null，只做包形状校验。</summary>
+        internal static Func<byte[], string> ThemeValidator { get; set; }
 
         // 市场签名暂时隐藏：验签代码、内置公钥和签名工具都保留，恢复时把这里改成 true 即可。
         // 关闭时目录不再拉取 .sig、条目里的 Signature 只解析不校验，卡片也不显示签名状态，
@@ -144,6 +147,7 @@ namespace WhaleLauncher
             && ranges.All(range => range != null && range.AppEpoch is 1 or 2
                 && Version.TryParse(range.MinAppVersion, out var min)
                 && min >= (range.AppEpoch == 2 ? new Version(1, 0, 0)
+                    : info.IsTheme ? new Version(4, 3, 0)
                     : info.IsUnified ? new Version(4, 1, 2) : new Version(0, 0))
                 && (string.IsNullOrEmpty(range.MaxAppVersion)
                     || Version.TryParse(range.MaxAppVersion, out var max) && max >= min))
@@ -193,12 +197,13 @@ namespace WhaleLauncher
                 || manifestPolicy.GetProperty("required").EnumerateArray().Any(field => !manifest.TryGetProperty(field.GetString(), out _))
                 || Text(manifest, "format") != Registry.GetProperty("format").GetString()
                 || !manifest.TryGetProperty("level", out var levelValue) || levelValue.ValueKind != JsonValueKind.Number
-                || !levelValue.TryGetInt32(out var level) || level is < 1 or > 4
+                || !levelValue.TryGetInt32(out var level) || level is < 0 or > 4
                 || Text(manifest, "runtime") != Text(LevelPolicy(level), "runtime")
                 || Text(manifest, "entry") != Text(LevelPolicy(level), "entry")
                 || !manifest.TryGetProperty("provides", out var declared) || declared.ValueKind != JsonValueKind.Object
                 || !manifest.TryGetProperty("calls", out var callList) || callList.ValueKind != JsonValueKind.Array)
                 throw failure;
+            var themePackage = level == 0;
             var levelPolicy = LevelPolicy(level);
             var provides = new Dictionary<string, PluginProvider>(StringComparer.Ordinal);
             var providers = Registry.GetProperty("providers");
@@ -223,7 +228,7 @@ namespace WhaleLauncher
                 }
                 if (!provides.TryAdd(field.Name, new(mode, scope, interval))) throw failure;
             }
-            if (provides.Count == 0) throw failure;
+            if (themePackage ? provides.Count != 0 : provides.Count == 0) throw failure;
             var calls = new List<string>();
             foreach (var call in callList.EnumerateArray())
             {
@@ -239,6 +244,7 @@ namespace WhaleLauncher
             JsonElement? schema = null;
             if (manifest.TryGetProperty("settingsSchema", out var settingsSchema))
             {
+                if (themePackage) throw failure;
                 if (settingsSchema.ValueKind != JsonValueKind.Object || Text(settingsSchema, "type") != "object"
                     || !ValidSchema(settingsSchema, 0)) throw failure;
                 schema = settingsSchema.Clone();
@@ -276,7 +282,7 @@ namespace WhaleLauncher
             }
             var info = new PluginInfo(Text(manifest, "id"), Text(manifest, "name"), Text(manifest, "author"),
                 Text(manifest, "version"), Text(manifest, "minAppVersion"), Text(manifest, "description"), null, 5,
-                Kind: "plugin", MaxAppVersion: Text(manifest, "maxAppVersion"), ExecutionTimeoutMs: timeout,
+                Kind: themePackage ? "theme" : "plugin", MaxAppVersion: Text(manifest, "maxAppVersion"), ExecutionTimeoutMs: timeout,
                 AppEpoch: appEpoch, AppCompatibility: ranges,
                 Provides: provides, Calls: calls.ToArray(), SettingsSchema: schema, Level: level,
                 DataAccess: dataAccess.ToArray());
@@ -288,7 +294,8 @@ namespace WhaleLauncher
         {
             var policy = Registry.GetProperty("settingsSchema");
             if (depth >= policy.GetProperty("maxDepth").GetInt32()
-                || !Fields(schema, policy.GetProperty("supportedKeywords").EnumerateArray().Select(item => item.GetString()))) return false;
+                || !Fields(schema, policy.GetProperty("supportedKeywords").EnumerateArray().Select(item => item.GetString()))
+                || !ValidAnnotations(schema, policy)) return false;
             var type = Text(schema, "type");
             if (!Contains(policy.GetProperty("allowedTypes"), type)) return false;
             if (schema.TryGetProperty("properties", out var properties))
@@ -309,6 +316,41 @@ namespace WhaleLauncher
                 || !SchemaRange(schema, "minLength", "maxLength", type == "string", true)) return false;
             if (schema.TryGetProperty("enum", out var choices) && (choices.ValueKind != JsonValueKind.Array
                 || choices.GetArrayLength() == 0 || choices.EnumerateArray().Any(item => !MatchesType(item, type)))) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// settingsSchema 的展示注解：长度与控制字符范围来自嵌入的共享注册表，
+        /// 与 Node 运行时 / 作者 CLI 保持同一策略；注解只影响展示。
+        /// </summary>
+        private static bool ValidAnnotations(JsonElement schema, JsonElement policy)
+        {
+            if (!policy.TryGetProperty("annotations", out var annotations) || annotations.ValueKind != JsonValueKind.Object
+                || !annotations.TryGetProperty("forbiddenRanges", out var forbidden) || forbidden.ValueKind != JsonValueKind.Array)
+                return false;
+            var ranges = new List<(int Low, int High)>();
+            foreach (var range in forbidden.EnumerateArray())
+            {
+                if (range.ValueKind != JsonValueKind.Array || range.GetArrayLength() != 2
+                    || !range[0].TryGetInt32(out var low) || !range[1].TryGetInt32(out var high) || low > high) return false;
+                ranges.Add((low, high));
+            }
+            foreach (var name in new[] { "title", "description" })
+            {
+                if (!schema.TryGetProperty(name, out var value)) continue;
+                if (value.ValueKind != JsonValueKind.String) return false;
+                var text = value.GetString() ?? "";
+                if (name == "title" && string.IsNullOrWhiteSpace(text)) return false;
+                if (!annotations.TryGetProperty(name, out var limit) || limit.ValueKind != JsonValueKind.Number
+                    || !limit.TryGetInt32(out var max) || max < 0) return false;
+                var count = 0;
+                foreach (var rune in text.EnumerateRunes())
+                {
+                    count++;
+                    if (ranges.Any(range => rune.Value >= range.Low && rune.Value <= range.High)) return false;
+                }
+                if (count > max) return false;
+            }
             return true;
         }
 
@@ -373,6 +415,29 @@ namespace WhaleLauncher
                 var filename = EntryFile(info);
                 using var entry = (zip.GetEntry(filename) ?? throw new InvalidDataException($"该等级需要 {filename}")).Open();
                 var source = ReadLimited(entry, LevelPolicy(info.Level).GetProperty("maxEntryBytes").GetInt32());
+                if (info.IsTheme)
+                {
+                    if (ThemeValidator != null)
+                    {
+                        try
+                        {
+                            if (!string.Equals(ThemeValidator(source), info.Id, StringComparison.Ordinal))
+                                throw new InvalidDataException("theme.json 的 id 必须与插件清单 id 一致");
+                        }
+                        catch (InvalidDataException ex) { throw new InvalidDataException("主题包无效：" + ex.Message); }
+                    }
+                    // 启动器只校验包形状与 JSON 对象/id 一致性；完整 token/对比度由 Appearance 在启用时校验。
+                    try
+                    {
+                        using var themeJson = JsonDocument.Parse(source);
+                        if (themeJson.RootElement.ValueKind != JsonValueKind.Object
+                            || !themeJson.RootElement.TryGetProperty("schema", out var schemaValue)
+                            || schemaValue.ValueKind != JsonValueKind.Number || schemaValue.GetInt32() != 1
+                            || Text(themeJson.RootElement, "id") != info.Id) throw new InvalidDataException("theme.json 无效或 id 不一致");
+                    }
+                    catch (JsonException) { throw new InvalidDataException("theme.json 必须是合法 JSON 对象"); }
+                    return new PluginPackage(info, source, RawManifest: raw, ThemeBytes: source);
+                }
                 if (info.RequiresFullAccess)
                 {
                     try
@@ -557,6 +622,8 @@ namespace WhaleLauncher
                 throw new InvalidDataException("启动此插件需要明确确认完整系统权限");
             if (package.Info.RequiresChatAccess && !chatAccessApproved)
                 throw new InvalidDataException("启动此插件需要明确确认聊天数据访问");
+            if (package.Info.IsTheme)
+                throw new InvalidDataException("纯数据主题不需要授权，请在插件卡片启用");
             if (!DeploymentMatches(id, package)) throw new InvalidDataException("已安装文件与原始插件包不一致，请重新安装");
             using var settings = ParseSettings(package.Info, MessageSettings(id));
             SaveGrant(id, package, archive, settings.RootElement);
@@ -650,6 +717,27 @@ namespace WhaleLauncher
             }
             WriteAtomically(target, bytes);
             return true;
+        }
+
+        /// <summary>读取已安装主题插件的 theme.json 原始字节；执行/校验交给 Appearance。</summary>
+        internal byte[] ThemeBytes(PluginInfo info)
+        {
+            EnsureRoot();
+            if (info?.IsTheme != true) throw new InvalidDataException("不是纯数据主题插件");
+            var package = ReadPackage(ReadFile(FileFor(info.Id, ".zip")));
+            if (!package.Info.IsTheme || package.Info.Id != info.Id || package.ThemeBytes == null)
+                throw new InvalidDataException("已安装的主题插件无效");
+            return package.ThemeBytes;
+        }
+
+        /// <summary>旧主题迁移用：把已经构造好的 0 级主题 ZIP 写进插件目录，不产生授权。</summary>
+        internal string InstallThemePackage(byte[] bytes)
+        {
+            var package = ReadPackage(bytes);
+            if (!package.Info.IsTheme) throw new InvalidDataException("不是纯数据主题包");
+            EnsureRoot();
+            WriteAtomically(FileFor(package.Info.Id, ".zip"), bytes);
+            return package.Info.Id;
         }
 
         internal string MessageSettings(string id)

@@ -35,7 +35,7 @@ namespace WhaleLauncher.Views
         public string Tip { get; set; } = "";
     }
 
-    public partial class BridgePage : UserControl, IRefreshable
+    public partial class BridgePage : UserControl, IRefreshable, IPageSectionHost
     {
         private readonly RuntimeSupervisor _sup;
         private readonly ConfigSaver _saver;
@@ -62,6 +62,30 @@ namespace WhaleLauncher.Views
         private bool _loading;
         private bool _configLoaded;
         private DateTime _lastRefresh = DateTime.MinValue;
+
+        // ── 区块元数据（P2）：稳定 ID，标题只给预览/诊断。
+        //    本页是 Grid 行排版（页头 / 微信设置 / 控制台 / 状态条），
+        //    动子元素顺序不会改变 Grid.Row，所以只开放显隐、不开放排序。
+        //    可隐藏的只有桥接控制台这一块「日志」；账号、开关、编码、权限与
+        //    故障状态条都在不可隐藏之内（藏掉会让用户看不到自己正在用的号，
+        //    或看不到为什么发不出去）。 ──
+        private static readonly PageSectionDescriptor[] BridgeSections =
+        {
+            new PageSectionDescriptor("header", "页头与桥接动作", canHide: false, canMove: false),
+            new PageSectionDescriptor("settings", "微信设置", canHide: false, canMove: false),
+            new PageSectionDescriptor("console", "桥接控制台", canHide: true, canMove: false),
+            new PageSectionDescriptor("status", "控制台状态与日志入口", canHide: false, canMove: false),
+        };
+
+        string IPageSectionHost.PageId => "bridge";
+        IReadOnlyList<PageSectionDescriptor> IPageSectionHost.SectionDescriptors => BridgeSections;
+        IReadOnlyList<PageSectionBinding> IPageSectionHost.SectionBindings => new[]
+        {
+            new PageSectionBinding("header", SectionHeader),
+            new PageSectionBinding("settings", SectionSettings),
+            new PageSectionBinding("console", SectionConsole),
+            new PageSectionBinding("status", SectionStatus),
+        };
 
         public BridgePage(RuntimeSupervisor sup)
         {

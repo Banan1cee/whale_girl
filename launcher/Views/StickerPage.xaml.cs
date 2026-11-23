@@ -15,12 +15,44 @@ using System.Windows.Threading;
 
 namespace WhaleLauncher.Views
 {
-    public partial class StickerPage : UserControl, IRefreshable
+    public partial class StickerPage : UserControl, IRefreshable, IPageSectionHost
     {
         // 格子 120px + DPI 余量。160 时单张解码量比 132 多 47%，肉眼分不出。
         private const int ThumbWidth = 132;
         private const int DecodeConcurrency = 4;   // 同时解码 4 张，别再串行排队
         private const int ThumbCacheMax = 800;     // 缩略图内存缓存上限（每张约 70-100 KB）
+
+        // ── 区块元数据（P2）：ID 是稳定英文常量，标题只用于预览/诊断。 ──
+        // 本页是 Grid 行排版：各区块分散在 5 个 Grid 行/容器里，改变子元素顺序
+        // 不会改变 Grid.Row，所以一律 canMove:false，只开放显隐。
+        // 发送开关、前台焦点提示、动态状态与发送结果都不可隐藏（canHide:false）：
+        // 藏掉它们等于让用户看不到"会不会切前台 / 发没发出去"。
+        private static readonly PageSectionDescriptor[] StickerSections =
+        {
+            new PageSectionDescriptor("header", "页头与刷新", canHide: false, canMove: false),
+            new PageSectionDescriptor("sender-settings", "发送开关与测试设置", canHide: false, canMove: false),
+            new PageSectionDescriptor("category-bar", "分类与上传工具条", canHide: false, canMove: false),
+            new PageSectionDescriptor("library", "表情包图库", canHide: false, canMove: false),
+            new PageSectionDescriptor("status", "状态与发送结果", canHide: false, canMove: false),
+            new PageSectionDescriptor("demand-help", "频率说明", canHide: true, canMove: false),
+            new PageSectionDescriptor("collect-help", "自动收集说明", canHide: true, canMove: false),
+        };
+
+        string IPageSectionHost.PageId => "stickers";
+        IReadOnlyList<PageSectionDescriptor> IPageSectionHost.SectionDescriptors => StickerSections;
+
+        // 绑定的只有元素本身：宿主不重建、不新增控件，也不碰任何业务动态 Visibility。
+        // 可隐藏的两项是纯说明文字（DemandHint 只由代码改 Text/Opacity，CollectHelpText 全静态）。
+        IReadOnlyList<PageSectionBinding> IPageSectionHost.SectionBindings => new[]
+        {
+            new PageSectionBinding("header", SectionHeader),
+            new PageSectionBinding("sender-settings", SectionSenderSettings),
+            new PageSectionBinding("category-bar", SectionCategoryBar),
+            new PageSectionBinding("library", SectionLibrary),
+            new PageSectionBinding("status", SectionStatus),
+            new PageSectionBinding("demand-help", DemandHint),
+            new PageSectionBinding("collect-help", CollectHelpText),
+        };
 
         private sealed class CellVm
         {

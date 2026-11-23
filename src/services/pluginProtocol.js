@@ -128,13 +128,17 @@ function validateManifestShape(manifest) {
       epochs.add(range.appEpoch);
     }
   }
-  if (!isObject(manifest.provides) || !Object.keys(manifest.provides).length) throw fail('manifest_providers_invalid');
+  if (!isObject(manifest.provides)) throw fail('manifest_provider_invalid');
+  const providerNames = Object.keys(manifest.provides);
+  // 0 级是纯数据主题：没有执行能力，也不允许声明任何 provider。
+  if (manifest.level === 0 ? providerNames.length !== 0 : providerNames.length === 0) throw fail('manifest_provider_invalid');
   for (const [name, descriptor] of Object.entries(manifest.provides)) {
     const rule = registry.providers[name];
     if (!own(registry.providers, name) || !level.providers.includes(name) || !isObject(descriptor) || Object.keys(descriptor).some(key => !descriptorKeys(rule).includes(key))
       || !rule.modes.includes(descriptor.mode) || !rule.scopes.includes(descriptor.scope)) throw fail('manifest_provider_invalid');
     if (!validateProviderInterval(rule, descriptor)) throw fail('manifest_provider_interval_invalid');
   }
+  if (manifest.level === 0 && manifest.settingsSchema !== undefined) throw fail('manifest_settings_schema_invalid');
   if (!Array.isArray(manifest.calls) || new Set(manifest.calls).size !== manifest.calls.length
     || manifest.calls.some(name => typeof name !== 'string' || !level.calls.includes(name))) throw fail('manifest_calls_invalid');
   const allowedData = level.dataAccess || [];
@@ -151,11 +155,38 @@ function validateManifestShape(manifest) {
   return manifest;
 }
 
+/**
+ * settingsSchema 的展示注解（title / description）的共享校验。
+ * 长度与控制字符范围都取自注册表，供运行时、作者 CLI 与启动器安装校验保持一致；
+ * 注解只影响展示，不参与设置值的校验，也不授予任何能力。
+ */
+function annotationError(name, value) {
+  const annotations = registry.settingsSchema.annotations;
+  const limit = annotations && annotations[name];
+  if (!Number.isInteger(limit) || limit < 0 || !Array.isArray(annotations.forbiddenRanges)) {
+    return `${name} 注解策略不可用`;
+  }
+  if (typeof value !== 'string') return `${name} 必须是字符串`;
+  const points = [...value].map(char => char.codePointAt(0));
+  for (const range of annotations.forbiddenRanges) {
+    if (!Array.isArray(range) || range.length !== 2 || !Number.isInteger(range[0]) || !Number.isInteger(range[1])) {
+      return `${name} 注解策略不可用`;
+    }
+    if (points.some(point => point >= range[0] && point <= range[1])) return `${name} 不能包含控制字符`;
+  }
+  if (name === 'title' && !value.trim()) return 'title 不能为空';
+  if ([...value].length > limit) return `${name} 不能超过 ${limit} 个字符`;
+  return null;
+}
+
 function validateSettingsSchema(schema, depth = 0) {
   const policy = registry.settingsSchema;
   if (depth >= policy.maxDepth || !isObject(schema)
     || Object.keys(schema).some(key => !policy.supportedKeywords.includes(key))
     || !policy.allowedTypes.includes(schema.type) || depth === 0 && schema.type !== 'object') throw fail('settings_schema_invalid');
+  for (const name of ['title', 'description']) {
+    if (schema[name] !== undefined && annotationError(name, schema[name])) throw fail('settings_schema_invalid');
+  }
   if (schema.properties !== undefined) {
     if (schema.type !== 'object' || !isObject(schema.properties)) throw fail('settings_schema_invalid');
     for (const child of Object.values(schema.properties)) validateSettingsSchema(child, depth + 1);
@@ -228,4 +259,4 @@ function validateManifest(raw, { appVersion, appEpoch = 1, entryBytes } = {}) {
   return manifest;
 }
 
-module.exports = { registry, parseStrict, validateManifest, validateProviderInterval, validateSettings, validateSettingsSchema, validateSchemaValue, compareVersion };
+module.exports = { registry, parseStrict, validateManifest, validateProviderInterval, validateSettings, validateSettingsSchema, validateSchemaValue, compareVersion, annotationError };

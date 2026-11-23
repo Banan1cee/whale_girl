@@ -193,6 +193,17 @@ namespace WhaleLauncher
                     var loaded = LauncherThemes.LoadActive(path);
                     Equal("mint", loaded.Id);
                     Equal("#FF6FD6C0", loaded.Colors["accent"]);
+                    LauncherThemes.LoadActive(path, out var legacyOwner);
+                    Equal("", legacyOwner);
+
+                    Equal(true, LauncherThemes.Save(path, theme, "theme-one"));
+                    Equal("mint", LauncherThemes.LoadActive(path, out var firstOwner).Id);
+                    Equal("theme-one", firstOwner);
+                    Equal(true, LauncherThemes.Save(path, theme, "theme-two"));
+                    Equal(false, LauncherThemes.Save(path, theme, "../invalid"));
+                    Equal("mint", LauncherThemes.LoadActive(path, out var secondOwner).Id);
+                    Equal("theme-two", secondOwner);
+                    Throws("不支持的字段", () => LauncherThemes.Parse(File.ReadAllBytes(path)));
 
                     File.WriteAllText(path, "{ broken");
                     Equal(null, LauncherThemes.LoadActive(path));

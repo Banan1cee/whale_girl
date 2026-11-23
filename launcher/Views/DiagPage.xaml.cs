@@ -22,7 +22,7 @@ using Microsoft.Win32;
 
 namespace WhaleLauncher.Views
 {
-    public partial class DiagPage : UserControl, IRefreshable
+    public partial class DiagPage : UserControl, IRefreshable, IPageSectionHost
     {
         private readonly RuntimeSupervisor _sup;
         private readonly DispatcherTimer _timer;
@@ -36,9 +36,37 @@ namespace WhaleLauncher.Views
         private DateTime _lastPaths = DateTime.MinValue;
         private readonly Dictionary<string, (DateTime At, string Text)> _sizeCache = new Dictionary<string, (DateTime At, string Text)>();
 
+        // ── 区块元数据（P2）：稳定 ID，标题只给预览/诊断。
+        //    本页是 Grid 行 + 行内 Grid 列排版：改子元素顺序不会改变 Grid.Row/Grid.Column，
+        //    所以只开放显隐、不开放排序。可隐藏的只有「内核日志」这一块日志；
+        //    自检、路径、运行通道、数据维护（备份/恢复/重置）与页头的诊断动作
+        //    都属于诊断/恢复关键区，不许藏。 ──
+        private static readonly PageSectionDescriptor[] DiagSections =
+        {
+            new PageSectionDescriptor("header", "页头与诊断动作", canHide: false, canMove: false),
+            new PageSectionDescriptor("checks", "自检", canHide: false, canMove: false),
+            new PageSectionDescriptor("logs", "内核日志", canHide: true, canMove: false),
+            new PageSectionDescriptor("paths", "路径与占用", canHide: false, canMove: false),
+            new PageSectionDescriptor("runtime", "运行与通道", canHide: false, canMove: false),
+            new PageSectionDescriptor("maintenance", "数据维护", canHide: false, canMove: false),
+        };
+
+        string IPageSectionHost.PageId => "diagnostics";
+        IReadOnlyList<PageSectionDescriptor> IPageSectionHost.SectionDescriptors => DiagSections;
+        IReadOnlyList<PageSectionBinding> IPageSectionHost.SectionBindings => new[]
+        {
+            new PageSectionBinding("header", SectionHeader),
+            new PageSectionBinding("checks", SectionChecks),
+            new PageSectionBinding("logs", SectionLogs),
+            new PageSectionBinding("paths", SectionPaths),
+            new PageSectionBinding("runtime", SectionRuntime),
+            new PageSectionBinding("maintenance", SectionMaintenance),
+        };
+
         public DiagPage(RuntimeSupervisor sup)
         {
             InitializeComponent();
+            ReadOnlyDisplay.StyleFlatList(Logs, new Thickness(10, 1, 10, 1));
             SmoothScroll.Attach(Logs);
             _sup = sup;
             CmbTail.SelectedIndex = 0;

@@ -56,6 +56,8 @@ namespace WhaleLauncher
         public MainWindow()
         {
             InitializeComponent();
+            // 页级样式在创建第一个页面前读回；文件缺失/非法时它不产生任何本地资源。
+            PageAppearance.Load();
 
             var dir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
             _sup = new RuntimeSupervisor(dir);
@@ -470,6 +472,10 @@ namespace WhaleLauncher
                 ApplyTitleBar();
                 _appliedTitleTheme = Appearance.Theme;
             }
+
+            // 页级样式取"全局尺寸 × 页面缩放"，全局值刚被上面刷新过，这里一并重算。
+            // 弹窗/更新横幅不在页面子树里，不受影响。
+            PageAppearance.RefreshAll();
         }
 
         // 顶栏和系统标题栏只跟深浅主题走，拖滑块 / 改颜色时不用重复刷。
@@ -561,6 +567,10 @@ namespace WhaleLauncher
                     page = new PlaceholderPage(key, "这一页创建失败了：" + ex.Message);
                 }
                 _pages[key] = page;
+                // 页级样式挂在页根本身：页面缓存复用时本地资源仍在，切主题时由
+                // ApplyAppearance → PageAppearance.RefreshAll() 统一重算。
+                var pageId = PageAppearance.PageIdFor(key);
+                if (pageId != null) PageAppearance.Attach(pageId, page);
             }
             Host.Content = page;
             if (page is IRefreshable r) _ = r.RefreshAsync();

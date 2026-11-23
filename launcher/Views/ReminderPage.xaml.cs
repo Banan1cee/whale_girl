@@ -26,7 +26,7 @@ namespace WhaleLauncher.Views
     }
 
     /// <summary>提醒列表：只读展示 + 删除（取消）一条提醒。</summary>
-    public partial class ReminderPage : UserControl, IRefreshable
+    public partial class ReminderPage : UserControl, IRefreshable, IPageSectionHost
     {
         private readonly RuntimeSupervisor _sup;
         private readonly ConfigSaver _saver;
@@ -35,6 +35,34 @@ namespace WhaleLauncher.Views
         private bool _formsLoaded;   // 表单（提醒规则 / 主动搭话）载入过没有（M30）
         private bool _diaryEnabled;  // 最近一次从服务端读到的日记开关，保存失败时用来回滚界面
         private bool _diarySendToOwner;
+
+        // ── 区块元数据（P2）：稳定 ID，标题只给预览/诊断。
+        //    整页是 Grid 行 + 一个整页滚动区，改子元素顺序不会改变 Grid.Row，
+        //    所以这里只开放显隐、不开放排序；可隐藏的只有顶部那句辅助说明，
+        //    日记/提醒规则/主动搭话/提醒列表/状态行都是功能或错误现场，不许藏。 ──
+        private static readonly PageSectionDescriptor[] ReminderSections =
+        {
+            new PageSectionDescriptor("header", "页头与刷新", canHide: false, canMove: false),
+            new PageSectionDescriptor("hint", "顶部说明", canHide: true, canMove: false),
+            new PageSectionDescriptor("diary", "日记设置", canHide: false, canMove: false),
+            new PageSectionDescriptor("rules", "提醒规则", canHide: false, canMove: false),
+            new PageSectionDescriptor("care", "主动搭话", canHide: false, canMove: false),
+            new PageSectionDescriptor("list", "提醒列表", canHide: false, canMove: false),
+            new PageSectionDescriptor("status", "状态与错误", canHide: false, canMove: false),
+        };
+
+        string IPageSectionHost.PageId => "reminders";
+        IReadOnlyList<PageSectionDescriptor> IPageSectionHost.SectionDescriptors => ReminderSections;
+        IReadOnlyList<PageSectionBinding> IPageSectionHost.SectionBindings => new[]
+        {
+            new PageSectionBinding("header", SectionHeader),
+            new PageSectionBinding("hint", HintText),
+            new PageSectionBinding("diary", SectionDiary),
+            new PageSectionBinding("rules", SectionRules),
+            new PageSectionBinding("care", SectionCare),
+            new PageSectionBinding("list", SectionList),
+            new PageSectionBinding("status", StatusText),
+        };
 
         public ReminderPage(RuntimeSupervisor sup)
         {

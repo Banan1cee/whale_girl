@@ -8,7 +8,7 @@ const { inflateRawSync } = require('node:zlib');
 const registry = require('../src/services/pluginProtocolRegistry.json');
 const { files, limits } = registry;
 const { compileRestricted } = require('../src/services/unifiedWasm');
-const { parseStrict, validateManifest } = require('../src/services/pluginProtocol');
+const { parseStrict, validateManifest, annotationError } = require('../src/services/pluginProtocol');
 const TEMPLATE_DIR = path.join(__dirname, '..', 'templates', 'plugins');
 const TEMPLATE = {
   'integer-tool': [1, 'tool.run@1', 'tool', 'manual', [], '整数工具'],
@@ -65,6 +65,11 @@ function settingsSchema(schema, depth = 1) {
   const field = 'settingsSchema';
   check(depth <= rules.maxDepth, `${field} 超出最大嵌套深度`);
   unknownFields(schema, rules.supportedKeywords, field);
+  for (const name of ['title', 'description']) {
+    if (!owns(schema, name)) continue;
+    const problem = annotationError(name, schema[name]);
+    check(!problem, `${field}.${name}: ${problem}`);
+  }
   check(rules.allowedTypes.includes(schema.type), `${field}.type 不受支持`);
   check(depth !== 1 || schema.type === 'object', `${field} 的根节点必须是对象类型`);
   for (const key of Object.keys(schema)) {
@@ -133,6 +138,9 @@ function manifestFrom(raw) {
   let checked;
   const unknown = Object.keys(manifest).filter(key => !manifestRules.allowed.includes(key));
   if (unknown.length) throw new Error(`plugin.json 含未知字段 ${unknown.join('、')}`);
+  // 先跑带具体字段名的同源 schema 校验，作者能看到是哪个注解/字段不合法，而不是统一报错。
+  if (manifest.level === 0 && owns(manifest, 'settingsSchema')) throw new Error('0 级纯数据主题不允许 settingsSchema');
+  if (owns(manifest, 'settingsSchema') && object(manifest.settingsSchema)) settingsSchema(manifest.settingsSchema);
   try { checked = validateManifest(Buffer.from(source)); }
   catch (error) {
     if (error.code === 'manifest_duplicate_key' || /duplicate/i.test(error.message)) throw new Error(errors.manifest_duplicate_key);
@@ -154,7 +162,9 @@ function manifestFrom(raw) {
   if (owns(manifest, 'maxAppVersion')) {
     check(compareVersion(manifest.maxAppVersion, manifest.minAppVersion) >= 0, 'maxAppVersion 不得小于 minAppVersion');
   }
-  check(object(manifest.provides) && Object.keys(manifest.provides).length > 0, 'provides 必须声明至少一个 provider');
+  check(object(manifest.provides) && (manifest.level === 0
+    ? Object.keys(manifest.provides).length === 0
+    : Object.keys(manifest.provides).length > 0), 'provides 必须符合该等级（0 级必须为空，其余至少一项）');
   check(Object.keys(manifest.provides).every(name => level.providers.includes(name)), 'provider 超出该权限等级');
   check(manifest.calls.every(name => level.calls.includes(name)), 'host call 超出该权限等级');
   for (const [name, descriptor] of Object.entries(manifest.provides)) {
@@ -170,7 +180,6 @@ function manifestFrom(raw) {
   }
   check(distinct(manifest.calls) && manifest.calls.every(name => typeof name === 'string' && level.calls.includes(name)),
     'calls 必须是已注册能力的数组，且不得重复');
-  if (owns(manifest, 'settingsSchema')) settingsSchema(manifest.settingsSchema);
   if (owns(manifest, 'executionTimeoutMs')) {
     check(boundedInt(manifest.executionTimeoutMs, limits.minExecutionTimeoutMs, limits.maxExecutionTimeoutMs), 'executionTimeoutMs 超出范围');
   }
@@ -377,6 +386,15 @@ function inspect(target, { syntax = false, projectOnly = false } = {}) {
   const manifest = manifestFrom(entries[files.manifest]);
   const entry = entries[manifest.entry];
   check(entry, 'ZIP 或项目入口与等级不匹配');
+  if (manifest.level === 0) {
+    // 主题是纯数据：CLI 只做静态 JSON 检查，不编译、不执行；完整 token/对比度由启动器校验。
+    let theme;
+    try { theme = JSON.parse(decoder.decode(entry)); }
+    catch { throw new Error('theme.json 必须是合法 UTF-8 JSON'); }
+    if (!object(theme) || theme.schema !== 1 || typeof theme.id !== 'string' || theme.id !== manifest.id)
+      throw new Error('theme.json 必须包含 schema:1 且 id 与插件清单一致');
+    return { manifest, entries };
+  }
   if (manifest.level !== 4) {
     try { compileRestricted(entry, manifest.level); }
     catch { throw new Error(`${manifest.entry} Wasm 模块或导入不符合该等级`); }

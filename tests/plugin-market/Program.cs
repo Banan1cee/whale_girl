@@ -61,8 +61,27 @@ try
         var bad = Encoding.UTF8.GetBytes(baseline.Replace(oldValue, newValue, StringComparison.Ordinal));
         Reject(() => PluginMarket.ReadPackage(Pack(bad, "plugin.js", script)), newValue);
     }
-    byte[] ScheduledManifest(string descriptor) => Encoding.UTF8.GetBytes(baseline.Replace(
-        "\"tool.run@1\":{\"mode\":\"tool\",\"scope\":\"manual\"}", "\"task.tick@1\":" + descriptor, StringComparison.Ordinal));
+    // settingsSchema 的 title/description 只影响展示；长度与控制字符策略来自共享注册表。
+    byte[] Annotated(string annotations) => Encoding.UTF8.GetBytes(
+        baseline.Replace("\"settingsSchema\":{", "\"settingsSchema\":{" + annotations + ",", StringComparison.Ordinal));
+    Check(PluginMarket.ReadPackage(Pack(Annotated("\"title\":\"设置\",\"description\":\"宿主说明\""), "plugin.js", script)).Info.Id == id,
+        "接受 settingsSchema 标题与说明注解");
+    var fieldAnnotated = Encoding.UTF8.GetBytes(baseline.Replace(
+        "\"properties\":{\"flag\":{\"type\":\"boolean\"}}",
+        "\"properties\":{\"flag\":{\"type\":\"boolean\",\"title\":\"开关\",\"description\":\"子项说明\"}}", StringComparison.Ordinal));
+    Check(PluginMarket.ReadPackage(Pack(fieldAnnotated, "plugin.js", script)).Info.Id == id,
+        "接受字段级标题与说明注解");
+    foreach (var (annotations, name) in new[] {
+        ("\"title\":\"\"", "拒绝空 title"),
+        ("\"title\":\"" + new string('t', 41) + "\"", "拒绝超长 title"),
+        ("\"description\":\"" + new string('d', 201) + "\"", "拒绝超长 description"),
+        ("\"title\":\"a\\u0001b\"", "拒绝 title 控制字符"),
+        ("\"description\":5", "拒绝非字符串 description") })
+    {
+        Reject(() => PluginMarket.ReadPackage(Pack(Annotated(annotations), "plugin.js", script)), name);
+    }
+
+    byte[] ScheduledManifest(string descriptor) => Encoding.UTF8.GetBytes(baseline.Replace(        "\"tool.run@1\":{\"mode\":\"tool\",\"scope\":\"manual\"}", "\"task.tick@1\":" + descriptor, StringComparison.Ordinal));
     var scheduledEntry = Encoding.UTF8.GetBytes("exports.providers = {'task.tick@1': () => null};");
     var scheduled = PluginMarket.ReadPackage(Pack(ScheduledManifest("""{"mode":"schedule","scope":"all","intervalSeconds":30}"""), "plugin.js", scheduledEntry));
     Check(scheduled.Info.Provides["task.tick@1"].IntervalSeconds == 30, "读取合法的定时周期");

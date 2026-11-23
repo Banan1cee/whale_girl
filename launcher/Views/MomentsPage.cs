@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -9,7 +10,7 @@ using System.Windows.Controls;
 namespace WhaleLauncher.Views;
 
 // 读取只查本地缓存；互动会操作微信窗口，执行后必须由用户在微信里确认。
-public sealed partial class MomentsPage : UserControl
+public sealed partial class MomentsPage : UserControl, IPageSectionHost
 {
     static readonly (string Value, string Label)[] Actions = {
         ("like", "点赞"), ("unlike", "取消点赞"), ("comment", "评论"), ("reply", "回复评论"),
@@ -23,6 +24,44 @@ public sealed partial class MomentsPage : UserControl
     int viewGeneration;
     bool loadingPage;
     bool settingsLoaded;
+
+    // ── 区块元数据（P2）：ID 是稳定英文常量，标题只用于预览/诊断。 ──
+    // 页面按 Grid 行 + 左右两栏排版，区块分散在 6 个不同容器里，改子元素顺序不会
+    // 改变 Grid.Row / Grid.Column，所以一律 canMove:false，只开放显隐。
+    // 发表开关、前台与"未确认"提示、动态状态和故障原因所在的区块不可隐藏；
+    // 只有纯说明文字（*-help）允许隐藏——它们都是静态 TextBlock 或只改 Text 的提示，
+    // 宿主写 Visibility 不会覆盖业务动态显隐。
+    static readonly PageSectionDescriptor[] PageSections =
+    {
+        new PageSectionDescriptor("header", "页头", canHide: false, canMove: false),
+        new PageSectionDescriptor("intro", "页面说明（含前台操作提示）", canHide: false, canMove: false),
+        new PageSectionDescriptor("publish", "自动发表与配额", canHide: false, canMove: false),
+        new PageSectionDescriptor("read", "读取缓存与自动策略", canHide: false, canMove: false),
+        new PageSectionDescriptor("interact", "手动互动", canHide: false, canMove: false),
+        new PageSectionDescriptor("result", "读取结果与状态", canHide: false, canMove: false),
+        new PageSectionDescriptor("publish-help", "立即发表说明", canHide: true, canMove: false),
+        new PageSectionDescriptor("image-help", "配图说明", canHide: true, canMove: false),
+        new PageSectionDescriptor("read-help", "读取快照说明", canHide: true, canMove: false),
+        new PageSectionDescriptor("auto-like-help", "自动点赞筛选说明", canHide: true, canMove: false),
+    };
+
+    string IPageSectionHost.PageId => "moments";
+    IReadOnlyList<PageSectionDescriptor> IPageSectionHost.SectionDescriptors => PageSections;
+
+    // 绑定的只有元素本身：宿主不重建、不新增控件，也不碰任何业务动态 Visibility。
+    IReadOnlyList<PageSectionBinding> IPageSectionHost.SectionBindings => new[]
+    {
+        new PageSectionBinding("header", SectionHeader),
+        new PageSectionBinding("intro", SectionIntro),
+        new PageSectionBinding("publish", SectionPublish),
+        new PageSectionBinding("read", SectionRead),
+        new PageSectionBinding("interact", SectionInteract),
+        new PageSectionBinding("result", SectionResult),
+        new PageSectionBinding("publish-help", PublishHelpText),
+        new PageSectionBinding("image-help", ImageHelpText),
+        new PageSectionBinding("read-help", ReadHelpText),
+        new PageSectionBinding("auto-like-help", AutoLikeHelpText),
+    };
 
     public MomentsPage(RuntimeSupervisor supervisor)
     {

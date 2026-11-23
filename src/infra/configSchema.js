@@ -174,6 +174,9 @@ const FIELDS = {
   'wechat.bgSend.unhideWindow': { type: 'bool' },
   'wechat.pipelineWorkers': { type: 'int', min: 1, max: 16 },
   'wechat.pipelineQueueLimit': { type: 'int', min: 1, max: 32 },
+  // 插件页免责声明阅读确认：与配置共用一份来源；哈希对应当前内嵌免责声明正文。
+  'plugins.disclaimer.acknowledged': { type: 'bool' },
+  'plugins.disclaimer.documentHash': { type: 'string', maxLen: 64 },
 };
 
 function describe(expected) {

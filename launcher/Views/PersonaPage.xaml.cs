@@ -21,7 +21,7 @@ namespace WhaleLauncher.Views
         public override string ToString() => Label ?? Id ?? "";
     }
 
-    public partial class PersonaPage : UserControl, IRefreshable
+    public partial class PersonaPage : UserControl, IRefreshable, IPageSectionHost
     {
         private readonly RuntimeSupervisor _sup;
         private readonly DispatcherTimer _saveTimer;
@@ -45,6 +45,26 @@ namespace WhaleLauncher.Views
         private bool _masterRendering;
 
         private string _currentPresetId = "";   // 当前人设来自哪一版，用来把下拉框选到正确项
+
+        // ── 区块元数据（P2）：四张卡都挂在 SectionsHost 下，是同 Panel 直接子节点，才允许排序。
+        //    人设与预设是主功能、身份关系含主人账号认证：两者不可隐藏，配置不能把它们藏起来。 ──
+        private static readonly PageSectionDescriptor[] PersonaSections =
+        {
+            new PageSectionDescriptor("preset", "人设与预设", canHide: false, canMove: true),
+            new PageSectionDescriptor("relation", "身份关系", canHide: false, canMove: true),
+            new PageSectionDescriptor("expression", "表达偏好", canHide: true, canMove: true),
+            new PageSectionDescriptor("memory", "上下文与记忆", canHide: true, canMove: true),
+        };
+
+        string IPageSectionHost.PageId => "persona";
+        IReadOnlyList<PageSectionDescriptor> IPageSectionHost.SectionDescriptors => PersonaSections;
+        IReadOnlyList<PageSectionBinding> IPageSectionHost.SectionBindings => new[]
+        {
+            new PageSectionBinding("preset", SecPreset),
+            new PageSectionBinding("relation", SecRelation),
+            new PageSectionBinding("expression", SecExpression),
+            new PageSectionBinding("memory", SecMemory),
+        };
 
         public PersonaPage(RuntimeSupervisor sup)
         {

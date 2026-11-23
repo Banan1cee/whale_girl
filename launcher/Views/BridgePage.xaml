@@ -46,12 +46,12 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" MinHeight="180" />
+            <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- 页头 -->
-        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,8">
+        <DockPanel x:Name="SectionHeader" Grid.Row="0" LastChildFill="False" Margin="0,0,0,8">
             <TextBlock DockPanel.Dock="Left" Text="微信 · 桥接" Style="{StaticResource H1}" VerticalAlignment="Center" />
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="发言范围 · 黑白名单" Style="{StaticResource Ghost}" Click="OnChatPolicy" />
@@ -61,7 +61,7 @@
         </DockPanel>
 
         <!-- 上半：微信设置（固定高度，不再滚动，内容一屏放完） -->
-        <StackPanel Grid.Row="1">
+        <StackPanel x:Name="SectionSettings" Grid.Row="1">
                 <Grid Margin="0,0,0,5">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -143,7 +143,7 @@
         </StackPanel>
 
         <!-- 下半：桥接控制台 -->
-        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0">
+        <Border x:Name="SectionConsole" Grid.Row="2" Style="{StaticResource Card}" Padding="0" MinHeight="180">
             <DockPanel>
                 <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="10,7">
                     <DockPanel LastChildFill="False">
@@ -223,7 +223,7 @@
         </Border>
 
         <!-- 控制台状态条 -->
-        <DockPanel Grid.Row="3" Margin="0,6,0,0" LastChildFill="False">
+        <DockPanel x:Name="SectionStatus" Grid.Row="3" Margin="0,6,0,0" LastChildFill="False">
             <TextBlock x:Name="ConsoleStat" DockPanel.Dock="Left" Style="{StaticResource Small}" VerticalAlignment="Center" />
             <Button x:Name="BtnOpenBridgeLog" DockPanel.Dock="Right" Content="打开日志文件" Style="{StaticResource TopBtn}"
                     HorizontalAlignment="Right" Click="OnOpenBridgeLog" />

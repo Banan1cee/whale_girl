@@ -20,9 +20,29 @@ namespace WhaleLauncher.Views
         public string Text { get; set; }
     }
 
-    public partial class StatusPage : UserControl, IRefreshable
+    public partial class StatusPage : UserControl, IRefreshable, IPageSectionHost
     {
         private readonly RuntimeSupervisor _sup;
+
+        // ── 区块元数据（P2）：稳定 ID，标题只给预览/诊断。StatusPage 用 Grid 行排版，
+        //    改变子元素顺序不会改变 Grid.Row，因此这里只开放显隐、不开放排序。 ──
+        private static readonly PageSectionDescriptor[] StatusSections =
+        {
+            new PageSectionDescriptor("header", "页头与刷新", canHide: false, canMove: false),
+            new PageSectionDescriptor("status-cards", "内核 / 桥接 / 微信", canHide: false, canMove: false),
+            new PageSectionDescriptor("usage", "用量与主动搭话", canHide: true, canMove: false),
+            new PageSectionDescriptor("recent", "最近动态", canHide: true, canMove: false),
+        };
+
+        string IPageSectionHost.PageId => "status";
+        IReadOnlyList<PageSectionDescriptor> IPageSectionHost.SectionDescriptors => StatusSections;
+        IReadOnlyList<PageSectionBinding> IPageSectionHost.SectionBindings => new[]
+        {
+            new PageSectionBinding("header", SectionHeader),
+            new PageSectionBinding("status-cards", SectionCards),
+            new PageSectionBinding("usage", SectionUsage),
+            new PageSectionBinding("recent", SectionRecent),
+        };
 
         private DateTime _lastCare = DateTime.MinValue;
         private RuntimeSupervisor.CareState _care;
@@ -34,6 +54,7 @@ namespace WhaleLauncher.Views
         public StatusPage(RuntimeSupervisor sup)
         {
             InitializeComponent();
+            ReadOnlyDisplay.StyleFlatList(Recent, new Thickness(0, 3, 0, 3));
             SmoothScroll.Attach(Recent);
             _sup = sup;
             _recentTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -67,30 +88,32 @@ namespace WhaleLauncher.Views
         private void Apply(Snapshot s)
         {
             // 内核
-            DotNode.Fill = s.NodeReady ? (Brush)FindResource("Ok") : (Brush)FindResource(s.NodeUp ? "Warn" : "Idle");
-            NodeMain.Text = !s.NodeUp ? "未启动" : (s.NodeReady ? "运行中" : "等待就绪");
-            NodeAge.Text = s.NodeUp ? (s.ExternalNode ? "后台启动 · " : "") + "已跑 " + Short(s.UptimeSec) : "";
-            NodeSub.Text = s.NodeUp
-                ? $"端口 {s.Port} · {s.Provider}/{s.Model}{(!s.NeedsKey || s.HasKey ? "" : " · 还没有 Key")}{(s.Mock ? " · 演示模式" : "")}"
-                : "点顶栏 ⏻ 启动";
+            CardNode.SetStatus(
+                s.NodeReady ? "Ok" : (s.NodeUp ? "Warn" : "Idle"),
+                !s.NodeUp ? "未启动" : (s.NodeReady ? "运行中" : "等待就绪"),
+                s.NodeUp ? (s.ExternalNode ? "后台启动 · " : "") + "已跑 " + Short(s.UptimeSec) : "",
+                s.NodeUp
+                    ? $"端口 {s.Port} · {s.Provider}/{s.Model}{(!s.NeedsKey || s.HasKey ? "" : " · 还没有 Key")}{(s.Mock ? " · 演示模式" : "")}"
+                    : "点顶栏 ⏻ 启动");
 
             // 桥接
-            DotBridge.Fill = s.BrOnline ? (Brush)FindResource("Ok")
-                : (s.NodeUp ? (Brush)FindResource("Warn") : (Brush)FindResource("Idle"));
-            BridgeMain.Text = s.BrOnline ? "在线" : (s.NodeUp ? "离线" : "未启动");
-            BridgeAge.Text = s.BrOnline && s.BrLastSeenSec >= 0 ? $"心跳 {s.BrLastSeenSec} 秒前" : "";
-            BridgeSub.Text = s.BrOnline
-                ? (s.BrUia ? "UIA 正常" : "UIA 拿不到") + (s.BrListener ? " · 收消息正常" : " · 收消息停了")
-                : (s.NodeUp ? "内核在跑，桥接没连上" : "—");
+            CardBridge.SetStatus(
+                s.BrOnline ? "Ok" : (s.NodeUp ? "Warn" : "Idle"),
+                s.BrOnline ? "在线" : (s.NodeUp ? "离线" : "未启动"),
+                s.BrOnline && s.BrLastSeenSec >= 0 ? $"心跳 {s.BrLastSeenSec} 秒前" : "",
+                s.BrOnline
+                    ? (s.BrUia ? "UIA 正常" : "UIA 拿不到") + (s.BrListener ? " · 收消息正常" : " · 收消息停了")
+                    : (s.NodeUp ? "内核在跑，桥接没连上" : "—"));
 
             // 微信
             var who = !string.IsNullOrEmpty(s.BrAccountNick) ? s.BrAccountNick : s.BrAccount;
-            DotWechat.Fill = s.BrOnline && s.BrAccountOk ? (Brush)FindResource("Ok")
-                : (s.BrOnline ? (Brush)FindResource("Warn") : (Brush)FindResource("Idle"));
-            WechatMain.Text = !s.BrOnline || string.IsNullOrEmpty(who) ? "未知" : who;
-            WechatSub.Text = s.BrOnline
-                ? $"窗口 {(string.IsNullOrEmpty(s.BrWindow) ? "未知" : s.BrWindow)} · 账号{(s.BrAccountOk ? "已确认" : "未确认")} · 双开守卫{(s.BrAccountGuard ? "已开" : "已关")}"
-                : "—";
+            CardWechat.SetStatus(
+                s.BrOnline && s.BrAccountOk ? "Ok" : (s.BrOnline ? "Warn" : "Idle"),
+                !s.BrOnline || string.IsNullOrEmpty(who) ? "未知" : who,
+                "",
+                s.BrOnline
+                    ? $"窗口 {(string.IsNullOrEmpty(s.BrWindow) ? "未知" : s.BrWindow)} · 账号{(s.BrAccountOk ? "已确认" : "未确认")} · 双开守卫{(s.BrAccountGuard ? "已开" : "已关")}"
+                    : "—");
 
             // 用量
             UsageLine.Text = s.NodeUp
