@@ -150,6 +150,7 @@ function normalizePreference(raw, now) {
   return {
     id: text(raw.id, 48) || `pf_${shortId(body)}`,
     key: text(raw.key, 60),
+    subject: text(raw.subject, 40) || 'self',
     text: body,
     kind: text(raw.kind, 20) || 'fact',
     confidence: clampNum(raw.confidence, 0, 1, 0.7),
@@ -240,6 +241,8 @@ function openThreads(card) {
 function preferenceToNote(p) {
   return {
     text: p.text,
+    key: p.key || '',
+    subject: p.subject || 'self',
     kind: p.kind || 'fact',
     confidence: p.confidence,
     importance: Math.max(1, Math.min(3, Math.round((Number(p.confidence) || 0.7) * 3))),
@@ -259,14 +262,21 @@ function addPreference(card, entry, { chatId, now = Date.now() } = {}) {
   const body = text(entry && entry.text, 80);
   if (!body) return null;
   const key = text(entry.key, 60);
+  const subject = text(entry.subject, 40) || 'self';
   const source = text(entry.source, 120);
   const confidence = clampNum(entry.confidence, 0, 1, 0.7);
   card.preferences = Array.isArray(card.preferences) ? card.preferences : [];
 
+  // 模型更新引用卡片内的稳定 ID，不能用模糊文本匹配去撤回另一条相似事实。
+  for (const id of Array.isArray(entry.supersedesIds) ? entry.supersedesIds : []) {
+    const target = card.preferences.find((p) => p.id === text(id, 48) && !p.deleted);
+    if (target) target.superseded = true;
+  }
+
   // 1) 同一 key 的新值：旧值标 superseded（不删，留审计）
   if (key) {
     for (const p of card.preferences) {
-      if (p.key !== key || p.superseded || p.deleted) continue;
+      if (p.key !== key || p.subject !== subject || p.superseded || p.deleted) continue;
       if (norm(p.text) === norm(body)) continue;
       if (confidence >= (p.confidence || 0) - 0.05) p.superseded = true;
     }
@@ -310,8 +320,8 @@ function addPreference(card, entry, { chatId, now = Date.now() } = {}) {
   }
 
   const item = normalizePreference({
-    id: `pf_${shortId(`${card.chatId}|${key}|${body}`)}`,
-    key, text: body, kind: entry.kind || 'fact', confidence, source,
+    id: `pf_${shortId(`${card.chatId}|${subject}|${key}|${body}`)}`,
+    key, subject, text: body, kind: entry.kind || 'fact', confidence, source,
     createdAt: at, lastMentionedAt: at, mentions: 1, legacy: Boolean(entry.legacy),
   }, at);
   // 用户明确纠正 / 手动记住：最高置信度
@@ -320,6 +330,22 @@ function addPreference(card, entry, { chatId, now = Date.now() } = {}) {
   evictOverflow(card.preferences, LIMITS.maxPreferencesPerPerson, at);
   card.updatedAt = at;
   return item;
+}
+
+function retractPreferences(card, ids, { chatId, now = Date.now() } = {}) {
+  assertChat(card, chatId || (card && card.chatId));
+  const at = nowOf(now);
+  const wanted = new Set((Array.isArray(ids) ? ids : []).map((id) => text(id, 48)).filter(Boolean));
+  if (!wanted.size) return 0;
+  let retracted = 0;
+  for (const item of Array.isArray(card.preferences) ? card.preferences : []) {
+    if (!wanted.has(item.id) || item.deleted || item.superseded) continue;
+    item.superseded = true;
+    item.supersededAt = at;
+    retracted += 1;
+  }
+  if (retracted) card.updatedAt = at;
+  return retracted;
 }
 
 /* ------------------------------ 写入：性格 ------------------------------ */
@@ -491,6 +517,7 @@ module.exports = {
   openThreads,
   preferenceToNote,
   addPreference,
+  retractPreferences,
   addTrait,
   addEvent,
   addThread,
