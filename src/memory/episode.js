@@ -136,7 +136,11 @@ async function closeEpisode({ chat, chatStore, llm = null, logger = null, now = 
     const speakers = speakersOf(messages);
     const date = episodeDate(messages, ep, now);
     const allUids = speakers.map((s) => s.uid);
-    const extracted = await extractor.extractEpisode({ messages, llm, speakers, logger, now });
+    const existingFacts = Object.fromEntries(speakers.map((speaker) => {
+      const card = chatStore.getCard(chat, speaker.uid);
+      return [speaker.uid, card ? personCard.activePreferences(card).map(({ id, subject, key, text }) => ({ id, subject, key, text })) : []];
+    }));
+    const extracted = await extractor.extractEpisode({ messages, llm, speakers, existingFacts, logger, now });
     if (chat.deleted) return { closed: false, reason: 'deleted', episodeId: ep.id };
     const summaryText = String(extracted.summary || '').replace(/\s+/g, ' ').trim().slice(0, 400)
       || extractor.extractiveSummary(messages, 200);
@@ -167,11 +171,20 @@ async function closeEpisode({ chat, chatStore, llm = null, logger = null, now = 
       const card = chatStore.ensurePerson(chat, speaker.uid, speaker.name);
       const personFacts = extracted.facts.filter((f) => !f.uid || f.uid === speaker.uid);
       for (const fact of personFacts) {
+        if (fact.operation === 'retract') {
+          personCard.retractPreferences(card, fact.supersedesIds, { chatId: chat.chatId, now });
+          if (!fact.text) continue;
+        }
+        const subject = fact.subject || 'self';
+        const key = fact.key || '';
         personCard.addPreference(card, {
           text: fact.text,
+          subject,
+          key,
           confidence: Math.min(0.9, Number(fact.confidence) || 0.7),
           source: messageIds[messageIds.length - 1] || '',
-          kind: 'fact',
+          kind: fact.kind || 'fact',
+          supersedesIds: fact.supersedesIds || [],
         }, { chatId: chat.chatId, now });
       }
       const personTraits = extracted.traits.filter((t) => !t.uid || t.uid === speaker.uid);
