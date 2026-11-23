@@ -2,6 +2,7 @@
 
 const { json, readBody } = require('../util');
 const { isLoopbackRequest } = require('../security');
+const { hostCall } = require('../../services/features/hostCall');
 
 const RANGES = new Set(['today', 'yesterday']);
 
@@ -20,16 +21,21 @@ module.exports = function register(router) {
     }
   };
 
-  router.get('/api/digest', (runtime, req, res) => {
+  router.get('/api/digest', async (runtime, req, res) => {
     local(req);
-    return json(res, 200, { ok: true, ...runtime.digest.status() });
+    const out = await hostCall(runtime, 'digest.status@1', {});
+    return json(res, 200, { ok: true, ...out.status });
   });
 
   router.post('/api/digest/generate', async (runtime, req, res) => {
     local(req);
     const body = await readBody(req);
     const range = RANGES.has(body.range) ? body.range : 'today';
-    void runtime.digest.generate(range);
-    return json(res, 202, { ok: true, ...runtime.digest.status() });
+    // 202 不能等模型：触发后立刻读一次状态，生成在后台继续。
+    // 失败详情由 DigestService 自己写进 status，这里只防一个悬空的 rejection。
+    void Promise.resolve(hostCall(runtime, 'digest.generate@1', { range }))
+      .catch((err) => runtime.logger?.warn?.('消息汇总生成触发失败：' + String(err?.code || 'error')));
+    const out = await hostCall(runtime, 'digest.status@1', {});
+    return json(res, 202, { ok: true, ...out.status });
   });
 };

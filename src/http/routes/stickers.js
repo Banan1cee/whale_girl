@@ -8,6 +8,9 @@
  *   2. 管理接口只允许本机访问（远程写已经在 security.js 拦过一层，这里再收紧）；
  *   3. 桥接用的 pending / claim / ack 必须带对的 gateway token
  *      —— 否则同机的其它程序能把别人待发的表情包领走。
+ *
+ * 排队/领取/回执走宿主能力（runtime.capabilities.invokeHost）；读盘、缩略图、
+ * 上传、资源管理器这些传输层动作留在路由里。
  */
 
 const fs = require('node:fs');
@@ -18,6 +21,7 @@ const { spawn } = require('node:child_process');
 const stickers = require('../../adapters/stickers');
 const { json, readBody, MIME } = require('../protocol');
 const { isLoopbackRequest } = require('../security');
+const { hostCall } = require('../../services/features/hostCall');
 
 const BRIDGE_ONLY = new Set(['/api/stickers/gate', '/api/stickers/pending', '/api/stickers/claim', '/api/stickers/ack', '/api/stickers/cancel']);
 
@@ -50,7 +54,10 @@ module.exports = function register(router) {
     }
 
     if (pathname === '/api/stickers/gate' && method === 'GET') {
-      return json(res, 200, service.gate(info.url.searchParams.get('id') || ''));
+      return (async () => {
+        const out = await hostCall(runtime, 'stickers.gate@1', { id: info.url.searchParams.get('id') || '' });
+        return json(res, 200, { ok: true, ...out.gate });
+      })();
     }
 
     if (pathname === '/api/stickers/status' && method === 'GET') {
@@ -146,7 +153,6 @@ module.exports = function register(router) {
       })();
     }
 
-
     // ---- 自定义分类：加 / 改名 / 删（内置三类不能动）----
     if (pathname === '/api/stickers/category' && method === 'POST') {
       return (async () => {
@@ -228,36 +234,50 @@ module.exports = function register(router) {
         if (generation !== service.generation) {
           return json(res, 409, { ok: false, error: '开关已变化，请重新排队' });
         }
-        const queued = service.enqueue(
-          (body && body.emotion) || 'other',
-          body && body.chat !== undefined ? body.chat : (config.sticker && config.sticker.testChat) || '文件传输助手'
-        );
-        return json(res, 200, { ok: true, queued });
+        const out = await hostCall(runtime, 'stickers.enqueue@1', {
+          emotion: (body && body.emotion) || 'other',
+          chat: body && body.chat !== undefined ? body.chat : (config.sticker && config.sticker.testChat) || '文件传输助手',
+        });
+        return json(res, 200, { ok: true, ...out });
       })();
     }
 
     if (pathname === '/api/stickers/pending' && method === 'GET') {
-      return json(res, 200, { ok: true, items: service.pending() });
+      return (async () => {
+        const out = await hostCall(runtime, 'stickers.pending@1', {});
+        return json(res, 200, { ok: true, ...out });
+      })();
     }
 
     if (pathname === '/api/stickers/claim' && method === 'POST') {
       return (async () => {
         const body = await readBody(req);
-        return json(res, 200, { ok: true, item: service.claim(body && body.id) });
+        const out = await hostCall(runtime, 'stickers.claim@1', { id: body && body.id });
+        return json(res, 200, { ok: true, ...out });
       })();
     }
 
     if (pathname === '/api/stickers/cancel' && method === 'POST') {
       return (async () => {
         const body = await readBody(req);
-        return json(res, 200, { ok: true, item: service.cancelReserved(body && body.id, body && body.generation, body && body.chatUsername) });
+        const out = await hostCall(runtime, 'stickers.cancel@1', {
+          id: body && body.id,
+          generation: body && body.generation,
+          chatUsername: body && body.chatUsername,
+        });
+        return json(res, 200, { ok: true, ...out });
       })();
     }
 
     if (pathname === '/api/stickers/ack' && method === 'POST') {
       return (async () => {
         const body = await readBody(req);
-        return json(res, 200, { ok: true, item: service.ack(body && body.id, body && body.status, body && body.error) });
+        const out = await hostCall(runtime, 'stickers.ack@1', {
+          id: body && body.id,
+          status: body && body.status,
+          error: body && body.error,
+        });
+        return json(res, 200, { ok: true, ...out });
       })();
     }
 

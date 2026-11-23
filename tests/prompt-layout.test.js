@@ -11,7 +11,7 @@
  *   1. 同一天内 system 字节稳定（私聊/群聊、换个人说话都不变）；
  *   2. 日期只在 system 里出现一次，每天跟着 now 变；
  *   3. 每轮会变的东西在尾部，时间戳由 ts 确定性推导。
- * 以及 features.staticSystem=false 只移动动态块，不改变当前设置和人格语义。
+ * 并确保动态状态只进入尾部，不回滚当前设置和人格语义。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -56,14 +56,14 @@ test('同一天内 system 字节稳定：私聊换个人说话、隔一分钟都
   assert.equal(c, d, '群里换个人说话，system 必须一字节都不差');
 });
 
-test('system 里只有静态块：说话人/字数/@/联网/链接/对喷/动作账本在尾部，不注入心情', () => {
+test('system 里只有静态块：说话人/字数/@/联网/链接/动作账本在尾部，不注入心情', () => {
   const cfg = config();
   const msg = groupMsg({
     senderName: '阿螈', text: '@鲸鲸 北京天气怎么样',
     groupParticipants: ['阿螈', '小海'], mentionedNames: ['小海'], addressedToBot: true,
     replyToName: '小海', groupStyleText: '这个群平均每句约 12 个字。',
     webText: '【北京 实时天气】现在 10.7°C', linkText: '链接正文：猫猫跳舞',
-    discussion: true, fight: true, fightTarget: { name: '小海', text: '你个垃圾' }, fightOnMaster: true,
+    discussion: true,
   });
   const events = [{ ts: NOW.getTime(), type: 'sticker', detail: '开心/wave.gif', status: 'confirmed' }];
   const parts = assemblePrompt({ config: cfg, msg, events, now: NOW });
@@ -73,7 +73,7 @@ test('system 里只有静态块：说话人/字数/@/联网/链接/对喷/动作
     assert.ok(!parts.system.includes(leaking), `system 里不该出现「${leaking}」：那是每轮会变的内容`);
   }
   for (const expected of ['最多约', '当前上下文参与者', '刚联网搜到的资料', '对方发的链接',
-    '第二条人格', '最近做过的事', '学这个群说话']) {
+    '最近做过的事', '学这个群说话']) {
     assert.ok(parts.tail.includes(expected), `尾部应该带上「${expected}」`);
   }
   assert.ok(!parts.system.includes('阿螈'), 'system 里不该出现这条消息的说话人');
@@ -152,63 +152,8 @@ test('当前消息顺序固定：正文 → 记忆块 → 本轮状态', () => {
   assert.equal(parts.tail.startsWith('【本轮状态】'), true);
 });
 
-test('features.staticSystem=false：只移动状态，不回滚人设与能力语义', () => {
-  const events = [{ ts: new Date(2026, 10, 3, 15, 40, 0).getTime(), type: 'sticker', detail: '开心/wave.gif', status: 'confirmed' }];
-  const scenarios = {
-    'default-private': {
-      config: config({ features: { staticSystem: false } }),
-      msg: { platform: 'wechat', chatType: 'private', senderName: '小海', text: '在吗', model: 'deepseek-flash' },
-      profile: { count: 4 },
-      now: NOW,
-    },
-    'default-group': {
-      config: config({ features: { staticSystem: false } }),
-      msg: {
-        platform: 'wechat', chatType: 'group', senderName: '阿螈', chatTitle: '深海鱼塘',
-        text: '@鲸鲸 帮我看下小海对阿螈说的「你」指谁',
-        groupParticipants: ['阿螈', '小海', '旁观者'],
-        mentionedNames: ['小海', '阿螈'],
-        addressedToBot: true,
-        replyToName: '小海',
-        groupStyleText: '这个群平均每句约 12 个字，最近常用：yyds、笑死。',
-        webText: '【北京 实时天气】\n现在 10.7°C（体感 10.3°C，阴）',
-        model: 'deepseek-flash',
-        discussion: true,
-      },
-      events,
-      now: NOW,
-    },
-    'default-private-master-roast': {
-      config: config({ persona: { masterRoast: true, ownerName: '爸爸' }, chat: { privateMaxChars: 80 }, features: { staticSystem: false } }),
-      msg: { platform: 'wechat', chatType: 'private', senderName: 'Master', isMaster: true, text: '你是不是傻', model: 'deepseek-flash' },
-      events,
-      now: NOW,
-    },
-    'custom-private-master': {
-      config: config({ persona: { customPrompt: '你是鲸鲸，保持一点俏皮。', masterRoast: true }, features: { staticSystem: false } }),
-      msg: { platform: 'wechat', chatType: 'private', senderName: 'Master', isMaster: true, text: '在吗', model: 'deepseek-flash' },
-      now: NOW,
-    },
-  };
-
-  for (const [name, ctx] of Object.entries(scenarios)) {
-    const modern = persona.buildPromptParts({ ...ctx, config: { ...ctx.config, features: { ...ctx.config.features, staticSystem: true } } });
-    assert.equal(persona.buildSystem(ctx), [modern.system, modern.tail].filter(Boolean).join('\n\n'), `${name} 仅改变状态位置`);
-  }
-
-  // 非静态布局同样提供日期、场景和能力，但不恢复随机心情。
-  const legacy = scenarios['default-group'];
-  const sys = persona.buildSystem(legacy);
-  assert.match(sys, /今天是 2026年11月3日 周二/);
-  assert.match(sys, /在微信群「深海鱼塘」里，这条是「阿螈」说的/);
-  assert.doesNotMatch(sys, /语气底子/);
-  assert.match(sys, /刚联网搜到的资料/);
-  assert.match(sys, /【最近做过的事/, '动作账本在旧行为里也在 system');
-});
-
-test('静态模式下 buildTurnState 为空转（旧行为不再拼尾部）', () => {
-  const cfg = config({ features: { staticSystem: false } });
-  const parts = persona.buildPromptParts({ config: cfg, msg: privateMsg({ text: '在吗' }), now: NOW });
-  assert.equal(parts.tail, '');
-  assert.match(parts.system, /【本轮状态】/, '关闭静态布局时状态在 system');
+test('提示词始终将本轮状态放在尾部 user 消息', () => {
+  const parts = persona.buildPromptParts({ config: config(), msg: privateMsg({ text: '在吗' }), now: NOW });
+  assert.ok(parts.tail.startsWith('【本轮状态】'));
+  assert.doesNotMatch(parts.system, /【本轮状态】/);
 });

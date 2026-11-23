@@ -48,9 +48,10 @@ function computeTrigger(bot, { msg, atMe, clean, isGroup, state, nowMs, isMaster
   if (sessionState.isSilent(state, nowMs)) {
     return { wake: false, reason: 'silent' };
   }
-  // 任何人单发一个问号，她也回一个问号
-  if (/^[?？]+$/.test(String(clean.text || '').trim())) {
-    return { wake: true, reason: 'question_mark' };
+  // 只发一个「？」不再算在跟她说话：以前任何人发个问号都能把她叫出来回一个「？」。
+  // 明确 @ ／回复她（上面的 addressed 分支）仍照常回，其余情况一律不接。
+  if (/^[?？\s]+$/.test(String(clean.text || '').trim())) {
+    return { wake: false, reason: 'question_mark' };
   }
   // 没 @ 但明显是在叫她说话：「来给大家说句话」「开麦」「跟大家聊聊」
   if (/(来(给|和)?(大家|群里|群友)?说|跟大家(说|聊)|开麦|说句话|出来说|你说两句)/.test(clean.text || '')) {

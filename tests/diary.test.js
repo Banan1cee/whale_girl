@@ -245,15 +245,16 @@ test('日记接口：仅本机可读写，后台生成立即返回且不会重�
   f.llm.complete = () => new Promise((resolve) => { release = resolve; });
   const res = { writeHead(code) { this.code = code; }, end(body) { this.body = JSON.parse(body); } };
   const req = { socket: { remoteAddress: '127.0.0.1' } };
-  routes['/api/diary/generate'](runtime, req, res);
+  // 触发与状态读取现在都经宿主能力分发（异步一档），HTTP 层仍然拿到 202 + 当前状态。
+  await routes['/api/diary/generate'](runtime, req, res);
   assert.equal(res.code, 202);
   assert.equal(res.body.status, 'running');
   const pending = f.service.pending;
-  routes['/api/diary/generate'](runtime, req, res);
+  await routes['/api/diary/generate'](runtime, req, res);
   assert.equal(f.service.pending, pending);
   release('测试正文');
   await pending;
-  routes['/api/diary'](runtime, req, res);
+  await routes['/api/diary'](runtime, req, res);
   assert.equal(res.body.status, 'done');
 });
 

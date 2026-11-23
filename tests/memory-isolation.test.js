@@ -11,7 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { Store } = require('../src/memory/store');
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 const personCard = require('../src/memory/personCard');
 

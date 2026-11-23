@@ -47,6 +47,8 @@ test('完整人设页保存顺序不会把新名字覆盖；热重载与重启�
   assert.equal(history[0].text, '我是鲸鲸，主人你好', '历史正文原样保留');
   const turns = app.runtime.bot.buildTurns({ chatType: 'group', chatId: 'test_name_group', text: '在吗' }, history);
   assert.match(turns[0].content, /小鱼（机器人）/);
+  // 同一 data 目录只允许一个内核持锁；重启验证前先停旧实例。
+  await app.close();
   const restarted = await startServer({ root: app.root, env: { WHALE_LOG_FILE: '' }, port: 0 });
   t.after(() => restarted.close());
   assert.equal(restarted.runtime.config.persona.name, '小鱼');
@@ -69,6 +71,7 @@ test('交流偏好按启动器保存链路下一轮更新，热重载和重启�
     assert.match(next.system, /可以自然追问或延伸相关话题/);
     assert.match(next.system, /可以主动表达偏好或独立判断/);
   }
+  await app.close();
   const restarted = await startServer({ root: app.root, env: { WHALE_LOG_FILE: '' }, port: 0 });
   t.after(() => restarted.close());
   const decision = await restarted.runtime.bot.decide({ ...msg, chatId: 'preferences-restarted' });
@@ -89,11 +92,12 @@ test('旧人设顶嘴存档不覆盖开关，下一轮、热重载和重启一�
   await post(app, '/api/settings', { userName: '老大' });
   await delay(450);
   assert.match(make(app.runtime).system, /顶嘴人格：刀子嘴豆腐心/);
+  await app.close();
   const restarted = await startServer({ root: app.root, env: { WHALE_LOG_FILE: '' }, port: 0 });
   t.after(() => restarted.close());
   assert.match(make(restarted.runtime).system, /顶嘴人格：刀子嘴豆腐心/);
-  await post(app, '/api/config', { patch: { 'persona.masterRoast': false } });
-  assert.doesNotMatch(make(app.runtime).system, /顶嘴人格：/);
+  await post(restarted, '/api/config', { patch: { 'persona.masterRoast': false } });
+  assert.doesNotMatch(make(restarted.runtime).system, /顶嘴人格：/);
 });
 
 test('自定义人设中的旧名字不盖过当前设置，主人称呼不授予陌生人身份', async (t) => {

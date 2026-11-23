@@ -1,8 +1,7 @@
 'use strict';
 
 const features = require('../../infra/features');
-const { applyConfigPatch } = require('../../infra/configPatch');
-const { prepareFeatureCommand } = require('../../services/configCommands');
+const { applyFeatureToggle } = require('../../services/configCommands');
 const { json, readBody } = require('../util');
 
 module.exports = function register(router) {
@@ -14,9 +13,8 @@ module.exports = function register(router) {
   router.post('/api/features', async (runtime, req, res) => {
     const body = await readBody(req);
     try {
-      const { key, entry, value, patch } = prepareFeatureCommand(body);
-      applyConfigPatch(runtime, patch);
-      runtime.logger.info(`功能开关 ${entry.label} → ${value ? '开' : '关'}`);
+      // 校验/落盘/热重载与离线保存共用同一份。
+      const { key, value } = applyFeatureToggle(runtime, body);
       return json(res, 200, { ok: true, key, value, features: features.list(runtime.config) });
     } catch (err) {
       return json(res, 400, { ok: false, error: err.message });

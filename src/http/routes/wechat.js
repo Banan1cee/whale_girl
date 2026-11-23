@@ -6,25 +6,37 @@ const {
   matchAccountDir,
 } = require('../../services/wechat');
 const { applyConfigPatch } = require('../../infra/configPatch');
-const { sendDenial } = require('../../core/wechatSendPolicy');
+const { sendAllowed } = require('../../core/wechatSendPolicy');
 const { isLoopbackRequest } = require('../security');
 const { json, readBody } = require('../util');
 const { tagId } = require('../../infra/privacy');
+const { hostCall } = require('../../services/features/hostCall');
 
 module.exports = function register(router) {
-  router.post('/api/wechat/send-permission', async (runtime, req, res) => {
+  // 桥接身份：本机回环 + 桥接 token 才允许核对发言范围。
+  // 身份检查留在入口层，共享规则只回答「这个会话能不能发」。
+  const bridgeIdentityOk = (runtime, req) => {
     const gw = runtime.gateways?.get('wechat');
-    if (!isLoopbackRequest(req) || !gw?.verifyToken(req, null)) {
+    return isLoopbackRequest(req) && Boolean(gw?.verifyToken(req, null));
+  };
+
+  router.post('/api/wechat/send-permission', async (runtime, req, res) => {
+    if (!bridgeIdentityOk(runtime, req)) {
       return json(res, 403, { ok: false, error: '仅允许本机微信桥接核对发言范围' });
     }
     const body = await readBody(req);
     const id = typeof body?.chatId === 'string' ? body.chatId.trim() : '';
     const name = typeof body?.name === 'string' ? body.name.trim() : '';
-    const contact = id && runtime.contacts?.get(id);
-    const reason = sendDenial(runtime.config, {
-      id, names: [name, contact?.name, contact?.remark], isGroup: /@chatroom$/i.test(id) || contact?.isGroup === true,
+    // 联系人读取走宿主能力：和插件看到的缓存、字段清洗是同一份。
+    const found = id ? await hostCall(runtime, 'contacts.get@1', { wxid: id }) : null;
+    const contact = found?.contact;
+    const { allowed, reason } = sendAllowed(runtime.config, {
+      chatId: id,
+      names: [name, contact?.name, contact?.remark],
+      isGroup: /@chatroom$/i.test(id) || contact?.isGroup === true,
+      platform: 'wechat',
     });
-    return json(res, 200, { ok: true, allowed: !reason, reason });
+    return json(res, 200, { ok: true, allowed, reason });
   });
 
   // ---- 微信多账号：列账号 / 刷新昵称 / 选账号 ----
@@ -60,12 +72,12 @@ module.exports = function register(router) {
 
   // ---- 联系人缓存：选择器（白名单 / 黑名单）用 ----
   // 微信的 wxid 只有桥接读得到，桥接定期把清单推上来；这里只做缓存和查询。
-  router.get('/api/wechat/contacts', (runtime, req, res, info) => {
-    const contacts = runtime.contacts;
-    if (!contacts) return json(res, 200, { ok: true, items: [], updatedAt: 0, total: 0, account: '' });
+  router.get('/api/wechat/contacts', async (runtime, req, res, info) => {
     const q = info.url.searchParams.get('q') || '';
     const type = String(info.url.searchParams.get('type') || 'all');
-    return json(res, 200, contacts.payload({ q, type: ['user', 'group'].includes(type) ? type : 'all' }));
+    return json(res, 200, await hostCall(runtime, 'contacts.list@1', {
+      q, type: ['user', 'group'].includes(type) ? type : 'all',
+    }));
   });
 
   router.post('/api/wechat/contacts/sync', async (runtime, req, res) => {
@@ -74,10 +86,9 @@ module.exports = function register(router) {
     if (!gw || !gw.verifyToken(req, null)) {
       return json(res, 403, { ok: false, error: '桥接 token 不正确' });
     }
-    const contacts = runtime.contacts;
-    if (!contacts) return json(res, 503, { ok: false, error: '联系人缓存未启用' });
+    if (!runtime.contacts) return json(res, 503, { ok: false, error: '联系人缓存未启用' });
     const body = await readBody(req);
-    const out = contacts.sync({
+    const out = await hostCall(runtime, 'contacts.sync@1', {
       account: (body && body.account) || '',
       items: (body && body.items) || [],
       at: (body && body.at) || Date.now(),

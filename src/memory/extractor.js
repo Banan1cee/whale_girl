@@ -83,30 +83,6 @@ function extractSelfFacts(text, { msgId = '', now = Date.now() } = {}) {
   return facts.length ? { facts } : { facts: [] };
 }
 
-/** 把规则抽到的事实写进卡（校验 chatId） */
-function applyFacts(card, facts, { chatId, now = Date.now() } = {}) {
-  const written = [];
-  for (const fact of facts || []) {
-    try {
-      const item = personCard.addPreference(card, {
-        text: fact.text,
-        key: fact.key || '',
-        kind: fact.kind || 'fact',
-        confidence: fact.confidence,
-        source: fact.source,
-        supersedes: fact.supersedes || [],
-        explicit: true,
-      }, { chatId, now });
-      if (!item) continue;
-      if (fact.renameTo) card.nickname = clampText(fact.renameTo, 20);
-      written.push(item);
-    } catch (err) {
-      if (err && err.code === 'MEMORY_CHAT_MISMATCH') throw err;
-    }
-  }
-  return written;
-}
-
 /** 连续 20 条 user 消息：只做轻量候选，不调模型、不写 L2 */
 function lightweightCandidates(messages, { now = Date.now() } = {}) {
   const out = [];
@@ -312,9 +288,9 @@ module.exports = {
   EPISODE_SYSTEM,
   cleanIncoming,
   extractSelfFacts,
-  applyFacts,
   lightweightCandidates,
   parseEpisode,
   extractiveSummary,
   extractEpisode,
 };
+

@@ -1,9 +1,17 @@
 'use strict';
 
-const { getSettings, applySettings } = require('../../services/settings');
 const { json, readBody } = require('../util');
+const { hostCall } = require('../../services/features/hostCall');
 
+/**
+ * 设置 HTTP 接口。
+ *
+ * 读/写都走宿主能力（settings.read@1 / settings.write@1），和插件 host.call 同一条路；
+ * 这里只保留 HTTP 传输层：请求体上限、错误映射成 400 的 `{ok:false,error}`。
+ */
 module.exports = function register(router) {
+  const write = (runtime, body) => hostCall(runtime, 'settings.write@1', body);
+
   router.post('/api/settings/test-service', async (runtime, req, res) => {
     const body = await readBody(req, 4 * 1024 * 1024);
     try {
@@ -13,12 +21,13 @@ module.exports = function register(router) {
       return json(res, 400, { ok: false, error: errorMessage(err) });
     }
   });
-  router.get('/api/settings', (runtime, req, res) => json(res, 200, getSettings(runtime)));
+  router.get('/api/settings', async (runtime, req, res) => json(res, 200,
+    await hostCall(runtime, 'settings.read@1', {})));
 
   router.post('/api/settings', async (runtime, req, res) => {
     const body = await readBody(req);
     try {
-      const data = await applySettings(runtime, body);
+      const data = await write(runtime, body);
       return json(res, 200, data);
     } catch (err) {
       return json(res, 400, { ok: false, error: err.message });
@@ -29,7 +38,7 @@ module.exports = function register(router) {
     const body = await readBody(req);
     if (body && Object.keys(body).length) {
       try {
-        await applySettings(runtime, body);
+        await write(runtime, body);
       } catch (err) {
         return json(res, 400, { ok: false, error: err.message });
       }

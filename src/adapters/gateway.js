@@ -109,7 +109,7 @@ function postJson(urlString, payload, headers = {}, timeoutMs = 10000) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 class Gateway {
-  constructor({ platform, options = {}, bot, logger }) {
+  constructor({ platform, options = {}, bot, logger, chat }) {
     this.platform = platform;
     this.options = {
       enabled: true,
@@ -120,6 +120,7 @@ class Gateway {
       ...options,
     };
     this.bot = bot;
+    this.chat = chat;
     this.logger = logger;
     this.stats = { received: 0, replied: 0, sent: 0, failed: 0, lastMessageAt: 0, lastError: '' };
     // 本地桥接的存活信息：桥接每 20 秒来一次心跳，状态接口据此报告「桥接在线 / 离线」
@@ -199,12 +200,17 @@ class Gateway {
         `[${this.platform}] 收到 ${msg.chatType === 'group' ? '群' : '私聊'}消息 sender=${tagName(msg.senderName)} ${textMeta(msg.text)}`
       );
     const localWechat = local && this.platform === 'wechat';
-    const result = await this.bot.handle(msg, { localWechat });
+    // 生产环境由 app 注入统一聊天入口；单独构造 Gateway（测试/嵌入式）时退回 Bot，
+    // 不在这里复制插件调度逻辑，避免两条接管路径。
+    const result = this.chat && typeof this.chat.handle === 'function'
+      ? await this.chat.handle(msg, { localWechat })
+      : await this.bot.handle(msg, { localWechat });
     this.logger?.debug?.(`[${this.platform}] event=gateway.result action=${result.action || '-'} reason=${result.reason || '-'} bubbles=${(result.bubbles || []).length}`);
     if (result.action !== 'reply' || !result.reply) {
       return { ok: true, action: 'ignore', reason: result.reason || 'ignored' };
     }
-    const reason = sendDenial(this.bot.config, { id: msg.chatId, names: [msg.chatTitle], isGroup: msg.chatType === 'group', platform: this.platform });
+    // 发送前再问一次共享规则（桥接排队期间名单可能已改）；事实形状与内核一致。
+    const reason = sendDenial(this.bot.config, msg);
     if (reason) return { ok: true, action: 'ignore', reason };
     if (localWechat && result.reason === 'sticker_request' && result.sticker) {
       return { ok: true, action: 'reply', reply: result.reply, stickerOnly: true, sticker: result.sticker };
@@ -218,11 +224,7 @@ class Gateway {
       senderName: msg.senderName,
       local,
     });
-    if (this.bot.messagePlugins && result.reason !== 'command') {
-      await this.bot.messagePlugins.run('chat.dispatched', this.bot.pluginContext({ key: this.bot.sessionKey(msg), msg }, {
-        delivery: { ok: out?.ok !== false, local: Boolean(out?.local), dryRun: Boolean(out?.dryRun) }
-      }));
-    }
+    // 新协议没有「已提交」回调：发送结果只在宿主账本与本条响应里，不另外通知插件。
     // 文字回执：发成功的她自己能从聊天记录里看见，不用记账；
     // 只有「根本没到微信」和「发失败」记下来，否则下一轮她会以为消息已经发出去了。
     try {
@@ -375,12 +377,12 @@ class Gateway {
   }
 }
 
-function createGateways({ config, bot, logger }) {
+function createGateways({ config, bot, logger, chat }) {
   const gateways = new Map();
   for (const platform of PLATFORMS) {
     const options = config.gateway?.[platform];
     if (!options) continue;
-    const gateway = new Gateway({ platform, options, bot, logger });
+    const gateway = new Gateway({ platform, options, bot, logger, chat });
     gateways.set(platform, gateway);
   }
   return gateways;

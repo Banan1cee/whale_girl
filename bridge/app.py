@@ -105,7 +105,9 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
             _here = G.os.path.dirname(G.os.path.abspath(__file__))
             if _here not in G.sys.path:
                 G.sys.path.insert(0, _here)
-            G.os.environ.setdefault('WHALE_STEPLOG', '1')
+            # 这里不再默认打开 WHALE_STEPLOG：每步耗时日志只给排查卡死用，
+            # 常开会把诊断日志刷满。步骤名与耗时始终记在 _STEP 里，
+            # 看门狗真卡住时照样能报出停在哪一步；要逐步日志时自己设这个环境变量。
             G.boot('应用 uia_compat 补丁')
             try:
                 import uia_compat

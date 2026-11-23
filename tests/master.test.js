@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 
@@ -108,7 +108,8 @@ test('主人让她闭嘴，她就闭嘴', async () => {
 test('主人骂她不会触发回怼', async () => {
   const { bot, cleanup } = makeBot();
   const r = await bot.decide(master('你就是个废物'));
-  assert.equal(r.msg.fight, false);
+  assert.notEqual(r.msg.fight, true);
+  assert.doesNotMatch(promptOf(r), /最大档|往死里骂/);
   cleanup();
 });
 

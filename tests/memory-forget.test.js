@@ -12,6 +12,23 @@ const path = require('node:path');
 const personCard = require('../src/memory/personCard');
 const { LIMITS } = require('../src/memory/constants');
 const { Store } = require('../src/memory/store');
+const record = require('../src/memory/record');
+const recordStore = require('../src/memory/recordStore');
+
+/** 把记录写进 chat 的时间线 / 各人的 subjects（4.3 起的唯一事实源） */
+function sharedWrite(store, chat, records) {
+  for (const item of records) {
+    if (!item) continue;
+    if (item.tier === 'M') {
+      recordStore.appendTimeline(chat.dir, [item]);
+      continue;
+    }
+    const existing = recordStore.readSubjects(store.memoryDir, item.subject);
+    const map = new Map(existing.map((r) => [r.id, r]));
+    map.set(item.id, item);
+    recordStore.writeSubjects(store.memoryDir, item.subject, [...map.values()]);
+  }
+}
 
 const NOW = 1_700_000_000_000;
 const DAY = 86400000;
@@ -104,19 +121,26 @@ test('Store：事件过期只淘汰 365 天前的，thread 60 天没提自动关
   const store = new Store({ file: path.join(dir, 'data', 'store.json'), logger: null });
   store.appendMessage('wechat:u:a', { role: 'user', name: '小海', uid: 'u1', text: '在吗', ts: NOW });
   const chat = store.chatStore.chats.get('wechat:u:a');
-  const card = store.chatStore.ensurePerson(chat, 'u1', '小海');
-  personCard.addEvent(card, {
-    date: '2021-01-01', title: '很老的事', summary: '两年前的旧事', participants: ['u1'],
-    source: { chatId: chat.chatId, messageIds: ['m1'] },
-  }, { chatId: chat.chatId, now: NOW });
-  personCard.addThread(card, { text: '很久没提的坑' }, { chatId: chat.chatId, now: NOW - 100 * DAY });
-  card.threads[0].lastMentionedAt = NOW - 100 * DAY;
-  store.chatStore.saveCard(chat, card);
+  const scope = `chat:${chat.hash}`;
+  // 4.3 起记忆在记录里：老的卡只当名册，这里直接写记录
+  sharedWrite(store, chat, [
+    record.makeRecord({
+      kind: 'event', tier: 'M', text: '很老的事：两年前的旧事', ts: NOW - 500 * DAY, scope,
+      subject: 'u1', confidence: 0.8, importance: 0.4,
+      meta: { date: '2021-01-01', title: '很老的事', summary: '两年前的旧事', participants: ['u1'] },
+    }),
+    record.makeRecord({
+      kind: 'thread', tier: 'L', text: '很久没提的坑', ts: NOW - 100 * DAY, scope,
+      subject: 'u1', confidence: 0.7, open: true,
+      meta: { status: 'open', lastMentionedAt: NOW - 100 * DAY },
+    }),
+  ]);
 
   const out = store.sweep(NOW);
   assert.ok(out.evicted >= 1);
-  assert.equal(personCard.activeEvents(card).length, 0);
-  assert.equal(personCard.openThreads(card).length, 0, '60 天没提的 thread 要关掉');
+  const records = store.chatStore.recordsOf(chat);
+  assert.equal(records.filter((r) => r.kind === 'event' && r.state === 'active').length, 0, '365 天前的事件要过期');
+  assert.equal(records.filter((r) => r.kind === 'thread' && r.open).length, 0, '60 天没提的 thread 要关掉');
   store.close();
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 });
 });

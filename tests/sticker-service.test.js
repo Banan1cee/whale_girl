@@ -243,8 +243,8 @@ test('HTTP：取消预留任务需要桥接 token、正确代次和精确会话'
 test('网关默认关回包真正无sticker字段，不给远程/其他平台发本机路径', async () => {
   // No model, server, runtime or WeChat needed.
   const gateway = new GatewayAdapter({ platform: 'wechat', options: {}, bot: {
-    handle: async () => ({ action: 'reply', reply: '你好', bubbles: ['你好'] }), stickerFor: () => null,
-  } });
+    stickerFor: () => null,
+  }, chat: { handle: async () => ({ action: 'reply', reply: '你好', bubbles: ['你好'] }) } });
   const result = await gateway.handleInbound({ chat_id: 'wxid-x', text: 'hello' }, { local: true });
   assert.equal(Object.hasOwn(result, 'sticker'), false);
   gateway.bot.stickerFor = () => { throw new Error('must not be called remotely'); };

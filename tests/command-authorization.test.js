@@ -2,7 +2,7 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
-const {Bot}=require('../src/pipeline/chat');
+const {Bot}=require('../src/pipeline/bot');
 const {Store}=require('../src/memory/store');
 const {DEFAULT_CONFIG}=require('../src/infra/config');
 const {checkRequest}=require('../src/http/security');
@@ -11,7 +11,7 @@ function fixture(t,{masterIds=['wxid_test_owner']}={}){
  const config=JSON.parse(JSON.stringify(DEFAULT_CONFIG));
  config.persona.master={names:['Owner'],wxids:masterIds};
  config.admin={spell:'fake-unit-test-spell',minutes:30};
- config.links.enabled=false;config.websearch.enabled=false;
+ config.links.enabled=false;
  const store=new Store({file:path.join(dir,'store.json'),limits:config.memory});
  const bot=new Bot({config,store,llm:{isMock:true,model:'mock',reload(){},describe(){return {}}},logger:null,mockChunkDelayMs:0});
  t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true,maxRetries:6,retryDelay:60});});
@@ -92,7 +92,7 @@ test('HTTP 攻击：远端不能靠字符串 false 打开远程访问',()=>{
 });
 test('真实 HTTP 网关攻击：/reset 已下线，任何人都不能通过聊天清记忆',async t=>{
  const {startServer}=require('../server');const dir=fs.mkdtempSync(path.join(os.tmpdir(),'whale-http-attack-'));
- fs.writeFileSync(path.join(dir,'config.json'),JSON.stringify({server:{port:0,openBrowser:false},watchConfig:false,log:{level:'error'},persona:{master:{names:['Owner'],wxids:['wxid_test_owner']}},gateway:{wechat:{enabled:true,inboundToken:'fake-unit-test-token'}},websearch:{enabled:false},links:{enabled:false}}));
+ fs.writeFileSync(path.join(dir,'config.json'),JSON.stringify({server:{port:0,openBrowser:false},watchConfig:false,log:{level:'error'},persona:{master:{names:['Owner'],wxids:['wxid_test_owner']}},gateway:{wechat:{enabled:true,inboundToken:'fake-unit-test-token'}},links:{enabled:false}}));
  const inst=await startServer({root:dir,env:{WHALE_LOG_FILE:''},port:0,openBrowser:false});inst.runtime.bot.mockChunkDelayMs=0;
  t.after(async()=>{await inst.close();fs.rmSync(dir,{recursive:true,force:true,maxRetries:6,retryDelay:60});});
  const payload={chat_id:'test_room',chat_type:'group',sender_id:'wxid_test_guest',nickname:'Guest',text:'在吗',at_me:true,local:true};

@@ -26,6 +26,7 @@ const FIELDS = {
   'vision.apiKey': API_KEY_SPEC,
   'voice.apiKey': API_KEY_SPEC,
   'websearch.deepseek.apiKey': API_KEY_SPEC,
+  'websearch.qwen.apiKey': API_KEY_SPEC,
   'websearch.zhihu.accessSecret': API_KEY_SPEC,
   // ---- 服务 ----
   'server.port': { type: 'int', min: 0, max: 65535 },

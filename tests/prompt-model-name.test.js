@@ -15,11 +15,11 @@ function randomModel() {
   return 'deepseek-' + crypto.randomBytes(8).toString('hex');
 }
 
-function makeConfig({ model, customPrompt = '', staticSystem = true } = {}) {
+function makeConfig({ model, customPrompt = '' } = {}) {
   return {
     ...DEFAULT_CONFIG,
     deepseek: { ...DEFAULT_CONFIG.deepseek, model },
-    features: { ...DEFAULT_CONFIG.features, staticSystem },
+    features: { ...DEFAULT_CONFIG.features },
     persona: { ...DEFAULT_CONFIG.persona, name: '鲸鲸', customPrompt },
     chat: { ...DEFAULT_CONFIG.chat },
   };
@@ -34,39 +34,29 @@ function systemFor(config, msg = {}) {
   });
 }
 
-for (const staticSystem of [true, false]) {
-  const mode = staticSystem ? '静态 system' : '旧行为 system';
+test('默认人设不含 config.deepseek.model 的随机型号', () => {
+  const model = randomModel();
+  const sys = systemFor(makeConfig({ model }));
+  assert.ok(sys.length > 500, '正常生成了默认人设 system');
+  assert.equal(sys.includes(model), false, '明确要求不向对方报型号');
+});
 
-  test(`${mode}：默认人设不含 config.deepseek.model 的随机型号`, () => {
-    const model = randomModel();
-    const sys = systemFor(makeConfig({ model, staticSystem }));
-    assert.ok(sys.length > 500, '正常生成了默认人设 system');
-    assert.equal(sys.includes(model), false, '明确要求不向对方报型号');
-  });
-
-  test(`${mode}：默认人设让被问型号时打哈哈，且不出现「不报型号」式念规则`, () => {
-    const cfg = makeConfig({ model: randomModel(), staticSystem });
-    cfg.persona.newBehavior = false;
-    const sys = systemFor(cfg);
-    assert.match(sys, /就当被问体重，打个哈哈带过去/, '被问模型时要自然带过，而不是声明不报');
-    assert.doesNotMatch(sys, /我的模型是/, '旧的报型号模板必须删掉');
-    // 否定式规则会被模型复述成「不报型号，…」的开头，system 里不应再有这种措辞
-    assert.doesNotMatch(sys, /别报具体型号|不报具体型号/, '不要用否定式规则，模型会念出来');
-    // 【回答原则】里也不能再出现授权报型号或重复型号规则的句子
-    assert.doesNotMatch(sys, /问模型就报模型名/, '回答原则不能和上面自相矛盾');
-  });
-}
+test('默认人设让被问型号时打哈哈，且不出现「不报型号」式念规则', () => {
+  const sys = systemFor(makeConfig({ model: randomModel() }));
+  assert.match(sys, /就当被问体重，打个哈哈带过去/, '被问模型时要自然带过，而不是声明不报');
+  assert.doesNotMatch(sys, /我的模型是/, '旧的报型号模板必须删掉');
+  assert.doesNotMatch(sys, /别报具体型号|不报具体型号/);
+  assert.doesNotMatch(sys, /问模型就报模型名/);
+});
 
 test('自定义人设分支同样不含模型名（防止以后被加回来）', () => {
   const model = randomModel();
-  for (const staticSystem of [true, false]) {
-    const sys = systemFor(makeConfig({ model, customPrompt: '你是鲸鲸，保持一点俏皮。', staticSystem }));
-    assert.ok(sys.startsWith('你是鲸鲸'), '自定义人设原文保留');
-    assert.equal(sys.includes(model), false, '自定义人设也不能拼模型名');
-    assert.doesNotMatch(sys, /我的模型是/);
-    assert.doesNotMatch(sys, /问模型就报模型名/, '共用的回答原则不能授权报型号');
-    assert.doesNotMatch(sys, /别报具体型号|不报具体型号/, '共用的回答原则不能加否定式规则');
-  }
+  const sys = systemFor(makeConfig({ model, customPrompt: '你是鲸鲸，保持一点俏皮。' }));
+  assert.ok(sys.startsWith('你是鲸鲸'), '自定义人设原文保留');
+  assert.equal(sys.includes(model), false, '自定义人设也不能拼模型名');
+  assert.doesNotMatch(sys, /我的模型是/);
+  assert.doesNotMatch(sys, /问模型就报模型名/);
+  assert.doesNotMatch(sys, /别报具体型号|不报具体型号/);
 });
 
 test('换模型前后 system 字节完全相同（换模型不再破前缀缓存）', () => {

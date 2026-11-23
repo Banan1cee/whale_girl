@@ -41,7 +41,7 @@
 | 95 | 保存部分朋友圈设置时覆盖未提交字段，在线请求可能被严格校验拒绝，离线保存可能启动定位探测 | 调用者使用默认值或显式 undefined 补齐缺省字段，离线命令复用了在线副作用入口 | 在线与离线只保存本次提交字段，保留现有设置与显式零值；在线开启仍需确认并绑定实时账号，离线保存不启动定位探测 | 4.1.3 | `tests/refactor-t03-config-values.test.js`、`tests/refactor-t03-moments-caller.test.js`、`tests/launcher-offline-config.test.js` |
 | 94 | 合法开关写法被错存为关闭，空白数值变成零，留空密钥或嵌套功能更新覆盖原值 | 配置校验、两种补丁写入及离线命令使用不同转换和合并规则 | 共用严格布尔与数值解析，非法值整批拒绝，保留显式零值和留空密钥；按注册路径合并功能开关并拒绝非对象根及原型路径 | 4.1.3 | `tests/refactor-t03-config-values.test.js`、`tests/config-schema.test.js`、`tests/config-flag-compat.test.js` |
 | 93 | 记忆恢复复制归档失败后仍可能删除原数据，写入或交换中断可能留下部分恢复 | 归档复制异常被吞，恢复直接改写原目录；启动未先处理未完成事务 | 先完整准备并校验新树，再保留原副本执行交换；失败回滚，中断后在配置读取与 Store 构造前恢复，无法安全恢复时中止启动 | 4.1.3 | `tests/refactor-t08-restore.test.js`、`tests/refactor-t08-startup-recovery.test.js`、`tests/memory-backup.test.js` |
-| 92 | 停用消息插件后保存设置会重新生成启用授权 | 设置保存与初次启用共用写授权路径，未核对当前启用状态与源码哈希 | 保存仅修改配置；已有有效授权时才同步设置，首次启用和完整系统权限须单独确认；更新保留数据但撤回旧授权 | 4.1.2 | `tests/plugin-market/Program.cs`、`tests/javascript-plugins.test.js` |
+| 92 | 停用消息插件后保存设置会重新生成启用授权 | 设置保存与初次启用共用写授权路径，未核对当前启用状态与源码哈希 | 保存仅修改配置；已有有效授权时才同步设置，首次启用和完整系统权限须单独确认；更新保留数据但撤回旧授权 | 4.1.2 | `tests/plugin-market/Program.cs`、`tests/unified-plugin-runtime.test.js` |
 | 91 | 后台发送的多个失败状态都显示“草稿或正文校验失败”，无法判断是否已尝试发送 | 发送前已有草稿、输入中断和点击发送后残留被合并成一条提示 | 分别显示处理阶段并记录稳定原因码，保持草稿保护和禁止盲目重发 | 4.1.1 | `tests/test_bg_live_encoding.py` |
 | 90 | 文字发送失败后表情包仍占队列，后续请求一直在途直到超时 | 桥接只在日志中说已取消，没有结束服务端 reserved 任务 | 带桥接 token、代次和精确会话取消尚未领取的预留任务，取消幂等，sending 任务不受影响；语音替代回复也释放未用表情包 | 4.1.1 | `tests/test_reply_sticker_cancel.py`、`tests/sticker-service.test.js` |
 | 89 | 群聊能收到消息却提示只有内部 ID，无法发送；空别名一直不恢复 | 群名查询忽略本地备注，错误使用最后发言者作为群名，空别名查询被永久缓存 | 读取精确群联系人的备注并保留群名兼容查询，不再使用成员身份代替群身份，空查询允许重试 | 4.1.1 | `tests/test_group_send_resolution.py` |

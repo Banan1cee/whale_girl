@@ -227,10 +227,10 @@ test('人设页按四层分组，维护与能力开关不再混入角色设置',
 
 test('实现开关唯一收纳到设置高级组，已有专页能力不再重复', () => {
   const settings = readLauncher('Views/SettingsPage.xaml.cs');
-  for (const key of ['envContext', 'relations', 'groupAddressGuard', 'fightQuoteCheck', 'staticSystem', 'memorySnapshot', 'mediaCleanup']) {
+  for (const key of ['envContext', 'relations', 'groupAddressGuard', 'memorySnapshot', 'mediaCleanup']) {
     assert.equal(settings.split(`Path = "features.${key}"`).length - 1, 1);
   }
-  assert.doesNotMatch(settings, /Path = "features\.(stickers|javascriptPlugins)"/);
+  assert.doesNotMatch(settings, /Path = "features\.(stickers|plugins|javascriptPlugins)"/);
 });
 
 test('所有人设可编辑和打包分享，新版开关默认打开，说明默认折叠', () => {
@@ -464,4 +464,161 @@ test('图标接好了：csproj 的 exe 图标 + 窗口图标 + 安装包图标',
 
   const iss = read('installer/whale.iss');
   assert.match(iss, /SetupIconFile=\{#SrcDir\}\\launcher\\Assets\\app\.ico/, '安装包没有 SetupIconFile');
+});
+
+test('启动按钮自动检查/转换旧记忆，失败即时可见且 durable 收据后才删 runner', () => {
+  const sup = readLauncher('RuntimeSupervisor.cs');
+  const settings = readLauncher('Views/SettingsPage.xaml.cs');
+  const win = readLauncher('MainWindow.xaml.cs');
+  assert.match(settings, /启动时会自动检查并转换旧记忆/, '旧手动确认文案必须更新');
+  assert.match(settings, /RunAutoMemoryUpgradeAsync\(\)/);
+  assert.doesNotMatch(settings, /AppDialog\.Confirm\([^)]*离线转换记忆/s, '自动流程不应再要求确认');
+  assert.match(sup, /upgrade-maintenance\.js/);
+  assert.match(sup, /--auto-upgrade/);
+  assert.match(sup, /MaintainBackupsAsync/);
+  assert.match(sup, /LastStartFailure/);
+  assert.match(sup, /durable == null \|\| durable\.Status != "idle"/, 'done 后必须 durable idle 才放行');
+  assert.match(sup, /private void RemoveRunnerIfEligible\(MemoryUpgradeStatus status\)[\s\S]{0,260}!status\.RunnerCleanupEligible/);
+  assert.match(sup, /ReparsePoint/, 'scripts 父目录重解析点必须拒绝删除');
+  assert.match(sup, /HasInstallerMarker/);
+  assert.match(sup, /unins000\.exe/);
+  assert.doesNotMatch(sup, /Delete\([^)]*import-4\.0/, '在线导入脚本必须保留');
+  assert.doesNotMatch(sup, /status\.Version == status\.TargetVersion[\s\S]{0,160}在线导入/, 'pending 不得退回在线导入');
+  const start = sup.slice(sup.indexOf('public async Task StartAllAsync'), sup.indexOf('public void RestartBridge'));
+  assert.match(start, /AutoForStartCoreAsync\(\);[\s\S]*?StartNodeCore\(\)/, '自动转换必须在启动内核之前');
+  assert.match(start, /if \(!upgrade\.Ok\)[\s\S]*?return;/, '失败时不得继续启动内核/桥接');
+  assert.match(win, /LastStartFailure/);
+  assert.match(win, /AppDialog\.Show\(this, startFailure/, '启动失败必须即时弹窗');
+  assert.doesNotMatch(win, /_sup\.StartNode\(/, '真实启动按钮统一走 StartAllAsync');
+});
+
+test('离线记忆转换与更新入口互斥，强制退出前复查 data 锁', () => {
+  const win = readLauncher('MainWindow.xaml.cs');
+  const sup = readLauncher('RuntimeSupervisor.cs');
+  assert.match(sup, /internal DataLockInfo InspectDataLock\(\)/, '启动器缺少只读锁检查');
+  assert.match(sup, /\.data\.lock/, '锁文件名必须与 Node 迁移模块一致');
+  assert.match(sup, /记忆正在转换，暂不能启动内核/, 'StartNode 被迁移锁挡住时要有提示');
+  assert.match(sup, /DataLockState\.GuardStale/, '死恢复守卫必须单独诊断');
+  assert.match(sup, /程序不会自动删除/, 'UI 只能给人工指引，不能自动删锁文件');
+  assert.match(win, /MigrationProcessActive/, '关窗只拦活迁移/恢复，不拦孤儿守卫');
+  assert.match(sup, /UpdateInProgress/);
+  assert.match(win, /if \(_sup\.MemoryMigrationRunning \|\| _sup\.MigrationLockActive\(out _\)\)/);
+  assert.match(win, /_sup\.UpdateInProgress = true;/);
+  assert.match(win, /_sup\.UpdateInProgress = false;/);
+  assert.ok((win.match(/更新暂缓退出/g) || []).length >= 2, '两处 Shutdown 前都要复查');
+  assert.ok((win.match(/Application\.Current\.Shutdown\(\);/g) || []).length >= 2);
+});
+
+// ── 启动器主题包（纯 JSON，v1）────────────────────────────────
+// 边界检查保持粗粒度：只锁“能力范围”和对外契约，不锁具体实现写法；
+// 真正的解析/拒绝行为由 tests/launcher/ThemeChecks 编译并执行 ThemePackage 来验证。
+const themeSource = readLauncher('LauncherTheme.cs');
+const appearanceSource = readLauncher('Appearance.cs');
+const settingsSource = readLauncher('Views/SettingsPage.xaml.cs');
+const dialogSource = readLauncher('AppDialog.cs');
+
+test('主题包是独立的纯 JSON 数据源：不扩插件协议、不加载执行体、不碰 WPF', () => {
+  assert.ok(fs.existsSync(path.join(launcher, 'LauncherTheme.cs')), '缺少主题包解析器 launcher/LauncherTheme.cs');
+  assert.ok(themeSource.includes('JsonDocument.Parse'), '主题包必须走 System.Text.Json 解析');
+  for (const forbidden of ['XamlReader', 'Assembly.Load', 'Process.Start', 'HttpClient', 'WebClient',
+    'plugin.json', 'whale-plugin', 'System.Windows', 'Application.Current']) {
+    assert.equal(themeSource.includes(forbidden), false, '主题解析不该出现：' + forbidden);
+  }
+  assert.ok(themeSource.includes('SchemaVersion = 1'), '主题包需要自己的 schema 版本');
+});
+
+test('主题只认有界语义 token，安全信号色与顶栏不在其中', () => {
+  assert.match(themeSource, /internal static readonly string\[\] ColorTokens =[\s\S]*?"accent"[\s\S]*?"field"[\s\S]*?\};/);
+  for (const reserved of ['"ok"', '"warn"', '"bad"', 'PrimaryBg', 'TopBtnHover', 'BgTop']) {
+    assert.equal(themeSource.includes(reserved), false, '主题色白名单不该包含：' + reserved);
+  }
+  assert.match(themeSource, /internal static readonly string\[\] FontFamilies =[\s\S]*?Microsoft YaHei UI[\s\S]*?SimSun/);
+
+  const overlay = appearanceSource.slice(appearanceSource.indexOf('WithThemeColors'), appearanceSource.indexOf('private static Color KeepAlpha'));
+  assert.ok(overlay.length > 200, '找不到主题色叠加层');
+  for (const protectedKey of ['next["Ok"]', 'next["Warn"]', 'next["Bad"]', 'next["BgTop"]', 'next["PrimaryBg"]', 'next["BackdropTint"]']) {
+    assert.equal(overlay.includes(protectedKey), false, '主题不该覆盖受保护画刷：' + protectedKey);
+  }
+});
+
+test('主题包字段有硬上限，未知字段整包拒绝', () => {
+  assert.match(themeSource, /MaxBytes = 64 \* 1024/);
+  assert.match(themeSource, /MinScale = 0\.85/);
+  assert.match(themeSource, /MaxScale = 1\.15/);
+  assert.match(themeSource, /MinCorner = 0/);
+  assert.match(themeSource, /MaxCorner = 24/);
+  assert.match(themeSource, /TextContrast = 4\.5/);
+  assert.match(themeSource, /AccentContrast = 3\.0/);
+  assert.match(themeSource, /RejectUnknown\(root, TopKeys/);
+  assert.match(themeSource, /RejectUnknown\(colors, ColorTokens/);
+  // id 不参与路径：写盘只用一个固定文件名
+  assert.match(themeSource, /FileName = "launcher-theme\.json"/);
+  assert.match(appearanceSource, /Path\.Combine\(AppContext\.BaseDirectory, "data", LauncherThemes\.FileName\)/);
+});
+
+test('外观面板有导入、预览、确认、停用，停用失败要如实显示', () => {
+  for (const text of ['导入主题包…', '应用并保存', '取消预览', '停用并恢复内置']) {
+    assert.ok(settingsSource.includes(text), '外观面板缺少按钮：' + text);
+  }
+  assert.ok(settingsSource.includes('LauncherThemes.TryLoadFile('), '导入要先做校验');
+  assert.ok(settingsSource.includes('Appearance.SetThemePackage('), '应用要走 Appearance');
+  assert.ok(settingsSource.includes('Appearance.ClearThemePackage(out var error)'), '停用要处理删除失败');
+  assert.ok(settingsSource.includes('RenderThemePreview(theme)'), '导入后要先预览');
+  assert.ok(settingsSource.includes('LauncherThemes.ColorTokens'), '预览要按语义 token 展示色块');
+  // 删除失败时不能显示成“已停用”
+  assert.ok(settingsSource.includes('停用失败：'), '停用失败必须显示原因');
+});
+
+test('授权、更新、安全确认的弹窗用局部内置资源与主题隔离', () => {
+  // 受保护弹窗把内置画刷与尺寸挂到卡片上：子树里的颜色、字体、圆角、内边距、hover 都局部命中
+  assert.ok(dialogSource.includes('Appearance.DialogSafeResources()'), '受保护弹窗缺少内置资源字典');
+  assert.ok(dialogSource.includes('Appearance.DefaultFontFamily'), '受保护弹窗要重置字体');
+  assert.ok(dialogSource.includes('Appearance.DefaultFontSize'), '受保护弹窗要重置基准字号');
+  // 自带内容的弹层（恢复记忆、发言范围等）不跟主题
+  assert.match(dialogSource, /allowTheme: false/);
+  // 授权 / 安全确认能显式标记为 critical
+  assert.match(dialogSource, /bool critical = false/);
+  assert.ok(settingsSource.includes('critical: true'), '删除 Key / 重置这类确认要标记 critical');
+  assert.ok(readLauncher('Views/PluginMarketPage.xaml.cs').includes('critical: true'), '3 级授权确认要标记 critical');
+  assert.ok(readLauncher('Views/DiagPage.xaml.cs').includes('critical: true'), '恢复出厂确认要标记 critical');
+  assert.ok(readLauncher('MainWindow.xaml.cs').includes('critical: true'), '更新确认要标记 critical');
+});
+
+test('尺寸 token 写进 App.xaml 且能被 Appearance 运行时重写', () => {
+  const chromeBlock = appearanceSource.slice(
+    appearanceSource.indexOf('internal static readonly string[] ChromeKeys'),
+    appearanceSource.indexOf('// 拖滑块会高频触发 Changed'));
+  const keys = [...chromeBlock.matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]);
+  assert.ok(keys.length >= 15, 'ChromeKeys 数量不对：' + keys.length);
+  for (const key of keys) {
+    assert.ok(appXaml.includes(`x:Key="${key}"`), 'App.xaml 缺少尺寸 token：' + key);
+    assert.ok(appearanceSource.includes(`"${key}"`), 'Appearance 缺少该尺寸 token 的默认值或重写');
+  }
+  const used = new Set();
+  for (const rel of ['App.xaml', 'MainWindow.xaml']) {
+    const text = readLauncher(rel);
+    for (const match of text.matchAll(/\{DynamicResource\s+((?:FontSize|Radius|Pad)[A-Za-z]+)\}/g)) used.add(match[1]);
+  }
+  for (const key of used) assert.ok(keys.includes(key), 'DynamicResource 用了未登记的尺寸 token：' + key);
+  assert.ok(used.size >= 15, '尺寸 token 没接到样式上：' + used.size);
+});
+
+test('没有主题包时保持内置外观（默认值与窗口一致）', () => {
+  assert.match(appearanceSource, /DefaultFontFamily = "Microsoft YaHei UI, Segoe UI"/);
+  assert.match(appearanceSource, /DefaultFontSize = 12\.5/);
+  assert.ok(readLauncher('MainWindow.xaml').includes('FontFamily="Microsoft YaHei UI, Segoe UI"'), '窗口默认字体应与 Appearance 默认值一致');
+  assert.ok(readLauncher('MainWindow.xaml').includes('FontSize="12.5"'), '窗口默认字号应与 BaseFontSize 一致');
+  // 主题只在实际生效（HasTheme）时才影响字号 / 间距；不可用时整包回到内置值
+  assert.match(appearanceSource, /HasTheme => _theme != null && _themeActive/);
+  assert.match(appearanceSource, /FontScale =>[^;]*HasTheme/);
+  assert.match(appearanceSource, /SpacingScale =>[^;]*HasTheme/);
+  // 顶栏继续用主题本色，主题包不参与
+  assert.ok(readLauncher('MainWindow.xaml.cs').includes('Appearance.TopBarColor(k)'));
+});
+
+test('主题不影响左导航和页面结构', () => {
+  for (const forbidden of ['Nav.Items', 'NavEntry', 'CreatePage', 'NavKeys', 'Sidebar', 'ShowDialog']) {
+    assert.equal(themeSource.includes(forbidden), false, '主题解析不该碰导航/页面：' + forbidden);
+  }
+  assert.ok(fs.existsSync(path.join(root, 'tests', 'launcher', 'ThemeChecks', 'ThemeChecks.csproj')), '缺少主题解析器测试工程');
 });

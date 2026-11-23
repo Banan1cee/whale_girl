@@ -1,92 +1,61 @@
 'use strict';
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 const { PluginHost } = require('../src/services/pluginHost');
-const { ReminderService } = require('../src/services/reminderService');
-const { StickerService } = require('../src/services/stickerService');
-const features = require('../src/infra/features');
 
-function fixture(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-sdk-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 }));
-  let approved = true;
-  let now = Date.now();
-  const config = { paths: { dataDir: dir }, reminder: { enabled: false },
-    gateway: { wechat: { inboundToken: 'test-placeholder' } } };
-  const r = { config, version: '4.1.2', bot: { javascriptPlugins: { isApproved: () => approved } },
-    pluginApiUrl: 'http://127.0.0.1:12345', stickerService: { jobs: new Map() },
-    llm: { complete: async options => { assert.equal(options.purpose, 'plugin'); return options.turns[0].content; } } };
-  r.reminders = new ReminderService(config, { now: () => now });
-  r.reminders.pluginAllowed = () => approved;
-  return { r, flow: { id: 'sdk-test', hash: 'test-hash', executionTimeoutMs: 30000 },
-    revoke: () => { approved = false; }, advance: ms => { now += ms; } };
+function fixture(overrides = {}, dependencies = {}) {
+  const config = { paths: { dataDir: 'data' }, websearch: {}, env: { timezone: 'Asia/Shanghai' } };
+  const runtime = {
+    version: '4.3.0',
+    config,
+    llm: { complete: async options => { assert.equal(options.purpose, 'plugin'); return 'model text'; } },
+    plugins: { isApproved: () => true },
+    ...overrides,
+  };
+  return { runtime, host: new PluginHost(runtime, dependencies) };
 }
 
-test('API 4 exposes all kernel API endpoints; token stays on same loopback origin', async t => {
-  const f = fixture(t); const calls = [];
-  const host = new PluginHost(f.r, { fetcher: async (url, options) => {
-    calls.push({ url, options }); return new Response(JSON.stringify({ ok: true, value: 7 }));
-  } });
-  const out = await host.call('api', { url: '/api/config', method: 'POST', body: { patch: { 'features.javascriptPlugins': true } } }, f.flow);
-  assert.equal(out.body.value, 7); assert.equal(calls[0].options.headers['x-bot-token'], 'test-placeholder');
-  assert.equal(calls[0].options.redirect, 'error');
-  for (const url of ['https://example.test/api/config', '//example.test/api/config', '/healthz',
-    'http://127.0.0.1:12346/api/config', 'http://user@127.0.0.1:12345/api/config'])
-    await assert.rejects(host.call('api', { url }, f.flow), /host_invalid_api_url/);
-  assert.equal(calls.length, 1);
-  f.revoke(); await assert.rejects(host.call('api', { url: '/api/status' }, f.flow), /grant_revoked/);
+const flow = (calls = ['status.read@1']) => ({ id: 'demo', packageHash: 'a'.repeat(64), calls });
+
+test('status.read@1 only returns the declared summary shape', async () => {
+  const { host } = fixture();
+  assert.deepEqual(await host.call('status.read@1', {}, flow()), {
+    version: '4.3.0', running: true, pluginProtocol: 'whale-plugin/1',
+  });
 });
 
-test('API 4 explicit search carries freshness/date hints and never invents publication time', async t => {
-  const f = fixture(t); let captured;
-  const host = new PluginHost(f.r, { search: async input => {
-    captured = input;
-    return { status: 'ok', text: 'evidence', items: [{ title: 'fixture', url: 'https://example.test/report' }] };
-  } });
-  const search = await host.call('search', { query: '湖人勇士比分', dateRange: { start: '2026-11-12', end: '2026-11-12' } }, f.flow);
-  assert.match(captured.text, /2026-11-12.*湖人勇士/); assert.equal(captured.force, true);
-  assert.equal(captured.config.enabled, true); assert.equal(search.items[0].publishedAt, null);
-  assert.equal(search.dateFilter, 'query_hint_only');
-  await assert.rejects(host.call('search', { query: 'test', dateRange: { start: 'bad', end: 'bad' } }, f.flow), /host_invalid_date_range/);
-  assert.equal(await host.call('model', { turns: [{ role: 'user', content: 'test' }] }, f.flow), 'test');
+test('undeclared, disabled and unknown host calls are refused before running', async () => {
+  const { host } = fixture();
+  await assert.rejects(host.call('status.read@1', {}, flow([])), { code: 'host_capability_not_declared' });
+  await assert.rejects(host.call('message.submit@1', { chatId: 'c', text: 'x' }, flow(['message.submit@1'])),
+    { code: 'host_capability_disabled' });
+  await assert.rejects(host.call('api.read@1', {}, flow(['api.read@1'])), { code: 'host_capability_unknown' });
+  await assert.rejects(host.call('status.read@1', { extra: true }, flow()), { code: 'invalid_host_capability_input' });
 });
 
-test('Plugin text/voice queue preserves metadata, bypasses reminder toggle and refuses retry', async t => {
-  const f = fixture(t); const host = new PluginHost(f.r);
-  const queued = await host.call('send', { chatId: 'test-conversation', text: 'fixture', type: 'voice' }, f.flow);
-  const [item] = f.r.reminders.due();
-  assert.equal(item.pluginId, f.flow.id); assert.equal(item.pluginHash, f.flow.hash);
-  assert.equal(item.delivery, 'voice'); assert.equal(f.r.reminders.list().length, 0);
-  assert.equal(f.r.reminders.ack(queued.id, { ok: false }).item.status, 'unconfirmed');
-  f.advance(300000); assert.deepEqual(f.r.reminders.due(), []);
-  const status = await host.call('delivery', { id: queued.id }, f.flow);
-  assert.equal(status.confirmed, false);
+test('revoked grants cannot reach the host', async () => {
+  const { host } = fixture({ plugins: { isApproved: () => false } });
+  await assert.rejects(host.call('status.read@1', {}, flow()), { code: 'grant_revoked' });
 });
 
-test('Disable or process restart cancels unclaimed plugin work and never replays uncertain sends', async t => {
-  const f = fixture(t); const host = new PluginHost(f.r);
-  const queued = await host.call('send', { chatId: 'test-conversation', text: 'fixture' }, f.flow);
-  f.revoke(); assert.deepEqual(f.r.reminders.due(), []);
-  assert.equal(f.r.reminders.items.find(row => row.id === queued.id).status, 'cancelled');
-  await assert.rejects(host.call('send', { chatId: 'test-conversation', text: 'fixture' }, f.flow), /grant_revoked/);
-  assert.equal(features.isOn({}, 'javascriptPlugins'), false);
+test('search.query@1 projects provider results into the contract and clamps the timeout', async () => {
+  const seen = [];
+  const { host } = fixture({}, { search: async input => { seen.push(input); return {
+    status: 'ok', text: 'x'.repeat(5), items: [{ title: 'T', url: 'https://e.test', snippet: 'S', raw: 'dropped' }],
+  }; } });
+  const out = await host.call('search.query@1', { query: '天气', timeoutMs: 9000 }, flow(['search.query@1']));
+  assert.equal(seen[0].config.enabled, true);
+  assert.equal(seen[0].config.timeoutMs <= 30000 && seen[0].config.timeoutMs >= 500, true);
+  assert.deepEqual(out.items, [{ title: 'T', url: 'https://e.test', snippet: 'S', publishedAt: null, fetchedAt: null }]);
+  assert.equal(out.status, 'ok');
 });
 
-test('Image SDK uses the real sticker queue and cancels a task after plugin revocation', async t => {
-  const f = fixture(t);
-  f.r.config.root = f.r.config.paths.dataDir;
-  f.r.config.features = { stickers: true };
-  f.r.stickerService = new StickerService(f.r.config);
-  f.r.stickerService.pluginAllowed = () => f.r.bot.javascriptPlugins.isApproved();
-  const host = new PluginHost(f.r);
-  const file = path.join(f.r.config.paths.dataDir, 'test.png');
-  fs.writeFileSync(file, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1cAAAAASUVORK5CYII=', 'base64'));
-  const queued = await host.call('send', { chatId: 'test-conversation', type: 'image', file }, f.flow);
-  assert.equal(f.r.stickerService.pending().length, 1);
-  f.revoke();
-  assert.deepEqual(f.r.stickerService.pending(), []);
-  assert.equal(f.r.stickerService.jobs.get(queued.id).status, 'cancelled');
+test('model.complete@1 is the only way a plugin gets model text', async () => {
+  const { host } = fixture();
+  const out = await host.call('model.complete@1', { turns: [{ role: 'user', content: 'hi' }] },
+    flow(['model.complete@1']));
+  assert.deepEqual(out, { text: 'model text' });
+  await assert.rejects(host.call('model.complete@1', { turns: [{ role: 'system', content: 'x' }] },
+    flow(['model.complete@1'])), { code: 'invalid_host_capability_input' });
 });

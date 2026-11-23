@@ -12,6 +12,287 @@ namespace WhaleLauncher.Checks
 {
 public static class Program
 {
+private static async Task CheckOfflineMigrationAsync(string root, RuntimeSupervisor sup, Action<bool,string> check)
+{
+    var scripts = Path.Combine(root, "scripts");
+    Directory.CreateDirectory(scripts);
+    var ready = Path.Combine(root, "data", "migration-ready");
+    var finish = Path.Combine(root, "data", "migration-finish");
+    var lockPath = Path.Combine(root, "data", ".data.lock");
+    File.WriteAllText(lockPath, JsonSerializer.Serialize(new {
+        version = 1, token = "fixture-lock-token", pid = Environment.ProcessId,
+        startedAt = 0, host = Environment.MachineName, purpose = "migration"
+    }));
+    check(!(await sup.RunOfflineMemoryMigrationAsync(apply: false)).Ok, "活锁时拒绝离线预览");
+    check(sup.MigrationLockActive(out _), "更新入口能识别迁移锁");
+    sup.StartNode();
+    check(!sup.NodeRunning, "活锁时启动入口不启动内核");
+    File.Delete(lockPath);
+    sup.UpdateInProgress = true;
+    check(!(await sup.RunOfflineMemoryMigrationAsync(apply: false)).Ok, "更新中拒绝离线转换");
+    sup.UpdateInProgress = false;
+
+    var guardPath = Path.Combine(root, "data", ".data.lock.recover");
+    var staleMain = JsonSerializer.Serialize(new {
+        version = 1, token = "stale-main", pid = 2147483647, startedAt = 0,
+        host = Environment.MachineName, purpose = "migration"
+    });
+    File.WriteAllText(lockPath, staleMain);
+    File.WriteAllText(guardPath, JsonSerializer.Serialize(new {
+        version = 1, token = "dead-guard", pid = 2147483647, startedAt = 1,
+        host = Environment.MachineName, purpose = "recovery"
+    }));
+    check(sup.InspectDataLock().State == DataLockState.GuardStale, "死守卫被识别为 guard_stale");
+    check(!(await sup.RunOfflineMemoryMigrationAsync(apply: false)).Ok, "死守卫拒绝离线预览");
+    check(!(await sup.RunOfflineMemoryMigrationAsync(apply: true)).Ok, "死守卫拒绝离线转换");
+    sup.StartNode();
+    check(!sup.NodeRunning, "死守卫阻止启动内核");
+    File.WriteAllText(guardPath, JsonSerializer.Serialize(new {
+        version = 1, token = "live-guard", pid = Environment.ProcessId, startedAt = 1,
+        host = Environment.MachineName, purpose = "recovery"
+    }));
+    check(sup.InspectDataLock().State == DataLockState.Recovering, "活守卫被识别为 recovering");
+    File.Delete(guardPath);
+    File.WriteAllText(lockPath, JsonSerializer.Serialize(new {
+        version = 1, token = "live-main", pid = Environment.ProcessId, startedAt = 0,
+        host = Environment.MachineName, purpose = "server"
+    }));
+    File.WriteAllText(guardPath, JsonSerializer.Serialize(new {
+        version = 1, token = "dead-guard-2", pid = 2147483647, startedAt = 1,
+        host = Environment.MachineName, purpose = "recovery"
+    }));
+    check(sup.InspectDataLock().State == DataLockState.Busy, "健康主锁优先于死守卫");
+    File.Delete(guardPath);
+    File.Delete(lockPath);
+    File.WriteAllText(Path.Combine(scripts, "migrate-memory.js"), """
+const fs = require('node:fs');
+if (!process.argv.includes('--apply')) console.log(JSON.stringify({ok:true,status:'pending',chats:1}));
+else {
+  fs.writeFileSync('data/migration-ready', '1');
+  const timer = setInterval(() => {
+    if (!fs.existsSync('data/migration-finish')) return;
+    clearInterval(timer);
+    console.log(JSON.stringify({ok:true,status:'done',chats:1}));
+  }, 10);
+  setTimeout(() => process.exit(7), 5000).unref();
+}
+""");
+    var preview = await sup.RunOfflineMemoryMigrationAsync(apply: false);
+    check(preview.Ok && preview.Str("status") == "pending" && !sup.NodeRunning, "停止后 JSON 预览可用");
+    var apply = sup.RunOfflineMemoryMigrationAsync(apply: true);
+    try
+    {
+        for (var i = 0; i < 200 && !File.Exists(ready) && !apply.IsCompleted; i++) await Task.Delay(10);
+        check(File.Exists(ready) && sup.MemoryMigrationRunning, "显式确认后启动离线转换进程");
+        sup.StartNode();
+        var start = sup.StartAllAsync(clearRestartHistory: false);
+        check(!sup.NodeRunning && !start.IsCompleted, "离线转换持锁期间两条启动入口均不会启动内核");
+        sup.StopAll();
+        check(!sup.NodeRunning && sup.MemoryMigrationRunning, "停止服务不打断正在运行的转换");
+        File.WriteAllText(finish, "1");
+        check((await apply).Str("status") == "done", "转换成功后释放启动锁");
+        await start;
+        check(sup.NodeRunning, "等待中的内核启动在转换结束后执行");
+        check(!(await sup.RunOfflineMemoryMigrationAsync(apply: true)).Ok, "内核运行时拒绝离线转换");
+        sup.StopAll();
+        // 保持既有桥接重启用例的计数基线。
+        var bridgeCount = Path.Combine(root, "bridge-test-count");
+        if (File.Exists(bridgeCount)) File.WriteAllText(bridgeCount, "0");
+    }
+    finally
+    {
+        File.WriteAllText(finish, "1");
+        await apply;
+    }
+}
+private static async Task CheckAutoUpgradeAsync(string workspace, string root, Action<bool,string> check)
+{
+    var autoRoot = Path.Combine(root, "auto-upgrade");
+    var scripts = Path.Combine(autoRoot, "scripts");
+    var maintenance = Path.Combine(scripts, "migrate", "upgrade-maintenance.js");
+    var runner = Path.Combine(scripts, "migrate-memory.js");
+    var importScript = Path.Combine(scripts, "migrate", "import-4.0.js");
+    Directory.CreateDirectory(Path.Combine(scripts, "migrate"));
+    File.WriteAllText(Path.Combine(autoRoot, ".whale-installed.json"), """{"schemaVersion":1,"installer":"whale-girl"}""");
+    File.WriteAllText(maintenance, """
+const fs=require('fs'),path=require('path');
+const a=process.argv.slice(2);const data=a[a.indexOf('--data')+1];
+if(a.includes('retention')){const f=path.join(data,'retention-count');const n=fs.existsSync(f)?Number(fs.readFileSync(f,'utf8')):0;fs.writeFileSync(f,String(n+1));console.log(JSON.stringify({ok:true,status:'ok'}));}
+else console.log(fs.readFileSync(path.join(data,'fake-status.json'),'utf8'));
+""");
+    var runnerCode = """
+const fs=require('fs'),path=require('path');
+const data=process.argv[process.argv.indexOf('--data')+1];
+const mode=fs.existsSync(path.join(data,'fake-auto-mode'))?fs.readFileSync(path.join(data,'fake-auto-mode'),'utf8').trim():'done';
+if (mode==='fail') { console.log(JSON.stringify({ok:false,status:'cleanup_pending',error:'cleanup_pending'})); process.exit(1); }
+console.log(JSON.stringify({ok:true,status:'done',version:3,targetVersion:3,chats:1,messages:1,removedSources:0,legacySources:0}));
+if (!fs.existsSync(path.join(data,'fake-no-durable')))
+  fs.writeFileSync(path.join(data,'fake-status.json'), JSON.stringify({ok:true,status:'idle',version:3,targetVersion:3,canAuto:false,runnerRequired:false,runnerCleanupEligible:true,receipt:{stage:'done'}}));
+""";
+    File.WriteAllText(runner, runnerCode);
+    File.WriteAllText(importScript, "// synthetic online import dependency\n");
+    var sup = new RuntimeSupervisor(autoRoot);
+    try
+    {
+        Directory.CreateDirectory(sup.DataDir);
+        File.WriteAllText(Path.Combine(sup.DataDir, "server-port.txt"), "1");
+        File.WriteAllText(Path.Combine(sup.DataDir, "fake-status.json"), """{"ok":true,"status":"pending","version":0,"targetVersion":3,"canAuto":true,"runnerRequired":true,"runnerCleanupEligible":false,"legacySources":1,"chats":2,"messages":3}""");
+        var retentionCount = Path.Combine(sup.DataDir, "retention-count");
+
+        sup.UpdateBlocked = true;
+        var blockedUpdate = await sup.AutoForStartCoreAsync();
+        check(!blockedUpdate.Ok && File.Exists(runner) && !File.Exists(retentionCount),
+            "更新检查中不运行自动转换/retention，也不删 runner");
+        sup.UpdateBlocked = false;
+
+        var done = await sup.AutoForStartCoreAsync();
+        check(done.Ok && done.Str("status") == "done", "启动前自动转换返回 done：" + done.Error);
+        check(!File.Exists(runner), "已安装布局且 done 后删除 one-shot runner");
+        check(File.Exists(importScript), "在线导入脚本必须保留");
+        check(File.Exists(retentionCount), "启动前执行备份 retention");
+        check(!sup.MemoryMigrationRunning, "自动流程结束释放迁移状态");
+
+        File.WriteAllText(Path.Combine(sup.DataDir, "fake-status.json"), """{"ok":true,"status":"idle","version":3,"targetVersion":3,"canAuto":false,"runnerRequired":false,"runnerCleanupEligible":true}""");
+        File.WriteAllText(runner, runnerCode);
+        var idle = await sup.AutoForStartCoreAsync();
+        check(idle.Ok && !File.Exists(runner), "receipt done 时 idle 启动也清理残留 runner");
+        check(int.Parse(File.ReadAllText(retentionCount)) >= 2, "多次启动仍持续执行 retention");
+
+        File.WriteAllText(Path.Combine(autoRoot, ".git"), "gitdir: fixture\n");
+        File.WriteAllText(runner, runnerCode);
+        var source = await sup.AutoForStartCoreAsync();
+        check(source.Ok && File.Exists(runner), "源码 .git 布局保留 runner");
+        File.Delete(Path.Combine(autoRoot, ".git"));
+
+        // 自动转换 exit1/cleanup_pending：不得启动内核/桥接，保留可恢复旧输入与 runner。
+        File.WriteAllText(Path.Combine(sup.DataDir, "fake-status.json"), """{"ok":true,"status":"pending","version":0,"targetVersion":3,"canAuto":true,"runnerRequired":true,"runnerCleanupEligible":false,"legacySources":1,"chats":2,"messages":3}""");
+        File.WriteAllText(Path.Combine(sup.DataDir, "fake-auto-mode"), "fail");
+        File.WriteAllText(Path.Combine(sup.DataDir, "store.json"), "{}");
+        await sup.StartAllAsync(clearRestartHistory: false);
+        check(!sup.NodeRunning && !sup.BridgeRunning, "归档/清理失败时自动转换阻止内核/桥接");
+        check(!string.IsNullOrEmpty(sup.LastStartFailure), "启动失败状态可供按钮层立即呈现");
+        check(File.Exists(runner) && File.Exists(Path.Combine(sup.DataDir, "store.json")), "失败时保留 runner 与可恢复旧输入");
+        File.Delete(Path.Combine(sup.DataDir, "store.json"));
+        File.Delete(Path.Combine(sup.DataDir, "fake-auto-mode"));
+
+        File.WriteAllText(Path.Combine(sup.DataDir, "fake-status.json"), """{"ok":true,"status":"idle","version":3,"targetVersion":3,"canAuto":false,"runnerRequired":false,"runnerCleanupEligible":false}""");
+        File.Delete(runner);
+        var currentNoRunner = await sup.AutoForStartCoreAsync();
+        check(currentNoRunner.Ok, "已是最新 v3 且 runner 缺失仍可启动");
+
+        // current v3 + 混合旧源：status=pending，必须自动导入清理，不能回退在线导入。
+        File.WriteAllText(runner, runnerCode);
+        File.WriteAllText(Path.Combine(sup.DataDir, "fake-status.json"), """{"ok":true,"status":"pending","version":3,"targetVersion":3,"canAuto":true,"runnerRequired":true,"runnerCleanupEligible":false,"legacySources":1,"chats":1,"messages":1}""");
+        var currentMixed = await sup.AutoForStartCoreAsync();
+        check(currentMixed.Ok, "current v3+混合旧源自动调用成功：" + currentMixed.Error);
+        check(currentMixed.Str("status") == "done" && !File.Exists(runner),
+            "current v3+混合旧源启动前自动 done 并清 runner");
+
+        // cleanup_pending：必须自动重试清理，失败阻止启动，成功后 done。
+        File.WriteAllText(runner, runnerCode);
+        File.WriteAllText(Path.Combine(sup.DataDir, "fake-status.json"), """{"ok":true,"status":"pending","version":3,"targetVersion":3,"canAuto":true,"runnerRequired":true,"runnerCleanupEligible":false,"legacySources":1,"chats":1,"messages":1}""");
+        File.WriteAllText(Path.Combine(sup.DataDir, "fake-auto-mode"), "fail");
+        var cleanupFail = await sup.AutoForStartCoreAsync();
+        check(!cleanupFail.Ok && File.Exists(runner), "cleanup_pending 失败阻止启动并保留 runner");
+        File.Delete(Path.Combine(sup.DataDir, "fake-auto-mode"));
+        var cleanupDone = await sup.AutoForStartCoreAsync();
+        check(cleanupDone.Ok && cleanupDone.Str("status") == "done" && !File.Exists(runner),
+            "cleanup_pending 再次启动自动清理完成");
+
+        // exit0 done 但 durable status 未完成：不得删除唯一 runner。
+        File.WriteAllText(runner, runnerCode);
+        File.WriteAllText(Path.Combine(sup.DataDir, "fake-status.json"), """{"ok":true,"status":"pending","version":3,"targetVersion":3,"canAuto":true,"runnerRequired":true,"runnerCleanupEligible":false,"legacySources":1,"chats":1,"messages":1}""");
+        File.WriteAllText(Path.Combine(sup.DataDir, "fake-no-durable"), "1");
+        var incomplete = await sup.AutoForStartCoreAsync();
+        check(!incomplete.Ok && File.Exists(runner), "done 无 durable 收据时阻止启动并保留 runner");
+        File.Delete(Path.Combine(sup.DataDir, "fake-no-durable"));
+
+        File.Delete(runner);
+        File.WriteAllText(Path.Combine(sup.DataDir, "fake-status.json"), """{"ok":true,"status":"pending","version":3,"targetVersion":3,"canAuto":true,"runnerRequired":true,"runnerCleanupEligible":false,"legacySources":1,"chats":1,"messages":1}""");
+        var noRunnerPending = await sup.AutoForStartCoreAsync();
+        check(!noRunnerPending.Ok, "pending 且 runner 缺失必须阻止，不退回在线导入");
+    }
+    finally
+    {
+        sup.Dispose();
+    }
+}
+
+private static void CopyDirectory(string source, string destination)
+{
+    Directory.CreateDirectory(destination);
+    foreach (var file in Directory.GetFiles(source))
+        File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), true);
+    foreach (var dir in Directory.GetDirectories(source))
+        CopyDirectory(dir, Path.Combine(destination, Path.GetFileName(dir)));
+}
+
+private static async Task CheckRealAutoUpgradeAsync(string workspace, string root, string node, Action<bool,string> check)
+{
+    // 正常 CI 的 workspace 是仓库根；隔离运行可能只放了 fixtures，需要回到当前仓库目录取真实脚本。
+    var sourceRoot = File.Exists(Path.Combine(workspace, "scripts", "migrate-memory.js"))
+        ? workspace : Environment.CurrentDirectory;
+    var realRoot = Path.Combine(root, "real-auto");
+    Directory.CreateDirectory(Path.Combine(realRoot, "scripts", "migrate"));
+    Directory.CreateDirectory(Path.Combine(realRoot, "runtime"));
+    CopyDirectory(Path.Combine(sourceRoot, "src"), Path.Combine(realRoot, "src"));
+    File.Copy(Path.Combine(sourceRoot, "package.json"), Path.Combine(realRoot, "package.json"), true);
+    File.Copy(Path.Combine(sourceRoot, "scripts", "migrate-memory.js"), Path.Combine(realRoot, "scripts", "migrate-memory.js"), true);
+    foreach (var name in new[] { "archive.js", "upgrade-maintenance.js", "import-4.0.js" })
+        File.Copy(Path.Combine(sourceRoot, "scripts", "migrate", name), Path.Combine(realRoot, "scripts", "migrate", name), true);
+    File.Copy(node, Path.Combine(realRoot, "runtime", "node.exe"), true);
+    File.WriteAllText(Path.Combine(realRoot, ".whale-installed.json"), """{"schemaVersion":1,"installer":"whale-girl"}""");
+    File.WriteAllText(Path.Combine(realRoot, "fixture.js"), """
+const {Store}=require('./src/memory/store');
+const fs=require('fs'),path=require('path');
+const data=path.join(process.cwd(),'data');
+fs.mkdirSync(data,{recursive:true});
+const store=new Store({file:path.join(data,'tmp-store.json'),dir:path.join(data,'memory')});
+store.appendMessage('wechat:u:synthetic',{role:'user',uid:'synthetic',name:'Synthetic',text:'synthetic upgrade fact',ts:1});
+store.close();
+const manifest=path.join(data,'memory','manifest.json');
+const value=JSON.parse(fs.readFileSync(manifest,'utf8'));
+delete value.formatVersion;
+fs.writeFileSync(manifest,JSON.stringify(value));
+""");
+    var fixture = await ProcessRunner.RunAsync(new ProcessStartInfo(Path.Combine(realRoot, "runtime", "node.exe"), "fixture.js")
+    {
+        WorkingDirectory = realRoot, UseShellExecute = false, CreateNoWindow = true,
+        RedirectStandardOutput = true, RedirectStandardError = true,
+    }, null, TimeSpan.FromSeconds(30));
+    check(fixture.Success, "真实脚本夹具：合成 v2 记忆 exit=" + fixture.ExitCode + " err=" + fixture.Error + " out=" + fixture.Output);
+
+    File.WriteAllText(Path.Combine(realRoot, "server.js"), """
+const http=require('http'),fs=require('fs'),path=require('path');
+const data=path.join(process.cwd(),'data');
+const s=http.createServer((req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({service:'whale-girl',up:true,pid:process.pid}));});
+s.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(data,'server-port.txt'),String(s.address().port)));
+process.stdin.on('data',(b)=>{if(String(b).includes('shutdown'))s.close(()=>process.exit(0));});
+setInterval(()=>{},1000);
+""");
+    var sup = new RuntimeSupervisor(realRoot);
+    try
+    {
+        var runner = Path.Combine(realRoot, "scripts", "migrate-memory.js");
+        var importScript = Path.Combine(realRoot, "scripts", "migrate", "import-4.0.js");
+        await sup.StartAllAsync(clearRestartHistory: false);
+        check(sup.NodeRunning, "真实脚本自动升级后内核启动");
+        check(!File.Exists(runner), "真实脚本 done 收据后删除 installed runner");
+        check(File.Exists(importScript), "真实脚本保留在线导入脚本");
+        var manifest = Path.Combine(realRoot, "data", "memory", "manifest.json");
+        using (var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(manifest)))
+            check(doc.RootElement.GetProperty("formatVersion").GetInt32() == 3, "真实脚本写入 formatVersion=3");
+        var backups = Path.Combine(realRoot, "data", "backups");
+        check(Directory.Exists(backups) && Directory.GetFiles(backups, "memory-pre-v3-*.zip").Length == 1,
+            "真实脚本创建压缩归档");
+    }
+    finally
+    {
+        sup.StopAll();
+        sup.Dispose();
+    }
+}
+
 private static async Task CheckProcessRunnerAsync(string workspace, string root, string node, Action<bool,string> check)
 {
     var script=Path.Combine(root,"process-runner-fixture.js");
@@ -370,7 +651,12 @@ try {
  sup.StopAll();
  sup.UpdateBlocked = false;
   if(args.Length<=2 || args[2]=="--phase1-all" || args[2]=="--phase1-runner")
-      await CheckProcessRunnerAsync(workspace,root,Path.Combine(root,"runtime","node.exe"),Check);
+      {
+       await CheckOfflineMigrationAsync(root, sup, Check);
+       await CheckAutoUpgradeAsync(workspace, root, Check);
+       await CheckRealAutoUpgradeAsync(workspace, root, Path.Combine(root,"runtime","node.exe"), Check);
+       await CheckProcessRunnerAsync(workspace,root,Path.Combine(root,"runtime","node.exe"),Check);
+   }
   if(args.Length>2 && (args[2]=="--phase1-f38" || args[2]=="--phase1-all" || args[2]=="--phase1-runner")) return 0;
  var restartHistory=(List<DateTime>)typeof(RuntimeSupervisor).GetField("_bridgeRestarts",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(sup);
  var previousRestart=DateTime.UtcNow.AddMinutes(-1);restartHistory.Add(previousRestart);
@@ -429,3 +715,4 @@ return 0;
 }
 }
 }
+

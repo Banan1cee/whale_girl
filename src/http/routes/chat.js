@@ -1,6 +1,6 @@
 'use strict';
 
-const { handleChat } = require('../../services/chat');
+const { handleChat } = require('../chatHandler');
 const { json } = require('../util');
 
 /**

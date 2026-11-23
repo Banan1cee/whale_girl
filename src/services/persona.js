@@ -160,4 +160,50 @@ function renamePersonaPreset(runtime, body = {}) {
   return { ok: true, preset: result.preset, presets: presets.list(runtime.config) };
 }
 
-module.exports = { applyPersonaPatch, savePersonaPreset, deletePersonaPreset, renamePersonaPreset, currentPersonaWarnings };
+/** 可分享人设包的自定义提示词上限：在线导出与离线保存共用这一条。 */
+const SHARE_PROMPT_LIMIT = 24000;
+
+/**
+ * 导出可分享人设包：只读判定，限长规则只有这一份。
+ * 超限文案由入口保持各自原文，这里只回事实。
+ */
+function shareDocument(config) {
+  const document = presets.fromConfig(config);
+  return { document, limit: SHARE_PROMPT_LIMIT, overLimit: document.customPrompt.length > SHARE_PROMPT_LIMIT };
+}
+
+/**
+ * 导入人设预设：在线路由和离线保存共用「取预设 → token 校验 → 写盘 → 热更新」。
+ *
+ * 离线保存也必须过同一道 token 闸，不能因为没启动内核就少校验一次。
+ * 返回码交给入口映射成自己的响应形状（在线 404/400，离线 {ok:false,error}）：
+ * code = preset_missing | preset_empty | too_long。
+ */
+async function importPersonaPreset(runtime, body = {}) {
+  const preset = presets.load(runtime.config, body && body.id);
+  if (!preset) return { ok: false, status: 404, code: 'preset_missing' };
+  const patch = presets.toPatch(preset);
+  if (!patch) return { ok: false, status: 400, code: 'preset_empty' };
+  // 记下来源，页面上能直接看到「现在用的是哪一版」
+  patch.sourcePreset = preset.id;
+  // 写盘失败照旧抛给入口：在线映射 500，离线 CLI 折成 {ok:false,error}。
+  const result = await applyPersonaPatch(runtime, patch);
+  if (!result.ok) {
+    const check = result.tokenCheck || {};
+    runtime.logger.warn(`人设预设 ${preset.id} 太长，拒绝导入：${check.tokens} token`);
+    return { ...result, status: 400, code: 'too_long' };
+  }
+  runtime.logger.info(`人设预设：已导入 ${preset.id}（${preset.version || '无版本号'}，${result.tokenCheck.tokens} token）`);
+  return { ...result, status: 200, applied: { id: preset.id, version: preset.version || '', name: preset.name || '' } };
+}
+
+module.exports = {
+  applyPersonaPatch,
+  savePersonaPreset,
+  deletePersonaPreset,
+  renamePersonaPreset,
+  currentPersonaWarnings,
+  shareDocument,
+  importPersonaPreset,
+  SHARE_PROMPT_LIMIT,
+};

@@ -18,7 +18,7 @@ const memoryBackup = require('./memory/backup');
 const { recoverRestore } = require('./memory/backupRestore');
 const mediaCache = require('./adapters/mediaCache');
 const { DeepSeekClient } = require('./llm/client');
-const { Bot } = require('./pipeline/chat');
+const { Bot } = require('./pipeline/bot');
 const { createTrace } = require('./core/trace');
 const { createGateways } = require('./adapters/gateway');
 const personaStore = require('./persona/store');
@@ -34,6 +34,9 @@ const { DiaryService } = require('./services/diary');
 const { DigestService } = require('./services/digest');
 const locationProbe = require('./services/location');
 const { PluginHost } = require('./services/pluginHost');
+const { createFeatureCapabilities } = require('./services/features');
+const { createStreamingChat } = require('./services/streamingChat');
+const { sendDenial } = require('./core/wechatSendPolicy');
 
 const VERSION = require('../package.json').version;
 
@@ -78,6 +81,8 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
     file: config.paths.storeFile,
     // 关系卡份额（120 token）跟着 features.relations 走：关掉就并回 recent
     limits: { ...(config.memory || {}), relationsEnabled: features.isOn(config, 'relations') },
+    // 记忆 v2 格式闸：默认关。切换 PR 会把默认值改成 true，并删掉 migrate.migrateIfNeeded。
+    formatVersionEnforced: features.isOn(config, 'memoryV2'),
     logger: child('memory'),
   });
   // 启动时先「忘」一遍：太久没被想起、又不重要的记忆沉到归档，别一直占着检索位
@@ -133,6 +138,8 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
     scheduler: runtime.scheduler,
     // 日记写完要发给主人时，借用提醒的主动发送队列；runtime.reminders 在下面才创建，
     // 所以这里用闭包延迟取，真正发日记时它已经存在。
+    // 这一条不走宿主能力：它是同进程内的回调装配（同步、无返回值、失败只记日志），
+    // 而能力分发是异步的；套上去会在启动早期拿不到实现，反而丢日记。
     enqueue: (item) => runtime.reminders.enqueueNow(item),
   });
   runtime.diary.start();
@@ -219,10 +226,121 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   } catch (err) {
     logger.warn('记忆启动恢复失败（不影响聊天）：' + describeError(err));
   }
-  runtime.gateways = createGateways({ config, bot: runtime.bot, logger: child('gateway') });
+  runtime.plugins = runtime.bot.plugins;
+  runtime.capabilities = runtime.bot.capabilities;
+  // 所有功能能力都登记到同一个 dispatcher：宿主内部调用与插件 host.call 走同一条口子。
+  // 少登记一项就会让对应路由/插件在运行时报 host_capability_unknown，所以这里不做静默跳过。
+  for (const [name, handler] of Object.entries(createFeatureCapabilities(runtime))) {
+    runtime.capabilities.defineHost(name, handler);
+  }
   runtime.pluginHost = new PluginHost(runtime);
-  runtime.bot.javascriptPlugins.hostCall = (...args) => runtime.pluginHost.call(...args);
-  const pluginAllowed = item => runtime.bot.javascriptPlugins.isApproved(item.pluginId, item.pluginHash);
+  // 插件 Worker 只能经 host.call 回到宿主；宿主按 registry 校验声明、作用域和启用状态。
+  runtime.plugins.hostCall = (name, input, flow, options) => runtime.pluginHost.call(name, input, flow, options);
+
+  // 全聊天接管前先把宿主安全闸跑完：管理员魔咒、禁言/白名单、重复消息都留在宿主手里。
+  // 这些情况不走插件，直接回退内置流程，避免替换者绕过身份与发送保护。
+  // `receipt` 记录「消息是否已经被宿主接收入账」：去重占位一旦发生，后面任何失败
+  // 都不能再回退内置流程，否则就是第二条接收路径。
+  const chatPreflight = (input, msg, key, receipt) => {
+    if (runtime.bot.isAdminSpellMessage?.(msg)) return { allowed: false, fallbackBuiltin: true };
+    // 身份（管理员魔咒）在入口层判断；能不能发交给共享规则，和网关/桥接同一个形状。
+    const denied = sendDenial(runtime.config, msg);
+    if (denied) return { allowed: false, result: { action: 'ignore', reason: denied } };
+    if (msg.msgId) {
+      if (store.isDuplicate(key, msg.msgId)) {
+        return { allowed: false, result: { action: 'ignore', reason: 'duplicate' } };
+      }
+      // 接管会跳过 Bot 的去重登记，必须在同会话串行队列里先占位，避免超时后重放。
+      store.markSeen(key, msg.msgId);
+    }
+    receipt.received = true;
+    return { allowed: true, input };
+  };
+
+  // 全接管的整段（插件调用 + 宿主结果阶段）也进同一会话队列：插件返回后还要
+  // 落库、提交配额、拆气泡，只有和正常聊天共用一条链，两条消息才不会被后到的抢先。
+  const takeoverChat = async (message, { localWechat = false, signal } = {}, key) => {
+    let result;
+    // builtin 返回的是宿主完整管线（管理员魔咒回退，或排队期间接管被撤下）的结果：
+    // 它已经 finalize、落库、计过配额，不能再进一次结果阶段。用显式标记区分来源，
+    // 完整结果另存，保住原 command/reason/mock 等字段。
+    let hostHandled = false;
+    let hostResult = null;
+    const receipt = { received: false };
+    try {
+      result = await runtime.capabilities.invoke(
+        'chat.handle@1',
+        { message: runtime.bot.providerMessage(message), localWechat },
+        { key: `handle:${key}`, scope: 'all', signal, preflight: input => chatPreflight(input, message, key, receipt),
+          // 已经在同一会话队列里：管理魔咒的回退直接跑本轮，不能再排一次队。
+          builtin: async () => {
+            hostHandled = true;
+            hostResult = await runtime.bot.handle(message, { localWechat, signal, alreadyQueued: true });
+            // dispatcher 会按 chat.handle.output@1（additionalProperties:false）校验 builtin
+            // 返回值；宿主结果里的 mock/commandType 等不属于插件契约，这里只回契约字段，
+            // 完整结果由 hostResult 原样返回给调用方。
+            const contract = { action: hostResult.action };
+            if (typeof hostResult.reply === 'string') contract.reply = hostResult.reply;
+            if (Array.isArray(hostResult.bubbles)) contract.bubbles = hostResult.bubbles;
+            if (typeof hostResult.mention === 'string') contract.mention = hostResult.mention;
+            if (typeof hostResult.reason === 'string') contract.reason = hostResult.reason;
+            return contract;
+          } },
+      );
+    } catch (failure) {
+      const code = String((failure && failure.code) || '');
+      // 断线/取消不是插件故障：按取消收尾，交给流式层静默结束，也不占配额。
+      if (signal?.aborted || code === 'capability_aborted') {
+        return { cancelled: true, action: 'ignore', reason: 'cancelled' };
+      }
+      // 内置流程已经跑完并落库/计过配额，再回退一次就是重复发送与重复计价。
+      if (hostHandled) throw failure;
+      // 授权失效：消息已经通过前置闸（去重占位），插件也可能已经执行过一部分；
+      // 回退内置流程会重复接收、甚至和插件已产生的副作用重叠，只能 fail closed。
+      // 只记 warn 并把原因带给调用方，不把它当成需要重试的宿主故障。
+      if (code === 'grant_revoked' || code === 'capability_not_declared' || code === 'plugin_not_enabled') {
+        runtime.logger.warn('全接管授权失效，按忽略收尾：' + describeError(failure));
+        return { action: 'ignore', reason: 'capability_revoked' };
+      }
+      // 输出不合契约（含 reply 为空）：插件已经执行过，半成品不能下发，同样不回退。
+      if (code === 'invalid_capability_output') {
+        runtime.logger.warn('全接管输出不合契约，按忽略收尾：' + describeError(failure));
+        return { action: 'ignore', reason: 'invalid_plugin_output' };
+      }
+      // 插件还没开始执行、宿主也还没占位（去重/禁言闸都没跑）：这些失败没有可重复的
+      // 接收或发送副作用，回退内置流程是安全的，比把消息静默丢掉更稳。
+      if (!receipt.received && (code === 'capability_queue_limit'
+        || code === 'capability_owner_conflict' || code === 'invalid_capability_input')) {
+        runtime.logger.warn('全接管调度失败（无副作用），回退内置流程：' + describeError(failure));
+        return runtime.bot.handle(message, { localWechat, signal, alreadyQueued: true });
+      }
+      // 其余都是真实故障（进程退出、超时、插件报错、内置流程自身出错）：
+      // 交给上层按错误收尾并留日志，不在这里吞成一条「忽略」。
+      throw failure;
+    }
+    // 宿主已经处理完的结果原样返回：不再治理、不再落库、不再扣配额。
+    if (hostHandled) return hostResult;
+    if (signal?.aborted) return { cancelled: true, action: 'ignore', reason: 'cancelled' };
+    if (!result || result.action !== 'reply') return { action: 'ignore', reason: (result && result.reason) || 'ignored' };
+    // 只有真实插件输出才进宿主结果阶段；失败回退不在这里做。
+    return runtime.bot.finishTakeoverReply(message, result, { signal });
+  };
+
+  const handleChat = (message, options = {}) => {
+    if (!runtime.capabilities.hasProviders('chat.handle@1')) return runtime.bot.handle(message, options);
+    const key = runtime.bot.sessionKey(message);
+    return runtime.bot.queueSession(key, () => takeoverChat(message, options, key));
+  };
+  runtime.chat = Object.freeze({
+    handle: handleChat,
+    stream: createStreamingChat(runtime.bot, child('chat'), {
+      takeOver: () => runtime.capabilities.hasProviders('chat.handle@1'),
+      handle: handleChat,
+    }),
+  });
+  runtime.gateways = createGateways({ config, bot: runtime.bot, logger: child('gateway'),
+    chat: runtime.chat });
+  const pluginAllowed = item => runtime.plugins.isApprovedIdHash(item.pluginId, item.pluginHash);
   runtime.reminders.pluginAllowed = pluginAllowed;
   runtime.stickerService.pluginAllowed = pluginAllowed;
   watchConfigFile(runtime);

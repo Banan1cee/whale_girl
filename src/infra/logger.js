@@ -10,7 +10,7 @@
  * 所以同一个 logger 可以「界面干净、文件完整」：debug 行不打印，但一定落盘。
  *
  * 来源定位（2026-11 起）：
- *   warn / error / debug 会自动抓调用点，行首多一段 [pipeline/chat.js:422]。
+ *   warn / error / debug 会自动抓调用点，行首多一段 [pipeline/bot.js:422]。
  *   info 不抓栈：info 主要看模块 tag，且调用频率高，抓栈不值当；
  *   需要模块名的 info 用 child('llm') 这种子 logger，会在行首打 [llm]。
  *   debug 抓栈是因为排查时最常见的问题就是「这条 debug 是哪行打的」；
@@ -51,7 +51,7 @@ function parseFrame(frame) {
   return { file, line };
 }
 
-/** 只留最后两段路径：src/pipeline/chat.js → pipeline/chat.js */
+/** 只留最后两段路径：src/pipeline/bot.js → pipeline/bot.js */
 function shortPath(file) {
   const parts = String(file).replace(/\\/g, '/').split('/').filter(Boolean);
   return parts.slice(-2).join('/');

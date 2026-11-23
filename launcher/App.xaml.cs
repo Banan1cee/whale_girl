@@ -53,6 +53,8 @@ namespace WhaleLauncher
             }
             base.OnStartup(e);
             Appearance.Load();
+            // 主题包先读回再铺色：读不出来就当没有，内置外观照常。
+            Appearance.LoadThemePackage();
             Appearance.ApplyTheme();
             DispatcherUnhandledException += (_, ex) => Crash("UI", ex.Exception);
             AppDomain.CurrentDomain.UnhandledException += (_, ex) => Crash("进程", ex.ExceptionObject as Exception);

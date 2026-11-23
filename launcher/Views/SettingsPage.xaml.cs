@@ -123,8 +123,6 @@ namespace WhaleLauncher.Views
                 new FieldSpec { Path = "features.envContext", Label = "提供环境信息", Kind = "bool", Hint = "向模型提供本机环境、时区与已配置地点；关闭后不提供环境块" },
                 new FieldSpec { Path = "features.relations", Label = "加载群聊关系", Kind = "bool", Hint = "按需提供人物关系资料，不改变角色性格" },
                 new FieldSpec { Path = "features.groupAddressGuard", Label = "群聊发言对象检查", Kind = "bool", Hint = "避免把群友之间的话认成对机器人说的；建议保持开启" },
-                new FieldSpec { Path = "features.fightQuoteCheck", Label = "反击原话核对", Kind = "bool", Hint = "反击前核对原话依据，不等于开启顶嘴人格" },
-                new FieldSpec { Path = "features.staticSystem", Label = "稳定提示词前缀", Kind = "bool", Hint = "只调整本轮状态的位置以便服务商缓存，不改变人格与设置含义" },
                 new FieldSpec { Path = "features.memorySnapshot", Label = "自动记忆快照", Kind = "bool", Hint = "启动和定时创建备份；关闭不删除已有备份" },
                 new FieldSpec { Path = "features.mediaCleanup", Label = "启动时清理媒体缓存", Kind = "bool", Hint = "按缓存保留策略清理；下次启动生效" },
             }},
@@ -444,6 +442,183 @@ namespace WhaleLauncher.Views
             body.Children.Add(Row("配色重置", resetPalette,
                 "主题色、遮罩色、文字色退回莫奈 / 主题默认，描边重新打开。", true));
 
+            // ── 主题包：独立 JSON 文件，不是 whale-plugin/1，也不跑任何代码 ──
+            // 导入先预览、确认后才应用；非法包只提示，不动当前外观。
+            var themeStatus = new TextBlock
+            {
+                Style = (Style)FindResource("Small"),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 6, 0, 0),
+            };
+            var themePreview = new StackPanel { Visibility = Visibility.Collapsed, Margin = new Thickness(0, 8, 0, 0) };
+            LauncherTheme pendingTheme = null;
+
+            var themeImport = new Button { Content = "导入主题包…", Style = (Style)FindResource("Ghost") };
+            var themeApply = new Button
+            {
+                Content = "应用并保存",
+                Style = (Style)FindResource("Primary"),
+                Margin = new Thickness(8, 0, 0, 0),
+                IsEnabled = false,
+            };
+            var themeCancel = new Button
+            {
+                Content = "取消预览",
+                Style = (Style)FindResource("Ghost"),
+                Margin = new Thickness(8, 0, 0, 0),
+                Visibility = Visibility.Collapsed,
+            };
+            var themeDisable = new Button
+            {
+                Content = "停用并恢复内置",
+                Style = (Style)FindResource("Ghost"),
+                Margin = new Thickness(8, 0, 0, 0),
+            };
+            var themeActions = new WrapPanel();
+            themeActions.Children.Add(themeImport);
+            themeActions.Children.Add(themeApply);
+            themeActions.Children.Add(themeCancel);
+            themeActions.Children.Add(themeDisable);
+            body.Children.Add(Row("主题包", themeActions,
+                "只认 JSON 数据：配色、字体字号、圆角、间距和普通弹窗底色。不能改布局、左导航，也不会接管授权 / 更新 / 安全确认。", true));
+            body.Children.Add(themeStatus);
+            body.Children.Add(themePreview);
+
+            void RenderThemePreview(LauncherTheme theme)
+            {
+                themePreview.Children.Clear();
+                if (theme == null)
+                {
+                    themePreview.Visibility = Visibility.Collapsed;
+                    return;
+                }
+                themePreview.Children.Add(new TextBlock
+                {
+                    Text = "预览 · " + theme.Name + (theme.Author.Length > 0 ? " · " + theme.Author : ""),
+                    Style = (Style)FindResource("H2"),
+                });
+                var swatches = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+                foreach (var token in LauncherThemes.ColorTokens)
+                {
+                    if (!theme.HasColor(token)) continue;
+                    var color = (Color)ColorConverter.ConvertFromString(theme.Colors[token]);
+                    var swatch = new Border
+                    {
+                        Width = 46,
+                        Height = 22,
+                        CornerRadius = new CornerRadius(6),
+                        BorderThickness = new Thickness(1),
+                        Margin = new Thickness(0, 0, 6, 6),
+                        Background = new SolidColorBrush(color),
+                        ToolTip = token + " " + theme.Colors[token],
+                    };
+                    swatch.SetResourceReference(Border.BorderBrushProperty, "CardBorder");
+                    swatches.Children.Add(swatch);
+                }
+                themePreview.Children.Add(swatches);
+                var facts = new List<string>();
+                if (theme.FontFamily.Length > 0) facts.Add("字体 " + theme.FontFamily);
+                if (Math.Abs(theme.FontScale - 1) > 0.001) facts.Add("字号 " + Math.Round(theme.FontScale * 100) + "%");
+                if (theme.Corner >= 0) facts.Add("圆角 " + theme.Corner);
+                if (Math.Abs(theme.Spacing - 1) > 0.001) facts.Add("间距 " + Math.Round(theme.Spacing * 100) + "%");
+                if (theme.DialogSurface.Length > 0) facts.Add("弹窗底色 " + theme.DialogSurface);
+                if (theme.DialogBorder.Length > 0) facts.Add("弹窗描边 " + theme.DialogBorder);
+                if (theme.DialogCorner >= 0) facts.Add("弹窗圆角 " + theme.DialogCorner);
+                themePreview.Children.Add(new TextBlock
+                {
+                    Text = facts.Count > 0 ? string.Join(" · ", facts) : "只声明了配色",
+                    Style = (Style)FindResource("Small"),
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 2, 0, 0),
+                });
+                themePreview.Visibility = Visibility.Visible;
+            }
+
+            void RefreshTheme()
+            {
+                // 选中但当前不可用时也要能停用（否则只能手动删文件）。
+                themeDisable.IsEnabled = Appearance.HasThemePackage || File.Exists(Appearance.ThemeFilePath);
+                if (Appearance.HasTheme)
+                {
+                    themeStatus.Text = "当前主题：" + Appearance.ActiveThemeName + "。停用后立刻回到内置外观，文件同时删除。";
+                }
+                else if (Appearance.HasThemePackage)
+                {
+                    // 主题本身合法，但和现在的配色 / 背景组合起来不够清楚：
+                    // 整包退回内置外观，并把原因说清楚，调回可用组合后会自动恢复。
+                    themeStatus.Text = "主题「" + Appearance.ActiveThemeName + "」当前不可用："
+                        + Appearance.ThemeUnavailableReason
+                        + "\n已使用内置外观；把配色 / 背景调回可用组合后它会自动恢复，也可以直接停用删除。";
+                }
+                else
+                {
+                    themeStatus.Text = "当前使用内置外观。导入后先预览，确认才会应用；不合格的包不会改动现有配色。";
+                }
+            }
+
+            themeImport.Click += (_, __) =>
+            {
+                var file = AppFilePicker.Open("选择鲸鲸主题包", ".json");
+                if (file == null) return;
+                if (LauncherThemes.TryLoadFile(file, out var theme, out var error))
+                {
+                    pendingTheme = theme;
+                    themeApply.IsEnabled = true;
+                    themeCancel.Visibility = Visibility.Visible;
+                    RenderThemePreview(theme);
+                    themeStatus.Text = "已通过校验，确认后才会生效并保存到 data 目录。";
+                }
+                else
+                {
+                    pendingTheme = null;
+                    themeApply.IsEnabled = false;
+                    themeCancel.Visibility = Visibility.Collapsed;
+                    RenderThemePreview(null);
+                    themeStatus.Text = "未导入：" + error;
+                }
+            };
+
+            themeApply.Click += (_, __) =>
+            {
+                if (pendingTheme == null) return;
+                if (!Appearance.SetThemePackage(pendingTheme, out var error))
+                {
+                    themeStatus.Text = "应用失败：" + error;
+                    return;
+                }
+                pendingTheme = null;
+                themeApply.IsEnabled = false;
+                themeCancel.Visibility = Visibility.Collapsed;
+                RenderThemePreview(null);
+                themeStatus.Text = error.Length > 0 ? error : "已应用并保存。";
+            };
+
+            themeCancel.Click += (_, __) =>
+            {
+                pendingTheme = null;
+                themeApply.IsEnabled = false;
+                themeCancel.Visibility = Visibility.Collapsed;
+                RenderThemePreview(null);
+                RefreshTheme();
+            };
+
+            themeDisable.Click += (_, __) =>
+            {
+                if (!Appearance.ClearThemePackage(out var error))
+                {
+                    // 文件删不掉时主题重启后仍会生效，不能假装已停用。
+                    themeStatus.Text = "停用失败：" + error;
+                    return;
+                }
+                pendingTheme = null;
+                themeApply.IsEnabled = false;
+                themeCancel.Visibility = Visibility.Collapsed;
+                RenderThemePreview(null);
+                hint.Text = "已停用主题包，恢复内置外观。";
+                hint.Foreground = (Brush)FindResource("Dim");
+                RefreshTheme();
+            };
+
             void Refresh()
             {
                 dark.IsChecked = Appearance.IsDark;
@@ -477,6 +652,7 @@ namespace WhaleLauncher.Views
                 pathText.Text = string.IsNullOrEmpty(Appearance.Backdrop)
                     ? "当前使用纯色背景。"
                     : "当前：" + Appearance.Backdrop;
+                RefreshTheme();
             }
 
             pick.Click += (_, __) =>
@@ -631,12 +807,12 @@ namespace WhaleLauncher.Views
             var divider = new Border { Height = 1, Margin = new Thickness(0, 0, 0, 12) };
             divider.SetResourceReference(Border.BackgroundProperty, "Line");
             box.Children.Add(divider);
-            box.Children.Add(new TextBlock { Text = "旧版记忆（3.x）", Style = (Style)FindResource("Label") });
+            box.Children.Add(new TextBlock { Text = "旧版记忆", Style = (Style)FindResource("Label") });
 
             var hint = new TextBlock
             {
-                Text = "3.x 的 data\\store.json（含 .journal）/ memory.json / 旧备份包会转成现在的格式；"
-                     + "同名聊天按时间合并，已经转过的不会重复导入。启动时也会自动检查一次。",
+                Text = "启动时会自动检查并转换旧记忆，无需手动确认；转换前自动备份，压缩后保留 30 天。"
+                     + "启动失败时可在这里重试；内核已启动时仍可在下方导入旧版快照。",
                 Style = (Style)FindResource("Small"),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 4, 0, 8),
@@ -645,7 +821,7 @@ namespace WhaleLauncher.Views
 
             var btn = new Button
             {
-                Content = "一键识别转换记忆",
+                Content = "重新检查并转换",
                 Style = (Style)FindResource("Ghost"),
                 HorizontalAlignment = HorizontalAlignment.Left,
             };
@@ -660,16 +836,23 @@ namespace WhaleLauncher.Views
 
             btn.Click += async (s, e) =>
             {
-                if (!_sup.NodeRunning)
-                {
-                    result.Text = "内核没在运行，先启动鲸鲸再试。";
-                    return;
-                }
                 btn.IsEnabled = false;
                 var original = btn.Content;
                 btn.Content = "正在检查…";
                 try
                 {
+                    if (!_sup.NodeRunning)
+                    {
+                        // 自动流程与启动按钮共用同一 seam；不再弹确认。
+                        btn.Content = "正在检查并转换…";
+                        var applied = await _sup.RunAutoMemoryUpgradeAsync();
+                        if (!applied.Ok) { result.Text = Api.Message(applied); return; }
+                        var autoStatus = applied.Str("status");
+                        result.Text = autoStatus == "done"
+                            ? $"已自动转换，共 {applied.Long("chats")} 个会话、{applied.Long("messages")} 条原文；备份已压缩保留 30 天。"
+                            : "没有需要转换的旧记忆。";
+                        return;
+                    }
                     var status = await Api.Get(_sup.Url, "/api/memory/import/status");
                     if (!status.Ok)
                     {
@@ -693,7 +876,7 @@ namespace WhaleLauncher.Views
                         + "· 合并 " + merged + " 个已有聊天\n"
                         + "· 补进 " + messages + " 条消息 / " + notes + " 条偏好\n\n"
                         + "开始转换吗？原文件会保留，转换前也会自动备份当前记忆。",
-                        "转换旧版记忆", okText: "开始转换"))
+                        "转换旧版记忆", okText: "开始转换", critical: true))
                     {
                         result.Text = "已取消，什么都没改。";
                         return;
@@ -2046,7 +2229,7 @@ namespace WhaleLauncher.Views
                 var on = voiceSwitch.IsChecked == true;
                 if (!on && !AppDialog.Confirm(Window.GetWindow(this),
                     "关闭语音识别会删除专用语音 Key，聊天 Key 保留。\n\n跟随模式下重新开启即可沿用聊天 Key；手动模式需要重新填写专用 Key。继续吗？",
-                    "关闭语音识别", okText: "关闭并删除"))
+                    "关闭语音识别", okText: "关闭并删除", critical: true))
                 {
                     _loading = true;
                     voiceSwitch.IsChecked = true;
@@ -2155,6 +2338,13 @@ namespace WhaleLauncher.Views
             PaintVoiceMode();
             AddApiProbe(voiceBody, "voice", "测试语音识别（选择 WAV）");
             // ── 搜索：一个总开关；开启后才出现“添加 API” ──────────
+            searchPanel.Children.Add(new TextBlock
+            {
+                Style = (Style)FindResource("Small"),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+                Text = "聊天使用 DeepSeek 官方 deepseek-flash 时，走模型内建搜索，不会自动调用下方独立搜索服务。其他聊天模型才使用这些设置。",
+            });
             var apiEnabled = new CheckBox { VerticalAlignment = VerticalAlignment.Center };
             searchPanel.Children.Add(Row("启用搜索 API", apiEnabled,
                 "关闭时不调用任何第三方搜索 API，并清空已添加的 API、删除已保存的搜索 Key。开启后先走 API，失败或没有结果再回退本地 Bing/360。", false, ModelLabel));
@@ -2209,7 +2399,7 @@ namespace WhaleLauncher.Views
                 {
                     if (_loading) return;
                     if (!AppDialog.Confirm(Window.GetWindow(this),
-                        "移除「" + title + "」会同时删除它的 Key / Secret。\n\n继续吗？", "移除 API", okText: "移除")) return;
+                        "移除「" + title + "」会同时删除它的 Key / Secret。\n\n继续吗？", "移除 API", okText: "移除", critical: true)) return;
                     apiProviders.Remove(key);
                     var saved = await _saver.SaveAsync(() => new Dictionary<string, object>
                     {
@@ -2285,7 +2475,7 @@ namespace WhaleLauncher.Views
                 var on = apiEnabled.IsChecked == true;
                 if (!on && !AppDialog.Confirm(Window.GetWindow(this),
                     "关闭搜索 API 会：\n\n• 清空已添加的 API\n• 删除 DeepSeek 搜索 Key 和知乎 Access Secret\n\n下次开启需要重新添加并填写。继续吗？",
-                    "关闭搜索 API", okText: "关闭并删除"))
+                    "关闭搜索 API", okText: "关闭并删除", critical: true))
                 {
                     _loading = true;
                     apiEnabled.IsChecked = true;

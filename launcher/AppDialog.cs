@@ -12,12 +12,13 @@ namespace WhaleLauncher
     /// <summary>在主窗口内容上显示模态弹层，不创建系统窗口。</summary>
     public static class AppDialog
     {
-        public static bool Show(Window owner, string message, string title = "鲸鲸", bool danger = false)
-            => OnUi(() => ShowCore(owner, message, title, danger, "知道了", null, null, null, null));
+        public static bool Show(Window owner, string message, string title = "鲸鲸", bool danger = false, bool critical = false)
+            => OnUi(() => ShowCore(owner, message, title, danger, "知道了", null, null, null, null, critical: critical));
 
         public static bool Confirm(Window owner, string message, string title = "鲸鲸",
-            bool danger = false, string okText = "确定", string cancelText = "取消", string warningText = null)
-            => OnUi(() => ShowCore(owner, message, title, danger, okText, cancelText, warningText, null, null));
+            bool danger = false, string okText = "确定", string cancelText = "取消", string warningText = null,
+            bool critical = false)
+            => OnUi(() => ShowCore(owner, message, title, danger, okText, cancelText, warningText, null, null, critical: critical));
 
         public static string Prompt(Window owner, string message, string title = "鲸鲸", string initial = "",
             string okText = "保存", string cancelText = "取消")
@@ -52,7 +53,7 @@ namespace WhaleLauncher
         }
 
         public static bool ShowContent(string title, UIElement content, double width = 620, string okText = "关闭", string cancelText = null)
-            => OnUi(() => ShowCore(null, null, title, false, okText, cancelText, null, content, null, width));
+            => OnUi(() => ShowCore(null, null, title, false, okText, cancelText, null, content, null, width, allowTheme: false));
 
         private static T OnUi<T>(Func<T> action)
         {
@@ -62,10 +63,20 @@ namespace WhaleLauncher
         }
 
         private static bool ShowCore(Window owner, string message, string title, bool danger,
-            string okText, string cancelText, string warningText, UIElement extra, TextBox input, double width = 480)
+            string okText, string cancelText, string warningText, UIElement extra, TextBox input, double width = 480,
+            bool allowTheme = true, bool critical = false)
         {
             var window = Application.Current?.MainWindow ?? owner;
             if (window?.Content is not Grid root || !window.IsVisible) return false;
+
+            // 普通提示 / 确认才跟随主题包。授权（critical / danger）、更新（warningText）、
+            // 安全与不可逆确认，以及自带内容的弹层（恢复记忆、发言范围）都不跟主题：
+            // 卡片上挂一份内置资源，弹窗子树里的颜色、字体字号、圆角、内边距、
+            // 按钮 hover 态全部在局部命中，不会从主题包继承任何东西。
+            var themed = allowTheme && !critical && !danger
+                && string.IsNullOrWhiteSpace(warningText) && Appearance.HasTheme;
+            var spacing = themed ? Appearance.SpacingScale : 1.0;
+            var corner = themed ? Appearance.DialogCornerRadius : 14;
 
             var frame = new DispatcherFrame();
             bool result = false;
@@ -74,15 +85,33 @@ namespace WhaleLauncher
             Grid.SetRowSpan(overlay, Math.Max(1, root.RowDefinitions.Count));
             Grid.SetColumnSpan(overlay, Math.Max(1, root.ColumnDefinitions.Count));
             Panel.SetZIndex(overlay, int.MaxValue);
-            var card = new Border { Width = width, MaxWidth = Math.Max(200, window.ActualWidth - 48), MaxHeight = Math.Max(200, window.ActualHeight - 48), CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            var card = new Border { Width = width, MaxWidth = Math.Max(200, window.ActualWidth - 48), MaxHeight = Math.Max(200, window.ActualHeight - 48), CornerRadius = new CornerRadius(corner), BorderThickness = new Thickness(1), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            if (!themed && Appearance.HasTheme)
+            {
+                var safe = new ResourceDictionary();
+                foreach (var pair in Appearance.DialogSafeResources()) safe[pair.Key] = pair.Value;
+                card.Resources = safe;
+                // 字体不设的话会从 MainWindow 继承主题字体；这里显式回到内置字体和基准字号。
+                // TextBlock 走 TextElement 的继承属性，Button/TextBox 走 Control 的，两条都设。
+                var safeFont = new FontFamily(Appearance.DefaultFontFamily);
+                System.Windows.Documents.TextElement.SetFontFamily(card, safeFont);
+                System.Windows.Documents.TextElement.SetFontSize(card, Appearance.DefaultFontSize);
+                card.SetValue(Control.FontFamilyProperty, safeFont);
+                card.SetValue(Control.FontSizeProperty, Appearance.DefaultFontSize);
+            }
             card.SetResourceReference(Border.BackgroundProperty, "Bg");
             card.SetResourceReference(Border.BorderBrushProperty, "Line");
-            var panel = new StackPanel { Margin = new Thickness(22, 20, 22, 18) };
+            if (themed && Appearance.HasThemeDialogColors)
+            {
+                card.Background = new SolidColorBrush(Appearance.DialogSurfaceColor);
+                card.BorderBrush = new SolidColorBrush(Appearance.DialogBorderColor);
+            }
+            var panel = new StackPanel { Margin = new Thickness(22, 20 * spacing, 22, 18 * spacing) };
             var layout = new DockPanel();
             card.Child = layout;
             var scroll = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             overlay.Children.Add(card);
-            var header = new DockPanel { Margin = new Thickness(22, 16, 22, 0) };
+            var header = new DockPanel { Margin = new Thickness(22, 16 * spacing, 22, 0) };
             DockPanel.SetDock(header, Dock.Top);
             layout.Children.Add(header);
             var close = new Button { Content = "×", FontSize = 20, Padding = new Thickness(8, 0, 8, 0), Style = Application.Current?.TryFindResource("Ghost") as Style, ToolTip = "关闭" };
@@ -118,7 +147,7 @@ namespace WhaleLauncher
             if (danger) ok.SetResourceReference(Control.ForegroundProperty, "Bad");
             ok.Click += (_, _) => Finish(true);
             row.Children.Add(ok);
-            row.Margin = new Thickness(22, 12, 22, 18);
+            row.Margin = new Thickness(22, 12 * spacing, 22, 18 * spacing);
             DockPanel.SetDock(row, Dock.Bottom);
             layout.Children.Add(row);
             layout.Children.Add(scroll);

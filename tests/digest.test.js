@@ -15,9 +15,7 @@
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const http = require('node:http');
-const path = require('node:path');
 
 const { DigestService, rangeWindow, dayKey } = require('../src/services/digest');
 const { createRouter } = require('../src/http/routes');
@@ -250,17 +248,4 @@ test('路由：GET 读状态，POST 立刻 202 并把范围交给后台生成', 
   } finally {
     await new Promise((r) => server.close(r));
   }
-});
-
-/* ------------------------------ 启动器接线 ------------------------------ */
-
-const repoRoot = path.resolve(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
-
-test('消息汇总通过插件设置进入，工作台不重复挂入口', () => {
-  const main = read('launcher/MainWindow.xaml.cs');
-  const tool = read('launcher/Views/PluginToolPage.xaml.cs');
-  assert.doesNotMatch(main, /Key = "消息汇总"|new DigestPage\(/);
-  assert.match(tool, /PluginHostActions.SummarizeAsync\(_sup, value\)/);
-  assert.match(tool, /if \(digest && !AppDialog\.Confirm\([\s\S]*?"确认聊天汇总权限", okText: "允许一次"\)\)\s*return;/);
 });

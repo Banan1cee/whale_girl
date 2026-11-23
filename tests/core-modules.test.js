@@ -90,6 +90,20 @@ test('退场静默不会被问号或「开麦」绕过', () => {
   assert.equal(computeTrigger(bot, { ...base, isMaster: true, atMe: true, clean: { text: '你说呢' } }).reason, 'addressed');
 });
 
+test('群里只发一个问号不算在叫她', () => {
+  const bot = { config: JSON.parse(JSON.stringify(DEFAULT_CONFIG)), rng: () => 1 };
+  bot.config.group.masterAlwaysReply = true;
+  const base = {
+    msg: { senderId: 'u-a', selfNames: [] }, isGroup: true, nowMs: 1000,
+    key: 'g', state: {},
+  };
+  const bare = computeTrigger(bot, { ...base, atMe: false, isMaster: false, clean: { text: '？' } });
+  assert.equal(bare.wake, false, '陌生人发「？」不再把她叫出来');
+  assert.equal(bare.reason, 'question_mark');
+  assert.equal(computeTrigger(bot, { ...base, atMe: false, isMaster: true, clean: { text: '？' } }).wake, false, '主人发「？」也不触发');
+  assert.equal(computeTrigger(bot, { ...base, atMe: true, isMaster: false, clean: { text: '？' } }).wake, true, '@ 她只发「？」仍然算在叫她');
+});
+
 test('静音消息不会写静默或接话窗口', () => {
   const bot = { config: JSON.parse(JSON.stringify(DEFAULT_CONFIG)), rng: () => 1 };
   const state = { mutedUntil: 9000, silentUntil: 9000, engagedUntil: 0, engagedBy: '' };

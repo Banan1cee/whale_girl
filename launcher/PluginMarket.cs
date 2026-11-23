@@ -20,18 +20,22 @@ namespace WhaleLauncher
         [property: System.Text.Json.Serialization.JsonPropertyName("minAppVersion")] string MinAppVersion,
         [property: System.Text.Json.Serialization.JsonPropertyName("maxAppVersion")] string MaxAppVersion = null);
 
+    internal sealed record PluginProvider(string Mode, string Scope, int? IntervalSeconds);
+
     internal sealed record PluginInfo(string Id, string Name, string Author, string Version, string MinAppVersion,
         string Description, string ResultLabel, int Api, string Download = null, string Sha256 = null, string Kind = "tool",
         string MaxAppVersion = null, int DiscussionIssue = 0, string HostAction = null,
         string[] Hooks = null, string[] Permissions = null, string Signature = null,
         int ExecutionTimeoutMs = 30000, int IntervalSeconds = 60,
         [property: System.Text.Json.Serialization.JsonPropertyName("appEpoch")] int AppEpoch = 0,
-        [property: System.Text.Json.Serialization.JsonPropertyName("appCompatibility")] PluginAppRange[] AppCompatibility = null)
+        [property: System.Text.Json.Serialization.JsonPropertyName("appCompatibility")] PluginAppRange[] AppCompatibility = null,
+        Dictionary<string, PluginProvider> Provides = null, string[] Calls = null, JsonElement? SettingsSchema = null,
+        int Level = 0, string[] DataAccess = null)
     {
-        internal bool IsPersona => Kind == "persona";
-        internal bool IsMessage => Api == 3 && Kind == "message";
-        internal bool IsJavaScript => Api == 4 && Kind is "message" or "tool";
-        internal bool IsFlow => IsMessage || IsJavaScript;
+        internal bool IsPersona => Api == 1 && Kind == "persona";
+        internal bool IsUnified => Api == 5 && Kind == "plugin" && Level is >= 1 and <= 4;
+        internal bool RequiresFullAccess => IsUnified && Level == 4;
+        internal bool RequiresChatAccess => IsUnified && Level == 3 && Provides?.ContainsKey("chat.reply@1") == true;
         internal int EffectiveAppEpoch => AppEpoch == 0 ? 1 : AppEpoch;
         internal PluginAppRange[] AppRanges => AppCompatibility
             ?? [new(EffectiveAppEpoch, MinAppVersion, MaxAppVersion)];
@@ -40,42 +44,22 @@ namespace WhaleLauncher
             + (string.IsNullOrEmpty(range.MaxAppVersion)
                 ? $"鲸鲸 {range.MinAppVersion} 及以上" : $"鲸鲸 {range.MinAppVersion} – {range.MaxAppVersion}")));
     }
-    internal sealed record PluginFeedback(int Comments);
-    internal sealed record MarketFavorite(string Id, long Count, bool Favorited);
-    internal sealed record PluginPackage(PluginInfo Info, byte[] Module, string Prompt = null, string Persona = null);
+    internal sealed record PluginFeedback(int Comments, int Favorites);
+    internal sealed record PluginPackage(PluginInfo Info, byte[] Module, string Prompt = null, string Persona = null, byte[] RawManifest = null);
 
     internal sealed class PluginMarket
     {
-        internal const string CatalogUrl = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index.json";
         internal const string DigestAction = "chat.summary";
-        private const string MarketApi = "https://api.github.com/repos/Banan1cee/whale-girl-plugins";
-        private const string FavoritesUrl = "https://whalegirl-market-favorites.chrisgao0312.workers.dev/api/favorites";
 
         // 市场签名暂时隐藏：验签代码、内置公钥和签名工具都保留，恢复时把这里改成 true 即可。
         // 关闭时目录不再拉取 .sig、条目里的 Signature 只解析不校验，卡片也不显示签名状态，
         // 避免用户以为包已经验过；SHA-256、下载域名白名单和包内清单一致性照常检查。
         internal static readonly bool MarketSignatureEnabled = false;
-        private const string CatalogV2Url = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-v2.json";
-        private const string CatalogV3Url = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-v3.json";
-        private const string CatalogV4Url = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-v4.json";
-        private const string PersonaCatalogUrl = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-personas.json";
-        private const int PackageLimit = 16 * 1024 * 1024;
-        private static readonly string[] NativeHooks = ["chat.received", "chat.pre_reply", "chat.prompt", "chat.generate", "chat.reply", "chat.before_send", "chat.dispatched", "chat.search", "chat.search_result", "app.start", "app.stop", "timer.tick", "tool.run"];
-        private const int PluginTimeoutMs = 3000;
-        private static readonly HttpClient Http = CreateClient();
+        private static readonly JsonElement Registry = LoadRegistry();
+        private static readonly int PackageLimit = Limit("maxPackageBytes");
+        private static readonly UTF8Encoding StrictUtf8 = new(false, true);
         private static readonly JsonSerializerOptions ReadOptions = new() { PropertyNameCaseInsensitive = true };
 
-        private sealed class DownloadMissingException : IOException
-        {
-            internal DownloadMissingException() : base("下载文件不存在") { }
-        }
-
-        private static HttpClient CreateClient()
-        {
-            var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("WhaleGirl-PluginMarket");
-            return client;
-        }
         private readonly string _baseDir;
         private readonly string _root;
 
@@ -160,39 +144,216 @@ namespace WhaleLauncher
             && ranges.All(range => range != null && range.AppEpoch is 1 or 2
                 && Version.TryParse(range.MinAppVersion, out var min)
                 && min >= (range.AppEpoch == 2 ? new Version(1, 0, 0)
-                    : info.IsJavaScript ? new Version(4, 1, 2)
-                    : info.IsMessage ? new Version(4, 1, 0) : new Version(0, 0))
+                    : info.IsUnified ? new Version(4, 1, 2) : new Version(0, 0))
                 && (string.IsNullOrEmpty(range.MaxAppVersion)
                     || Version.TryParse(range.MaxAppVersion, out var max) && max >= min))
             && ranges.Select(range => range.AppEpoch).Distinct().Count() == ranges.Length;
 
-        private static bool Valid(PluginInfo info) => info != null && ValidId(info.Id) && (info.Api == 1 && info.HostAction == null
-                || info.Api == 2 && info.Kind == "tool" && info.HostAction is null or DigestAction
-                || info.IsMessage && info.HostAction == null && info.Hooks is { Length: > 0 and <= 7 }
-                    && info.Hooks.Distinct().Count() == info.Hooks.Length
-                    && info.Hooks.All(h => h is "chat.received" or "chat.pre_reply" or "chat.prompt" or "chat.generate" or "chat.reply" or "chat.before_send" or "chat.dispatched")
-                    && info.Permissions is { Length: <= 2 }
-                    && info.Permissions.All(p => p is "chat.history" or "model.prompt")
-                || info.IsJavaScript && info.HostAction == null && info.Hooks is { Length: > 0 and <= 13 }
-                    && info.Hooks.Distinct().Count() == info.Hooks.Length && info.Hooks.All(NativeHooks.Contains)
-                    && info.Permissions is ["system.full"]
-                    && info.ExecutionTimeoutMs is >= 100 and <= 120000
-                    && info.IntervalSeconds is >= 1 and <= 86400)
-            && Version.TryParse(info.Version, out _) && Version.TryParse(info.MinAppVersion, out var min)
-            && info.AppEpoch is >= 0 and <= 2
-            && ValidAppRanges(info)
-            && (info.EffectiveAppEpoch != 2 || min >= new Version(1, 0, 0))
-            && (!info.IsMessage || info.EffectiveAppEpoch == 2 || min >= new Version(4, 1, 0))
-            && (!info.IsJavaScript || info.EffectiveAppEpoch == 2 || min >= new Version(4, 1, 2))
-            && (string.IsNullOrEmpty(info.MaxAppVersion) || (Version.TryParse(info.MaxAppVersion, out var max) && max >= min))
-            && info.DiscussionIssue >= 0
-            && info.Name?.Trim().Length is > 0 and <= 80
-            && info.Author?.Trim().Length is > 0 and <= 80
-            && SafeText(info.Name, 80).Length > 0
-            && SafeText(info.Author, 80).Length > 0
-            && info.Description?.Length is <= 600 && (info.IsPersona || info.IsFlow ||
-                (info.Kind == "tool" && info.ResultLabel?.Trim().Length is > 0 and <= 80
-                    && SafeText(info.ResultLabel, 80).Length > 0));
+        private static JsonElement LoadRegistry()
+        {
+            using var stream = typeof(PluginMarket).Assembly.GetManifestResourceStream("WhaleLauncher.PluginProtocolRegistry.json")
+                ?? throw new InvalidOperationException("缺少插件协议注册表");
+            using var json = JsonDocument.Parse(stream);
+            return json.RootElement.Clone();
+        }
+
+        private static int Limit(string key) => Registry.GetProperty("limits").GetProperty(key).GetInt32();
+        private static string ProtocolFile(string key) => Registry.GetProperty("files").GetProperty(key).GetString();
+        private static JsonElement LevelPolicy(int level) => Registry.GetProperty("levels").GetProperty(level.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        internal static string LevelName(int level) => Registry.GetProperty("levelNames").TryGetProperty(
+            level.ToString(System.Globalization.CultureInfo.InvariantCulture), out var name) ? name.GetString() : null;
+        private static string EntryFile(PluginInfo info) => Text(LevelPolicy(info.Level), "entry");
+        private static bool Fields(JsonElement value, IEnumerable<string> allowed)
+        {
+            if (value.ValueKind != JsonValueKind.Object) return false;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            return value.EnumerateObject().All(field => allowed.Contains(field.Name, StringComparer.Ordinal) && seen.Add(field.Name));
+        }
+        private static string Text(JsonElement value, string key) =>
+            value.TryGetProperty(key, out var item) && item.ValueKind == JsonValueKind.String ? item.GetString() : null;
+        private static bool Contains(JsonElement array, string value) => array.EnumerateArray().Any(item => item.GetString() == value);
+        private static bool Metadata(PluginInfo info) => ValidId(info.Id)
+            && Version.TryParse(info.Version, out _) && Version.TryParse(info.MinAppVersion, out _)
+            && ValidAppRanges(info) && info.DiscussionIssue >= 0
+            && info.Name?.Trim().Length is > 0 and <= 80 && SafeText(info.Name, 80).Length > 0
+            && info.Author?.Trim().Length is > 0 and <= 80 && SafeText(info.Author, 80).Length > 0
+            && info.Description?.Length is <= 600
+            && (string.IsNullOrEmpty(info.MaxAppVersion) || (Version.TryParse(info.MaxAppVersion, out var max)
+                && max >= Version.Parse(info.MinAppVersion)));
+
+        internal static bool Valid(PluginInfo info) => info != null && info.IsPersona && Metadata(info)
+            && info.Hooks == null && info.Permissions == null
+            && info.Provides == null && info.Calls == null && info.SettingsSchema == null;
+
+        private static PluginInfo ParseUnified(JsonElement manifest)
+        {
+            var failure = new InvalidDataException("统一插件清单无效，或声明了未开放的能力、作用域或调用");
+            var manifestPolicy = Registry.GetProperty("manifest");
+            if (!Fields(manifest, manifestPolicy.GetProperty("allowed").EnumerateArray().Select(item => item.GetString()))
+                || manifestPolicy.GetProperty("required").EnumerateArray().Any(field => !manifest.TryGetProperty(field.GetString(), out _))
+                || Text(manifest, "format") != Registry.GetProperty("format").GetString()
+                || !manifest.TryGetProperty("level", out var levelValue) || levelValue.ValueKind != JsonValueKind.Number
+                || !levelValue.TryGetInt32(out var level) || level is < 1 or > 4
+                || Text(manifest, "runtime") != Text(LevelPolicy(level), "runtime")
+                || Text(manifest, "entry") != Text(LevelPolicy(level), "entry")
+                || !manifest.TryGetProperty("provides", out var declared) || declared.ValueKind != JsonValueKind.Object
+                || !manifest.TryGetProperty("calls", out var callList) || callList.ValueKind != JsonValueKind.Array)
+                throw failure;
+            var levelPolicy = LevelPolicy(level);
+            var provides = new Dictionary<string, PluginProvider>(StringComparer.Ordinal);
+            var providers = Registry.GetProperty("providers");
+            foreach (var field in declared.EnumerateObject())
+            {
+                if (!Contains(levelPolicy.GetProperty("providers"), field.Name)
+                    || !providers.TryGetProperty(field.Name, out var rule)
+                    || !Fields(field.Value, ["mode", "scope", "intervalSeconds"])) throw failure;
+                var mode = Text(field.Value, "mode");
+                var scope = Text(field.Value, "scope");
+                if (!Contains(rule.GetProperty("modes"), mode) || !Contains(rule.GetProperty("scopes"), scope)) throw failure;
+                int? interval = null;
+                var requiresInterval = rule.TryGetProperty("intervalSeconds", out var range);
+                var hasInterval = field.Value.TryGetProperty("intervalSeconds", out var value);
+                if (requiresInterval != hasInterval) throw failure;
+                if (requiresInterval)
+                {
+                    if (value.ValueKind != JsonValueKind.Number
+                        || !value.TryGetInt32(out var seconds) || seconds < range.GetProperty("min").GetInt32()
+                        || seconds > range.GetProperty("max").GetInt32()) throw failure;
+                    interval = seconds;
+                }
+                if (!provides.TryAdd(field.Name, new(mode, scope, interval))) throw failure;
+            }
+            if (provides.Count == 0) throw failure;
+            var calls = new List<string>();
+            foreach (var call in callList.EnumerateArray())
+            {
+                if (call.ValueKind != JsonValueKind.String || !Registry.GetProperty("calls").TryGetProperty(call.GetString(), out _)
+                    || !Contains(levelPolicy.GetProperty("calls"), call.GetString())
+                    || calls.Contains(call.GetString(), StringComparer.Ordinal)) throw failure;
+                calls.Add(call.GetString());
+            }
+            var timeout = 30000;
+            if (manifest.TryGetProperty("executionTimeoutMs", out var timeoutValue)
+                && (timeoutValue.ValueKind != JsonValueKind.Number || !timeoutValue.TryGetInt32(out timeout)
+                    || timeout < Limit("minExecutionTimeoutMs") || timeout > Limit("maxExecutionTimeoutMs"))) throw failure;
+            JsonElement? schema = null;
+            if (manifest.TryGetProperty("settingsSchema", out var settingsSchema))
+            {
+                if (settingsSchema.ValueKind != JsonValueKind.Object || Text(settingsSchema, "type") != "object"
+                    || !ValidSchema(settingsSchema, 0)) throw failure;
+                schema = settingsSchema.Clone();
+            }
+            var appEpoch = 0;
+            if (manifest.TryGetProperty("appEpoch", out var epoch) && (epoch.ValueKind != JsonValueKind.Number
+                || !epoch.TryGetInt32(out appEpoch) || appEpoch is not (1 or 2))) throw failure;
+            PluginAppRange[] ranges = null;
+            if (manifest.TryGetProperty("appCompatibility", out var compatibility))
+            {
+                if (compatibility.ValueKind != JsonValueKind.Array || compatibility.GetArrayLength() is < 1 or > 2) throw failure;
+                ranges = compatibility.EnumerateArray().Select(range =>
+                {
+                    if (!Fields(range, ["appEpoch", "minAppVersion", "maxAppVersion"])
+                        || !range.TryGetProperty("appEpoch", out var rangeEpoch) || rangeEpoch.ValueKind != JsonValueKind.Number
+                        || !rangeEpoch.TryGetInt32(out var generation) || generation is not (1 or 2)
+                        || Text(range, "minAppVersion") is not string min
+                        || range.TryGetProperty("maxAppVersion", out var maximum) && maximum.ValueKind != JsonValueKind.String) throw failure;
+                    return new PluginAppRange(generation, min, Text(range, "maxAppVersion"));
+                }).ToArray();
+            }
+            if (manifest.TryGetProperty("maxAppVersion", out var maxVersion) && maxVersion.ValueKind != JsonValueKind.String)
+                throw failure;
+            var dataAccess = new List<string>();
+            if (manifest.TryGetProperty("dataAccess", out var dataList))
+            {
+                if (dataList.ValueKind != JsonValueKind.Array || !provides.ContainsKey("chat.reply@1")
+                    || !levelPolicy.TryGetProperty("dataAccess", out var allowedData)) throw failure;
+                foreach (var item in dataList.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.String || !Contains(allowedData, item.GetString())
+                        || dataAccess.Contains(item.GetString(), StringComparer.Ordinal)) throw failure;
+                    dataAccess.Add(item.GetString());
+                }
+            }
+            var info = new PluginInfo(Text(manifest, "id"), Text(manifest, "name"), Text(manifest, "author"),
+                Text(manifest, "version"), Text(manifest, "minAppVersion"), Text(manifest, "description"), null, 5,
+                Kind: "plugin", MaxAppVersion: Text(manifest, "maxAppVersion"), ExecutionTimeoutMs: timeout,
+                AppEpoch: appEpoch, AppCompatibility: ranges,
+                Provides: provides, Calls: calls.ToArray(), SettingsSchema: schema, Level: level,
+                DataAccess: dataAccess.ToArray());
+            if (!Metadata(info)) throw failure;
+            return info;
+        }
+
+        private static bool ValidSchema(JsonElement schema, int depth)
+        {
+            var policy = Registry.GetProperty("settingsSchema");
+            if (depth >= policy.GetProperty("maxDepth").GetInt32()
+                || !Fields(schema, policy.GetProperty("supportedKeywords").EnumerateArray().Select(item => item.GetString()))) return false;
+            var type = Text(schema, "type");
+            if (!Contains(policy.GetProperty("allowedTypes"), type)) return false;
+            if (schema.TryGetProperty("properties", out var properties))
+            {
+                if (type != "object" || properties.ValueKind != JsonValueKind.Object) return false;
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                if (properties.EnumerateObject().Any(field => !names.Add(field.Name) || !ValidSchema(field.Value, depth + 1))) return false;
+            }
+            if (schema.TryGetProperty("required", out var required))
+            {
+                if (type != "object" || required.ValueKind != JsonValueKind.Array) return false;
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                if (required.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String || !names.Add(item.GetString()))) return false;
+            }
+            if (schema.TryGetProperty("additionalProperties", out var additional)
+                && (type != "object" || additional.ValueKind is not (JsonValueKind.True or JsonValueKind.False))) return false;
+            if (!SchemaRange(schema, "minimum", "maximum", type is "integer" or "number", false)
+                || !SchemaRange(schema, "minLength", "maxLength", type == "string", true)) return false;
+            if (schema.TryGetProperty("enum", out var choices) && (choices.ValueKind != JsonValueKind.Array
+                || choices.GetArrayLength() == 0 || choices.EnumerateArray().Any(item => !MatchesType(item, type)))) return false;
+            return true;
+        }
+
+        private static bool SchemaRange(JsonElement schema, string min, string max, bool allowed, bool length)
+        {
+            var hasMin = schema.TryGetProperty(min, out var lower);
+            var hasMax = schema.TryGetProperty(max, out var upper);
+            bool ValidBound(JsonElement value) => value.ValueKind == JsonValueKind.Number && double.IsFinite(value.GetDouble())
+                && (!length || value.TryGetInt32(out var count) && count >= 0);
+            return (!hasMin && !hasMax) || allowed && (!hasMin || ValidBound(lower)) && (!hasMax || ValidBound(upper))
+                && (!hasMin || !hasMax || lower.GetDouble() <= upper.GetDouble());
+        }
+
+        private static bool MatchesType(JsonElement value, string type) => type switch
+        {
+            "object" => value.ValueKind == JsonValueKind.Object,
+            "string" => value.ValueKind == JsonValueKind.String,
+            "boolean" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
+            "integer" => value.ValueKind == JsonValueKind.Number && double.IsFinite(value.GetDouble()) && Math.Truncate(value.GetDouble()) == value.GetDouble(),
+            "number" => value.ValueKind == JsonValueKind.Number && double.IsFinite(value.GetDouble()),
+            _ => false
+        };
+
+        private static bool MatchesSchema(JsonElement value, JsonElement schema)
+        {
+            var type = Text(schema, "type");
+            if (!MatchesType(value, type)) return false;
+            if (schema.TryGetProperty("enum", out var choices)
+                && !choices.EnumerateArray().Any(item => JsonElement.DeepEquals(item, value))) return false;
+            if (type == "object")
+            {
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                var hasProps = schema.TryGetProperty("properties", out var props);
+                var allowExtra = !schema.TryGetProperty("additionalProperties", out var extra) || extra.GetBoolean();
+                foreach (var field in value.EnumerateObject())
+                    if (!seen.Add(field.Name) || (hasProps && props.TryGetProperty(field.Name, out var fieldSchema)
+                        ? !MatchesSchema(field.Value, fieldSchema) : !allowExtra)) return false;
+                return !schema.TryGetProperty("required", out var required) || required.EnumerateArray().All(item => seen.Contains(item.GetString()));
+            }
+            var lower = type == "string" ? "minLength" : "minimum";
+            var upper = type == "string" ? "maxLength" : "maximum";
+            var number = type == "string" ? value.GetString().EnumerateRunes().Count() : type is "integer" or "number" ? value.GetDouble() : 0;
+            return (!schema.TryGetProperty(lower, out var min) || number >= min.GetDouble())
+                && (!schema.TryGetProperty(upper, out var max) || number <= max.GetDouble());
+        }
 
         internal static PluginPackage ReadPackage(byte[] bytes)
         {
@@ -200,36 +361,37 @@ namespace WhaleLauncher
             using var zip = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
             if (zip.Entries.Count != 2 || zip.GetEntry("plugin.json") is not { } manifest)
                 throw new InvalidDataException("ZIP 根目录必须包含 plugin.json 和一个插件文件");
-            using var metadata = manifest.Open();
-            var info = JsonSerializer.Deserialize<PluginInfo>(ReadLimited(metadata, 8192), ReadOptions);
-            if (!Valid(info)) throw new InvalidDataException("插件清单无效或接口版本不支持");
-            if (!info.IsJavaScript && bytes.Length > 1024 * 1024) throw new InvalidDataException("旧接口插件包超过 1 MiB");
-            if (zip.Entries.Any(e => ((e.ExternalAttributes >> 16) & 0xF000) == 0xA000))
+            if (zip.Entries.Any(entry => ((entry.ExternalAttributes >> 16) & 0xF000) == 0xA000))
                 throw new InvalidDataException("插件包不得包含符号链接");
-            if (info.IsJavaScript)
+            using var metadata = manifest.Open();
+            var raw = ReadLimited(metadata, Limit("maxManifestBytes"));
+            using var json = JsonDocument.Parse(raw);
+            if (json.RootElement.ValueKind != JsonValueKind.Object) throw new InvalidDataException("插件清单必须为 JSON 对象");
+            if (json.RootElement.TryGetProperty("format", out _))
             {
-                using var script = (zip.GetEntry("plugin.js") ?? throw new InvalidDataException("JavaScript 插件需要 plugin.js")).Open();
-                var source = ReadLimited(script, 8 * 1024 * 1024);
-                try { _ = new UTF8Encoding(false, true).GetString(source); }
-                catch (DecoderFallbackException) { throw new InvalidDataException("plugin.js 必须为 UTF-8"); }
-                if (source.Length == 0) throw new InvalidDataException("plugin.js 不能为空");
-                return new PluginPackage(info, source);
+                var info = ParseUnified(json.RootElement);
+                var filename = EntryFile(info);
+                using var entry = (zip.GetEntry(filename) ?? throw new InvalidDataException($"该等级需要 {filename}")).Open();
+                var source = ReadLimited(entry, LevelPolicy(info.Level).GetProperty("maxEntryBytes").GetInt32());
+                if (info.RequiresFullAccess)
+                {
+                    try
+                    {
+                        if (string.IsNullOrWhiteSpace(StrictUtf8.GetString(source))) throw new InvalidDataException("plugin.js 不能为空");
+                    }
+                    catch (DecoderFallbackException) { throw new InvalidDataException("plugin.js 必须为 UTF-8"); }
+                }
+                else if (!source.AsSpan().StartsWith(new byte[] { 0, 97, 115, 109, 1, 0, 0, 0 }))
+                    throw new InvalidDataException("plugin.wasm 必须具有有效的 WebAssembly v1 文件头");
+                return new PluginPackage(info, source, RawManifest: raw);
             }
-            if (info.IsPersona)
-            {
-                using var preset = (zip.GetEntry("persona.json") ??
-                    throw new InvalidDataException("人设包需要 persona.json")).Open();
-                using var json = JsonDocument.Parse(ReadLimited(preset, 192 * 1024));
-                var data = json.RootElement;
-                var document = PersonaPackage.Read(data);
-                return new PluginPackage(info, null, (string)document["customPrompt"], JsonSerializer.Serialize(document));
-            }
-            using var code = (zip.GetEntry("plugin.wasm") ??
-                throw new InvalidDataException("工具包需要 plugin.wasm")).Open();
-            var wasm = ReadLimited(code, 512 * 1024);
-            if (wasm.Length < 8 || !wasm.AsSpan(0, 8).SequenceEqual(new byte[] { 0, 97, 115, 109, 1, 0, 0, 0 }))
-                throw new InvalidDataException("插件缺少有效的 WebAssembly 模块");
-            return new PluginPackage(info, wasm);
+            var persona = json.RootElement.Deserialize<PluginInfo>(ReadOptions);
+            if (!Valid(persona)) throw new InvalidDataException("人设包清单无效");
+            if (raw.Length > 8192 || bytes.Length > 1024 * 1024) throw new InvalidDataException("人设包超过大小限制");
+            using var preset = (zip.GetEntry("persona.json") ?? throw new InvalidDataException("人设包需要 persona.json")).Open();
+            using var data = JsonDocument.Parse(ReadLimited(preset, 192 * 1024));
+            var document = PersonaPackage.Read(data.RootElement);
+            return new PluginPackage(persona, null, (string)document["customPrompt"], JsonSerializer.Serialize(document));
         }
 
         private static byte[] ReadLimited(Stream stream, int limit)
@@ -245,241 +407,13 @@ namespace WhaleLauncher
             return output.ToArray();
         }
 
-        // GitHub raw / releases 在部分网络会被拦；按直达 → jsDelivr → 公共反代的顺序试。
-        // 只有原始地址通过 GitHub HTTPS 校验后才生成镜像，镜像本身也不允许带用户信息。
-        private static IEnumerable<string> DownloadCandidates(string url)
+        internal static PluginPackage ValidateLocal(string file, string version, int appEpoch = 1)
         {
-            yield return url;
-            if (url.StartsWith("https://raw.githubusercontent.com/", StringComparison.Ordinal))
-            {
-                var rest = url.Substring("https://raw.githubusercontent.com/".Length);
-                var parts = rest.Split('/');
-                if (parts.Length >= 3)
-                    yield return $"https://cdn.jsdelivr.net/gh/{parts[0]}/{parts[1]}@{parts[2]}/{string.Join("/", parts.Skip(3))}";
-            }
-            if (url.StartsWith("https://raw.githubusercontent.com/", StringComparison.Ordinal)
-                || url.StartsWith("https://github.com/", StringComparison.Ordinal)
-                || url.StartsWith("https://release-assets.githubusercontent.com/", StringComparison.Ordinal)
-                || url.StartsWith("https://objects.githubusercontent.com/", StringComparison.Ordinal))
-            {
-                yield return "https://gh-proxy.com/" + url;
-                yield return "https://ghfast.top/" + url;
-            }
+            var package = ReadPackage(ReadFile(file));
+            if (!Compatible(package.Info, version, appEpoch))
+                throw new InvalidDataException("插件适用的鲸鲸版本体系或版本范围与当前客户端不兼容");
+            return package;
         }
-
-        private static async Task<byte[]> DownloadAsync(string url, int limit, bool feedback = false, bool stopOnNotFound = false)
-        {
-            Exception last = null;
-            foreach (var candidate in DownloadCandidates(url))
-            {
-                try
-                {
-                    return await DownloadOnce(candidate, limit, feedback, stopOnNotFound);
-                }
-                catch (DownloadMissingException) { throw; }
-                catch (Exception ex) when (ex is HttpRequestException or InvalidDataException
-                    or OperationCanceledException or IOException)
-                {
-                    last = ex;
-                }
-            }
-            throw last ?? new InvalidDataException("插件下载失败");
-        }
-
-        private static async Task<byte[]> DownloadOnce(string url, int limit, bool feedback = false, bool stopOnNotFound = false)
-        {
-            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) throw new InvalidDataException("下载地址无效");
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(feedback ? 5 : 20));
-            for (var hop = 0; hop < 5; hop++)
-            {
-                var allowedHost = uri.Host is "raw.githubusercontent.com" or "github.com" or "release-assets.githubusercontent.com"
-                    or "objects.githubusercontent.com" or "cdn.jsdelivr.net" or "gh-proxy.com" or "ghfast.top"
-                    || (feedback && uri.Host == "api.github.com");
-                if (uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort || uri.UserInfo.Length != 0 || !allowedHost)
-                    throw new InvalidDataException("插件下载地址须使用 GitHub HTTPS");
-                using var response = await Http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-                if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308 && response.Headers.Location is { } location)
-                {
-                    uri = new Uri(uri, location);
-                    continue;
-                }
-                if (stopOnNotFound && response.StatusCode == HttpStatusCode.NotFound)
-                    throw new DownloadMissingException();
-                response.EnsureSuccessStatusCode();
-                if (response.Content.Headers.ContentLength > limit) throw new InvalidDataException("下载文件超过大小限制");
-                await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
-                using var result = new MemoryStream();
-                var buffer = new byte[8192];
-                int count;
-                while ((count = await stream.ReadAsync(buffer.AsMemory(), timeout.Token)) > 0)
-                {
-                    if (result.Length + count > limit) throw new InvalidDataException("下载文件超过大小限制");
-                    result.Write(buffer, 0, count);
-                }
-                return result.ToArray();
-            }
-            throw new InvalidDataException("下载重定向次数过多");
-        }
-
-        internal static async Task<PluginInfo[]> CatalogAsync()
-        {
-            // index.json 是主目录，拿不到或签名不对就整体拒绝；
-            // v2/v3 与人设目录是可选目录，缺签名时跳过，避免旧目录把整个市场拖死。
-            var items = await LoadCatalogAsync(CatalogUrl, 1, "tool");
-            try { items = items.Concat(await LoadCatalogAsync(CatalogV2Url, 2, "tool")).ToArray(); }
-            catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidDataException
-                or OperationCanceledException or InvalidOperationException)
-            { /* 独立目录可能尚未发布或尚未签名。 */ }
-            try { items = items.Concat(await LoadCatalogAsync(CatalogV3Url, 3, "message")).ToArray(); }
-            catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidDataException
-                or OperationCanceledException or InvalidOperationException) { }
-            try { items = items.Concat(await LoadCatalogAsync(CatalogV4Url, 4)).ToArray(); }
-            catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidDataException
-                or OperationCanceledException or InvalidOperationException) { }
-            try { items = items.Concat(await LoadCatalogAsync(PersonaCatalogUrl, 1, "persona")).ToArray(); }
-            catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidDataException
-                or OperationCanceledException or InvalidOperationException) { }
-            return items.GroupBy(i => i.Id).SelectMany(group => group
-                .GroupBy(i => i.Version).Select(version => version.First())).ToArray();
-        }
-
-        private static async Task<PluginInfo[]> LoadCatalogAsync(string url, int? expectedApi = null,
-            string expectedKind = null)
-        {
-            var bytes = await DownloadAsync(url, 256 * 1024);
-            if (!MarketSignatureEnabled) return ParseCatalog(bytes, expectedApi, expectedKind);
-            string signature = null;
-            try
-            {
-                signature = Encoding.UTF8.GetString(await DownloadAsync(url + ".sig", 4096, stopOnNotFound: true)).Trim();
-            }
-            catch (DownloadMissingException)
-            {
-                // 目录还没签名时按未签名目录加载：市场初期没有 .sig，强制验签会把整个市场挡在门外。
-                // 一旦目录带了 .sig 就必须验过才用，签错依然拒绝（ParseSignedCatalog 里抛）。
-            }
-            if (string.IsNullOrWhiteSpace(signature)) return ParseCatalog(bytes, expectedApi, expectedKind);
-            return ParseSignedCatalog(bytes, signature, expectedApi, expectedKind);
-        }
-
-        internal static PluginInfo[] ParseSignedCatalog(byte[] bytes, string signature, int? expectedApi = null,
-            string expectedKind = null)
-        {
-            if (!PluginTrust.Verify(bytes, signature))
-                throw new InvalidDataException("市场目录签名无效，已拒绝加载");
-            return ParseCatalog(bytes, expectedApi, expectedKind);
-        }
-
-        internal static PluginInfo[] ParseCatalog(byte[] bytes, int? expectedApi = null, string expectedKind = null)
-        {
-            using var json = JsonDocument.Parse(bytes);
-            if (json.RootElement.ValueKind != JsonValueKind.Array)
-                throw new InvalidDataException("市场目录格式无效");
-            return json.RootElement.EnumerateArray().Select(item =>
-            {
-                try { return item.Deserialize<PluginInfo>(ReadOptions); }
-                catch (JsonException) { return null; }
-            }).Where(i => Valid(i) && (!expectedApi.HasValue || i.Api == expectedApi.Value)
-                && (expectedKind == null || i.Kind == expectedKind) && !string.IsNullOrWhiteSpace(i.Download)
-                && Regex.IsMatch(i.Sha256 ?? "", @"\A[0-9a-fA-F]{64}\z")).ToArray();
-        }
-
-        internal static async Task<Dictionary<int, PluginFeedback>> FeedbackAsync(IEnumerable<PluginInfo> catalog)
-        {
-            var remaining = catalog.Select(plugin => plugin.DiscussionIssue).Where(number => number > 0).ToHashSet();
-            var feedback = new Dictionary<int, PluginFeedback>();
-            for (var page = 1; remaining.Count > 0; page++)
-            {
-                var url = $"{MarketApi}/issues?state=all&per_page=100&page={page}";
-                using var payload = JsonDocument.Parse(await DownloadAsync(url, 1024 * 1024, feedback: true));
-                foreach (var issue in payload.RootElement.EnumerateArray())
-                {
-                    if (issue.TryGetProperty("pull_request", out _)) continue;
-                    var number = issue.GetProperty("number").GetInt32();
-                    if (!remaining.Remove(number)) continue;
-                    var comments = issue.GetProperty("comments").GetInt32();
-                    feedback[number] = new PluginFeedback(comments);
-                }
-                if (payload.RootElement.GetArrayLength() < 100) break;
-            }
-            return feedback;
-        }
-
-        internal async Task<Dictionary<string, MarketFavorite>> FavoritesAsync(IEnumerable<string> ids)
-        {
-            var favorites = new Dictionary<string, MarketFavorite>(StringComparer.Ordinal);
-            foreach (var batch in ids.Where(ValidId).Distinct().Chunk(64))
-            {
-                using var request = new HttpRequestMessage(HttpMethod.Get,
-                    FavoritesUrl + "?ids=" + Uri.EscapeDataString(string.Join(",", batch)));
-                var states = await SendFavoriteRequest(request);
-                foreach (var id in batch)
-                {
-                    if (!states.TryGetValue(id, out var state)) throw new InvalidDataException("收藏统计缺少插件数据");
-                    favorites.Add(id, state);
-                }
-            }
-            return favorites;
-        }
-
-        internal async Task<MarketFavorite> SetFavoriteAsync(string id, bool favorited)
-        {
-            if (!ValidId(id)) throw new InvalidDataException("插件 ID 无效");
-            using var request = new HttpRequestMessage(HttpMethod.Put, FavoritesUrl)
-            {
-                Content = new StringContent(JsonSerializer.Serialize(new { id, favorited }), Encoding.UTF8, "application/json")
-            };
-            var states = await SendFavoriteRequest(request);
-            if (!states.TryGetValue(id, out var state) || state.Favorited != favorited)
-                throw new InvalidDataException("未收到收藏确认");
-            return state;
-        }
-
-        private async Task<Dictionary<string, MarketFavorite>> SendFavoriteRequest(HttpRequestMessage request)
-        {
-            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", FavoriteInstallationKey());
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-            if (!response.IsSuccessStatusCode) throw new HttpRequestException("暂时无法连接收藏服务，请稍后重试");
-            await response.Content.LoadIntoBufferAsync(32 * 1024, timeout.Token);
-            return ParseFavoriteStates(await response.Content.ReadAsByteArrayAsync(timeout.Token));
-        }
-
-        internal static Dictionary<string, MarketFavorite> ParseFavoriteStates(byte[] json)
-        {
-            using var payload = JsonDocument.Parse(json);
-            var states = new Dictionary<string, MarketFavorite>(StringComparer.Ordinal);
-            foreach (var item in payload.RootElement.GetProperty("favorites").EnumerateArray())
-            {
-                var id = item.GetProperty("id").GetString();
-                var count = item.GetProperty("count").GetInt64();
-                var favorited = item.GetProperty("favorited").GetBoolean();
-                if (!ValidId(id) || count < 0 || (favorited && count == 0) || !states.TryAdd(id, new(id, count, favorited)))
-                    throw new InvalidDataException("收藏统计格式无效");
-            }
-            return states;
-        }
-
-        private string FavoriteInstallationKey()
-        {
-            EnsureRoot();
-            var file = FileFor("market-favorites", ".key");
-            if (!File.Exists(file))
-            {
-                var temporary = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
-                try
-                {
-                    File.WriteAllText(temporary, Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32)));
-                    try { File.Move(temporary, file); }
-                    catch (IOException) when (File.Exists(file)) { }
-                }
-                finally { File.Delete(temporary); }
-            }
-            var key = File.ReadAllText(FileFor("market-favorites", ".key"));
-            if (!Regex.IsMatch(key, @"\A[0-9a-f]{64}\z")) throw new InvalidDataException("本地收藏凭据无效");
-            return key;
-        }
-
         private string FileFor(string id, string suffix)
         {
             if (!ValidId(id)) throw new InvalidDataException("插件 ID 无效");
@@ -504,7 +438,8 @@ namespace WhaleLauncher
                 try
                 {
                     var id = Path.GetFileNameWithoutExtension(path);
-                    var info = ReadPackage(ReadFile(FileFor(id, ".zip"))).Info;
+                    var bytes = ReadFile(FileFor(id, ".zip"));
+                    var info = ReadInstalledInfo(bytes);
                     if (info.Id == id) installed.Add(info);
                 }
                 catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException) { }
@@ -512,25 +447,100 @@ namespace WhaleLauncher
             return installed.OrderBy(i => i.Name).ToArray();
         }
 
+        private static string Digest(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        private const string SettingsFilename = "settings.json";
+
+        private string InstallDirectory(string id)
+        {
+            var path = FileFor(id, "");
+            if (Path.Exists(path) && (!Directory.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0))
+                throw new IOException("插件安装目录必须是普通目录");
+            return path;
+        }
+
+        private string InstallFile(string id, string filename)
+        {
+            var path = Path.Combine(InstallDirectory(id), filename);
+            if (Path.Exists(path) && (!File.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0))
+                throw new IOException("插件数据文件不能是链接或目录");
+            return path;
+        }
+
+        private static PluginInfo ReadInstalledInfo(byte[] bytes)
+        {
+            try { return ReadPackage(bytes).Info; }
+            catch (InvalidDataException)
+            {
+                using var zip = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
+                using var entry = (zip.GetEntry("plugin.json") ?? throw new InvalidDataException("缺少清单")).Open();
+                var info = JsonSerializer.Deserialize<PluginInfo>(ReadLimited(entry, 8192), ReadOptions);
+                if (info?.Api is < 1 or > 4 || info?.Kind == "persona" || info == null || !Metadata(info)) throw;
+                return info;
+            }
+        }
+
+        private void Revoke(string id)
+        {
+            var grant = InstallFile(id, ProtocolFile("grant"));
+            if (File.Exists(grant)) File.Delete(grant);
+            File.Delete(FileFor(id, ".flow-grant.json"));
+            File.Delete(FileFor(id, ".enabled"));
+            File.Delete(FileFor(id, ".persona.json"));
+        }
+
         internal bool Enabled(string id)
         {
             EnsureRoot();
-            return File.Exists(FileFor(id, ".enabled")) || File.Exists(FileFor(id, ".persona.json"));
+            if (File.Exists(FileFor(id, ".persona.json"))) return true;
+            try
+            {
+                var grant = InstallFile(id, ProtocolFile("grant"));
+                if (!File.Exists(grant)) return false;
+                var archive = ReadFile(FileFor(id, ".zip"));
+                var installed = ReadPackage(archive);
+                if (!installed.Info.IsUnified || installed.Info.Id != id) return false;
+                using var parsed = JsonDocument.Parse(ReadFile(grant));
+                return GrantMatches(id, parsed.RootElement, installed, archive);
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or JsonException) { return false; }
         }
 
-        internal void SetEnabled(string id, bool enabled, bool fullAccessApproved = false)
+        private bool DeploymentMatches(string id, PluginPackage installed) =>
+            ReadFile(InstallFile(id, ProtocolFile("manifest"))).AsSpan().SequenceEqual(installed.RawManifest)
+            && ReadFile(InstallFile(id, EntryFile(installed.Info))).AsSpan().SequenceEqual(installed.Module);
+
+        private bool GrantMatches(string id, JsonElement grant, PluginPackage installed, byte[] archive)
+        {
+            if (grant.ValueKind != JsonValueKind.Object) return false;
+            bool Flag(string name, bool expected) => grant.TryGetProperty(name, out var value)
+                && value.ValueKind == (expected ? JsonValueKind.True : JsonValueKind.False);
+            return grant.TryGetProperty("level", out var level) && level.ValueKind == JsonValueKind.Number
+                && level.TryGetInt32(out var grantedLevel) && grantedLevel == installed.Info.Level
+                && Flag("enabled", true) && Flag("fullAccess", installed.Info.RequiresFullAccess)
+                && Flag("nodeFullConfirmed", installed.Info.RequiresFullAccess)
+                && Flag("chatConfirmed", installed.Info.RequiresChatAccess)
+                && DataAccessMatches(grant, installed.Info)
+                && Guid.TryParseExact(Text(grant, "epoch"), "D", out _)
+                && Text(grant, "packageHash") == Digest(archive)
+                && Text(grant, "manifestHash") == Digest(installed.RawManifest)
+                && Text(grant, "entryHash") == Digest(installed.Module)
+                && DeploymentMatches(id, installed);
+        }
+
+        private static bool DataAccessMatches(JsonElement grant, PluginInfo info)
+        {
+            var expected = info.DataAccess ?? Array.Empty<string>();
+            if (!grant.TryGetProperty("approvedDataAccess", out var value) || value.ValueKind != JsonValueKind.Array) return expected.Length == 0;
+            var actual = value.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString()).ToArray();
+            return actual.Length == expected.Length && expected.All(name => actual.Contains(name, StringComparer.Ordinal));
+        }
+
+        internal void SetEnabled(string id, bool enabled, bool fullAccessApproved = false, bool chatAccessApproved = false)
         {
             EnsureRoot();
-            var marker = FileFor(id, ".enabled");
-            var preset = FileFor(id, ".persona.json");
-            if (!enabled)
-            {
-                File.Delete(FileFor(id, ".flow-grant.json"));
-                File.Delete(marker);
-                File.Delete(preset);
-                return;
-            }
-            var package = ReadPackage(ReadFile(FileFor(id, ".zip")));
+            if (!enabled) { Revoke(id); return; }
+            var archive = ReadFile(FileFor(id, ".zip"));
+            var package = ReadPackage(archive);
             if (package.Info.Id != id || !Compatible(package.Info, UpdateManifestService.LocalVersion(_baseDir), UpdateManifestService.LocalEpoch(_baseDir)))
                 throw new InvalidDataException("插件标识或兼容版本无效");
             if (package.Info.IsPersona)
@@ -540,18 +550,16 @@ namespace WhaleLauncher
                 document["name"] = package.Info.Name;
                 document["description"] = package.Info.Description;
                 document["version"] = package.Info.Version;
-                WriteAtomically(preset, JsonSerializer.SerializeToUtf8Bytes(document));
+                WriteAtomically(FileFor(id, ".persona.json"), JsonSerializer.SerializeToUtf8Bytes(document));
+                return;
             }
-            else if (package.Info.IsFlow)
-            {
-                if (package.Info.IsJavaScript && !fullAccessApproved)
-                    throw new InvalidDataException("JavaScript 插件需要明确确认完整系统权限");
-                PublishMessagePackage(package);
-                SaveFlowGrant(package.Info, MessageSettings(id), package.Info.IsJavaScript);
-                WriteAtomically(marker, []);
-            }
-            else if (!File.Exists(marker))
-                using (File.Open(marker, FileMode.CreateNew)) { }
+            if (package.Info.RequiresFullAccess && !fullAccessApproved)
+                throw new InvalidDataException("启动此插件需要明确确认完整系统权限");
+            if (package.Info.RequiresChatAccess && !chatAccessApproved)
+                throw new InvalidDataException("启动此插件需要明确确认聊天数据访问");
+            if (!DeploymentMatches(id, package)) throw new InvalidDataException("已安装文件与原始插件包不一致，请重新安装");
+            using var settings = ParseSettings(package.Info, MessageSettings(id));
+            SaveGrant(id, package, archive, settings.RootElement);
         }
 
         internal void Uninstall(string id)
@@ -559,28 +567,32 @@ namespace WhaleLauncher
             SetEnabled(id, false);
             File.Delete(FileFor(id, ".zip"));
             File.Delete(FileFor(id, ".flow.json"));
-            DeletePluginData(id);
+            DeleteLegacyPluginData(id);
+            var install = InstallDirectory(id);
+            if (!Directory.Exists(install)) return;
+            File.Delete(InstallFile(id, ProtocolFile("manifest")));
+            foreach (var entry in Registry.GetProperty("levels").EnumerateObject().Select(pair => Text(pair.Value, "entry")).Distinct())
+                File.Delete(InstallFile(id, entry));
+            File.Delete(InstallFile(id, SettingsFilename));
+            // 插件拥有完整权限；不递归清除插件可控制的路径，避免删除链接目标或用户文件。
         }
 
-        /// <summary>清掉插件自己的设置与会话状态；插件包和清单由调用方决定是否保留。</summary>
-        private void DeletePluginData(string id)
+        private void DeleteLegacyPluginData(string id)
         {
             File.Delete(FileFor(id, ".flow-settings.json"));
-            // 消息插件的会话状态是聊天派生数据，卸载或换作者时必须一起清掉；
-            // 否则同 ID 的新插件会继承旧状态，用户也会以为已经删干净了。
             foreach (var pattern in new[] { id + ".*.state.json", id + ".*.state.json.*.tmp" })
             {
                 foreach (var file in Directory.EnumerateFiles(_root, pattern))
                 {
                     try { File.Delete(file); }
-                    catch (IOException) { /* 被占用时下次启动还能再清；卸载本身不应失败。 */ }
+                    catch (IOException) { }
                 }
             }
         }
 
         internal async Task InstallAsync(PluginInfo listing)
         {
-            var bytes = await DownloadAsync(listing.Download, PackageLimit);
+            var bytes = await PluginCatalog.DownloadAsync(listing.Download, PackageLimit);
             // 签名暂时隐藏：恢复 MarketSignatureEnabled 后，条目里带了 Signature 就必须验过。
             if (MarketSignatureEnabled && !string.IsNullOrWhiteSpace(listing.Signature) && !PluginTrust.Verify(bytes, listing.Signature))
                 throw new InvalidDataException("插件包签名无效，已拒绝安装");
@@ -606,99 +618,87 @@ namespace WhaleLauncher
         {
             if (!Compatible(info, UpdateManifestService.LocalVersion(_baseDir), UpdateManifestService.LocalEpoch(_baseDir)))
                 throw new InvalidDataException("插件适用的鲸鲸版本体系或版本范围与当前客户端不兼容");
+            if (Directory.Exists(_root)) EnsureRoot();
             var target = FileFor(info.Id, ".zip");
             PluginInfo current = null;
-            if (Directory.Exists(_root)) EnsureRoot();
             if (File.Exists(target))
             {
-                current = ReadPackage(ReadFile(target)).Info;
+                try { current = ReadPackage(ReadFile(target)).Info; }
+                catch (InvalidDataException) { throw new InvalidDataException("该插件 ID 已有旧版或损坏的安装，请先卸载"); }
                 if (current.Kind != info.Kind) throw new InvalidDataException("同一插件 ID 不能更换类型");
                 if (Version.Parse(current.Version) >= Version.Parse(info.Version))
                     throw new InvalidDataException("已安装相同或更新版本");
-                // 市场更新不能跨作者接管同一个 ID；本地 ZIP 仍可安装，但确认框会明确提示作者变化。
-                if (!SameAuthor(current.Author, info.Author) && confirm == null)
+                if (!SameAuthor(current.Author, info.Author))
                     throw new InvalidDataException("插件 ID 已被其他作者使用，请先卸载旧版本");
             }
             if (confirm != null && !confirm(info, current)) return false;
             EnsureRoot();
-            // 本地确认允许换作者，但不能让新作者继承旧插件的授权和聊天状态。
-            if (current != null && !SameAuthor(current.Author, info.Author))
+            // 更新永远先撤权；安装与保存配置不会新建授权。
+            Revoke(info.Id);
+            if (info.IsUnified)
             {
-                SetEnabled(info.Id, false);
-                DeletePluginData(info.Id);
+                var package = ReadPackage(bytes);
+                var install = InstallDirectory(info.Id);
+                Directory.CreateDirectory(install);
+                var data = Directory.CreateDirectory(Path.Combine(install, ProtocolFile("dataDirectory")));
+                if ((data.Attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("插件数据目录不能是链接");
+                var entry = EntryFile(info);
+                if (current?.IsUnified == true && EntryFile(current) != entry)
+                    File.Delete(InstallFile(info.Id, EntryFile(current)));
+                WriteAtomically(InstallFile(info.Id, ProtocolFile("manifest")), package.RawManifest);
+                WriteAtomically(InstallFile(info.Id, entry), package.Module);
             }
-            if (current != null && info.IsPersona) SetEnabled(info.Id, false);
-            if (info.IsFlow || current?.IsFlow == true) SetEnabled(info.Id, false);
             WriteAtomically(target, bytes);
-            if (info.IsFlow)
-            {
-                File.Delete(FileFor(info.Id, ".flow-grant.json"));
-                File.Delete(FileFor(info.Id, ".enabled"));
-                PublishMessagePackage(ReadPackage(bytes));
-            }
             return true;
-        }
-
-        private void PublishMessagePackage(PluginPackage package)
-        {
-            var info = package.Info;
-            if (info.IsJavaScript)
-            {
-                WriteAtomically(FileFor(info.Id, ".flow.json"), JsonSerializer.SerializeToUtf8Bytes(new
-                {
-                    id = info.Id, api = 4, kind = info.Kind, hooks = info.Hooks, permissions = info.Permissions,
-                    executionTimeoutMs = info.ExecutionTimeoutMs, intervalSeconds = info.IntervalSeconds,
-                    javascript = Encoding.UTF8.GetString(package.Module)
-                }, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
-                return;
-            }
-            WriteAtomically(FileFor(info.Id, ".flow.json"), JsonSerializer.SerializeToUtf8Bytes(new
-            {
-                id = info.Id, api = 3, hooks = info.Hooks, permissions = info.Permissions,
-                wasm = Convert.ToBase64String(package.Module)
-            }, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
         }
 
         internal string MessageSettings(string id)
         {
-            var file = FileFor(id, ".flow-settings.json");
+            var file = InstallFile(id, SettingsFilename);
             if (!File.Exists(file)) return "{}";
-            return Encoding.UTF8.GetString(ReadFile(file));
+            return StrictUtf8.GetString(ReadFile(file));
+        }
+
+        private static JsonDocument ParseSettings(PluginInfo info, string settings)
+        {
+            if (Encoding.UTF8.GetByteCount(settings) > Limit("maxSettingsBytes"))
+                throw new InvalidDataException("设置超过大小限制");
+            var value = JsonDocument.Parse(settings);
+            if (value.RootElement.ValueKind == JsonValueKind.Object
+                && (info.SettingsSchema == null || MatchesSchema(value.RootElement, info.SettingsSchema.Value))) return value;
+            value.Dispose();
+            throw new InvalidDataException("设置必须为符合此插件声明的 JSON 对象");
         }
 
         internal void SetMessageSettings(string id, string settings)
         {
             EnsureRoot();
-            var package = ReadPackage(ReadFile(FileFor(id, ".zip")));
-            if (!package.Info.IsFlow || package.Info.Id != id) throw new InvalidDataException("消息插件无效");
-            var limit = package.Info.IsJavaScript ? 65536 : 4096;
-            if (Encoding.UTF8.GetByteCount(settings) > limit) throw new InvalidDataException("设置超过大小限制");
-            using var value = JsonDocument.Parse(settings);
-            if (value.RootElement.ValueKind != JsonValueKind.Object) throw new InvalidDataException("设置需要 JSON 对象");
-            WriteAtomically(FileFor(id, ".flow-settings.json"), Encoding.UTF8.GetBytes(settings));
-            // 保存配置不能创造运行授权；只有明确启用才能生成初始授权。
-            if (Enabled(id) && File.Exists(FileFor(id, ".flow-grant.json")))
-            {
-                using var grant = JsonDocument.Parse(ReadFile(FileFor(id, ".flow-grant.json")));
-                using var current = File.OpenRead(FileFor(id, ".flow.json"));
-                var hash = Convert.ToHexString(SHA256.HashData(current)).ToLowerInvariant();
-                if (grant.RootElement.TryGetProperty("hash", out var oldHash) && oldHash.GetString() == hash
-                    && grant.RootElement.TryGetProperty("enabled", out var active) && active.ValueKind == JsonValueKind.True
-                    && (!package.Info.IsJavaScript || grant.RootElement.TryGetProperty("fullAccess", out var full) && full.ValueKind == JsonValueKind.True))
-                    SaveFlowGrant(package.Info, settings, package.Info.IsJavaScript);
-            }
+            var archive = ReadFile(FileFor(id, ".zip"));
+            var package = ReadPackage(archive);
+            if (!package.Info.IsUnified || package.Info.Id != id || !DeploymentMatches(id, package))
+                throw new InvalidDataException("已安装的统一插件无效");
+            using var value = ParseSettings(package.Info, settings);
+            var grant = InstallFile(id, ProtocolFile("grant"));
+            var wasEnabled = Enabled(id);
+            if (wasEnabled) File.Delete(grant);
+            WriteAtomically(InstallFile(id, SettingsFilename), Encoding.UTF8.GetBytes(settings));
+            if (wasEnabled) SaveGrant(id, package, archive, value.RootElement);
         }
 
-        private void SaveFlowGrant(PluginInfo info, string settings, bool fullAccess)
+        internal static bool HostCallEnabled(string id) => Registry.GetProperty("calls").TryGetProperty(id, out var call)
+            && call.TryGetProperty("enabled", out var enabled) && enabled.ValueKind == JsonValueKind.True;
+
+        private void SaveGrant(string id, PluginPackage package, byte[] archive, JsonElement settings)
         {
-            using var value = JsonDocument.Parse(settings);
-            if (value.RootElement.ValueKind != JsonValueKind.Object || Encoding.UTF8.GetByteCount(settings) > (info.IsJavaScript ? 65536 : 4096))
-                throw new InvalidDataException("插件设置无效");
-            using var stream = File.OpenRead(FileFor(info.Id, ".flow.json"));
-            var flow = ReadLimited(stream, 64 * 1024 * 1024);
-            WriteAtomically(FileFor(info.Id, ".flow-grant.json"), JsonSerializer.SerializeToUtf8Bytes(new
+            WriteAtomically(InstallFile(id, ProtocolFile("grant")), JsonSerializer.SerializeToUtf8Bytes(new
             {
-                enabled = true, fullAccess, hash = Convert.ToHexString(SHA256.HashData(flow)).ToLowerInvariant(), settings = value.RootElement
+                enabled = true, level = package.Info.Level, fullAccess = package.Info.RequiresFullAccess,
+                nodeFullConfirmed = package.Info.RequiresFullAccess, chatConfirmed = package.Info.RequiresChatAccess,
+                approvedDataAccess = package.Info.DataAccess ?? Array.Empty<string>(),
+                epoch = Guid.NewGuid().ToString("D"),
+                packageHash = Digest(archive), manifestHash = Digest(package.RawManifest), entryHash = Digest(package.Module),
+                approvedCalls = package.Info.Calls.Where(HostCallEnabled).ToArray(),
+                approvedProviders = package.Info.Provides.Keys.ToArray(), settings
             }));
         }
 
@@ -712,94 +712,5 @@ namespace WhaleLauncher
             }
             finally { File.Delete(staging); }
         }
-
-        internal async Task<string> RunAsync(string id, string input, string authorizedAction = null,
-            Func<string, Task<string>> host = null)
-        {
-            EnsureRoot();
-            if (!Enabled(id)) throw new InvalidOperationException("请先启用插件");
-            var package = ReadPackage(ReadFile(FileFor(id, ".zip")));
-            if (package.Info.IsPersona || package.Info.IsFlow || package.Info.Id != id || !Compatible(package.Info, UpdateManifestService.LocalVersion(_baseDir), UpdateManifestService.LocalEpoch(_baseDir)))
-                throw new InvalidDataException("插件类型、标识或兼容版本无效");
-            if (package.Info.HostAction != authorizedAction)
-                throw new InvalidOperationException("此插件需要确认宿主权限");
-            if (authorizedAction != null)
-                input = await (host ?? throw new InvalidOperationException("此权限暂不可用"))(input);
-
-            var node = Path.Combine(_baseDir, "runtime", "node.exe");
-            if (!File.Exists(node)) throw new IOException("运行插件需要鲸鲸自带的 Node 运行时");
-            var start = new ProcessStartInfo(node)
-            {
-                UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true,
-                RedirectStandardOutput = true, RedirectStandardError = true,
-                StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = Encoding.UTF8,
-            };
-            start.Environment.Clear();
-            start.Environment["SystemRoot"] = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-            start.ArgumentList.Add("--wasm-max-mem-pages=16");
-            start.ArgumentList.Add("--wasm-max-table-size=1024");
-            start.ArgumentList.Add("--max-old-space-size=64");
-            start.ArgumentList.Add("-e");
-            start.ArgumentList.Add(Runner);
-            using var worker = Process.Start(start) ?? throw new IOException("无法启动插件运行器");
-            using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(PluginTimeoutMs));
-            var output = worker.StandardOutput.ReadToEndAsync();
-            var errors = worker.StandardError.ReadToEndAsync();
-            try
-            {
-                var bytes = Encoding.UTF8.GetBytes(input);
-                if (bytes.Length > 65536) throw new InvalidDataException("输入超过 64 KiB");
-                var payload = JsonSerializer.Serialize(new
-                {
-                    api = package.Info.Api, wasm = Convert.ToBase64String(package.Module),
-                    input = Convert.ToBase64String(bytes), timeoutMs = PluginTimeoutMs
-                });
-                await worker.StandardInput.WriteAsync(payload.AsMemory(), timeout.Token);
-                worker.StandardInput.Close();
-                await worker.WaitForExitAsync(timeout.Token);
-                var result = await output;
-                if (worker.ExitCode != 0 || (package.Info.Api == 1 && !int.TryParse(result, out _)))
-                    throw new InvalidDataException("插件执行失败，或请求了未开放的接口");
-                return result;
-            }
-            catch (OperationCanceledException) { throw new TimeoutException("插件运行超时"); }
-            finally
-            {
-                if (!worker.HasExited) worker.Kill(entireProcessTree: true);
-                await errors;
-            }
-        }
-
-        // 插件只拿到字节查询函数，无 WASI、文件、网络或微信接口。
-        private const string Runner = """
-            let data = '';
-            process.stdin.setEncoding('utf8').on('data', chunk => { data += chunk; }).on('end', () => {
-              let guard;
-              try {
-                const args = JSON.parse(data);
-                guard = setTimeout(() => process.exit(1), Math.max(1, Number(args.timeoutMs) || 3000) + 250);
-                const input = Buffer.from(args.input, 'base64');
-                const module = new WebAssembly.Module(Buffer.from(args.wasm, 'base64'));
-                const output = [];
-                const imports = {
-                  input_size: () => input.length, input_byte: i => input[i] ?? -1
-                };
-                if (args.api === 2) imports.output_byte = value => {
-                  if (output.length >= 65536 || value < 0 || value > 255) throw new Error();
-                  output.push(value);
-                };
-                if (WebAssembly.Module.imports(module).some(i =>
-                  i.module !== 'whale' || i.kind !== 'function' || !Object.hasOwn(imports, i.name)))
-                  throw new Error();
-                const wasm = new WebAssembly.Instance(module, { whale: imports });
-                const value = wasm.exports.run();
-                if (!Number.isInteger(value) || value !== (value | 0)) throw new Error();
-                if (args.api === 1) process.stdout.write(String(value));
-                else if (value === 0) process.stdout.write(new TextDecoder('utf-8', {fatal: true}).decode(Uint8Array.from(output)));
-                else throw new Error();
-                clearTimeout(guard);
-              } catch { clearTimeout(guard); process.exitCode = 1; }
-            });
-            """;
     }
 }

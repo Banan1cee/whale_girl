@@ -60,10 +60,12 @@ test('改名会同步写进 config.json（桥接靠它更新群里 @ 称呼）',
 });
 
 test('导入预设会记下来源，保存接口也接受它', () => {
-  // 模块化之后路由在 src/http/routes/persona.js，不再堆在 server.js 里
+  // 模块化之后路由在 src/http/routes/persona.js，不再堆在 server.js 里；
+  // 预设导入的校验/写盘/热更新已收口到 src/services/persona.js，规则跟着共享实现走。
   const route = fs.readFileSync(path.join(root, 'src', 'http', 'routes', 'persona.js'), 'utf8');
   const service = fs.readFileSync(path.join(root, 'src', 'services', 'persona.js'), 'utf8');
-  assert.match(route, /patch\.sourcePreset\s*=\s*preset\.id/, '导入时要记 sourcePreset');
+  assert.match(route, /importPersonaPreset\(runtime, body\)/, '导入走共享实现');
+  assert.match(service, /patch\.sourcePreset\s*=\s*preset\.id/, '导入时要记 sourcePreset');
   assert.match(service, /body\.sourcePreset !== undefined/, '保存时接受来源预设');
 });
 

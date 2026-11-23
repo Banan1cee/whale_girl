@@ -110,13 +110,11 @@ const BINARY_RULES = [
     name: '源码托管链接（二进制）',
     re: /raw\.githubusercontent\.com\/[A-Za-z0-9._-]+\//gi,
     keep: (m, index, text) =>
-      !['raw.githubusercontent.com/banan1cee/whale_girl/', 'raw.githubusercontent.com/banan1cee/whale_gril/',
-        'raw.githubusercontent.com/banan1cee/whale-girl-plugins/main/index.json',
-        'raw.githubusercontent.com/banan1cee/whale-girl-plugins/main/index-v2.json']
+      !['raw.githubusercontent.com/banan1cee/whale_girl/', 'raw.githubusercontent.com/banan1cee/whale_gril/']
         .some(prefix => text.slice(index).toLowerCase().startsWith(prefix)) &&
       // .NET 字符串后的二进制长度标记不一定解码成空白或 NUL，所以带文件名的目录
       // 必须紧跟 URL 分隔符（或什么都没跟）才算官方路径。
-      !/^raw\.githubusercontent\.com\/banan1cee\/whale-girl-plugins\/main\/(?:index-v3|index-v4|index-personas)\.json(?![a-z0-9._~:/?#%=&+\-])/i.test(text.slice(index)),
+      !/^raw\.githubusercontent\.com\/banan1cee\/whale-girl-plugins\/main\/(?:index-v5|index-personas)\.json(?![a-z0-9._~:/?#%=&+\-])/i.test(text.slice(index)),
   },
 ];
 

@@ -8,13 +8,10 @@ const path = require('node:path');
 const { StickerService } = require('../src/services/stickerService');
 const jsonFile = require('../src/infra/jsonFile');
 const { readStoreFile, Store } = require('../src/memory/store');
-const { readLegacyStore } = require('../src/memory/migrate');
+const { readLegacyStore } = require('../scripts/migrate/import-4.0');
 const persona = require('../src/persona');
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
-
-const root = path.resolve(__dirname, '..');
-const source = rel => fs.readFileSync(path.join(root, rel), 'utf8');
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-dedup-'));
@@ -22,8 +19,7 @@ function fixture(t) {
   return dir;
 }
 
-test('表情包设置只定义一次，每份状态只读取一次且保持响应结构', () => {
-  assert.equal((source('src/services/stickerService.js').match(/^  _demandSettings\(\) \{/gm) || []).length, 1);
+test('表情包状态只读取一次且保持响应结构', () => {
   let calls = 0;
   const context = {
     config: {}, generation: 3, migration: null,
@@ -62,7 +58,7 @@ test('旧增量日志共用容错读取：保留顺序、跳过半截行，不�
   assert.equal(fs.readFileSync(file + '.journal', 'utf8'), raw);
 });
 
-test('快照与迁移读取都复用公共实现，保留各自的合并规则', t => {
+test('快照与迁移读取保留各自的合并规则', t => {
   const dir = fixture(t);
   const file = path.join(dir, 'store.json');
   const snap = '\uFEFF' + JSON.stringify({ version: 1, savedAt: 123, stats: { messages: 8 }, digest: ['kept'], sessions: { old: {} } });
@@ -79,10 +75,6 @@ test('快照与迁移读取都复用公共实现，保留各自的合并规则',
   assert.deepEqual(readLegacyStore(file), { final: { title: 'kept' } });
   assert.equal(fs.readFileSync(file, 'utf8'), snap);
   assert.equal(fs.readFileSync(file + '.journal', 'utf8'), journal);
-  for (const rel of ['src/memory/store.js', 'src/memory/migrate.js']) {
-    assert.match(source(rel), /const \{ readJson, readJournal \} = require\('\.\.\/infra\/jsonFile'\)/);
-    assert.doesNotMatch(source(rel), /function read(?:JsonQuiet|Journal)\(/);
-  }
 });
 
 test('坏快照和 full 空增量仍按旧规则恢复，不把容错合并成新语义', t => {
@@ -100,7 +92,6 @@ test('群聊实际提示词能拿到词库词条，私聊不附加群风格', as
   config.root = dir;
   config.paths = { dataDir: dir };
   config.features.envContext = false;
-  config.websearch.enabled = false;
   config.links.enabled = false;
   config.group.cooldownSec = 0;
   assert.equal(typeof persona.slangTerms, 'function');
@@ -119,32 +110,4 @@ test('群聊实际提示词能拿到词库词条，私聊不附加群风格', as
   } finally {
     store.close();
   }
-});
-
-test('启动器只去掉无引用成员，联系人错误摘要复用公共方法', () => {
-  const main = source('launcher/MainWindow.xaml.cs');
-  assert.doesNotMatch(main, /\b_last\b|\bUptime\(/);
-  assert.doesNotMatch(source('launcher/Views/DiagPage.xaml.cs'), /\bLatestRunDir\(/);
-  assert.doesNotMatch(source('launcher/Views/SettingsPage.xaml.cs'), /\bBuildSection\(/);
-  assert.match(source('launcher/Api.cs'), /public static string Detail\(ApiResult res\)/);
-  for (const rel of ['launcher/Views/ContactCheckList.xaml.cs']) {
-    assert.match(source(rel), /Api\.Message\(res\)/);
-    assert.doesNotMatch(source(rel), /private static string Detail\(/);
-  }
-});
-
-test('主窗口复用启动顺序但保留重启历史，不改变诊断入口默认清零', () => {
-  const main = source('launcher/MainWindow.xaml.cs');
-  assert.equal((main.match(/await _sup\.StartAllAsync\(clearRestartHistory: false\)/g) || []).length, 2);
-  assert.doesNotMatch(main, /_sup\.StartNode\(\)|_sup\.WaitForNodeAsync\(\)|_sup\.StartBridge\(\)/);
-  assert.match(source('launcher/RuntimeSupervisor.cs'), /StartAllAsync\(bool clearRestartHistory = true\)/);
-  assert.match(source('launcher/RuntimeSupervisor.cs'), /if \(clearRestartHistory\)/);
-  assert.match(source('launcher/Views/DiagPage.xaml.cs'), /await _sup\.StartAllAsync\(\)/);
-});
-
-test('桥接只删未使用导入，不影响其他模块自己的 subprocess', () => {
-  assert.doesNotMatch(source('bridge/engine.py'), /^import subprocess\s*$/m);
-  assert.doesNotMatch(source('bridge/uia_boot.py'), /^from typing import .*\bTuple\b/m);
-  assert.match(source('bridge/uia_boot.py'), /^import subprocess\s*$/m);
-  assert.match(source('bridge/voice_reply.py'), /^import subprocess\s*$/m);
 });

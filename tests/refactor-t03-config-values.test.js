@@ -102,12 +102,12 @@ for (const [name, write] of Object.entries(writers)) {
 
   test(name + ': partial nested schema/feature patches preserve siblings and opaque JSON', t => {
     const f = fixture(t, { group: { requireAt: true, cooldownSec: 45 }, features: { envContext: false, stickers: true } });
-    write(f, { group: { requireAt: 'no' }, features: { javascriptPlugins: 'yes' },
+    write(f, { group: { requireAt: 'no' }, features: { plugins: 'yes' },
       'gateway.wechat.outboundHeaders': { 'X-Test': 'fixture' } });
     assert.equal(f.raw().group.requireAt, false);
     assert.equal(f.raw().group.cooldownSec, 45);
     assert.equal(f.raw().features.stickers, true);
-    assert.equal(f.raw().features.javascriptPlugins, true);
+    assert.equal(f.raw().features.plugins, true);
     assert.deepEqual(f.raw().gateway.wechat.outboundHeaders, { 'X-Test': 'fixture' });
   });
 
@@ -232,20 +232,20 @@ test('online and offline feature commands accept identical legacy values and pre
 
 test('offline feature writes reject missing or non-schema values without changing config bytes', async t => {
   for (const { name, initial, body } of [
-    { name: 'missing value', initial: true, body: { key: 'javascriptPlugins' } },
-    { name: 'invalid text', initial: true, body: { key: 'javascriptPlugins', value: 'not-a-boolean' } },
-    { name: 'numeric 2', initial: false, body: { key: 'javascriptPlugins', value: 2 } },
-    { name: 'array yes', initial: false, body: { key: 'javascriptPlugins', value: ['yes'] } },
-    { name: 'null', initial: true, body: { key: 'javascriptPlugins', value: null } },
+    { name: 'missing value', initial: true, body: { key: 'plugins' } },
+    { name: 'invalid text', initial: true, body: { key: 'plugins', value: 'not-a-boolean' } },
+    { name: 'numeric 2', initial: false, body: { key: 'plugins', value: 2 } },
+    { name: 'array yes', initial: false, body: { key: 'plugins', value: ['yes'] } },
+    { name: 'null', initial: true, body: { key: 'plugins', value: null } },
   ]) {
     await t.test(name, async child => {
-      const f = fixture(child, { features: { javascriptPlugins: initial } });
+      const f = fixture(child, { features: { plugins: initial } });
       const before = fs.readFileSync(f.file, 'utf8');
       const result = await saveLocalConfiguration(f.root, { path: '/api/features', body }, {});
       assert.equal(result.ok, false);
       assert.match(result.error, /无效的功能设置/);
       assert.equal(fs.readFileSync(f.file, 'utf8'), before);
-      assert.equal(loadConfig({ root: f.root, env: {}, readOnly: true }).features.javascriptPlugins, initial);
+      assert.equal(loadConfig({ root: f.root, env: {}, readOnly: true }).features.plugins, initial);
     });
   }
 });

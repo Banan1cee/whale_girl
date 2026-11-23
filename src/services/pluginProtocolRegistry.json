@@ -1,0 +1,1245 @@
+{
+  "format": "whale-plugin/1",
+  "runtime": "node-full",
+  "levelNames": {
+    "1": "1 级 · 受限 Wasm（整数工具）",
+    "2": "2 级 · 受限 Wasm（文本工具）",
+    "3": "3 级 · 受限 Wasm（回复草稿）",
+    "4": "4 级 · Node.js（完整系统权限）"
+  },
+  "levels": {
+    "1": {
+      "runtime": "wasm-restricted",
+      "entry": "plugin.wasm",
+      "providers": [
+        "tool.run@1"
+      ],
+      "calls": [],
+      "maxEntryBytes": 524288
+    },
+    "2": {
+      "runtime": "wasm-restricted",
+      "entry": "plugin.wasm",
+      "providers": [
+        "tool.run@1"
+      ],
+      "calls": [],
+      "maxEntryBytes": 524288
+    },
+    "3": {
+      "runtime": "wasm-restricted",
+      "entry": "plugin.wasm",
+      "providers": [
+        "tool.run@1",
+        "chat.reply@1"
+      ],
+      "calls": [],
+      "dataAccess": [
+        "chat.history",
+        "model.prompt"
+      ],
+      "maxEntryBytes": 524288
+    },
+    "4": {
+      "runtime": "node-full",
+      "entry": "plugin.js",
+      "providers": [
+        "tool.run@1",
+        "chat.reply@1",
+        "chat.generate@1",
+        "chat.handle@1",
+        "chat.search@1",
+        "task.tick@1"
+      ],
+      "calls": [
+        "status.read@1",
+        "search.query@1",
+        "model.complete@1",
+        "message.submit@1",
+        "message.send@1",
+        "settings.read@1",
+        "features.read@1",
+        "persona.read@1",
+        "memory.recent@1",
+        "reminders.list@1",
+        "reminders.create@1",
+        "reminders.cancel@1",
+        "stickers.status@1",
+        "diary.status@1",
+        "moments.latest@1",
+        "care.decide@1",
+        "contacts.search@1",
+        "wechat.status@1",
+        "bridge.status@1",
+        "digest.generate@1",
+        "plugins.status@1",
+        "reminders.rules@1",
+        "stickers.enqueue@1",
+        "diary.generate@1",
+        "diary.read@1",
+        "digest.status@1",
+        "moments.snapshot@1",
+        "moments.request@1",
+        "moments.action@1",
+        "moments.result@1",
+        "moments.publish@1",
+        "moments.settings@1",
+        "contacts.get@1",
+        "contacts.list@1",
+        "persona.write@1",
+        "settings.write@1",
+        "memory.recall@1",
+        "memory.write@1"
+      ],
+      "maxEntryBytes": 8388608
+    }
+  },
+  "manifest": {
+    "required": [
+      "format",
+      "level",
+      "id",
+      "name",
+      "author",
+      "version",
+      "minAppVersion",
+      "description",
+      "entry",
+      "runtime",
+      "provides",
+      "calls"
+    ],
+    "allowed": [
+      "format",
+      "level",
+      "id",
+      "name",
+      "author",
+      "version",
+      "minAppVersion",
+      "maxAppVersion",
+      "appEpoch",
+      "appCompatibility",
+      "description",
+      "entry",
+      "runtime",
+      "provides",
+      "calls",
+      "dataAccess",
+      "settingsSchema",
+      "executionTimeoutMs"
+    ],
+    "idPattern": "^[a-z][a-z0-9-]{0,47}$",
+    "entry": "plugin.js",
+    "maxIdLength": 48,
+    "maxNameLength": 80,
+    "maxAuthorLength": 80,
+    "maxDescriptionLength": 600
+  },
+  "files": {
+    "manifest": "plugin.json",
+    "entry": "plugin.js",
+    "grant": "grant.json",
+    "dataDirectory": "data"
+  },
+  "limits": {
+    "maxPackageBytes": 16777216,
+    "maxManifestBytes": 32768,
+    "maxEntryBytes": 8388608,
+    "maxSettingsBytes": 65536,
+    "maxInvocationBytes": 524288,
+    "maxConcurrentInvocations": 2,
+    "maxQueuedInvocations": 32,
+    "maxInstalledPlugins": 16,
+    "maxCallsPerInvocation": 64,
+    "maxConcurrentCallsPerInvocation": 8,
+    "minExecutionTimeoutMs": 100,
+    "maxExecutionTimeoutMs": 120000
+  },
+  "providers": {
+    "tool.run@1": {
+      "modes": [
+        "tool"
+      ],
+      "scopes": [
+        "manual"
+      ],
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "manual"
+    },
+    "chat.generate@1": {
+      "modes": [
+        "replace"
+      ],
+      "scopes": [
+        "all"
+      ],
+      "inputSchema": "chat.generate.input@1",
+      "outputSchema": "chat.generate.output@1",
+      "sideEffect": "billable-model-call",
+      "dataAccess": [
+        "current-message",
+        "system-prompt",
+        "conversation-history",
+        "memory-context"
+      ]
+    },
+    "chat.reply@1": {
+      "modes": [
+        "observe",
+        "enhance",
+        "replace"
+      ],
+      "scopes": [
+        "all"
+      ],
+      "inputSchema": "chat.reply.input@1",
+      "outputSchema": "chat.reply.output@1",
+      "sideEffect": "none",
+      "dataAccess": [
+        "current-message",
+        "draft-reply"
+      ]
+    },
+    "chat.handle@1": {
+      "modes": [
+        "replace"
+      ],
+      "scopes": [
+        "all"
+      ],
+      "inputSchema": "chat.handle.input@1",
+      "outputSchema": "chat.handle.output@1",
+      "sideEffect": "host-delivered-reply"
+    },
+    "chat.search@1": {
+      "modes": [
+        "replace",
+        "enhance"
+      ],
+      "scopes": [
+        "all"
+      ],
+      "inputSchema": "chat.search.input@1",
+      "outputSchema": "chat.search.output@1",
+      "sideEffect": "network-read"
+    },
+    "task.tick@1": {
+      "modes": [
+        "schedule"
+      ],
+      "scopes": [
+        "all"
+      ],
+      "inputSchema": "task.tick.input@1",
+      "outputSchema": "json",
+      "intervalSeconds": {
+        "min": 1,
+        "max": 86400
+      },
+      "sideEffect": "declared-host-calls-only"
+    }
+  },
+  "calls": {
+    "status.read@1": {
+      "inputSchema": "empty-object",
+      "outputSchema": "status.summary@1",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "search.query@1": {
+      "inputSchema": "search.query.input@1",
+      "outputSchema": "search.query.output@1",
+      "sideEffect": "network-read",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "model.complete@1": {
+      "inputSchema": "model.complete.input@1",
+      "outputSchema": "model.complete.output@1",
+      "sideEffect": "billable-network-call",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "message.submit@1": {
+      "inputSchema": "message.submit.input@1",
+      "outputSchema": "message.submit.output@1",
+      "sideEffect": "external-message",
+      "requiresConsent": true,
+      "enabled": false
+    },
+    "settings.read@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "features.read@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "persona.read@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "memory.recent@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "read-chat-history",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "reminders.list@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "reminders.create@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "reminders.cancel@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "stickers.status@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "diary.status@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "read-diary",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "moments.latest@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "read-moments",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "care.decide@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "contacts.search@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "read-contacts",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "wechat.status@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "bridge.status@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "digest.generate@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "billable-model-call",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "plugins.status@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "reminders.rules@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "reminders.enqueue@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "external-message",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "reminders.due@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "reminders.ack@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "reminders.permission@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "stickers.enqueue@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "external-message",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "stickers.gate@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "stickers.pending@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "stickers.claim@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "stickers.ack@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "stickers.cancel@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "diary.generate@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "billable-model-call",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "diary.read@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "read-diary",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "digest.status@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "moments.snapshot@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "moments.request@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "read-moments",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "moments.action@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "external-action",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "moments.result@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "moments.publish@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "external-message",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "moments.settings@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "moments.claim@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "moments.complete@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "contacts.get@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "read-contacts",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "contacts.list@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "read-contacts",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "persona.write@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "settings.write@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "memory.recall@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "read-memory",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "memory.write@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "message.send@1": {
+      "inputSchema": "message.send.input@1",
+      "outputSchema": "message.submit.output@1",
+      "sideEffect": "external-message",
+      "requiresConsent": true,
+      "enabled": true
+    },
+    "reminders.pendingFor@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "none",
+      "requiresConsent": false,
+      "enabled": true
+    },
+    "contacts.sync@1": {
+      "inputSchema": "json",
+      "outputSchema": "json",
+      "sideEffect": "local-write",
+      "requiresConsent": false,
+      "enabled": true
+    }
+  },
+  "schemas": {
+    "json": {
+      "type": "json"
+    },
+    "empty-object": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "status.summary@1": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "running": {
+          "type": "boolean"
+        },
+        "pluginProtocol": {
+          "type": "string",
+          "const": "whale-plugin/1"
+        }
+      },
+      "required": [
+        "version",
+        "running",
+        "pluginProtocol"
+      ],
+      "additionalProperties": false
+    },
+    "chat.generate.input@1": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "object",
+          "properties": {
+            "platform": {
+              "type": "string",
+              "maxLength": 24
+            },
+            "chatType": {
+              "type": "string",
+              "enum": [
+                "private",
+                "group"
+              ]
+            },
+            "chatId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16000
+            }
+          },
+          "required": [
+            "platform",
+            "chatType",
+            "chatId",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "system": {
+          "type": "string",
+          "maxLength": 64000
+        },
+        "turns": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "assistant"
+                ]
+              },
+              "content": {
+                "type": "string",
+                "maxLength": 64000
+              }
+            },
+            "required": [
+              "role",
+              "content"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "message",
+        "system",
+        "turns"
+      ],
+      "additionalProperties": false
+    },
+    "chat.generate.output@1": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 16000
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "chat.reply.input@1": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "object",
+          "properties": {
+            "platform": {
+              "type": "string",
+              "maxLength": 24
+            },
+            "chatType": {
+              "type": "string",
+              "enum": [
+                "private",
+                "group"
+              ]
+            },
+            "chatId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderName": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16000
+            }
+          },
+          "required": [
+            "platform",
+            "chatType",
+            "chatId",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 16000
+        },
+        "system": {
+          "type": "string",
+          "maxLength": 64000
+        },
+        "history": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "assistant"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 16000
+              }
+            },
+            "required": [
+              "role",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "output": {
+          "$ref": "chat.reply.output@1"
+        }
+      },
+      "required": [
+        "message",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "chat.reply.output@1": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 16000
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "chat.handle.input@1": {
+      "type": "object",
+      "properties": {
+        "localWechat": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "object",
+          "properties": {
+            "platform": {
+              "type": "string",
+              "maxLength": 24
+            },
+            "chatType": {
+              "type": "string",
+              "enum": [
+                "private",
+                "group"
+              ]
+            },
+            "chatId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderName": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16000
+            },
+            "atMe": {
+              "type": "boolean"
+            },
+            "msgId": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "chatTitle": {
+              "type": "string",
+              "maxLength": 160
+            }
+          },
+          "required": [
+            "platform",
+            "chatType",
+            "chatId",
+            "senderId",
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "message",
+        "localWechat"
+      ],
+      "additionalProperties": false
+    },
+    "chat.handle.output@1": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "reply",
+            "ignore"
+          ]
+        },
+        "reply": {
+          "type": "string",
+          "maxLength": 16000
+        },
+        "bubbles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "maxItems": 20
+        },
+        "mention": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "chat.search.input@1": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "object",
+          "properties": {
+            "platform": {
+              "type": "string",
+              "maxLength": 24
+            },
+            "chatType": {
+              "type": "string",
+              "enum": [
+                "private",
+                "group"
+              ]
+            },
+            "chatId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16000
+            }
+          },
+          "required": [
+            "platform",
+            "chatType",
+            "chatId",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "previous": {
+          "$ref": "chat.search.output@1"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "chat.search.output@1": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 32000
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "url": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "snippet": {
+                "type": "string",
+                "maxLength": 12000
+              },
+              "publishedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 64
+              },
+              "fetchedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "title",
+              "url",
+              "snippet"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 30
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "empty",
+            "failed"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "items",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "task.tick.input@1": {
+      "type": "object",
+      "properties": {
+        "scheduledAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "now": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "settings": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "scheduledAt",
+        "now",
+        "settings"
+      ],
+      "additionalProperties": false
+    },
+    "search.query.input@1": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "freshness": {
+          "type": "string",
+          "enum": [
+            "today",
+            "yesterday",
+            "week",
+            "month",
+            "year"
+          ]
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 500,
+          "maximum": 30000
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "search.query.output@1": {
+      "$ref": "chat.search.output@1"
+    },
+    "model.complete.input@1": {
+      "type": "object",
+      "properties": {
+        "system": {
+          "type": "string",
+          "maxLength": 64000
+        },
+        "turns": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "assistant"
+                ]
+              },
+              "content": {
+                "type": "string",
+                "maxLength": 64000
+              }
+            },
+            "required": [
+              "role",
+              "content"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "maxTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32000
+        }
+      },
+      "required": [
+        "turns"
+      ],
+      "additionalProperties": false
+    },
+    "model.complete.output@1": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 64000
+        },
+        "usage": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "message.submit.input@1": {
+      "type": "object",
+      "properties": {
+        "chatId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        }
+      },
+      "required": [
+        "chatId",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "message.submit.output@1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued"
+          ]
+        },
+        "confirmed": {
+          "type": "boolean",
+          "const": false
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "confirmed"
+      ],
+      "additionalProperties": false
+    },
+    "message.send.input@1": {
+      "type": "object",
+      "properties": {
+        "chatId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "delivery": {
+          "type": "string",
+          "enum": [
+            "text",
+            "voice"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "chatType": {
+          "type": "string",
+          "enum": [
+            "private",
+            "group"
+          ]
+        }
+      },
+      "required": [
+        "chatId",
+        "text"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "settingsSchema": {
+    "supportedKeywords": [
+      "type",
+      "properties",
+      "required",
+      "additionalProperties",
+      "enum",
+      "minimum",
+      "maximum",
+      "minLength",
+      "maxLength"
+    ],
+    "maxDepth": 8,
+    "allowedTypes": [
+      "object",
+      "string",
+      "integer",
+      "number",
+      "boolean"
+    ]
+  }
+}

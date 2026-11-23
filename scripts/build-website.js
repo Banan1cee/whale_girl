@@ -8,7 +8,7 @@ const { validateSupport } = require('./website-support');
 const APP = 'https://github.com/Banan1cee/whale_girl';
 const MARKET = 'https://github.com/Banan1cee/whale-girl-plugins';
 const ORIGIN = 'https://bot.zyyc.cc/';
-const INDEXES = new Set(['index.json', 'index-v2.json', 'index-v3.json', 'index-v4.json', 'index-personas.json']);
+const INDEXES = new Set(['index-v5.json', 'index-personas.json']);
 const dateFormat = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', dateStyle: 'short' });
 const e = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const date = value => dateFormat.format(new Date(value));
@@ -44,7 +44,7 @@ function withoutComments(text) {
     if (start === -1) { fragments.push(text.slice(cursor)); break; }
     fragments.push(text.slice(cursor, start));
     // 保留边界，避免删除后将两侧碎片重新拼成 HTML 标记；输出仍须逐段转义。
-    fragments.push('\n');
+    fragments.push('n');
     const end = text.indexOf('-->', start + 4);
     if (end === -1) break;
     cursor = end + 3;
@@ -54,36 +54,36 @@ function withoutComments(text) {
 
 function notes(body) {
   // 不执行发行说明中的 HTML，也不将第三方 Markdown 链接变成可执行 URL。
-  const lines = withoutComments(String(body || '此版本未提供更新说明，请查看 GitHub 发行页。')).split(/\r?\n/);
+  const lines = withoutComments(String(body || '此版本未提供更新说明，请查看 GitHub 发行页。')).split(/r?n/);
   let code = false;
   let list = false;
   let headingIndex = 0;
   const headings = [];
   const result = [];
   for (const line of lines) {
-    if (/^\s*```/.test(line)) {
+    if (/^s*```/.test(line)) {
       if (list) { result.push('</ul>'); list = false; }
       result.push(code ? '</code></pre>' : '<pre><code>'); code = !code; continue;
     }
-    if (code) { result.push(e(line) + '\n'); continue; }
-    const bullet = /^\s*(?:[-*+]\s+|\d+\.\s+)(.*)$/.exec(line);
+    if (code) { result.push(e(line) + 'n'); continue; }
+    const bullet = /^s*(?:[-*+]s+|d+.s+)(.*)$/.exec(line);
     if (bullet) {
       if (!list) { result.push('<ul>'); list = true; }
       result.push(`<li>${e(bullet[1])}</li>`); continue;
     }
     if (list) { result.push('</ul>'); list = false; }
-    const heading = /^#{1,6}\s+(.*)$/.exec(line);
+    const heading = /^#{1,6}s+(.*)$/.exec(line);
     if (heading) {
       const id = `note-${headingIndex++}`;
       headings.push({ id, title: heading[1] });
       result.push(`<h2 id="${id}">${e(heading[1])}</h2>`);
     }
-    else if (/^>/.test(line)) result.push(`<blockquote>${e(line.replace(/^>\s?/, ''))}</blockquote>`);
+    else if (/^>/.test(line)) result.push(`<blockquote>${e(line.replace(/^>s?/, ''))}</blockquote>`);
     else if (line.trim()) result.push(`<p>${e(line)}</p>`);
   }
   if (list) result.push('</ul>');
   if (code) result.push('</code></pre>');
-  return { html: result.join('\n'), headings };
+  return { html: result.join('n'), headings };
 }
 
 function header(prefix, current) {
@@ -104,7 +104,7 @@ function layout(route, title, description, content, current) {
   const depth = route.split('/').filter(Boolean).length;
   const prefix = depth ? '../'.repeat(depth) : './';
   const page = route.startsWith('downloads/') && depth > 1 ? 'release' : route.startsWith('plugins/') && depth > 1 ? 'plugin' : depth > 1 ? 'transparency' : route.split('/')[0];
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#191c1a"><meta name="description" content="${e(description)}"><title>${e(title)} — 鲸鲸 Whale Girl</title><link rel="canonical" href="${ORIGIN}${route}"><link rel="icon" href="${prefix}images/launcher-icon.png" type="image/png"><script src="${prefix}theme.js"></script><link rel="stylesheet" href="${prefix}style.css"><link rel="stylesheet" href="${prefix}pages.css"><link rel="stylesheet" href="${prefix}polish.css"><script src="${prefix}site-motion.js" defer></script><script src="${prefix}site.js" defer></script></head><body class="content-page page-${page}" data-page="${page}">${ambient()}${header(prefix, current)}<main id="main" class="wrap page-main">${pageBrand(prefix, page)}${content}</main>${footer(prefix)}</body></html>\n`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#191c1a"><meta name="description" content="${e(description)}"><title>${e(title)} — 鲸鲸 Whale Girl</title><link rel="canonical" href="${ORIGIN}${route}"><link rel="icon" href="${prefix}images/launcher-icon.png" type="image/png"><script src="${prefix}theme.js"></script><link rel="stylesheet" href="${prefix}style.css"><link rel="stylesheet" href="${prefix}pages.css"><link rel="stylesheet" href="${prefix}polish.css"><script src="${prefix}site-motion.js" defer></script><script src="${prefix}site.js" defer></script></head><body class="content-page page-${page}" data-page="${page}">${ambient()}${header(prefix, current)}<main id="main" class="wrap page-main">${pageBrand(prefix, page)}${content}</main>${footer(prefix)}</body></html>n`;
 }
 
 function pageBrand() {
@@ -163,8 +163,8 @@ function releasePage(item, latest) {
       <nav class="note-toc" aria-label="更新说明目录"><h3>本页目录</h3>${renderedNotes.headings.map(heading => `<a href="#${heading.id}">${e(heading.title)}</a>`).join('')}</nav></aside></div>`;
 }
 
-function pluginKind(item) { return item.Kind === 'persona' ? 'persona' : item.Kind === 'message' || item.Api === 3 ? 'message' : 'tool'; }
-const kinds = { persona: '人设预设', message: '消息插件', tool: '功能工具' };
+function pluginKind(item) { return item.Kind === 'persona' ? 'persona' : 'plugin'; }
+const kinds = { persona: '人设预设', plugin: '插件' };
 
 function atLeastVersion(value, minimum) {
   const parts = String(value).replace(/^v/i, '').split('.');
@@ -183,19 +183,17 @@ function validatePlugins(plugins, commit) {
   return plugins.map(item => {
     if (!/^[a-z][a-z0-9-]{0,79}$/.test(item.Id) || ids.has(item.Id)) throw new Error('插件 ID 无效或重复');
     ids.add(item.Id);
-    if (!INDEXES.has(item.SourceIndex) || ![1, 2, 3, 4].includes(item.Api) || !item.Name || !item.Author
+    if (!INDEXES.has(item.SourceIndex) || ![1, 5].includes(item.Api) || !item.Name || !item.Author
       || !/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(item.Version) || !/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(item.MinAppVersion)
       || !/^[a-f0-9]{64}$/i.test(item.Sha256)) throw new Error(`插件清单无效：${item.Id}`);
-    const expectedIndex = item.Kind === 'persona' ? 'index-personas.json' : item.Api === 4 ? 'index-v4.json' : item.Api === 3 ? 'index-v3.json' : item.Api === 2 ? 'index-v2.json' : 'index.json';
-    if (item.SourceIndex !== expectedIndex || (item.Api === 3 && item.Kind !== 'message')
-      || (item.Kind && !['tool', 'message', 'persona'].includes(item.Kind))
-      || (item.Kind === 'message' && ![3, 4].includes(item.Api))
-      || (item.Kind === 'persona' && item.Api !== 1)
-      || (item.Api === 4 && !['tool', 'message'].includes(item.Kind))) throw new Error(`插件类型与目录不符：${item.Id}`);
-    if ((item.Hooks && (!Array.isArray(item.Hooks) || item.Hooks.some(value => typeof value !== 'string')))
-      || (item.Permissions && (!Array.isArray(item.Permissions) || item.Permissions.some(value => typeof value !== 'string')))) throw new Error(`插件权限格式无效：${item.Id}`);
-    if (item.Api === 4 && !atLeastVersion(item.MinAppVersion, '4.1.2')) throw new Error(`JavaScript 插件最低客户端须为 4.1.2 或以上：${item.Id}`);
-    if (item.Api === 4 && !item.Permissions?.includes('system.full')) throw new Error(`JavaScript 插件须声明完整系统权限：${item.Id}`);
+    const persona = item.Kind === 'persona';
+    if (item.SourceIndex !== (persona ? 'index-personas.json' : 'index-v5.json')
+      || (item.Kind && !['plugin', 'persona'].includes(item.Kind))
+      || (persona && item.Api !== 1) || (!persona && (item.Api !== 5 || !item.Level || ![1, 2, 3, 4].includes(item.Level)))) {
+      throw new Error(`插件类型与目录不符：${item.Id}`);
+    }
+    if (item.Hooks || item.Permissions) throw new Error(`旧接口字段不能进入市场目录：${item.Id}`);
+    if (item.Level === 1 && !atLeastVersion(item.MinAppVersion, '4.3.0')) throw new Error(`插件最低客户端须为 4.3.0 或以上：${item.Id}`);
     const packageName = `${item.Id}-${item.Version}.zip`;
     const validDownloads = [`https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/packages/${packageName}`, `https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/${commit}/packages/${packageName}`];
     if (!validDownloads.includes(item.Download)) throw new Error(`插件下载地址无效：${item.Id}`);
@@ -204,7 +202,7 @@ function validatePlugins(plugins, commit) {
 }
 
 function pluginCards(plugins, prefix = './') {
-  return `<div class="plugin-grid" data-motion-list>${plugins.map((item, index) => `<article class="plugin-card" data-filter-item data-order="${index}" data-name="${e(item.Name)}" data-author="${e(item.Author)}" data-kind="${pluginKind(item)}" data-search="${e([item.Name, item.Id, item.Author, item.Description].join(' '))}"><div class="card-top"><span class="plugin-emblem" aria-hidden="true">${pluginKind(item) === 'persona' ? 'P' : pluginKind(item) === 'message' ? 'M' : 'T'}<i></i></span><span class="tag">${kinds[pluginKind(item)]}</span><span class="plugin-api">API ${item.Api}</span></div><h${prefix === './' ? '2' : '3'}><a href="${prefix}${item.Id}/">${e(item.Name)}</a></h${prefix === './' ? '2' : '3'}><p class="plugin-id">${e(item.Id)}</p><p class="plugin-description">${e(item.Description)}</p><dl class="plugin-meta"><div><dt>作者</dt><dd>${e(item.Author)}</dd></div><div><dt>版本</dt><dd>${e(item.Version)}</dd></div><div><dt>最低客户端</dt><dd>${e(item.MinAppVersion)}</dd></div></dl><a class="text-link" href="${prefix}${item.Id}/">了解与下载 <span aria-hidden="true">↗</span></a></article>`).join('')}</div>`;
+  return `<div class="plugin-grid" data-motion-list>${plugins.map((item, index) => `<article class="plugin-card" data-filter-item data-order="${index}" data-name="${e(item.Name)}" data-author="${e(item.Author)}" data-kind="${pluginKind(item)}" data-search="${e([item.Name, item.Id, item.Author, item.Description].join(' '))}"><div class="card-top"><span class="plugin-emblem" aria-hidden="true">${pluginKind(item) === 'persona' ? 'P' : 'W'}<i></i></span><span class="tag">${kinds[pluginKind(item)]}</span><span class="plugin-api">等级 ${e(String(item.Level ?? "-"))}</span></div><h${prefix === './' ? '2' : '3'}><a href="${prefix}${item.Id}/">${e(item.Name)}</a></h${prefix === './' ? '2' : '3'}><p class="plugin-id">${e(item.Id)}</p><p class="plugin-description">${e(item.Description)}</p><dl class="plugin-meta"><div><dt>作者</dt><dd>${e(item.Author)}</dd></div><div><dt>版本</dt><dd>${e(item.Version)}</dd></div><div><dt>最低客户端</dt><dd>${e(item.MinAppVersion)}</dd></div></dl><a class="text-link" href="${prefix}${item.Id}/">了解与下载 <span aria-hidden="true">↗</span></a></article>`).join('')}</div>`;
 }
 
 function pluginsPage(plugins, data) {
@@ -220,19 +218,15 @@ function pluginsPage(plugins, data) {
 
 function pluginDetail(item, data) {
   const kind = pluginKind(item);
-  const permissions = [...new Set([...(item.Permissions || []), ...(item.HostAction ? [item.HostAction] : [])])];
-  const descriptions = { 'chat.history': '读取最近 12 条会话消息', 'model.prompt': '读取与替换本轮系统提示词', 'chat.summary': '按次确认后，由宿主调用模型汇总选定日期的消息；云端模型会收到参与汇总的片段，可能产生费用', 'system.full': '完整系统权限，可访问文件、网络、系统命令、聊天、记忆及主程序全部 API；不是沙箱，只启用信任的代码' };
-  const activation = item.Api === 4 ? '打开「启用 JavaScript 插件（实验性）」总开关，再逐个确认完整系统权限并启用。总开关默认关闭；更新后需重新授权。'
-    : kind === 'persona' ? '启用后，在插件卡片「设置」预览人设，并确认应用。'
-    : kind === 'message' ? '启用时确认持续参与消息处理；停用即撤销授权，更新后需重新启用。'
-      : '启用后，点击同一张插件卡片的「设置」使用工具。';
+  const activation = kind === 'persona' ? '启用后，在插件卡片「设置」预览人设，并确认应用。'
+    : '启用时按等级确认授权；停用即撤销授权，更新后需重新启用。';
   const fields = [
     ['ID', item.Id], ['作者', item.Author], ['版本', item.Version], ['类型', kinds[kind]],
-    ['接口', `API ${item.Api}`], ['最低客户端', item.MinAppVersion], ['许可证', item.License || '目录未声明'],
+    ['等级', `${item.Level ?? '-'} 级`], ['最低客户端', item.MinAppVersion], ['许可证', item.License || '目录未声明'],
   ];
   return '<a class="back-link" href="../">← 浏览全部插件</a>'
     + intro(kinds[kind], e(item.Name), e(item.Description))
-    + (item.Api === 4 ? `<div class="notice"><strong>JavaScript 插件不是沙箱。</strong>代码以当前系统用户权限执行，可访问文件、网络和主程序全部 API。只启用信任的作者；停用或卸载不能撤销已经完成的操作。${atLeastVersion(data.latest.tag_name, item.MinAppVersion) ? '' : '所需客户端功能尚未正式发布，当前仅供开发测试；以 GitHub Releases 实际版本为准。'}</div>` : '')
+    + (kind === 'plugin' && item.Level === 4 ? `<div class="notice"><strong>4 级插件拥有完整系统权限。</strong>只启用信任的作者；停用或卸载不能撤销已经完成的操作。${atLeastVersion(data.latest.tag_name, item.MinAppVersion) ? '' : '所需客户端功能尚未正式发布，当前仅供开发测试；以 GitHub Releases 实际版本为准。'}</div>` : '')
     + `<div class="detail-grid"><div>
       <section class="info-panel"><h2>安装与使用</h2><ol class="steps">
         <li>核对客户端构建支持此插件所需的 API 与权限；最低声明版本是 ${e(item.MinAppVersion)}${item.MaxAppVersion ? `，最高声明版本是 ${e(item.MaxAppVersion)}` : ''}。</li>
@@ -241,9 +235,9 @@ function pluginDetail(item, data) {
         <p class="notice">网页仅提供浏览和下载，不会连接你的本机程序。消息插件须核对具体客户端构建；开发版能力不等于旧客户端已支持。</p>
       </section>
       <section class="page-section"><h2>权限与数据</h2>
-        ${kind === 'message' ? '<p>启用后持续读取当前消息和上一条机器人回复，并可保存按插件、会话隔离的状态。</p>' : ''}
-        ${permissions.length ? `<ul>${permissions.map(permission => `<li><code>${e(permission)}</code>：${e(descriptions[permission] || '清单声明的附加权限，请阅读源码和客户端授权提示。')}</li>`).join('')}</ul>` : '<p>目录未声明附加权限。仍需核对插件类型和客户端提示，这不等于插件不处理任何数据。</p>'}
-        ${item.Hooks?.length ? `<h3>消息扩展点</h3><ul>${item.Hooks.map(hook => `<li><code>${e(hook)}</code></li>`).join('')}</ul>` : ''}
+        ${kind === 'plugin' ? `<p>${e(item.Level ?? '-')} 级插件：${{ 1: '手动整数工具', 2: '手动文本工具', 3: '回复草稿增强', 4: 'Node.js 完整系统权限' }[item.Level] || '按清单声明'}</p>` : ''}
+        ${item.DataAccess?.length ? `<h3>数据访问</h3><ul>${item.DataAccess.map(name => `<li><code>${e(name)}</code></li>`).join('')}</ul>` : ''}
+        ${item.Calls?.length ? `<h3>宿主调用</h3><ul>${item.Calls.map(name => `<li><code>${e(name)}</code></li>`).join('')}</ul>` : ''}
       </section>
       <section class="page-section"><h2>版本记录</h2><p>${e(item.Version)} · 当前目录收录版本</p>
         <p>当前展示市场收录的版本，更多源码与变更请查看市场仓库。</p>${link(`${MARKET}/commits/main/plugins/${item.Id}`, '源码与变更历史')}
@@ -352,8 +346,8 @@ function buildSite({ root = path.resolve(__dirname, '..'), output, data, tips: s
   write('support/transparency/', '打赏公示', '查看鲸鲸团队已核对发布的各渠道打赏记录。', tipsPage(tips, support), 'support/');
   write('team/', '团队成员与致谢', '认识鲸鲸背后的三位开发者与贡献者。', teamPage(team), 'team/');
   const routes = ['', 'downloads/', 'plugins/', 'support/', 'support/transparency/', 'team/', ...releases.map(item => `downloads/${releaseSlug(item.tag_name)}/`), ...plugins.map(item => `plugins/${item.Id}/`)];
-  fs.writeFileSync(path.join(target, 'sitemap.xml'), `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${routes.map(route => `<url><loc>${e(ORIGIN + route)}</loc></url>`).join('')}</urlset>\n`);
-  fs.writeFileSync(path.join(target, 'robots.txt'), `User-agent: *\nAllow: /\nSitemap: ${ORIGIN}sitemap.xml\n`);
+  fs.writeFileSync(path.join(target, 'sitemap.xml'), `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${routes.map(route => `<url><loc>${e(ORIGIN + route)}</loc></url>`).join('')}</urlset>n`);
+  fs.writeFileSync(path.join(target, 'robots.txt'), `User-agent: *nAllow: /nSitemap: ${ORIGIN}sitemap.xmln`);
   return { releases: releases.length, plugins: plugins.length, pages: routes.length };
 }
 

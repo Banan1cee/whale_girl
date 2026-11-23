@@ -14,7 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const persona = require('../src/persona');
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 
@@ -51,39 +51,41 @@ test('颜文字池里有真的颜文字，不是占位符', () => {
   assert.equal(typeof persona.kaomojiPick(() => 0.5), 'string');
 });
 
-function makeBot(level) {
+function makeBot(t, level) {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
   config.persona.emojiLevel = level;
   delete config.chat.emojiChance; // 模拟「面板里没调概率」，让它跟着档位走
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-emoji-'));
   const store = new Store({ file: path.join(dir, 'store.json'), limits: config.memory });
+  let raw;
   const bot = new Bot({
     config, store, logger: null, mockChunkDelayMs: 0,
-    llm: { isMock: true, model: 'mock', reload() {}, describe() { return {}; } },
+    llm: { isMock: false, model: 'fixture', async complete() { return raw; } },
   });
-  return { bot, store, cleanup: () => { store.close(); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 6, retryDelay: 60 }); } };
+  t.after(() => { store.close(); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 6, retryDelay: 60 }); });
+  bot.rng = () => 0;
+  let sequence = 0;
+  return async (text) => {
+    raw = text;
+    const result = await bot.handle({ platform: 'web', chatId: 'fixture-' + (++sequence), chatType: 'private',
+      senderId: 'fixture', senderName: '合成用户', text: '你还好吗' });
+    assert.equal(result.action, 'reply');
+    return result.bubbles;
+  };
 }
 
-test('「关」时一条都不加料', () => {
-  const { bot, cleanup } = makeBot('关');
-  bot.rng = () => 0; // 最容易被抽中
-  for (let i = 0; i < 20; i += 1) assert.equal(bot.pickEmoji('今天好累'), '今天好累');
-  cleanup();
+test('「关」时模型没带表情就不随机追加', async t => {
+  const reply = makeBot(t, '关');
+  for (let i = 0; i < 20; i += 1) assert.deepEqual(await reply('今天好累'), ['今天好累']);
 });
 
-test('「多」时能产出颜文字（以前只有 emoji，颜文字永远不出现）', () => {
-  const { bot, cleanup } = makeBot('多');
-  bot.rng = () => 0; // 必中，且走颜文字分支（第一次 0 不大于概率，第二次 0 < 0.5）
-  const out = bot.pickEmoji('今天好累');
-  assert.match(out, /^今天好累 /, '应当在句尾加料');
-  const tail = out.replace('今天好累 ', '');
-  assert.ok(persona.KAOMOJI.includes(tail), '加的是颜文字：' + tail);
-  cleanup();
+test('「多」时能产出颜文字', async t => {
+  const bubbles = await makeBot(t, '多')('今天好累');
+  assert.equal(bubbles[0], '今天好累');
+  assert.equal(bubbles.length, 2);
+  assert.ok(persona.KAOMOJI.includes(bubbles[1]));
 });
 
-test('「正常」时加了料也不会重复加（本身带 emoji 就跳过）', () => {
-  const { bot, cleanup } = makeBot('正常');
-  bot.rng = () => 0;
-  assert.equal(bot.pickEmoji('好耶🐋'), '好耶🐋');
-  cleanup();
+test('「正常」时模型已带 emoji 不重复添加', async t => {
+  assert.deepEqual(await makeBot(t, '正常')('好耶🐋'), ['好耶', '🐋']);
 });

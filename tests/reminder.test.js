@@ -13,7 +13,7 @@ const http = require('node:http');
 
 const reminder = require('../src/core/reminder');
 const { ReminderService } = require('../src/services/reminderService');
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG, loadConfig } = require('../src/infra/config');
 const { startServer } = require('../server');

@@ -154,7 +154,7 @@
     }
   },
   "websearch": {
-    "_说明": "问天气/新闻等实时问题时联网现搜。本地 Bing/360 始终开启；api.enabled 只控制是否额外调用第三方搜索 API。city 填你所在的城市（比如「上海」），问她天气时才准；留空就按她收到的原话搜（可能搜到别的城市）。",
+    "_说明": "聊天使用 DeepSeek 官方 deepseek-flash 时走模型内建搜索，不自动调用独立搜索。其他聊天模型问天气/新闻等实时问题时可使用独立搜索；api.enabled 只控制是否调用第三方搜索 API，关闭后仍可用 Bing/360。city 可填所在城市（比如「上海」）。",
     "enabled": true,
     "city": "",
     "timeoutMs": 8000,
@@ -220,7 +220,6 @@
     "_说明": "功能开关。关掉 = 回到旧行为，也可以直接在调试台「功能开关」卡片里勾。",
     "stickers": false,
     "groupAddressGuard": true,
-    "fightQuoteCheck": true,
     "mediaCleanup": true,
     "memorySnapshot": true
   },

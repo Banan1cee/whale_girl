@@ -1,6 +1,6 @@
 {
   "name": "whale-girl-bot",
-  "version": "4.1.9",
+  "version": "4.3.0",
   "updateEpoch": 1,
   "private": false,
   "description": "鲸鲸 —— 模块化重构版（CommonJS，零 npm 依赖）",
@@ -9,8 +9,11 @@
   "scripts": {
     "start": "node server.js",
     "doctor": "node server.js --doctor",
+    "plugin": "node scripts/plugin-cli.js",
     "test": "node --test --test-concurrency=4 \"tests/*.test.js\"",
     "check-layers": "node scripts/check-layers.js",
+    "check-legacy": "node scripts/check-legacy.js",
+    "migrate-memory": "node scripts/migrate-memory.js",
     "smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1",
     "release-check": "node scripts/release-check.js --release",
     "privacy": "node scripts/privacy-scan.js .",
@@ -40,3 +43,4 @@
     "url": ""
   }
 }
+

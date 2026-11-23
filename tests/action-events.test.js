@@ -8,7 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { Store } = require('../src/memory/store');
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { assemblePrompt } = require('./support/prompt');
 const { DEFAULT_CONFIG, loadConfig } = require('../src/infra/config');
 const events = require('../src/core/events');

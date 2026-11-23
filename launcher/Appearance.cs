@@ -55,6 +55,63 @@ namespace WhaleLauncher
 
         public static event Action Changed;
 
+        // ── 主题包（纯 JSON，见 LauncherTheme.cs）──────────────────
+        // 主题只叠加颜色和尺寸，不接管顶栏、系统标题栏和任何安全信号色。
+        //
+        // 启用规则只有一条：每次重建配色都用同一套最终对比度判定，
+        // 判定通过才整包生效（颜色 + 字体 + 圆角 + 弹窗），不通过就整包回到内置外观，
+        // 并把原因记在 ThemeUnavailableReason 里。启动、应用、以及用户改配色 / 背景 /
+        // 取色 / 明暗之后的重建都走这条规则，所以不会出现“运行时半套、下次启动才拒掉”。
+        private static LauncherTheme _theme;
+        private static bool _themeActive;
+        private static string _themeReason = "";
+
+        /// <summary>主题是否正在生效（选中但当前不可用时为 false）。</summary>
+        public static bool HasTheme => _theme != null && _themeActive;
+
+        /// <summary>是否选中了主题包（哪怕它当前不可用）。停用按钮用这个判断。</summary>
+        public static bool HasThemePackage => _theme != null;
+
+        /// <summary>主题不可用的原因；正在生效或没有主题时为空。</summary>
+        public static string ThemeUnavailableReason => _theme != null && !_themeActive ? _themeReason : "";
+
+        public static string ActiveThemeName => _theme?.Name ?? "";
+        public static string ThemeFilePath => Path.Combine(AppContext.BaseDirectory, "data", LauncherThemes.FileName);
+
+        /// <summary>内置字体族：和 MainWindow.xaml 的 Window.FontFamily 保持同一份默认值。</summary>
+        public const string DefaultFontFamily = "Microsoft YaHei UI, Segoe UI";
+
+        /// <summary>内置基准字号：和 MainWindow.xaml 的 Window.FontSize 保持同一份默认值。</summary>
+        public const double DefaultFontSize = 12.5;
+
+        public static string UiFontFamily => HasTheme && _theme.FontFamily.Length > 0 ? _theme.FontFamily : DefaultFontFamily;
+        public static double FontScale => HasTheme ? _theme.FontScale : 1.0;
+        public static double BaseFontSize => DefaultFontSize * FontScale;
+        public static double SpacingScale => HasTheme ? _theme.Spacing : 1.0;
+
+        /// <summary>普通弹窗（非授权 / 更新 / 安全确认）的圆角、底色和描边。</summary>
+        public static int DialogCornerRadius => HasTheme && _theme.DialogCorner >= 0 ? _theme.DialogCorner : 14;
+        public static Color DialogSurfaceColor => HasTheme && _theme.DialogSurface.Length > 0
+            ? ParseColor(_theme.DialogSurface) : BaseColor("Bg");
+        public static Color DialogBorderColor => HasTheme && _theme.DialogBorder.Length > 0
+            ? ParseColor(_theme.DialogBorder) : BaseColor("Line");
+        public static bool HasThemeDialogColors => HasTheme
+            && (_theme.DialogSurface.Length > 0 || _theme.DialogBorder.Length > 0);
+
+        /// <summary>
+        /// 字号 / 圆角 / 内边距这类尺寸不能是 App.xaml 里的字面量，否则切主题时已经建好的控件不会跟着变。
+        /// 这里统一写进 Application.Resources，App.xaml 用 DynamicResource 引用；默认值等于原来的字面量。
+        /// 键名清单同时被 tests/launcher-ui.test.js 用来和 App.xaml 对照。
+        /// </summary>
+        internal static readonly string[] ChromeKeys =
+        {
+            "FontSizeH1", "FontSizeH2", "FontSizeLabel", "FontSizeSmall", "FontSizeValue",
+            "FontSizeBody", "FontSizeControl", "FontSizeField",
+            "RadiusChip", "RadiusCard", "RadiusButton", "RadiusTopButton", "RadiusField",
+            "RadiusNav", "RadiusComboItem",
+            "PadChip", "PadPrimary", "PadGhost", "PadTopBtn",
+        };
+
         // 拖滑块会高频触发 Changed，背景图只解码一次，别每次都重新读 1920px 的图。
         private static BitmapImage _bitmapCache;
         private static string _bitmapCachePath = "";
@@ -249,17 +306,37 @@ namespace WhaleLauncher
             var tint = IsDark ? _darkTint : _lightTint;
             Application.Current.Resources["BackdropTint"] = new SolidColorBrush(tint);
             ApplyTextHalo(IsDark ? _darkHalo : _lightHalo);
+            ApplyChromeResources();
         }
 
         private static void BuildPalettes()
         {
             TryGetMonet();
-            _lightPalette = BuildPalette(false, out _lightTint, out _lightHalo);
-            _darkPalette = BuildPalette(true, out _darkTint, out _darkHalo);
+
+            // 统一决策点：每次重建都重新判定当前主题是否还能整包生效。
+            // 判定只看“当前设置组合下的最终配色”，所以启动、应用、以及改配色 / 换背景 /
+            // 切明暗之后的重建结果一致；不合格时连字体和圆角也不上，避免半套外观。
+            if (_theme != null)
+            {
+                _themeReason = ValidateForApply(_theme);
+                _themeActive = _themeReason.Length == 0;
+            }
+            else
+            {
+                _themeReason = "";
+                _themeActive = false;
+            }
+
+            var theme = _themeActive ? _theme : null;
+            _lightPalette = BuildPalette(false, theme, out _lightTint, out _lightHalo);
+            _darkPalette = BuildPalette(true, theme, out _darkTint, out _darkHalo);
             _paletteReady = true;
         }
 
         private static Dictionary<string, Color> BuildPalette(bool dark, out Color tint, out Color halo)
+            => BuildPalette(dark, _themeActive ? _theme : null, out tint, out halo);
+
+        private static Dictionary<string, Color> BuildPalette(bool dark, LauncherTheme theme, out Color tint, out Color halo)
         {
             var map = dark ? Dark : Light;
             var colors = new Dictionary<string, Color>(map.Count);
@@ -268,6 +345,12 @@ namespace WhaleLauncher
             ApplyPalette(colors, dark);
             if (HasBackdrop) ApplyGlassSurfaces(colors, dark);
             ApplyTextPalette(colors, dark);
+
+            // 主题包最后叠：颜色只覆盖语义 token 映射到的那几个键，
+            // 顶栏、安全信号色（Ok/Warn/Bad）和主按钮色不在映射表里，改不到。
+            // 这里不再做“悄悄丢颜色”的兜底：能不能用由 ValidateForApply 在提交状态前判定，
+            // 一旦开始应用就整包生效，避免字体/圆角生效而配色被偷偷换回内置的半套外观。
+            if (theme != null) colors = WithThemeColors(colors, theme, dark);
 
             tint = ResolveTint(colors, dark);
             halo = IsLight(colors["Text"]) ? Colors.Black : Colors.White;
@@ -678,6 +761,234 @@ namespace WhaleLauncher
         }
 
         private static void InvalidatePalette() => _paletteReady = false;
+
+        // ── 主题包接入 ────────────────────────────────────────────
+
+        /// <summary>
+        /// 启动时读回上次保存的主题。只有文件坏 / 内容非法才当“没有主题”；
+        /// 内容合法但当前设置组合下最终对比度不合格时，主题仍留在内存里（只是不生效），
+        /// 由 BuildPalettes 记录原因，用户调回配色或背景后会自动恢复。
+        /// </summary>
+        public static void LoadThemePackage()
+        {
+            _theme = LauncherThemes.LoadActive(ThemeFilePath);
+            _themeActive = false;
+            _themeReason = "";
+            _paletteReady = false;
+        }
+
+        /// <summary>
+        /// 应用并保存主题。先在内存里把明暗两套最终配色都算一遍并验对比度，
+        /// 通过后先把文件原子写盘，最后才提交内存状态：任何一步失败都保持原外观，
+        /// 不存在“报告成功但只生效一半”或“重启后换了另一套”的情况。
+        /// </summary>
+        internal static bool SetThemePackage(LauncherTheme theme, out string error)
+        {
+            error = "";
+            var problem = ValidateForApply(theme);
+            if (problem.Length > 0)
+            {
+                error = problem;
+                return false;
+            }
+            if (!LauncherThemes.Save(ThemeFilePath, theme))
+            {
+                error = "没能写进 data 目录，已保持原外观；请检查目录权限或磁盘空间。";
+                return false;
+            }
+
+            _theme = theme;
+            InvalidatePalette();
+            ApplyTheme();
+            Changed?.Invoke();
+            return true;
+        }
+
+        /// <summary>
+        /// 停用主题包：先删持久化文件，删成功才切回内置外观。
+        /// 删不掉就如实返回失败（重启后它会重新生效），不做“看起来停用了”的假动作。
+        /// </summary>
+        internal static bool ClearThemePackage(out string error)
+        {
+            error = "";
+            var hadTheme = _theme != null;
+            var hadFile = File.Exists(ThemeFilePath);
+            if (!hadTheme && !hadFile) return true;
+            if (!LauncherThemes.Remove(ThemeFilePath))
+            {
+                error = "删不掉 data\\" + LauncherThemes.FileName + "，主题在重启后仍会生效；请先关闭占用该文件的程序或手动删除。";
+                return false;
+            }
+
+            _theme = null;
+            _themeActive = false;
+            _themeReason = "";
+            InvalidatePalette();
+            ApplyTheme();
+            Changed?.Invoke();
+            return true;
+        }
+
+        /// <summary>
+        /// 提交状态前的唯一验收点：主题自己声明的颜色对，加上叠进现有明暗 / 玻璃关系后的
+        /// 最终配色，任何一套不清楚就整包拒绝。返回空串表示可以应用。
+        /// </summary>
+        private static string ValidateForApply(LauncherTheme theme)
+        {
+            if (theme == null) return "没有可应用的主题包。";
+            var problem = LauncherThemes.ContrastProblem(theme);
+            if (problem.Length > 0) return problem;
+            foreach (var dark in new[] { true, false })
+            {
+                var colors = BuildPalette(dark, theme, out _, out _);
+                if (!ContrastOk(colors)) return (dark ? "深色" : "浅色") + "下最终对比度不足，主题包未应用。";
+            }
+            return "";
+        }
+
+        /// <summary>
+        /// 主题色叠加层。只写映射表里的键，返回新字典；原字典保持不变，
+        /// 这样对比度闸不通过时可以整包丢弃。
+        /// </summary>
+        private static Dictionary<string, Color> WithThemeColors(Dictionary<string, Color> colors, LauncherTheme theme, bool dark)
+        {
+            var next = new Dictionary<string, Color>(colors);
+            var accent = theme.HasColor("accent") ? ParseColor(theme.Colors["accent"]) : colors["Accent"];
+            var background = theme.HasColor("background") ? ParseColor(theme.Colors["background"]) : colors["Bg"];
+            var surface = theme.HasColor("surface") ? ParseColor(theme.Colors["surface"]) : colors["CardBg"];
+            var text = theme.HasColor("text") ? ParseColor(theme.Colors["text"]) : colors["Text"];
+            var border = theme.HasColor("border") ? ParseColor(theme.Colors["border"]) : colors["CardBorder"];
+            var field = theme.HasColor("field") ? ParseColor(theme.Colors["field"]) : colors["FieldBg"];
+            var fade = IsLight(text) ? Colors.Black : Colors.White;
+
+            // 淡色 / 玻璃层沿用原配色的 alpha：主题只决定色相，不改变“透多少”。
+            next["Accent"] = accent;
+            next["AccentSoft"] = Blend(background, accent, dark ? 0.16 : 0.12);
+            next["AccentDim"] = Blend(background, accent, dark ? 0.10 : 0.07);
+            next["Bg"] = KeepAlpha(background, colors["Bg"]);
+            next["BgDeep"] = KeepAlpha(Blend(background, dark ? Colors.Black : Colors.White, 0.10), colors["BgDeep"]);
+            next["BgContent"] = KeepAlpha(background, colors["BgContent"]);
+            next["BgNav"] = KeepAlpha(Blend(background, accent, 0.04), colors["BgNav"]);
+            next["CardBg"] = KeepAlpha(surface, colors["CardBg"]);
+            next["PopupBg"] = KeepAlpha(surface, colors["PopupBg"]);
+            next["ChipBg"] = KeepAlpha(Blend(surface, background, 0.35), colors["ChipBg"]);
+            next["GhostBg"] = KeepAlpha(Blend(surface, background, 0.25), colors["GhostBg"]);
+            next["GhostHover"] = KeepAlpha(Blend(surface, accent, 0.10), colors["GhostHover"]);
+            next["Surface3"] = KeepAlpha(Blend(surface, background, 0.15), colors["Surface3"]);
+            next["Hover"] = KeepAlpha(Blend(surface, accent, 0.10), colors["Hover"]);
+            next["Text"] = KeepAlpha(text, colors["Text"]);
+            next["Text2"] = Blend(text, fade, 0.14);
+            next["Muted"] = theme.HasColor("muted") ? ParseColor(theme.Colors["muted"]) : Blend(text, fade, 0.30);
+            next["Dim"] = Blend(text, fade, 0.44);
+            next["Line"] = KeepAlpha(border, colors["Line"]);
+            next["LineSoft"] = KeepAlpha(Blend(border, background, 0.50), colors["LineSoft"]);
+            next["CardBorder"] = KeepAlpha(border, colors["CardBorder"]);
+            next["FieldBorder"] = KeepAlpha(border, colors["FieldBorder"]);
+            next["FieldBg"] = KeepAlpha(field, colors["FieldBg"]);
+            next["ScrollThumb"] = KeepAlpha(Blend(field, background, 0.35), colors["ScrollThumb"]);
+            return next;
+        }
+
+        private static Color KeepAlpha(Color color, Color alphaFrom)
+            => Color.FromArgb(alphaFrom.A, color.R, color.G, color.B);
+
+        /// <summary>最终配色闸：正文 / 次要文字 / 强调色对底色都要够清楚。</summary>
+        private static bool ContrastOk(Dictionary<string, Color> colors)
+            => ContrastRatio(colors["Text"], colors["Bg"]) >= LauncherThemes.TextContrast
+            && ContrastRatio(colors["Text2"], colors["Bg"]) >= LauncherThemes.AccentContrast
+            && ContrastRatio(colors["Accent"], colors["Bg"]) >= LauncherThemes.AccentContrast
+            && ContrastRatio(colors["Text"], colors["CardBg"]) >= LauncherThemes.TextContrast;
+
+        private static double ContrastRatio(Color first, Color second)
+            => LauncherThemes.Ratio(Rgb(first), Rgb(second));
+
+        private static uint Rgb(Color color)
+            => 0xFF000000u | ((uint)color.R << 16) | ((uint)color.G << 8) | color.B;
+
+        /// <summary>
+        /// 字号 / 圆角 / 内边距：App.xaml 里用 DynamicResource 引用这些键，
+        /// 所以换主题时已经建好的页面也会跟着刷新。默认值取自 ChromeDefaults，
+        /// 和 App.xaml 里那组资源是同一套数字。
+        /// </summary>
+        private static void ApplyChromeResources()
+        {
+            if (Application.Current == null) return;
+            var resources = Application.Current.Resources;
+            var font = FontScale;
+            var spacing = SpacingScale;
+            var cornerRatio = HasTheme && _theme.Corner >= 0 ? _theme.Corner / 18.0 : 1.0;
+
+            foreach (var kv in ChromeDefaults())
+            {
+                resources[kv.Key] = kv.Value switch
+                {
+                    double size => size * font,
+                    CornerRadius radius => new CornerRadius(ScaledCorner(radius.TopLeft, cornerRatio)),
+                    Thickness pad => new Thickness(pad.Left * spacing, pad.Top * spacing,
+                        pad.Right * spacing, pad.Bottom * spacing),
+                    _ => kv.Value,
+                };
+            }
+        }
+
+        private static double ScaledCorner(double baseValue, double ratio)
+            => Math.Round(Math.Clamp(baseValue * ratio, 0, 28), 1);
+
+        /// <summary>
+        /// 授权 / 更新 / 安全确认用的局部内置资源：把当前明暗主题的**本色**画刷和
+        /// 尺寸 token 的默认值打包成一份 ResourceDictionary，挂到弹窗卡片上。
+        /// 这样弹窗子树里所有 DynamicResource（字体字号、圆角、内边距、按钮 hover 态、
+        /// 危险色）都会在这里命中，不再继承主题包的字体和尺寸。
+        /// </summary>
+        internal static Dictionary<string, object> DialogSafeResources()
+        {
+            var map = new Dictionary<string, object>(StringComparer.Ordinal);
+            var colors = IsDark ? Dark : Light;
+            foreach (var kv in colors) map[kv.Key] = new SolidColorBrush(ParseColor(kv.Value));
+            foreach (var kv in ChromeDefaults()) map[kv.Key] = kv.Value;
+
+            // 文字描边取色跟正文亮暗走，主题改过正文色时不能让确认框继续用主题的描边：
+            // 正文是亮色就描黑边、暗色就描白边，和内置外观一致。用户关掉描边时不强加。
+            var text = ParseColor(colors["Text"]);
+            if (Application.Current?.Resources.Contains("TextHalo") == true)
+            {
+                var halo = new DropShadowEffect
+                {
+                    Color = LauncherThemes.Luminance(Rgb(text)) > 0.55 ? Colors.Black : Colors.White,
+                    ShadowDepth = 0,
+                    BlurRadius = 0.9,
+                    Opacity = 0.7,
+                    RenderingBias = RenderingBias.Performance,
+                };
+                halo.Freeze();
+                map["TextHalo"] = halo;
+            }
+            return map;
+        }
+
+        /// <summary>尺寸 token 的默认值；必须和 App.xaml 里那组资源保持一致。</summary>
+        private static Dictionary<string, object> ChromeDefaults() => new(StringComparer.Ordinal)
+        {
+            ["FontSizeH1"] = 30.0,
+            ["FontSizeH2"] = 13.5,
+            ["FontSizeLabel"] = 12.0,
+            ["FontSizeSmall"] = 11.0,
+            ["FontSizeValue"] = 13.5,
+            ["FontSizeBody"] = 12.5,
+            ["FontSizeControl"] = 12.0,
+            ["FontSizeField"] = 12.5,
+            ["RadiusChip"] = new CornerRadius(9),
+            ["RadiusCard"] = new CornerRadius(18),
+            ["RadiusButton"] = new CornerRadius(10),
+            ["RadiusTopButton"] = new CornerRadius(8),
+            ["RadiusField"] = new CornerRadius(8),
+            ["RadiusNav"] = new CornerRadius(10),
+            ["RadiusComboItem"] = new CornerRadius(7),
+            ["PadChip"] = new Thickness(11, 0, 11, 0),
+            ["PadPrimary"] = new Thickness(16, 9, 16, 9),
+            ["PadGhost"] = new Thickness(14, 7, 14, 7),
+            ["PadTopBtn"] = new Thickness(10, 5, 10, 5),
+        };
 
         public static void SetBackdropBlur(double radius)
         {

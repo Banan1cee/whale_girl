@@ -108,9 +108,9 @@ test('配置校验日志不把 env.location 的实际值写出去', () => {
 test('Node 已知日志调用点不再直接拼接正文/昵称/会话 id', () => {
   const root = path.join(__dirname, '..');
   const checks = [
-    ['src/pipeline/chat.js', /提醒已登记：\$\{item\.text\}/],
-    ['src/pipeline/chat.js', /判定在跟别人说话，不接：\$\{said\.slice/],
-    ['src/pipeline/chat.js', /私聊 \$\{msg\.senderName\}/],
+    ['src/pipeline/bot.js', /提醒已登记：\$\{item\.text\}/],
+    ['src/pipeline/bot.js', /判定在跟别人说话，不接：\$\{said\.slice/],
+    ['src/pipeline/bot.js', /私聊 \$\{msg\.senderName\}/],
     ['src/adapters/gateway.js', /消息 \$\{msg\.senderName\}/],
     ['src/http/routes/reminders.js', /提醒已取消：' \+ out\.item\.text/],
     ['src/services/settings.js', /称呼已改为「\$\{name\}/],

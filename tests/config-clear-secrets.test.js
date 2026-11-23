@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { loadConfig } = require('../src/infra/config');
-const { clearSecrets, publicConfig } = require('../src/infra/configPatch');
+const { applyConfigPatch, clearSecrets, publicConfig } = require('../src/infra/configPatch');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-clear-secrets-'));
@@ -65,6 +65,21 @@ test('清除 voice.apiKey 同时删 settings 的旧语音 Key 位置，保留其
   assert.equal(settings.keys?.voice, undefined);
   assert.equal(settings.keys?.deepseek, 'keep-me');
   assert.equal(settings.apiKey, 'chat-settings-key');
+});
+
+test('搜索凭据不回显且不被空值或其他设置保存覆盖', (t) => {
+  const { config, runtime } = fixture(t);
+  applyConfigPatch(runtime, { websearch: { api: { followChat: false, providers: ['qwen'] }, qwen: { apiKey: 'test-qwen-search-secret' } } });
+  applyConfigPatch(runtime, { 'websearch.qwen.apiKey': '', 'env.location': '上海' });
+  assert.equal(config.env.location, '上海');
+  assert.equal(config.websearch.qwen.apiKey, 'test-qwen-search-secret');
+  const pub = publicConfig(config);
+  assert.deepEqual(pub.config.websearch.api.providers, ['qwen']);
+  assert.equal(pub.config.websearch.qwen.apiKey, '');
+  assert.equal(pub.secrets['websearch.qwen.apiKey'], true);
+  assert.doesNotMatch(JSON.stringify(pub), /test-qwen-search-secret/);
+  clearSecrets(runtime, ['websearch.qwen.apiKey']);
+  assert.equal(publicConfig(config).secrets['websearch.qwen.apiKey'], false);
 });
 
 test('不允许清除非密钥字段', (t) => {

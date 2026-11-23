@@ -24,9 +24,17 @@ const { statusPayload, replyChannelLabel } = require('./src/services/status');
 const { applySettings } = require('./src/services/settings');
 const probe = require('./src/infra/probe');
 const { watchParentPipe } = require('./src/infra/parentGuard');
+const { describeError } = require('./src/infra/errors');
+const dataLock = require('./src/memory/dataLock');
 
 // 探针：进程从 require 到现在的时间，用来算「启动到 listen」到底多久
 const probeBootAt = probe.now();
+
+// 数据目录锁的所有拒绝码（busy/recovering/guard_stale/guard_unknown/unknown/unavailable）
+// 都走同一套人话提示；不要只列旧的三类，否则新守卫状态会掉进堆栈分支。
+function isDataLockError(err) {
+  return Boolean(err && typeof err.code === 'string' && err.code.startsWith('data_lock_'));
+}
 
 /* ------------------------------------------------------------------ */
 /* 主处理函数                                                          */
@@ -48,7 +56,27 @@ function createHandler(runtime) {
 /* ------------------------------------------------------------------ */
 
 async function startServer({ root = projectRoot(), env = process.env, port, host } = {}) {
-  const runtime = createRuntime({ root, env });
+  // 与离线迁移共用同一把 data 目录排他锁：先拿到所有权，再 recoverRestore / 开 Store。
+  // 这样「服务先起 / 迁移先跑」两个方向都靠原子锁排序，而不是读一下锁再各自开库。
+  const dataDir = path.join(root, 'data');
+  const lock = dataLock.acquire({ dataDir, purpose: 'server' });
+  let lockReleased = false;
+  const releaseLock = () => {
+    if (lockReleased) return;
+    lockReleased = true;
+    lock.releaseSync();
+    process.removeListener('exit', onExit);
+  };
+  function onExit() { lock.releaseSync(); }
+  process.once('exit', onExit);
+
+  let runtime;
+  try {
+    runtime = createRuntime({ root, env });
+  } catch (err) {
+    releaseLock();
+    throw err;
+  }
   const { config, logger } = runtime;
   // config.json 解析不了时 loadConfig 只能退回默认值。这里必须大声说出来：
   // 否则用户看到的是「配置全变默认了」，而日志里一条解释都没有，
@@ -80,14 +108,27 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
     );
     listenHost = '127.0.0.1';
   }
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(listenPort, listenHost, resolve);
-  });
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(listenPort, listenHost, resolve);
+    });
+  } catch (err) {
+    // listen 失败时服务从未对外可用；先关掉 runtime/store，再释放所有权。
+    try { await runtime.plugins.stop(); } catch { /* 失败也要继续清理 */ }
+    try { runtime.store.close(); } catch { /* 失败也要继续清理 */ }
+    releaseLock();
+    throw err;
+  }
   const actualPort = server.address().port;
   const pluginHost = ['::', '::1'].includes(listenHost) ? '[::1]' : '127.0.0.1';
   runtime.pluginApiUrl = `http://${pluginHost}:${actualPort}`;
-  runtime.bot.javascriptPlugins.start();
+  // 授权轮询同时更新定时项，避免停用或重签后沿用旧任务。
+  runtime.plugins.start(() => {
+    try { runtime.capabilities?.reconcileTasks(runtime.scheduler); } catch (err) {
+      logger.warn('插件定时任务登记失败（不影响收发）：' + describeError(err));
+    }
+  });
   // 探针：listen 成功 = 内核第一次能被连上。这条数字直接对应「启动器 10 秒超时 / 积极拒绝」
   probe.emit(logger, 'info',
     `listen 就绪 端口=${actualPort} 启动到 listen=${probe.ms(probe.now() - probeBootAt)}ms`);
@@ -113,7 +154,7 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
   const close = async () => {
     if (closed) return;
     closed = true;
-    await runtime.bot.javascriptPlugins.stop();
+    await runtime.plugins.stop();
     // SSE / keep-alive 连接会让 server.close() 一直等，先强制断开空闲连接
     try { if (server.closeIdleConnections) server.closeIdleConnections(); } catch { /* ignore */ }
     setTimeout(() => {
@@ -122,14 +163,18 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
     await new Promise((resolve) => server.close(resolve));
     runtime.loopProbe?.stop();   // 探针：关服务时把事件循环峰值吐出来
     logger.close();
+    releaseLock();
   };
   server.on('close', () => {
-    void runtime.bot.javascriptPlugins.stop();
+    runtime.capabilities?.stopTasks(runtime.scheduler);
+    void runtime.plugins.stop();
     runtime.scheduler?.stopAll();
     runtime.moments?.stopAutoRead();
     runtime.diary?.stop();
     runtime.stopConfigWatch?.();
     runtime.store.close();
+    // 所有权不在 'close' 事件里释放：事件回调里的 plugins.stop() 还是异步的，
+    // 真正的 close() 在 await 完 plugins/store/HTTP teardown 后才释放。
   });
 
   return { server, runtime, port: actualPort, host: listenHost, url, close };
@@ -213,9 +258,26 @@ async function main() {
     process.exit(0);
   }
   if (args.includes('--debug-info')) {
-    const rt = createRuntime({});
-    console.log(JSON.stringify({ state: debugState(rt), sessions: debugSessions(rt) }, null, 2));
-    rt.store.close();
+    // 调试导出也会打开 Store；同样先拿所有权，避免和迁移/服务并发读写。
+    let lock;
+    try {
+      lock = dataLock.acquire({ dataDir: path.join(projectRoot(), 'data'), purpose: 'server' });
+      const rt = createRuntime({});
+      try {
+        console.log(JSON.stringify({ state: debugState(rt), sessions: debugSessions(rt) }, null, 2));
+      } finally {
+        try { rt.store.close(); } catch { /* 退出前已尽力 */ }
+      }
+    } catch (err) {
+      if (isDataLockError(err)) {
+        console.error(`\n❌ 数据目录正忙：${err.message}\n`);
+        process.exitCode = 1;
+        return;
+      }
+      throw err;
+    } finally {
+      if (lock) lock.releaseSync();
+    }
     process.exit(0);
   }
   const portArg = args.find((a) => /^--port=\d+$/.test(a));
@@ -225,7 +287,9 @@ async function main() {
   try {
     instance = await startServer({ port });
   } catch (err) {
-    if (err.code === 'EADDRINUSE') {
+    if (isDataLockError(err)) {
+      console.error(`\n❌ 数据目录正忙：${err.message}\n`);
+    } else if (err.code === 'EADDRINUSE') {
       console.error(`\n❌ 端口被占用了（${err.port || '默认端口'}）。换个端口：node server.js --port=8788\n`);
     } else {
       console.error('\n❌ 启动失败：', err && err.stack ? err.stack : err, '\n');

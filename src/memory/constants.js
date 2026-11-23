@@ -79,6 +79,21 @@ const LIMITS = Object.freeze({
   maxTurnChars: 1800,
   checkpointKeep: 50,
   closedEpisodeMemory: 200,
+
+  // ---- 记忆 v2（三层模型）----
+  // 数据目录布局版本：manifest.version 不等于它就拒绝启动，旧数据必须先跑
+  // `node scripts/migrate-memory.js --apply`。不做运行时兼容是有意的：
+  // 只要旧格式还能读，旧分支就永远删不掉（见 docs/记忆系统.md）。
+  formatVersion: 3,
+  // 滚动关闭：累计这么多条 user 消息就关 episode，不等空闲。长会话里
+  // 「空闲 30 分钟」可能几小时都不触发，中期记忆会整段缺产。
+  recentTurnsRollover: 40,
+  // 长期常驻事实 / 中期摘要段 各自的容量上限（超出的降级，不删除）
+  subjectFactCap: 30,
+  digestCap: 30,
+  // 档案分块：6 条消息一块、重叠 1 条，单块约 220 token
+  chunkSize: 6,
+  chunkOverlap: 1,
 });
 
 const DAY_MS = 86400000;

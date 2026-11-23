@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 
@@ -25,12 +25,28 @@ function fixture(t, options = {}) {
     calibration: { trimScale: () => 1, apply: n => ({ scale: 1, calibrated: n, n: 0 }) } });
   const control = { pre: 'pass', ...options };
   const hooks = [];
-  bot.messagePlugins = { supports: () => false, async run(hook, context) {
-    hooks.push(hook);
-    if (control.throwHook === hook) throw new Error('fixture hook failure');
-    return { action: hook === 'chat.pre_reply' ? control.pre : 'pass', system: context.system,
-      text: hook === 'chat.generate' && control.generated !== undefined ? control.generated : context.text };
-  } };
+  // 旧的 messagePlugins 钩子已退役；用统一 capability 调度 seam 注入合成插件。
+  // pre=skip 用「生成插件返回空」表达，pre=wake 用「接管插件存在」表达，
+  // 由 Bot.decide 自己证明静音/禁用闸优先于插件。
+  bot.pluginRuntime.installed = () => {
+    const list = [];
+    if (control.generated !== undefined || control.throwHook === 'chat.generate' || control.pre === 'skip') {
+      list.push({ id: 'fixture-generate', provides: { 'chat.generate@1': { mode: 'replace', scope: 'all' } }, settings: {}, executionTimeoutMs: 30000 });
+    }
+    if (control.pre === 'wake') {
+      list.push({ id: 'fixture-handle', provides: { 'chat.handle@1': { mode: 'replace', scope: 'all' } }, settings: {}, executionTimeoutMs: 30000 });
+    }
+    return list;
+  };
+  bot.pluginRuntime.invoke = async (flow, capability) => {
+    hooks.push(capability);
+    if (capability === 'chat.generate@1') {
+      if (control.throwHook === 'chat.generate') throw new Error('fixture hook failure');
+      if (control.generated !== undefined) return { text: control.generated };
+      return { text: '' };
+    }
+    return { action: 'ignore', reason: 'plugin_wake' };
+  };
   t.after(() => {
     store.close();
     assert.equal(path.dirname(root), os.tmpdir());
@@ -192,6 +208,34 @@ test('normal denied decisions do not apply speculative engagement or consent eff
   }
 });
 
+test('group leak guard uses the safe reply as the only public and persisted output', async t => {
+  const f = fixture(t);
+  // 纯合成标记（不是任何真实聊天内容）：命中 leakGuard 的「来源泄漏」规则。
+  const synthetic = '你上次跟我说过这件事';
+  f.bot.llm.complete = async () => synthetic;
+  const msg = message('leak-guard', { atMe: true });
+  const result = await f.bot.handle(msg);
+  assert.equal(result.action, 'reply');
+  assert.equal(result.reply, '这个我不清楚呀');
+  assert.deepEqual(result.bubbles, ['这个我不清楚呀']);
+  assert.ok(!JSON.stringify(result).includes(synthetic), '公开结果不能再带原文');
+  const key = f.bot.sessionKey(f.bot.normalize(msg));
+  const rows = f.store.messages(key, 100).filter(m => m.role === 'assistant');
+  assert.equal(rows.at(-1).text, '这个我不清楚呀', '持久化也必须是安全正文');
+  assert.ok(!rows.at(-1).text.includes(synthetic));
+});
+
+test('nickname-only master match cannot produce admin hints for muted nonowners', async t => {
+  const f = fixture(t);
+  // 昵称命中主人名单但 senderId 未绑定：只能算普通群友，且已被静音。
+  const m = message('nickname-admin', { atMe: true, text: '管理状态', senderName: 'FixtureOwner', senderId: 'not-the-owner' });
+  state(f, m).mutedUntil = f.now() + 600000;
+  const result = await f.bot.decide(m);
+  assert.equal(result.action, 'ignore');
+  assert.equal(result.reason, 'muted');
+  assert.equal(result.commandType, undefined);
+});
+
 test('silent/muted/plugin and early reminder/dismiss/admin lane precedence remains', async t => {
   for (const [kind, expectedAction, expectedReason] of [
     ['silent-peer', 'ignore', 'silent'], ['silent-owner', 'reply', 'addressed'],
@@ -222,6 +266,6 @@ test('silent/muted/plugin and early reminder/dismiss/admin lane precedence remai
       assert.equal(result.msg.newPersonaBehavior, true);
       assert.equal(result.commandType, undefined);
     }
-    if (['dismiss', 'reminder', 'admin'].includes(kind)) assert.ok(!f.hooks.includes('chat.pre_reply'), kind);
+    if (['dismiss', 'reminder', 'admin'].includes(kind)) assert.ok(!f.hooks.includes('chat.generate@1') && !f.hooks.includes('chat.handle@1'), kind);
   }
 });

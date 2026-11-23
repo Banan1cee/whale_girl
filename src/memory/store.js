@@ -14,9 +14,14 @@ const personCard = require('./personCard');
 const episode = require('./episode');
 const compression = require('./compression');
 const retrieval = require('./retrieval');
+const search = require('./search');
+const scope = require('./scope');
+const sharedStore = require('./sharedStore');
+const record = require('./record');
+const recordStore = require('./recordStore');
 const format = require('./format');
 const extractor = require('./extractor');
-const migrate = require('./migrate');
+const formatVersion = require('./formatVersion');
 const budgetPlan = require('./budgetPlan');
 const relations = require('./relations');
 const { LIMITS, DAY_MS } = require('./constants');
@@ -65,7 +70,7 @@ function activePreferenceTexts(card) {
 }
 
 class Store {
-  constructor({ file, dir, limits = {}, logger = null, now = Date.now, llm = null } = {}) {
+  constructor({ file, dir, limits = {}, logger = null, now = Date.now, llm = null, formatVersionEnforced = false } = {}) {
     this.file = file || path.resolve(process.cwd(), 'data', 'store.json');
     this.memoryDir = dir || path.join(path.dirname(this.file), 'memory');
     this.logger = logger;
@@ -87,16 +92,22 @@ class Store {
     this.digest = [];
     this.stats = { messages: 0, replies: 0 };
     this._background = new Set();
+    // 格式闸：只认当前格式，不认识的版本直接拒绝启动。
+    // 必须放在 ChatStore 构造之前 —— 它初始化时会重写 manifest，把 formatVersion 抹掉，
+    // 之后就再也判断不出「这个目录本来是旧格式」。
+    //
+    // 旧版这里会在构造时顺手跑一次自动导入。那等于让旧格式永远活着：
+    // 每次启动都跑一遍导入、还要留一份 legacy 只读副本。现在导入搬到了
+    // scripts/migrate-memory.js（一次性、离线、跑完就删旧文件），
+    // src/ 里不再有任何迁移代码。
+    if (formatVersionEnforced) {
+      const gate = formatVersion.check({ dir: this.memoryDir });
+      if (!gate.ok) throw gate.error;
+    }
     this.chatStore = new ChatStore({
       dir: this.memoryDir, logger, now: () => this._now(),
       maxMessages: this.limits.maxMessages,
     });
-    try {
-      const result = migrate.migrateIfNeeded({ memoryDir: this.memoryDir, chatStore: this.chatStore, logger });
-      if (result.migrated) this.chatStore.load();
-    } catch (err) {
-      if (this.logger) this.logger.warn('旧记忆迁移失败（不影响新记忆）：' + describeError(err));
-    }
     this._syncSessions();
   }
 
@@ -125,7 +136,11 @@ class Store {
       enumerable: true,
       get: () => {
         const out = {};
-        for (const card of chat.people.values()) out[card.uid] = this._profileView(card);
+        for (const registry of chat.people.values()) {
+          // 记忆正文在记录里，名册只有 uid/name：物化后合并，别让 UI 看到空卡
+          const card = this.chatStore.getCard(chat, registry.uid);
+          out[registry.uid] = this._profileView({ ...registry, ...(card || {}), uid: registry.uid });
+        }
         return out;
       },
     });
@@ -160,6 +175,16 @@ class Store {
     if (!this.sessions.has(chatId)) this.sessions.set(chatId, this._view(chat));
     else if (meta.title && !chat.title) chat.title = String(meta.title).slice(0, 60);
     return this.sessions.get(chatId);
+  }
+
+  setGeneratedTitle(key, value) {
+    const title = String(value || '').replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 60);
+    if (!title) return;
+    const chat = this.chatStore.ensureChat(key);
+    if (chat.title || chat.platform !== 'web' || chat.chatType !== 'private') return;
+    chat.title = title;
+    this.sessions.set(chat.chatId, this._view(chat));
+    this.chatStore.saveMeta(chat, { immediate: true });
   }
 
   getState(key) {
@@ -224,30 +249,90 @@ class Store {
     return entry;
   }
 
+  /** 记录是唯一事实源：事实写进这个人的 subjects，不再写人物卡 */
+  _writeFacts(chat, uid, facts, entry) {
+    const id = String(uid || '');
+    if (!id || !Array.isArray(facts) || !facts.length) return;
+    const existing = recordStore.readSubjects(this.memoryDir, id);
+    const byId = new Map(existing.map((r) => [r.id, r]));
+    for (const fact of facts) {
+      const item = record.makeRecord({
+        kind: 'preference',
+        text: fact.text,
+        ts: entry.ts,
+        tier: 'L',
+        scope: `chat:${chat.hash}`,
+        subject: id,
+        source: { chatId: chat.chatId, messageIds: [entry.id] },
+        confidence: fact.confidence,
+        meta: { key: fact.key || '', tag: fact.kind || 'fact', explicit: true },
+      });
+      if (!item) continue;
+      // 同义自述去重：同一个 key（比如 name / city）或同一句话，只更新不新增。
+      // 记录 id 含消息 id，所以「同一句话发两遍」会得到两个 id —— 必须在这里按内容合并。
+      const textKey = personCard.normalizeText(item.text);
+      const dup = [...byId.values()].find((r) => r.state === 'active'
+        && ((item.meta.key && r.meta && r.meta.key === item.meta.key)
+          || (textKey && personCard.normalizeText(r.text) === textKey)));
+      if (dup) {
+        byId.set(dup.id, {
+          ...dup,
+          confidence: Math.max(Number(dup.confidence) || 0, Number(item.confidence) || 0),
+          hits: (Number(dup.hits) || 0) + 1,
+          meta: { ...(dup.meta || {}), ...(item.meta || {}), lastMentionedAt: entry.ts },
+        });
+        continue;
+      }
+      const old = byId.get(item.id);
+      byId.set(item.id, old ? { ...old, ...item, hits: old.hits || 0, ts: old.ts } : item);
+    }
+    const capped = record.capByKind([...byId.values()], {
+      caps: { preference: LIMITS.maxPreferencesPerPerson, fact: LIMITS.maxPreferencesPerPerson },
+      now: entry.ts,
+    });
+    recordStore.writeSubjects(this.memoryDir, id, capped);
+    this.chatStore.markRecordsDirty(chat);
+  }
+
+  /** 中期记录（摘要 / 事件 / 关系）只追加到 timeline */
+  _appendTimeline(chat, records) {
+    const list = (Array.isArray(records) ? records : []).filter(Boolean);
+    if (!list.length) return 0;
+    const n = recordStore.appendTimeline(chat.dir, list);
+    this.chatStore.markRecordsDirty(chat);
+    return n;
+  }
+
   _onUserMessage(chat, entry) {
     if (!entry.uid || !entry.text) return;
+    // 人物卡退化成名册：这里只登记「这个 chat 出现过这个人」，记忆内容一律写记录
+    this.chatStore.ensurePerson(chat, entry.uid, entry.name);
     try {
-      // 已有卡就直接用，别在这里重复把 count 加一次（profile() 那步才算“聊过一次”）
-      const card = this.chatStore.getCard(chat, entry.uid) || this.chatStore.ensurePerson(chat, entry.uid, entry.name);
       const { facts } = extractor.extractSelfFacts(entry.text, { msgId: entry.id, now: entry.ts });
       if (facts.length) {
-        extractor.applyFacts(card, facts, { chatId: chat.chatId, now: entry.ts });
-        // 人生事件：即时补一条事件卡
+        this._writeFacts(chat, entry.uid, facts, entry);
+        // 人生事件：即时补一条中期事件
         for (const fact of facts) {
           if (!String(fact.key || '').startsWith('life:')) continue;
-          personCard.addEvent(card, {
-            id: `evt_${entry.id}`,
-            date: personCard.dateString(entry.ts),
-            title: trimText(entry.text, 20),
-            summary: trimText(entry.text, 150),
-            keywords: [],
-            participants: [entry.uid],
-            importance: 0.65,
-            confidence: 0.8,
+          this._appendTimeline(chat, [record.makeRecord({
+            kind: 'event',
+            tier: 'M',
+            text: trimText(entry.text, 150),
+            ts: entry.ts,
+            scope: `chat:${chat.hash}`,
+            subject: entry.uid,
             source: { chatId: chat.chatId, messageIds: [entry.id] },
-          }, { chatId: chat.chatId, now: entry.ts });
+            confidence: 0.8,
+            importance: 0.65,
+            meta: {
+              date: personCard.dateString(entry.ts),
+              title: trimText(entry.text, 20),
+              summary: trimText(entry.text, 150),
+              keywords: [],
+              participants: [entry.uid],
+            },
+          })]);
         }
-        this.chatStore.saveCard(chat, card);
       }
     } catch (err) {
       if (err && err.code === 'MEMORY_CHAT_MISMATCH') throw err;
@@ -266,9 +351,8 @@ class Store {
           byUid.get(c.uid).push(c);
         }
         for (const [uid, list] of byUid) {
-          const person = this.chatStore.getCard(chat, uid) || this.chatStore.ensurePerson(chat, uid, list[0].name);
-          extractor.applyFacts(person, list, { chatId: chat.chatId, now: entry.ts });
-          this.chatStore.saveCard(chat, person);
+          this.chatStore.ensurePerson(chat, uid, list[0].name);
+          this._writeFacts(chat, uid, list, entry);
         }
         chat.meta.stats.userMessagesSinceExtract = 0;
       } catch (err) {
@@ -353,6 +437,129 @@ class Store {
         && message.msgId.startsWith('care:')
         && message.text)
       .slice(-count);
+  }
+
+  /**
+   * 每个 chat 的档案索引（懒建 + 按「消息数 + 最后 seq」失效）。
+   *
+   * 不缓存的话，开着档案召回时每轮都要重切 400 块再建倒排，实测 ~20ms，
+   * 全部花在同一份没变的数据上。消息一追加缓存就自动失效，不需要手动清。
+   */
+  _archiveIndex(key) {
+    const chat = this.chatStore.ensureChat(key);
+    if (!chat) return null;
+    const last = chat.messages[chat.messages.length - 1] || {};
+    const stamp = `${chat.messages.length}:${last.seq || 0}`;
+    if (!this._archiveCache) this._archiveCache = new Map();
+    const hit = this._archiveCache.get(key);
+    if (hit && hit.stamp === stamp) return hit.index;
+    const chunks = search.buildChunks(chat.messages, { chatId: chat.chatId });
+    const index = search.buildIndex(chunks);
+    this._archiveCache.set(key, { stamp, index });
+    // 只留最近 16 个会话，别把几千个群的索引都揣在内存里
+    if (this._archiveCache.size > 16) {
+      const oldest = this._archiveCache.keys().next().value;
+      this._archiveCache.delete(oldest);
+    }
+    return index;
+  }
+
+  /**
+   * 长期档案检索：在原文分块上跑 BM25（不需要 embedding）。
+   *
+   * 这是补「掉出 recent 窗口就永久失联」那个缺口的最小实现：读路径以前只看
+   * recent / 摘要 / 事件卡，messages.jsonl 里几千条原文根本没人搜。
+   * 纯读取，不改任何状态；要不要塞进 prompt 由调用方决定。
+   *
+   * @param {string} key chatId
+   * @param {string} query 当前消息
+   * @param {{topK?:number}} [opts]
+   * @returns {Array<{chunk:object, score:number}>}
+   */
+  searchArchive(key, query, { topK = 3 } = {}) {
+    if (!query) return [];
+    const index = this._archiveIndex(key);
+    if (!index) return [];
+    return search.search(index, query, { topK });
+  }
+
+  /**
+   * 这一轮的可见性上下文。
+   *
+   * 群聊必须带成员名单：跨会话的公开事实只有在当事人「也在场」时才注入，
+   * 否则小明的口味会出现在他根本不在的群里 —— 那比泄漏更让人不适。
+   * 名单来自本 chat 已建卡的人；宁可少注入，不猜。
+   */
+  audienceOf(key, { uid = '', isGroup = false } = {}) {
+    const chat = this.chatStore.ensureChat(key);
+    const roster = new Set();
+    if (chat) {
+      for (const card of chat.people.values()) {
+        if (card && card.uid) roster.add(String(card.uid));
+      }
+    }
+    return scope.buildAudience({
+      chatHash: chat ? chat.hash : '',
+      isGroup: isGroup === true,
+      uid,
+      roster,
+    });
+  }
+
+  /** 把「名字」解析成本群里的 uid：只认本 chat 已有的卡，不跨群查人 */
+  _resolveMentionUids(key, names = []) {
+    const chat = this.chatStore.ensureChat(key);
+    const out = [];
+    if (!chat || !Array.isArray(names) || !names.length) return out;
+    const wanted = new Set(names.map((n) => String(n || '').trim()).filter(Boolean));
+    if (!wanted.size) return out;
+    for (const card of chat.people.values()) {
+      if (!card) continue;
+      const labels = [card.name, card.nickname].filter(Boolean).map(String);
+      if (labels.some((label) => wanted.has(label))) out.push(String(card.uid));
+    }
+    return out;
+  }
+
+  /**
+   * 本轮可以注入的公开事实：当前说话人 + 被提到的人。
+   * 不注入全群所有人的公开卡：50 个人各几条，预算直接爆，而且和当前话题无关。
+   */
+  sharedFor(key, { uid = '', isGroup = false, mentionedNames = [] } = {}) {
+    const audience = this.audienceOf(key, { uid, isGroup });
+    const subjects = new Set();
+    if (uid) subjects.add(String(uid));
+    for (const id of this._resolveMentionUids(key, mentionedNames)) subjects.add(id);
+    if (!subjects.size) return { records: [], audience };
+    const records = sharedStore.forSubjects(this.memoryDir, subjects, audience);
+    return { records, audience };
+  }
+
+  /**
+   * 晋升一条事实到共享池（显式操作，不在聊天热路径上）。
+   *
+   * @param {string} key chatId
+   * @param {string} uid 事实所属的人
+   * @param {{id?:string, text?:string}} target 用 id 或文本定位那条记录
+   * @param {{approvedBy?:string, audience?:string}} [opts]
+   */
+  promoteFact(key, uid, target = {}, { approvedBy = 'explicit', audience = 'all' } = {}) {
+    const chat = this.chatStore.ensureChat(key);
+    if (!chat || !chat.people.has(String(uid))) return { ok: false, reason: 'no_card' };
+    // 记录是唯一事实源：从 subjects/timeline 里找那条要公开的事实
+    const records = this.chatStore.recordsOf(chat);
+    const id = target.id ? String(target.id) : '';
+    const text = target.text ? String(target.text).trim() : '';
+    const source = records.find((r) => (
+      r.subject === String(uid) && (id ? r.id === id : (text && r.text.includes(text)))
+    ));
+    if (!source) return { ok: false, reason: 'not_found' };
+    return sharedStore.promote(this.memoryDir, source, { approvedBy, audience });
+  }
+
+  /** 撤销公开：只删共享池副本，源记录不动 */
+  revokeShared(uid, id) {
+    return sharedStore.revoke(this.memoryDir, uid, id);
   }
 
   /**
@@ -521,8 +728,9 @@ class Store {
 
   profile(key, uid, name) {
     const chat = this.chatStore.ensureChat(key);
-    const card = this.chatStore.ensurePerson(chat, uid, name);
-    return this._profileView(card);
+    const registry = this.chatStore.ensurePerson(chat, uid, name);
+    const card = this.chatStore.getCard(chat, uid) || registry;
+    return this._profileView({ ...registry, ...card, uid: registry.uid });
   }
 
   setNickname(key, uid, nickname) {
@@ -543,81 +751,151 @@ class Store {
   /**
    * 旧 API：写一条记忆。
    * kind 支持 fact/preference/promise/recent/taboo；promise 同时开一条 thread。
+   * 4.3 起写的是记录，不是人物卡。
    */
   addNote(key, uid, note, meta = {}) {
     const chat = this.chatStore.ensureChat(key);
-    const card = this.chatStore.ensurePerson(chat, uid, meta.name || '');
+    this.chatStore.ensurePerson(chat, uid, meta.name || '');
     const raw = typeof note === 'string' ? { text: note } : (note || {});
     const textValue = trimText(raw.text, 80);
-    if (!textValue) return activePreferenceTexts(card);
+    if (!textValue) return activePreferenceTexts(this._viewCard(chat, uid));
     const kind = ['fact', 'preference', 'promise', 'recent', 'taboo'].includes(raw.kind) ? raw.kind : (meta.kind || 'fact');
     const lastMsg = chat.messages[chat.messages.length - 1];
-    personCard.addPreference(card, {
-      text: textValue,
-      kind,
-      confidence: Number.isFinite(Number(meta.confidence)) ? Number(meta.confidence) : importanceToConfidence(raw.importance || meta.importance),
-      source: meta.source || (lastMsg && lastMsg.id) || '',
-      explicit: meta.explicit !== false,
-    }, { chatId: chat.chatId, now: this._now() });
-    if (kind === 'promise') personCard.addThread(card, { text: textValue }, { chatId: chat.chatId, now: this._now() });
-    this.chatStore.saveCard(chat, card);
-    return activePreferenceTexts(card);
+    const now = this._now();
+    this._saveSubjectRecords(chat, uid, (list) => {
+      const item = record.makeRecord({
+        kind: 'preference',
+        text: textValue,
+        ts: now,
+        tier: 'L',
+        scope: `chat:${chat.hash}`,
+        subject: String(uid),
+        source: { chatId: chat.chatId, messageIds: [meta.source || (lastMsg && lastMsg.id)].filter(Boolean) },
+        confidence: Number.isFinite(Number(meta.confidence)) ? Number(meta.confidence) : importanceToConfidence(raw.importance || meta.importance),
+        meta: { tag: kind, explicit: meta.explicit !== false },
+      });
+      if (!item) return list;
+      const map = new Map(list.map((r) => [r.id, r]));
+      map.set(item.id, item);
+      if (kind === 'promise') {
+        const thread = record.makeRecord({
+          kind: 'thread',
+          text: textValue,
+          ts: now,
+          tier: 'L',
+          scope: `chat:${chat.hash}`,
+          subject: String(uid),
+          source: item.source,
+          confidence: 0.7,
+          open: true,
+          meta: { status: 'open', lastMentionedAt: now },
+        });
+        if (thread) map.set(thread.id, thread);
+      }
+      return [...map.values()];
+    });
+    return activePreferenceTexts(this._viewCard(chat, uid));
   }
 
   manualRemember(key, uid, textValue) {
     const chat = this.chatStore.ensureChat(key);
-    const card = this.chatStore.ensurePerson(chat, uid);
+    this.chatStore.ensurePerson(chat, uid);
     const lastMsg = chat.messages[chat.messages.length - 1];
-    personCard.addPreference(card, {
-      text: trimText(textValue, 80),
-      kind: 'fact',
-      confidence: 1,
-      source: lastMsg && lastMsg.id,
-      explicit: true,
-    }, { chatId: chat.chatId, now: this._now() });
-    this.chatStore.saveCard(chat, card);
-    return activePreferenceTexts(card);
+    const now = this._now();
+    this._saveSubjectRecords(chat, uid, (list) => {
+      const item = record.makeRecord({
+        kind: 'preference',
+        text: trimText(textValue, 80),
+        ts: now,
+        tier: 'L',
+        scope: `chat:${chat.hash}`,
+        subject: String(uid),
+        source: { chatId: chat.chatId, messageIds: [lastMsg && lastMsg.id].filter(Boolean) },
+        confidence: 1,
+        meta: { tag: 'fact', explicit: true },
+      });
+      if (!item) return list;
+      const map = new Map(list.map((r) => [r.id, r]));
+      map.set(item.id, item);
+      return [...map.values()];
+    });
+    return activePreferenceTexts(this._viewCard(chat, uid));
   }
 
   removeNote(key, uid, needle) {
     const chat = this.chatStore.ensureChat(key);
-    const card = this.chatStore.ensurePerson(chat, uid);
-    const removed = personCard.forget(card, needle, this._now());
-    this.chatStore.saveCard(chat, card);
-    return { removed, notes: activePreferenceTexts(card) };
+    const target = personCard.normalizeText(needle);
+    const scope = `chat:${chat.hash}`;
+    let removed = 0;
+    this._saveSubjectRecords(chat, uid, (list) => list.map((item) => {
+      // 只删这个 chat 的记录：同一个 uid 在别的会话里的同文记忆不能被顺手删掉
+      if (!target || item.state !== 'active' || item.scope !== scope) return item;
+      const body = personCard.normalizeText(item.text);
+      if (!body || (body !== target && !body.includes(target))) return item;
+      removed += 1;
+      return record.markDeleted(item, this._now());
+    }));
+    return { removed, notes: activePreferenceTexts(this._viewCard(chat, uid)) };
   }
 
   touchNotes(key, uid, texts, now = null) {
     const chat = this.chatStore.ensureChat(key);
-    const card = this.chatStore.ensurePerson(chat, uid);
     const at = Number(now) || this._now();
     const targets = new Set((texts || []).map((t) => personCard.normalizeText(t)).filter(Boolean));
-    if (!targets.size) return activePreferenceTexts(card);
-    let touched = false;
-    for (const list of [card.preferences, card.threads, card.events]) {
-      for (const item of Array.isArray(list) ? list : []) {
-        const body = personCard.normalizeText(item.text || item.title || '');
-        if (!body || !targets.has(body)) continue;
-        item.lastMentionedAt = at;
-        item.mentions = (Number(item.mentions) || 0) + 1;
-        touched = true;
-      }
+    if (targets.size) {
+      this._saveSubjectRecords(chat, uid, (list) => list.map((item) => {
+        if (item.state !== 'active') return item;
+        const body = personCard.normalizeText(item.text);
+        if (!body || !targets.has(body)) return item;
+        return {
+          ...item,
+          hits: (Number(item.hits) || 0) + 1,
+          meta: { ...(item.meta || {}), lastMentionedAt: at },
+        };
+      }));
     }
-    if (touched) this.chatStore.saveCard(chat, card);
-    return activePreferenceTexts(card);
+    return activePreferenceTexts(this._viewCard(chat, uid));
   }
 
   listNotes(key) {
     const chat = this.chatStore.ensureChat(key);
     const out = [];
-    for (const card of chat.people.values()) {
+    for (const registry of chat.people.values()) {
+      const card = this._viewCard(chat, registry.uid);
       const notes = activePreferenceTexts(card);
-      if (notes.length) out.push({ uid: card.uid, name: card.name, notes });
-      else if (personCard.openThreads(card).length) {
-        out.push({ uid: card.uid, name: card.name, notes: personCard.openThreads(card).map((t) => t.text) });
+      if (notes.length) out.push({ uid: registry.uid, name: registry.name || (card && card.name), notes });
+      else {
+        const threads = personCard.openThreads(card);
+        if (threads.length) out.push({ uid: registry.uid, name: registry.name, notes: threads.map((t) => t.text) });
       }
     }
     return out;
+  }
+
+  /** 记录读写的小工具：读这个人的 subjects → 交给 mutate → 写回（含容量裁剪） */
+  _saveSubjectRecords(chat, uid, mutate) {
+    const id = String(uid || '');
+    if (!id) return [];
+    const before = recordStore.readSubjects(this.memoryDir, id);
+    const after = record.capByKind(mutate(before), { caps: this._subjectCaps(), now: this._now() });
+    recordStore.writeSubjects(this.memoryDir, id, after);
+    this.chatStore.markRecordsDirty(chat);
+    return after;
+  }
+
+  /** 长期记录的分 kind 上限：各占各的额度，别让性格/话题挤掉偏好 */
+  _subjectCaps() {
+    return {
+      preference: LIMITS.maxPreferencesPerPerson,
+      fact: LIMITS.maxPreferencesPerPerson,
+      trait: LIMITS.maxTraitsPerPerson,
+      thread: LIMITS.maxThreadsPerPerson,
+    };
+  }
+
+  /** 物化卡：记录优先；没有任何记录时退回名册（未迁移的老数据） */
+  _viewCard(chat, uid) {
+    return this.chatStore.getCard(chat, uid) || personCard.newCard({ chatId: chat.chatId, uid: String(uid || ''), now: this._now() });
   }
 
   /* ------------------------------ 摘要 / 兼容 ------------------------------ */
@@ -708,7 +986,9 @@ class Store {
       messages += chat.messages.length;
       totalMessages += chat.meta.stats.messages || 0;
       totalReplies += chat.meta.stats.replies || 0;
-      for (const card of chat.people.values()) notes += personCard.activePreferences(card).length;
+      // 记忆在记录里，别再从空卡上数：数出来永远是 0
+      notes += this.chatStore.recordsOf(chat)
+        .filter((r) => r.state === 'active' && (r.kind === 'preference' || r.kind === 'fact')).length;
     }
     this.stats = { messages: totalMessages, replies: totalReplies };
     return {
@@ -840,7 +1120,7 @@ class Store {
     return { chats: this.chatStore.chats.size, episodesClosed: closed };
   }
 
-  /** 每天一次：合并、过期、归档 */
+  /** 每天一次：过期、去重、关闭闲置话题、归档（4.3 起清理的是记录，不是人物卡） */
   sweep(now = null) {
     const at = Number(now) || this._now();
     let evicted = 0;
@@ -849,10 +1129,7 @@ class Store {
       // 用户刚导进来就少一段很难解释）；一周后按正常规则清理。
       const freshImport = chat.meta.importedAt && at - chat.meta.importedAt < 7 * DAY_MS;
       if (!freshImport) this.chatStore.pruneRaw(chat, at);
-      for (const card of chat.people.values()) {
-        evicted += this._consolidateCard(chat, card, at);
-      }
-      evicted += this._enforceChatEventCap(chat, at);
+      evicted += this._expireRecords(chat, at);
       this.chatStore.saveMeta(chat);
     }
     const archived = this.chatStore.archiveIdle(at);
@@ -863,79 +1140,82 @@ class Store {
     return { archived: archived.length, evicted, purged: 0 };
   }
 
-  _consolidateCard(chat, card, now) {
-    let evicted = 0;
+  /** 记录的时间价值分：重要度 × 30 天半衰 + 置顶 */
+  _recordScore(item, now) {
+    const importance = Number(item.importance) || 0.3;
+    const ageDays = Math.max(0, (now - (Number(item.ts) || now)) / DAY_MS);
+    return importance * Math.pow(0.5, ageDays / 30) + (item.pinned ? 1 : 0);
+  }
+
+  /** 清理一个 chat 的记录：过期事件、同文事件、每 chat 上限、闲置话题、软删清理 */
+  _expireRecords(chat, now) {
+    const scope = `chat:${chat.hash}`;
     const cutoff = now - LIMITS.eventRetentionDays * DAY_MS;
-    const keptEvents = [];
-    for (const ev of card.events || []) {
-      const ts = Date.parse(`${ev.date}T00:00:00`);
-      if (Number.isFinite(ts) && ts < cutoff && !ev.pinned) evicted += 1;
-      else keptEvents.push(ev);
-    }
-    card.events = keptEvents.slice(0, LIMITS.maxEventsPerPerson);
-    for (const t of card.threads || []) {
-      if (t.status === 'open' && now - (t.lastMentionedAt || t.createdAt || now) > LIMITS.threadIdleCloseDays * DAY_MS) {
-        t.status = 'closed';
-        t.closedAt = now;
+    let evicted = 0;
+
+    // 中期 timeline：过期 + 去重 + 上限
+    const timeline = recordStore.readTimeline(chat.dir);
+    let timelineChanged = false;
+    const kept = [];
+    for (const item of timeline) {
+      if (item.kind === 'event' && item.scope === scope && !item.pinned) {
+        const ts = Number(item.ts) || 0;
+        if (ts && ts < cutoff) { evicted += 1; timelineChanged = true; continue; }
       }
+      kept.push(item);
     }
-    // 合并完全同文的偏好：留置信度最高的
-    const seen = new Map();
-    const merged = [];
-    for (const p of card.preferences || []) {
-      if (p.deleted) { merged.push(p); continue; }
-      const key = `${p.key || ''}|${personCard.normalizeText(p.text)}`;
-      const prev = seen.get(key);
-      if (!prev) {
-        seen.set(key, p);
-        merged.push(p);
-        continue;
+    const seen = new Set();
+    let deduped = [];
+    for (const item of kept) {
+      if (item.kind === 'event') {
+        const key = `${item.subject}|${item.text}`;
+        if (seen.has(key)) { evicted += 1; timelineChanged = true; continue; }
+        seen.add(key);
       }
-      if ((p.confidence || 0) > (prev.confidence || 0)) {
-        prev.superseded = true;
-        seen.set(key, p);
-        merged[merged.indexOf(prev)] = p;
-      } else {
-        p.superseded = true;
-        merged.push(p);
-      }
-      evicted += 1;
+      deduped.push(item);
     }
-    card.preferences = merged;
-    // 很老的软删记录直接清掉，别让文件越滚越大
-    for (const list of [card.preferences, card.traits, card.threads]) {
-      for (let i = (list || []).length - 1; i >= 0; i -= 1) {
-        const item = list[i];
-        if ((item.deleted || item.superseded) && now - (item.deletedAt || item.createdAt || now) > 30 * DAY_MS) {
-          list.splice(i, 1);
+    const events = deduped.filter((r) => r.kind === 'event');
+    if (events.length > LIMITS.maxEventsPerChat) {
+      const overflow = events.length - LIMITS.maxEventsPerChat;
+      const ranked = events.slice().sort((a, b) => this._recordScore(a, now) - this._recordScore(b, now));
+      const drop = new Set(ranked.slice(0, overflow).map((r) => r.id));
+      deduped = deduped.map((item) => (
+        drop.has(item.id) && item.state === 'active'
+          ? { ...item, state: 'archived', archivedAt: now }
+          : item
+      ));
+      evicted += overflow;
+      timelineChanged = true;
+    }
+    // 只有真的改了才重写：sweep 每天跑，空写一遍整份 timeline 纯属浪费
+    if (timelineChanged) recordStore.writeTimeline(chat.dir, deduped);
+
+    // 长期 subjects：闲置话题关闭、软删记录过期清掉
+    for (const registry of chat.people.values()) {
+      const all = recordStore.readSubjects(this.memoryDir, registry.uid);
+      let changed = false;
+      const next = [];
+      for (const item of all) {
+        if (item.scope === scope && item.kind === 'thread' && item.open) {
+          const last = Number(item.meta && item.meta.lastMentionedAt) || Number(item.ts) || now;
+          if (now - last > LIMITS.threadIdleCloseDays * DAY_MS) {
+            next.push({ ...item, open: false, meta: { ...(item.meta || {}), status: 'closed', closedAt: now } });
+            changed = true;
+            continue;
+          }
         }
+        if (item.state === 'deleted' && now - (Number(item.ts) || now) > 30 * DAY_MS) {
+          changed = true;
+          evicted += 1;
+          continue;
+        }
+        next.push(item);
       }
+      if (changed) recordStore.writeSubjects(this.memoryDir, registry.uid, next);
     }
-    this.chatStore.saveCard(chat, card);
     return evicted;
   }
 
-  _enforceChatEventCap(chat, now) {
-    const all = [];
-    for (const card of chat.people.values()) {
-      for (const ev of card.events || []) {
-        if (ev.deleted) continue;
-        const ageDays = Math.max(0, (now - (Date.parse(`${ev.date}T00:00:00`) || now)) / DAY_MS);
-        all.push({ card, ev, score: (ev.importance || 0.3) * Math.pow(0.5, ageDays / 30) + (ev.pinned ? 1 : 0) });
-      }
-    }
-    const overflow = all.length - LIMITS.maxEventsPerChat;
-    if (overflow <= 0) return 0;
-    all.sort((a, b) => a.score - b.score);
-    const affected = new Set();
-    for (const item of all.slice(0, overflow)) {
-      item.ev.deleted = true;
-      item.ev.deletedAt = now;
-      affected.add(item.card);
-    }
-    for (const card of affected) this.chatStore.saveCard(chat, card);
-    return overflow;
-  }
 
   /* ------------------------------ 生命周期 ------------------------------ */
 
@@ -954,3 +1234,15 @@ class Store {
 }
 
 module.exports = { Store, readStoreFile, trimText };
+
+
+
+
+
+
+
+
+
+
+
+

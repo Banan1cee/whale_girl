@@ -311,6 +311,58 @@ test('健康检查与 404', async () => {
   await app.close();
 });
 
+test('服务运行期间轮询插件授权并更新调度表', async t => {
+  const { UnifiedPluginRuntime } = require('../src/services/unifiedPluginRuntime');
+  const id = 'ticker-fixture';
+  const name = `plugin-v1:${id}:task.tick@1`;
+  let installed = [];
+  t.mock.method(UnifiedPluginRuntime.prototype, 'installed', () => installed);
+  const app = await boot({ env: { autoDetect: false } });
+  t.after(() => app.close());
+  const list = () => app.runtime.scheduler.list().find(job => job.name === name);
+  const waitFor = async expected => {
+    for (let i = 0; i < 30; i++) {
+      if (list()?.intervalMs === expected) return;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.equal(list()?.intervalMs, expected);
+  };
+  const ticker = (epoch, intervalSeconds) => ({ id, epoch, executionTimeoutMs: 30000,
+    provides: { 'task.tick@1': { mode: 'schedule', scope: 'all', intervalSeconds } } });
+  assert.equal(list(), undefined);
+  installed = [ticker('first', 30)];
+  await waitFor(30000);
+  installed = [ticker('second', 45)];
+  await waitFor(45000);
+  installed = [];
+  await waitFor(undefined);
+});
+
+test('插件定时任务登记失败时仍能通过健康检查并正常关闭', async t => {
+  const { UnifiedCapabilityDispatcher } = require('../src/services/unifiedCapabilityDispatcher');
+  const reconcile = t.mock.method(UnifiedCapabilityDispatcher.prototype, 'reconcileTasks', () => {
+    throw new Error('test task registration failure');
+  });
+  const createServer = http.createServer;
+  let listener;
+  // 回归断言失败时，startServer 可能在监听后拒绝，测试仍需能关闭监听端口。
+  t.mock.method(http, 'createServer', (...args) => {
+    listener = createServer(...args);
+    return listener;
+  });
+  t.after(async () => {
+    if (listener?.listening) await new Promise(resolve => listener.close(resolve));
+  });
+
+  const app = await boot({ env: { autoDetect: false } });
+  assert.equal(reconcile.mock.callCount(), 1);
+  const health = await fetch(app.url + '/healthz');
+  assert.equal(health.status, 200);
+  assert.equal((await health.json()).ok, true);
+  await app.close();
+  assert.equal(app.server.listening, false);
+});
+
 test('诊断接口：状态接口能看到主人和模型信息', async () => {
   const app = await boot();
   try {
@@ -561,6 +613,128 @@ test('桥接心跳：启动器能看出桥接在不在、UIA 通不通', async (
     await app.close();
   }
 });
+test('data 目录锁：服务持有期间迁移/第二个服务都 busy，close 真正 teardown 后释放', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-srv-lock-'));
+  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ server: { port: 0 } }));
+  const dataLock = require('../src/memory/dataLock');
+  const migrate = require('../scripts/migrate-memory');
+  let app;
+  try {
+    app = await startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0 });
+    assert.equal(dataLock.inspect(path.join(root, 'data')).state, 'busy');
+    assert.throws(() => dataLock.acquire({ dataDir: path.join(root, 'data'), purpose: 'migration' }), (err) => {
+      assert.equal(err.code, 'data_lock_busy');
+      return true;
+    });
+    // 迁移入口也必须走同一把锁；拒绝时不能改服务已经建好的 memory 目录。
+    const manifest = path.join(root, 'data', 'memory', 'manifest.json');
+    const before = fs.existsSync(manifest) ? fs.readFileSync(manifest) : null;
+    const lines = [];
+    const original = console.log;
+    console.log = (...parts) => lines.push(parts.join(' '));
+    let code;
+    try { code = migrate.main(['--json', '--apply', '--data', path.join(root, 'data')]); }
+    finally { console.log = original; }
+    assert.equal(code, 2);
+    assert.equal(JSON.parse(lines[0]).status, 'busy');
+    assert.deepEqual(fs.existsSync(manifest) ? fs.readFileSync(manifest) : null, before);
+    // 第二个服务实例在 createRuntime 之前就被锁拒绝。
+    await assert.rejects(startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0 }), (err) => {
+      assert.equal(err.code, 'data_lock_busy');
+      return true;
+    });
+    await app.close();
+    app = null;
+    assert.equal(dataLock.inspect(path.join(root, 'data')).state, 'idle');
+    const again = await startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0 });
+    await again.close();
+    assert.equal(dataLock.inspect(path.join(root, 'data')).state, 'idle');
+  } finally {
+    if (app) { try { await app.close(); } catch { /* ignore */ } }
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+test('data 目录锁：迁移先持锁时 server 拒绝启动且不碰全新 memory 根', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-srv-lock2-'));
+  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ server: { port: 0 } }));
+  const dataLock = require('../src/memory/dataLock');
+  const lock = dataLock.acquire({ dataDir: path.join(root, 'data'), purpose: 'migration' });
+  try {
+    await assert.rejects(startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0 }), (err) => {
+      assert.equal(err.code, 'data_lock_busy');
+      return true;
+    });
+    assert.equal(fs.existsSync(path.join(root, 'data', 'memory')), false, '拒绝时不能建 memory 目录');
+    assert.equal(fs.existsSync(path.join(root, 'data', 'memory', 'manifest.json')), false);
+  } finally {
+    lock.releaseSync();
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+test('data 目录锁：listen 失败释放所有权，修好后可再启动', async () => {
+  const rootA = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-srv-lockA-'));
+  const rootB = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-srv-lockB-'));
+  fs.writeFileSync(path.join(rootA, 'config.json'), JSON.stringify({ server: { port: 0 } }));
+  fs.writeFileSync(path.join(rootB, 'config.json'), JSON.stringify({ server: { port: 0 } }));
+  const dataLock = require('../src/memory/dataLock');
+  const first = await startServer({ root: rootA, env: { WHALE_LOG_FILE: '' }, port: 0 });
+  try {
+    await assert.rejects(
+      startServer({ root: rootB, env: { WHALE_LOG_FILE: '' }, port: first.port }),
+      (err) => err.code === 'EADDRINUSE');
+    assert.equal(dataLock.inspect(path.join(rootB, 'data')).state, 'idle');
+    const second = await startServer({ root: rootB, env: { WHALE_LOG_FILE: '' }, port: 0 });
+    await second.close();
+    assert.equal(dataLock.inspect(path.join(rootB, 'data')).state, 'idle');
+  } finally {
+    await first.close();
+    fs.rmSync(rootA, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    fs.rmSync(rootB, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+test('data 目录锁：createRuntime 格式闸失败也释放所有权', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-srv-lock3-'));
+  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ server: { port: 0 }, features: { memoryV2: true } }));
+  const memory = path.join(root, 'data', 'memory');
+  fs.mkdirSync(memory, { recursive: true });
+  fs.writeFileSync(path.join(memory, 'manifest.json'), JSON.stringify({ formatVersion: 0 }));
+  fs.writeFileSync(path.join(memory, 'keep.txt'), 'synthetic');
+  const dataLock = require('../src/memory/dataLock');
+  try {
+    await assert.rejects(startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0 }),
+      (err) => err.code === 'MEMORY_FORMAT_VERSION');
+    assert.equal(dataLock.inspect(path.join(root, 'data')).state, 'idle');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+test('data 目录锁：死恢复守卫 fail-closed，且不改写两个锁文件', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-srv-guard-'));
+  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ server: { port: 0 } }));
+  const data = path.join(root, 'data');
+  fs.mkdirSync(data, { recursive: true });
+  const lockPath = path.join(data, '.data.lock');
+  const guardPath = path.join(data, '.data.lock.recover');
+  fs.writeFileSync(lockPath, JSON.stringify({ version: 1, token: 'stale-main', pid: 2147483647,
+    startedAt: 1, host: os.hostname(), purpose: 'migration' }));
+  fs.writeFileSync(guardPath, JSON.stringify({ version: 1, token: 'dead-guard', pid: 2147483647,
+    startedAt: 1, host: os.hostname(), purpose: 'recovery' }));
+  const [beforeLock, beforeGuard] = [fs.readFileSync(lockPath, 'utf8'), fs.readFileSync(guardPath, 'utf8')];
+  try {
+    await assert.rejects(startServer({ root, env: { WHALE_LOG_FILE: '' }, port: 0 }),
+      (err) => err.code === 'data_lock_guard_stale');
+    assert.equal(fs.readFileSync(lockPath, 'utf8'), beforeLock);
+    assert.equal(fs.readFileSync(guardPath, 'utf8'), beforeGuard);
+    assert.equal(fs.existsSync(path.join(data, 'memory')), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
 test('演示模式下 webhook 响应带 mock:true，桥接才能提醒用户', async () => {
   const app = await boot({
     gateway: {

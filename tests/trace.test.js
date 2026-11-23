@@ -16,7 +16,7 @@ const path = require('node:path');
 
 const { createLogger } = require('../src/infra/logger');
 const { createTrace } = require('../src/core/trace');
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 

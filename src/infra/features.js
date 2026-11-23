@@ -23,9 +23,9 @@ const REGISTRY = [
     experimental: true,
   },
   {
-    key: 'javascriptPlugins', path: 'features.javascriptPlugins',
-    label: 'JavaScript 插件（实验性，完整系统权限）',
-    desc: '默认关闭。开启后仍须逐个确认插件权限。JavaScript 可访问网络、文件、系统命令及全部主程序 API，只启用信任的作者。关闭会停止受管理的插件进程并取消尚未执行的插件发送任务。',
+    key: 'plugins', path: 'features.plugins',
+    label: '统一协议插件（1–4 级）',
+    desc: '默认关闭。1–3 级在受限 Wasm 环境运行；3 级回复扩展需要聊天授权。4 级 Node 插件必须确认完整系统权限，不是沙箱。关闭会停止受管理的 Worker 并取消未执行调用。',
     default: false, experimental: true,
   },
   {
@@ -43,20 +43,6 @@ const REGISTRY = [
     default: true,
   },
   {
-    key: 'fightQuoteCheck',
-    path: 'features.fightQuoteCheck',
-    label: '开怼前必须引用对方原话',
-    desc: '开火时要求回复里带上对方原话的片段（证明她真读懂了）；找不到就降级成一句「？」，不再乱喷。',
-    default: true,
-  },
-  {
-    key: 'staticSystem',
-    path: 'features.staticSystem',
-    label: '系统提示词静态化（前缀缓存）',
-    desc: '开启后将本轮状态放在最后一条用户消息，保持系统前缀稳定；关闭后将状态放入 system。只改变位置，不改变人设、顶嘴人格或设置含义。',
-    default: true,
-  },
-  {
     key: 'mediaCleanup',
     path: 'features.mediaCleanup',
     label: '启动时清理媒体缓存',
@@ -68,6 +54,13 @@ const REGISTRY = [
     path: 'features.memorySnapshot',
     label: '自动记忆快照',
     desc: '启动和每 30 分钟备份一次记忆到 data/backups（最多 20 份）。关掉=只保留手动备份。',
+    default: true,
+  },
+  {
+    key: 'memoryV2',
+    path: 'features.memoryV2',
+    label: '记忆 v2（三层模型）',
+    desc: '三层记忆（短期原文 / 中期摘要事件 / 长期档案）+ 原文检索 + 共享池。启动时校验记忆目录格式，不匹配 v3 直接拒绝启动并提示跑迁移脚本；关闭时回到只有 recent + 事件卡的旧路径。',
     default: true,
   },
   {
@@ -172,3 +165,6 @@ function defaults() {
 }
 
 module.exports = { REGISTRY, isOn, list, defaults, getByPath, toBool };
+
+
+

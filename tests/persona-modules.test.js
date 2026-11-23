@@ -13,7 +13,7 @@ const demo = require('../src/persona/demo');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 
 test('原入口保留导出引用，提示词不依赖演示台词或消息清洗', () => {
-  for (const key of ['buildSystem', 'buildPromptParts', 'buildBlocks', 'buildTurnState', 'buildLegacySystem', 'stickerCapability']) assert.equal(persona[key], prompt[key]);
+  for (const key of ['buildSystem', 'buildPromptParts', 'buildBlocks', 'buildTurnState', 'stickerCapability']) assert.equal(persona[key], prompt[key]);
   assert.equal(persona.mockReply, demo.mockReply);
   assert.equal(persona.cleanIncomingForPersona, text.cleanIncomingForPersona);
   assert.equal(persona.splitBubbles, text.splitBubbles);
@@ -33,15 +33,11 @@ test('人设字段共享校验，补充提示词不截断也不吞显式清空',
   assert.deepEqual(profile.identityPatch({}), {});
 });
 
-test('兼容构造入口不再回到旧人格，两个布局只有位置差异', () => {
+test('兼容构造入口不回到旧人格并保留静态提示词/尾部', () => {
   const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
   Object.assign(config.persona, { masterRoast: true, customPrompt: '温和的图书管理员' });
   const ctx = { config, msg: { chatType: 'private', isMaster: true, text: '在吗' }, now: new Date(2026, 10, 15, 12) };
-  const modern = persona.buildPromptParts(ctx);
-  const expected = [modern.system, modern.tail].join('\n\n');
-  assert.equal(persona.buildLegacySystem(ctx), expected);
-  config.features.staticSystem = false;
-  assert.equal(persona.buildSystem(ctx), expected);
-  assert.equal(persona.buildTurnState(ctx), '');
-  assert.doesNotMatch(expected, /语气底子|现在这条消息主人在骂你/);
+  const parts = persona.buildPromptParts(ctx);
+  assert.ok(parts.tail.startsWith('【本轮状态】'));
+  assert.doesNotMatch(parts.system, /语气底子|现在这条消息主人在骂你/);
 });

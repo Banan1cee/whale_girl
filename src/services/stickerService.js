@@ -221,9 +221,11 @@ class StickerService {
     return enabled;
   }
   requireEnabled() { if (!this.reconcile()) throw fail('表情包功能未开启', 404); }
-  add(hit, chat, chatUsername = '', key = '', status = 'queued') {
+  add(hit, chat, chatUsername = '', key = '', status = 'queued', attribution = null) {
     if ([...this.jobs.values()].filter((j) => ACTIVE.has(j.status)).length >= 20) throw fail('表情包任务已满，请先等待现有任务结束', 429);
     const job = { id: crypto.randomUUID(), ...hit, chat, chatUsername, key, status, generation: this.generation, at: this.now(), error: '' };
+    // 插件排的队要记归属：授权撤回后由 reconcile 直接作废，不能让已撤回的插件借队列继续发。
+    if (attribution && attribution.pluginId) { job.pluginId = attribution.pluginId; job.pluginHash = attribution.pluginHash; }
     this.jobs.set(job.id, job);
     return { ...job };
   }
@@ -284,17 +286,19 @@ class StickerService {
     this._note(job, 'queued');
     return { ...added };
   }
-  enqueue(emotion, chat) {
+  enqueue(emotion, chat, attribution = null) {
     this.requireEnabled();
     emotion = stickers.normalizeEmotion(emotion);
     if (!emotion) throw fail('请选择有效的情绪');
     chat = String(chat || '').trim();
     if (!chat || chat.length > 160 || /[\r\n\x00-\x1f]/.test(chat)) throw fail('请输入明确的目标会话名称');
-    const existing = [...this.jobs.values()].find(j => ACTIVE.has(j.status) && (j.chat === chat || j.chatUsername === chat));
+    const owner = attribution && attribution.pluginId ? attribution.pluginId : '';
+    // 去重只在同一归属内生效：不同插件针对同一会话排队不应该互相吞掉。
+    const existing = [...this.jobs.values()].find(j => ACTIVE.has(j.status) && (j.pluginId || '') === owner
+      && (j.chat === chat || j.chatUsername === chat));
     if (existing) return { ...existing, deduplicated: true };
     const file = stickers.choose(stickers.imagesFor(stickers.stickerDir(this.config, this.config.root), emotion), this.rng);
-    if (!file) throw fail('这一类还没有图片（也没有「通用」图），先往这个分类里拖几张');
-    return this.add({ emotion, path: file }, chat);
+    return this.add({ emotion, path: file }, chat, '', '', 'queued', attribution);
   }
   pending() {
     this.requireEnabled();

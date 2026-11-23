@@ -8,15 +8,15 @@
  * （以前两套逻辑并存且不一致，用户改了开关看着没反应）。
  */
 
-const care = require('../../services/care');
 const { careForChat } = require('../../services/careChat');
+const { hostCall } = require('../../services/features/hostCall');
 const { errorMessage } = require('../../infra/errors');
 const { json, readBody } = require('../util');
 const { describeError } = require('../../infra/errors');
 
 module.exports = function register(router) {
   // 桥接定时来问「现在该发吗、发给谁」
-  router.get('/api/care/due', (runtime, req, res, info) => {
+  router.get('/api/care/due', async (runtime, req, res, info) => {
     const q = info.url;
     const last = Number(q.searchParams.get('last') || 0);
     const sentToday = Number(q.searchParams.get('sentToday') || 0);
@@ -24,8 +24,8 @@ module.exports = function register(router) {
       .split(/[\n,;，；\s]+/)
       .map((x) => x.trim())
       .filter(Boolean);
-    const out = care.careDecide(runtime.config, {
-      contacts: runtime.contacts || null,
+    // 判定走宿主能力：和插件看到的 due/reason/target 是同一份计算结果。
+    const out = await hostCall(runtime, 'care.decide@1', {
       lastSentTs: Number.isFinite(last) && last > 0 ? last : 0,
       sentToday: Number.isFinite(sentToday) ? sentToday : 0,
       activeWxids: active,

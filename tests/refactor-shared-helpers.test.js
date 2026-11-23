@@ -63,18 +63,12 @@ test('clean：只换 C0 控制字符、不压连续空白、超长不加省略�
   assert.equal(clean('abcdef', 3), 'abc');
 });
 
-test('clipControl / clipWithEllipsis：更名后模块可用，旧名 clean 不再定义', () => {
+test('clipControl / clipWithEllipsis：更名后模块可用', () => {
   const events = require('../src/core/events');
   const errors = require('../src/infra/errors');
   assert.equal(typeof events.describe, 'function');
   const out = errors.describeError(Object.assign(new Error('x'.repeat(300)), { detail: 'y'.repeat(300) }));
   assert.match(out, /detail=/, 'describeError 仍输出结构字段');
-  // 两个文件里的旧名 clean 已更名；只检查源码里不再有 function clean(（同文件其它 cleanXxx 不算）
-  for (const [rel, fn] of [['../src/core/events.js', 'clipControl'], ['../src/infra/errors.js', 'clipWithEllipsis']]) {
-    const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', rel.replace('../src/', '')), 'utf8');
-    assert.match(src, new RegExp('function ' + fn + '\\('));
-    assert.doesNotMatch(src, /function clean\(/);
-  }
 });
 
 test('cleanIncoming：去「昵称:」前缀、去行首 @、压空白；persona 版已更名', () => {

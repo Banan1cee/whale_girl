@@ -15,7 +15,7 @@ const root = path.resolve(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8').replace(/^\uFEFF/, '');
 
 test('限流口径统一写「每分钟」，别再有每小时上限的旧说法', () => {
-  const files = ['src/pipeline/chat.js', 'src/pipeline/trigger.js'];
+  const files = ['src/pipeline/bot.js', 'src/pipeline/trigger.js'];
   for (const rel of files) {
     let text;
     try {

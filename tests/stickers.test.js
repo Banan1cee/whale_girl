@@ -81,7 +81,7 @@ test('表情包：没有分类标记时链路不发；pick 自己的兜底只服
   const root = makeRoot(['炸毛/a.gif', '其他/o.gif']);
   // 概率字段全拉满也没用：发不发只看 finalize 有没有抠出分类
   const cfg = cfgOn(root, { chances: { angry: 1, cute: 1, other: 1 }, genericChance: 1 });
-  const { Bot } = require('../src/pipeline/chat');
+  const { Bot } = require('../src/pipeline/bot');
   const ctx = { config: cfg, stickerService: { plan: () => { throw new Error('没有分类时不该调用服务'); } } };
   assert.equal(Bot.prototype.stickerFor.call(ctx, { msg: { platform: 'wechat' } }), null);
   // pick 本身不再因为「没写分类」返回 null：图库有图就兜底一张，供「认不出」那条路用

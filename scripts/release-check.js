@@ -99,16 +99,25 @@ try {
   }
   check('CHANGELOG 没有重复版本号', dupes.length === 0, dupes.length ? '重复：' + dupes.join(', ') : `${heads.length} 个版本`);
 
-  // 同一条主线（主.次 相同）里补丁号必须连续：3.0.0~3.0.15 不能缺 3.0.7。
-  // 只查「package.json 所在的那条线」——历史版本（比如从上游接手的 2.9.2）不一定连续。
+  // 补丁号必须连续，而且**所有 4.x 及以后的主线都要连续**，不能只顾 package.json 那条线。
+  // 以前只查 package 所在线：从 4.2.1 直接跳到 4.3.0 也能过，中间的 4.2.2 / 4.2.3
+  // 就永远没人补。现在 4.0 起的每条线都要从 .0 开始一个不缺。
+  // 2.9.x 等上游接手的旧线不在此列。
   const missing = [];
-  const line = `${pkg.version.split('.')[0]}.${pkg.version.split('.')[1]}`;
-  const pats = heads.filter((h) => `${h.maj}.${h.min}` === line).map((h) => h.pat);
-  if (pats.length) {
-    const max = Math.max(...pats);
-    for (let i = 0; i <= max; i += 1) if (!pats.includes(i)) missing.push(`${line}.${i}`);
+  const lines = new Map();
+  for (const h of heads) {
+    if (h.maj < 4) continue;
+    const key = `${h.maj}.${h.min}`;
+    if (!lines.has(key)) lines.set(key, new Set());
+    lines.get(key).add(h.pat);
   }
-  check('版本号连续（不跳号）', missing.length === 0, missing.length ? '缺：' + missing.join(', ') : `${line}.x 共 ${pats.length} 个`);
+  for (const [key, pats] of lines) {
+    const max = Math.max(...pats);
+    for (let i = 0; i <= max; i += 1) if (!pats.has(i)) missing.push(`${key}.${i}`);
+  }
+  const lineLabel = [...lines.keys()].join(' / ');
+  check('版本号连续（不跳号）', missing.length === 0,
+    missing.length ? '缺：' + missing.join(', ') : `${lineLabel} 全部连续`);
 
   // 每个版本都得有内容，不能只有标题
   const empty = [];

@@ -25,6 +25,8 @@ const { chatHash, personHash } = require('./hash');
 const { LIMITS, DAY_MS } = require('./constants');
 const { estimateTokens, messageTokens } = require('./tokens');
 const personCard = require('./personCard');
+const recordStore = require('./recordStore');
+const materialize = require('./materialize');
 const relations = require('./relations');
 
 const META_SAVE_DEBOUNCE_MS = 400;
@@ -113,10 +115,26 @@ class ChatStore {
 
   init() {
     fs.mkdirSync(this.chatRoot, { recursive: true });
-    this.manifest = readJson(path.join(this.dir, 'manifest.json'));
+    const existed = readJson(path.join(this.dir, 'manifest.json'));
+    this.manifest = existed;
+    // formatVersion 是记忆整体格式（见 formatVersion.js），和这里的目录布局版本
+    // version=2 是两回事。重写 manifest 时必须把它带过去，否则每次启动都会把
+    // 「已升级到 v3」这个标记抹掉，下次启动又被格式闸拦下来。
+    //
+    // 全新目录（没有 manifest、也没有任何 chat 目录）直接标成当前格式：
+    // 否则第一次启动写 0、第二次启动就被自己的格式闸拦住。
+    // 但如果 manifest 丢了而 chats/ 里还有数据，绝不能当新库标成当前版本 ——
+    // 那是数据损坏，应该让格式闸/迁移脚本来处理。
+    let chatDirs = [];
+    try { chatDirs = fs.readdirSync(this.chatRoot); } catch { chatDirs = []; }
+    const fresh = !existed && chatDirs.length === 0;
+    const formatVersion = existed
+      ? (Number(existed.formatVersion) || 0)
+      : (fresh ? (Number(LIMITS.formatVersion) || 0) : 0);
     if (!this.manifest || Number(this.manifest.version) !== 2) {
       this.manifest = {
         version: 2,
+        formatVersion,
         createdAt: Number(this.manifest && this.manifest.createdAt) || Date.now(),
         updatedAt: Date.now(),
         migratedFrom: Array.isArray(this.manifest && this.manifest.migratedFrom) ? this.manifest.migratedFrom : [],
@@ -355,9 +373,51 @@ class ChatStore {
     return card;
   }
 
-  /** 不改 count 的只读拿卡（后台任务用） */
+  /**
+   * 这个 chat 的全部记录（timeline + 各人的 subjects），按本 chat 的 scope 过滤。
+   *
+   * 人物卡不再保存记忆内容，只留「这个 chat 里出现过谁」的名册；
+   * 提示词、档案面板、关系块都从这里把记录物化成卡来看。
+   */
+  recordsOf(chat) {
+    if (!chat) return [];
+    // 缓存：一次 buildContext 里要拿好几张卡，不缓存会把 50 个人的 subjects 读 50 遍。
+    // 失效条件是「消息数变了」或写记录的地方主动 markRecordsDirty —— 记录只在
+    // 消息进来、episode 关闭、记住/忘掉时变化，这比每次扫盘便宜得多。
+    const stamp = `${chat.messages.length}:${chat.recordsDirty || 0}`;
+    if (chat._recordsCache && chat._recordsCache.stamp === stamp) return chat._recordsCache.list;
+    const out = [];
+    const scope = `chat:${chat.hash}`;
+    out.push(...recordStore.readTimeline(chat.dir).filter((r) => r.scope === scope));
+    for (const uid of chat.people.keys()) {
+      for (const item of recordStore.readSubjects(this.dir, uid)) {
+        if (item.scope === scope) out.push(item);
+      }
+    }
+    chat._recordsCache = { stamp, list: out };
+    return out;
+  }
+
+  /** 记录被写过（不在 appendMessage 路径上时）要主动失效缓存 */
+  markRecordsDirty(chat) {
+    if (!chat) return;
+    chat.recordsDirty = (Number(chat.recordsDirty) || 0) + 1;
+  }
+
+  /** 不改 count 的只读拿卡：记录物化优先，没有记录时退回名册（未迁移的旧数据） */
   getCard(chat, uid) {
-    return chat.people.get(String(uid || 'anonymous')) || null;
+    const id = String(uid || 'anonymous');
+    const registry = chat.people.get(id) || null;
+    const records = this.recordsOf(chat);
+    if (records.length) {
+      return materialize.cardFromRecords(records, {
+        uid: id,
+        chatId: chat.chatId,
+        name: registry ? registry.name : '',
+        nickname: registry ? registry.nickname : '',
+      });
+    }
+    return registry;
   }
 
   saveCard(chat, card) {
@@ -726,7 +786,7 @@ class ChatStore {
     for (const chat of this.chats.values()) {
       messages += chat.messages.length;
       people += chat.people.size;
-      for (const card of chat.people.values()) events += personCard.activeEvents(card).length;
+      events += this.recordsOf(chat).filter((r) => r.kind === 'event' && r.state === 'active').length;
     }
     return { chats: this.chats.size, messages, people, events };
   }
@@ -747,3 +807,5 @@ function normalizeEpisode(raw) {
 }
 
 module.exports = { ChatStore, writeJsonAtomic, readJson, normalizeSummary, normalizeEpisode, normalizeState, padSeq };
+
+

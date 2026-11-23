@@ -3,7 +3,7 @@
 /**
  * 固定话术（canned）分支：命中就直接回一句，不调模型。
  *
- * 从 `pipeline/chat.js::decide()` 里原样搬出来的第一批。判断顺序、正则、返回字段
+ * 从 `pipeline/bot.js::decide()` 里原样搬出来的第一批。判断顺序、正则、返回字段
  * 都和原来一致 —— 这一步只挪位置，不改行为，所以 `tests/decide-snapshot.test.js`
  * 的快照能原样通过。
  *
@@ -90,10 +90,7 @@ function dismissReply(bot, { msg, text, isGroup, isMaster, atMe, state, nowMs, k
       atMe,
       canned: isMaster
         ? '好的主人，我走了'
-        // 吵架大赛模式不接受「滚」：被赶更要顶回去，不许乖乖消失
-        : (persona.fightModeOn && persona.fightModeOn(bot.config)
-          ? persona.clapbackPick(['重', '反问'], bot.rng, bot.config)
-          : persona.clapbackPick('叫滚', bot.rng, bot.config)),
+        : persona.clapbackPick('叫滚', bot.rng, bot.config),
       reason: 'dismissed',
     };
   }

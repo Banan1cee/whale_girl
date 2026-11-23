@@ -152,7 +152,7 @@ test('恶意网页解析超时不会冻结内核，线程可中止并返回失�
 });
 
 test('链接阅读器永不返回时，当前消息降级继续，同会话后续消息也能处理', async () => {
-  const { Bot } = require('../src/pipeline/chat');
+  const { Bot } = require('../src/pipeline/bot');
   const bot = Object.create(Bot.prototype);
   const events = [], signals = [];
   bot.config = { links: { timeoutMs: 30 } };
@@ -178,7 +178,7 @@ test('链接阅读器永不返回时，当前消息降级继续，同会话后�
 });
 
 test('链接读取或记账抛错时也可继续回复，不出现未处理拒绝', async () => {
-  const { Bot } = require('../src/pipeline/chat');
+  const { Bot } = require('../src/pipeline/bot');
   const result = await Bot.prototype.readLink.call({ config: {}, linkReader: async () => { throw new Error('fixture failure'); },
     store: { appendEvent() { throw new Error('fixture disk failure'); } }, logger: { info() {}, warn() {} } }, 'https://example.org/', 'fixture');
   assert.match(result, /读取失败/);

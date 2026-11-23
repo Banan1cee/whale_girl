@@ -17,7 +17,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 const { DeepSeekClient } = require('../src/llm/client');

@@ -317,6 +317,12 @@ namespace WhaleLauncher
         private async Task RunUpdateAsync(ManifestCheck chk, bool askFirst)
         {
             if (_updating || chk == null || chk.Manifest == null) return;
+            var lockDetail = "";
+            if (_sup.MemoryMigrationRunning || _sup.MigrationLockActive(out lockDetail))
+            {
+                StatusLine.Text = "更新暂缓：" + (string.IsNullOrEmpty(lockDetail) ? "记忆转换进行中。" : lockDetail);
+                return;
+            }
             var latest = chk.Manifest.Latest;
 
             if (askFirst)
@@ -327,10 +333,11 @@ namespace WhaleLauncher
                     + "更新会下载官方安装包，校验 SHA256 后覆盖安装；data\\ 和 config.json 不会被改动。\n"
                     + "更新期间启动器会退出，结束后自动重新打开。\n\n现在更新吗？",
                     "检查更新", okText: "现在更新", cancelText: "稍后",
-                    warningText: UpdateManifestService.ReleaseWarning(chk.Manifest))) return;
+                    warningText: UpdateManifestService.ReleaseWarning(chk.Manifest), critical: true)) return;
             }
 
             _updating = true;
+            _sup.UpdateInProgress = true;
             BtnUpdate.IsEnabled = false;
             ShowUpdateProgress("正在更新…", -1);
             try
@@ -348,6 +355,12 @@ namespace WhaleLauncher
                         AppDialog.Show(this,
                             "必须更新到 v" + latest + " 才能继续使用，但自动更新失败了：\n\n" + outcome.Error,
                             "必须更新", danger: true);
+                        if (_sup.MemoryMigrationRunning || _sup.MigrationLockActive(out _))
+                        {
+                            HideUpdateProgress();
+                            StatusLine.Text = "记忆转换已开始，更新暂缓退出；请等转换结束后重新检查更新。";
+                            return;
+                        }
                         Application.Current.Shutdown();
                         return;
                     }
@@ -360,12 +373,19 @@ namespace WhaleLauncher
                 // 这里不能再重启自己，否则会跟安装器抢同一个 exe。
                 StatusLine.Text = "正在安装 v" + latest + "，启动器会退出并在安装完成后自动重新打开…";
                 await Task.Delay(800);
+                if (_sup.MemoryMigrationRunning || _sup.MigrationLockActive(out _))
+                {
+                    HideUpdateProgress();
+                    StatusLine.Text = "记忆转换已开始，更新暂缓退出；请等转换结束后重新检查更新。";
+                    return;
+                }
                 Application.Current.Shutdown();
                 return;
             }
             finally
             {
                 _updating = false;
+                _sup.UpdateInProgress = false;
                 BtnUpdate.IsEnabled = true;
             }
         }
@@ -398,6 +418,15 @@ namespace WhaleLauncher
         /// <summary>更新中关窗口：说清楚关掉也不会中断，让用户自己决定。</summary>
         private void OnClosingDuringUpdate(object sender, System.ComponentModel.CancelEventArgs e)
         {
+            var lockDetail = "";
+            if (_sup.MemoryMigrationRunning || _sup.MigrationProcessActive(out lockDetail))
+            {
+                e.Cancel = true;
+                StatusLine.Text = string.IsNullOrEmpty(lockDetail)
+                    ? "记忆转换工具还在运行，请等它结束后再关闭。"
+                    : lockDetail + "请等它结束后再关闭。";
+                return;
+            }
             if (!_updating) return;
             if (!AppDialog.Confirm(this,
                 "更新还在进行。\n\n" +
@@ -409,6 +438,9 @@ namespace WhaleLauncher
         private void ApplyAppearance()
         {
             var dark = Appearance.IsDark;
+            // 字体族和基准字号由主题包决定；没有主题时就是原来的 Microsoft YaHei UI / 12.5。
+            FontFamily = new FontFamily(Appearance.UiFontFamily);
+            FontSize = Appearance.BaseFontSize;
             if (IconMoon != null)
             {
                 IconMoon.Visibility = dark ? Visibility.Visible : Visibility.Collapsed;
@@ -590,6 +622,7 @@ namespace WhaleLauncher
             if (_busy) return;
             _busy = true;
             BtnToggle.IsEnabled = BtnRestart.IsEnabled = false;
+            var startFailure = "";
             try
             {
                 if (AnythingRunning)
@@ -602,12 +635,19 @@ namespace WhaleLauncher
                 {
                     _sup.Say("— 启动中 —");
                     await _sup.StartAllAsync(clearRestartHistory: false);
+                    startFailure = _sup.LastStartFailure;
                 }
             }
             finally
             {
                 _busy = false;
                 await RefreshAsync();
+                if (!string.IsNullOrEmpty(startFailure))
+                {
+                    // RefreshAsync 会把状态行改回“就绪”；失败必须最后覆盖并立即弹窗。
+                    StatusLine.Text = startFailure;
+                    AppDialog.Show(this, startFailure, "启动失败", danger: true);
+                }
             }
         }
 
@@ -616,17 +656,24 @@ namespace WhaleLauncher
             if (_busy) return;
             _busy = true;
             BtnToggle.IsEnabled = BtnRestart.IsEnabled = false;
+            var startFailure = "";
             try
             {
                 _sup.Say("— 重启中 —");
                 await Task.Run(() => _sup.StopAll());
                 await Task.Delay(600);
                 await _sup.StartAllAsync(clearRestartHistory: false);
+                startFailure = _sup.LastStartFailure;
             }
             finally
             {
                 _busy = false;
                 await RefreshAsync();
+                if (!string.IsNullOrEmpty(startFailure))
+                {
+                    StatusLine.Text = startFailure;
+                    AppDialog.Show(this, startFailure, "启动失败", danger: true);
+                }
             }
         }
 

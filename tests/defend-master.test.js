@@ -2,7 +2,8 @@
 const { promptOf } = require('./support/prompt');
 
 /**
- * 有人骂主人：她要能看出来，并且知道骂的是谁。
+ * 旧版「有人骂主人就自动开战、锁定靶子」已删除。
+ * 这里锁住新语义：骂人不再产生对喷状态或攻击提示，仍按普通对话处理。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -10,7 +11,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 
@@ -34,35 +35,31 @@ const boss = (text, extra = {}) => ({
   senderId: 'wxid_boss', senderName: 'Master', text, chatTitle: '示例群', atMe: false, ...extra,
 });
 
-test('「你个臭机器人还挑衅上我了」算骂她，会进火力模式', async () => {
+test('「你个臭机器人还挑衅上我了」不再写入对喷状态', async () => {
   const { bot, cleanup } = makeBot();
   const r = await bot.decide(g('你个臭机器人还挑衅上我了'));
-  assert.equal(r.msg.fight, true, '这种话应该被识别成骂她');
+  assert.notEqual(r.msg.fight, true, '不应再进入火力模式');
   cleanup();
 });
 
-test('主人说「有人骂我」，她能揪出刚才骂人的那个', async () => {
+test('主人说「有人骂我」不再锁定靶子或注入攻击指令', async () => {
   const { bot, cleanup } = makeBot();
-  // 先让对方骂一句，再让主人来告状
   await bot.decide(g('你个臭机器人还挑衅上我了', { msgId: 'm1' }));
   const r = await bot.decide(boss('有人骂我'));
-  assert.equal(r.msg.fight, true, '主人被骂要开战');
-  assert.equal(r.msg.fightOnMaster, true);
-  assert.ok(r.msg.fightTarget, '要找出骂人的是谁');
-  assert.equal(r.msg.fightTarget.name, '测试群友');
-  assert.match(r.msg.fightTarget.text, /臭机器人/);
-  assert.match(promptOf(r), /测试群友/, '提示词里要写上靶子');
+  assert.notEqual(r.msg.fight, true, '不应再开战');
+  assert.equal(r.msg.fightTarget, undefined, '不应再生成靶子');
+  assert.doesNotMatch(promptOf(r), /直接冲|开炮|往死里骂/, '不应注入攻击指令');
   cleanup();
 });
 
-test('没人骂主人时，不会凭空开战', async () => {
+test('没人骂主人时不会凭空生成靶子', async () => {
   const { bot, cleanup } = makeBot();
   const r = await bot.decide(boss('有人骂我吗'));
-  assert.notEqual(r.msg.fight, true);
+  assert.equal(r.msg.fightTarget, undefined);
   cleanup();
 });
 
-test('普通对话里出现「机器人」不算骂人', async () => {
+test('普通对话里出现「机器人」不产生对喷状态', async () => {
   const { bot, cleanup } = makeBot();
   const r = await bot.decide(g('这个机器人挺好用的'));
   assert.notEqual(r.msg.fight, true);

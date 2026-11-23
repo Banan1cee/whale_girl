@@ -244,7 +244,7 @@ test('kill 在 episode L2 等模型时：原文在；重启后还能补写', asy
   try {
     const chat = store.chatStore.chats.get('wechat:u:crash');
     assert.ok(chat.meta.episode, 'episode 还开着，重启可以补写');
-    assert.equal(personCard.activeEvents(chat.people.get('u1')).length, 0);
+    assert.equal(store.chatStore.recordsOf(chat).filter((r) => r.kind === 'event').length, 0);
     // 重启补写：给一个能返回的模型
     store.llm = {
       isMock: false,
@@ -258,7 +258,7 @@ test('kill 在 episode L2 等模型时：原文在；重启后还能补写', asy
     };
     const r = await store.closeEpisode('wechat:u:crash', { llm: store.llm, now: Date.now() });
     assert.equal(r.closed, true);
-    assert.ok(personCard.activeEvents(chat.people.get('u1')).length >= 1);
+    assert.ok(store.chatStore.recordsOf(chat).filter((r) => r.kind === 'event').length >= 1);
   } finally {
     store.close();
   }
@@ -273,8 +273,7 @@ test('kill 在 L2 卡片写完、meta 未写时：重启补写不产生重复事
   const store = new Store({ file: storeFile(root), logger: null });
   try {
     const chat = store.chatStore.chats.get('wechat:u:crash');
-    const card = chat.people.get('u1');
-    const before = personCard.activeEvents(card).length;
+    const before = store.chatStore.recordsOf(chat).filter((r) => r.kind === 'event').length;
     assert.equal(before, 1, '第一遍已经写了一条事件');
     assert.equal(chat.meta.closedEpisodes.length, 0, 'meta 没写盘，closedEpisodes 还是空的');
 
@@ -291,7 +290,7 @@ test('kill 在 L2 卡片写完、meta 未写时：重启补写不产生重复事
     };
     const r = await store.closeEpisode('wechat:u:crash', { llm: store.llm, now: Date.now() });
     assert.equal(r.closed, true);
-    const after = personCard.activeEvents(chat.people.get('u1')).length;
+    const after = store.chatStore.recordsOf(chat).filter((r) => r.kind === 'event').length;
     assert.equal(after, before, '补写不能产生重复事件');
     assert.equal(chat.meta.closedEpisodes.length, 1);
   } finally {
@@ -389,3 +388,4 @@ test('整段服务：回复途中 kill，已收到的用户消息不丢（回复
     cleanup(root);
   }
 });
+

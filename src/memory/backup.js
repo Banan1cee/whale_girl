@@ -122,11 +122,13 @@ function summarize(bundle) {
     const m = /^chats\/([0-9a-f]{16})\//.exec(rel);
     if (m) chats.add(m[1]);
     if (/^chats\/[0-9a-f]{16}\/messages\.jsonl$/.test(rel)) messages += countMessages(body);
-    if (/^chats\/[0-9a-f]{16}\/people\/[0-9a-f]{16}\.json$/.test(rel)) {
+    // 4.3 起记忆正文在 subjects/ 里（每条 record 一条事实）；people/ 只剩名册
+    if (/^subjects\/[0-9a-f]{16}\.json$/.test(rel)) {
       try {
-        const card = JSON.parse(body);
-        notes += (Array.isArray(card.preferences) ? card.preferences.filter((p) => !p.deleted && !p.superseded).length : 0);
-      } catch { /* 坏卡不影响统计 */ }
+        const file = JSON.parse(body);
+        const list = Array.isArray(file) ? file : (file && Array.isArray(file.records) ? file.records : []);
+        notes += list.filter((r) => r && r.state === 'active' && (r.kind === 'preference' || r.kind === 'fact')).length;
+      } catch { /* 坏文件不影响统计 */ }
     }
   }
   return { sessions: chats.size, messages, notes };
@@ -287,3 +289,4 @@ module.exports = {
   FILES,
   KEEP,
 };
+

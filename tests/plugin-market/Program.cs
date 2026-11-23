@@ -1,363 +1,237 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using WhaleLauncher;
 
-using var signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+void Check(bool value, string name) { if (!value) throw new Exception(name); }
+void Reject(Action action, string name)
+{
+    try { action(); }
+    catch (InvalidDataException) { return; }
+    throw new Exception("预期拒绝：" + name);
+}
+byte[] Pack(byte[] manifest, string filename, byte[] payload)
+{
+    using var output = new MemoryStream();
+    using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+    {
+        using (var file = zip.CreateEntry("plugin.json").Open()) file.Write(manifest);
+        using var entry = zip.CreateEntry(filename).Open();
+        entry.Write(payload);
+    }
+    return output.ToArray();
+}
+string Sha(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
-var dir = Directory.CreateDirectory(Path.Combine(Environment.GetEnvironmentVariable("WHALE_TEST_TMP") ?? Path.GetTempPath(), "whale-market-checks-" + Guid.NewGuid().ToString("N"))).FullName;
+var temp = Path.Combine(Environment.GetEnvironmentVariable("WHALE_TEST_TMP") ?? Path.GetTempPath(), "whale-market-checks-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(temp);
 try
 {
-    var module = Convert.FromHexString("0061736d010000000105016000017f021401057768616c650a696e7075745f73697a650000030201000707010372756e00010a0601040010000b");
-    var info = new PluginInfo("text-counter", "文本工具箱", "测试", "1.0.0", "4.1.0", "统计输入", "字节数", 1);
-    byte[] Pack(PluginInfo item, string moduleName = "plugin.wasm", byte[] code = null)
+    const string id = "unified-tool";
+    const string baseline = """
+        {"format":"whale-plugin/1","level":4,"id":"unified-tool","name":"工具","author":"测试","version":"1.0.0",
+         "minAppVersion":"4.1.5","description":"测试","runtime":"node-full","entry":"plugin.js",
+         "provides":{"tool.run@1":{"mode":"tool","scope":"manual"}},"calls":["status.read@1","message.submit@1"],
+         "settingsSchema":{"type":"object","properties":{"flag":{"type":"boolean"}},"additionalProperties":false}}
+        """;
+    var script = Encoding.UTF8.GetBytes("exports.providers = {'tool.run@1': input => input};");
+    var manifest = Encoding.UTF8.GetBytes(baseline);
+    var archive = Pack(manifest, "plugin.js", script);
+    var zipPath = Path.Combine(temp, "sample.zip");
+    File.WriteAllBytes(zipPath, archive);
+    var validated = PluginMarket.ValidateLocal(zipPath, "4.1.5");
+    Check(validated.Info.Id == id && validated.Info.Provides.ContainsKey("tool.run@1"), "统一协议只读校验");
+    Check(!Directory.Exists(Path.Combine(temp, "data")), "只读校验不修改数据目录");
+    Reject(() => PluginMarket.ValidateLocal(zipPath, "4.1.4"), "版本下限");
+    Reject(() => PluginMarket.ValidateLocal(zipPath, "4.1.5", 2), "默认只声明旧代");
+    var dual = Encoding.UTF8.GetBytes(baseline.Replace("\"description\"", "\"appCompatibility\":[{\"appEpoch\":1,\"minAppVersion\":\"4.1.5\"},{\"appEpoch\":2,\"minAppVersion\":\"1.0.0\",\"maxAppVersion\":\"1.0.9\"}],\"description\""));
+    var dualInfo = PluginMarket.ReadPackage(Pack(dual, "plugin.js", script)).Info;
+    Check(PluginMarket.Compatible(dualInfo, "1.0.0", 2) && !PluginMarket.Compatible(dualInfo, "1.1.0", 2), "新插件明示双代兼容性");
+
+    foreach (var (oldValue, newValue) in new[] {
+        ("whale-plugin/1", "whale-plugin/2"), ("node-full", "node-sandbox"), ("tool.run@1", "tool.run@999"),
+        ("\"mode\":\"tool\"", "\"mode\":\"replace\""), ("\"scope\":\"manual\"", "\"scope\":\"all\""),
+        ("\"scope\":\"manual\"", "\"scope\":\"manual\",\"intervalSeconds\":60"),
+        ("status.read@1", "legacy.api"), ("\"status.read@1\"", "\"status.read@1\",\"status.read@1\""),
+        ("additionalProperties", "patternProperties"), ("\"entry\":\"plugin.js\"", "\"entry\":\"plugin.js\",\"Api\":4") })
     {
-        using var bytes = new MemoryStream();
-        using (var zip = new ZipArchive(bytes, ZipArchiveMode.Create, leaveOpen: true))
-        {
-            using (var meta = zip.CreateEntry("plugin.json").Open()) JsonSerializer.Serialize(meta, item);
-            using var wasm = zip.CreateEntry(moduleName).Open();
-            wasm.Write(code ?? module);
-        }
-        return bytes.ToArray();
+        var bad = Encoding.UTF8.GetBytes(baseline.Replace(oldValue, newValue, StringComparison.Ordinal));
+        Reject(() => PluginMarket.ReadPackage(Pack(bad, "plugin.js", script)), newValue);
     }
-    void Check(bool valid) { if (!valid) throw new Exception("插件回归检查失败"); }
-    void Reject(Action action)
-    {
-        try { action(); }
-        catch (InvalidDataException) { return; }
-        throw new Exception("预期拒绝无效插件");
-    }
+    byte[] ScheduledManifest(string descriptor) => Encoding.UTF8.GetBytes(baseline.Replace(
+        "\"tool.run@1\":{\"mode\":\"tool\",\"scope\":\"manual\"}", "\"task.tick@1\":" + descriptor, StringComparison.Ordinal));
+    var scheduledEntry = Encoding.UTF8.GetBytes("exports.providers = {'task.tick@1': () => null};");
+    var scheduled = PluginMarket.ReadPackage(Pack(ScheduledManifest("""{"mode":"schedule","scope":"all","intervalSeconds":30}"""), "plugin.js", scheduledEntry));
+    Check(scheduled.Info.Provides["task.tick@1"].IntervalSeconds == 30, "读取合法的定时周期");
+    Reject(() => PluginMarket.ReadPackage(Pack(ScheduledManifest("""{"mode":"schedule","scope":"all"}"""), "plugin.js", scheduledEntry)), "定时周期必填");
+    Reject(() => PluginMarket.ReadPackage(Pack(ScheduledManifest("""{"mode":"schedule","scope":"all","intervalSeconds":86401}"""), "plugin.js", scheduledEntry)), "拒绝越界周期");
+    Reject(() => PluginMarket.ReadPackage(Pack(manifest, "../plugin.js", script)), "禁止 ZIP 路径穿越");
+    Reject(() => PluginMarket.ReadPackage(Pack(manifest, "plugin.js", [0xff, 0xfe])), "入口必须是 UTF-8");
 
-    var releaseInfo = info with { AppEpoch = 2, MinAppVersion = "1.0.0", MaxAppVersion = "1.0.9" };
-    Check(!PluginMarket.Compatible(releaseInfo, "4.1.6.1", 1));
-    Check(PluginMarket.Compatible(releaseInfo, "1.0.0", 2));
-    Check(!PluginMarket.Compatible(releaseInfo, "0.9.9", 2));
-    Check(!PluginMarket.Compatible(releaseInfo, "1.1.0", 2));
-    Check(!PluginMarket.Compatible(info, "5.0.0", 2));
-    Check(PluginMarket.Compatible(info, "4.1.6.1", 0));
-    Check(PluginMarket.Compatible(info with { AppEpoch = 1 }, "4.1.6.1", 1));
-    Check(PluginMarket.ReadPackage(Pack(releaseInfo)).Info.AppEpoch == 2);
-    Check(JsonSerializer.Serialize(releaseInfo).Contains("\"appEpoch\":2"));
-    Check(releaseInfo.CompatibilityLabel.Contains("正式版"));
-    Reject(() => PluginMarket.ReadPackage(Pack(info with { AppEpoch = -1 })));
-    Reject(() => PluginMarket.ReadPackage(Pack(info with { AppEpoch = 3 })));
-    File.WriteAllBytes(Path.Combine(dir, "wrong-epoch.zip"), Pack(releaseInfo));
-    Reject(() => new PluginMarket(dir).InstallLocal(Path.Combine(dir, "wrong-epoch.zip")));
-    var bothInfo = info with { AppCompatibility = [
-        new PluginAppRange(1, "4.1.0", "4.1.6.1"),
-        new PluginAppRange(2, "1.0.0", "1.0.9")
-    ] };
-    Check(PluginMarket.Compatible(bothInfo, "4.1.6.1", 1));
-    Check(PluginMarket.Compatible(bothInfo, "1.0.0", 2));
-    Check(!PluginMarket.Compatible(bothInfo, "4.1.7", 1));
-    Check(!PluginMarket.Compatible(bothInfo, "1.1.0", 2));
-    Check(!PluginMarket.Compatible(bothInfo, "4.1.6.1", 2));
-    Check(!PluginMarket.Compatible(bothInfo, "1.0.0", 1));
-    Check(PluginMarket.ReadPackage(Pack(bothInfo)).Info.AppCompatibility.Length == 2);
-    Check(bothInfo.CompatibilityLabel.Contains("正式版") && bothInfo.CompatibilityLabel.Contains("旧版"));
-    Reject(() => PluginMarket.ReadPackage(Pack(bothInfo with { AppCompatibility = [] })));
-    Reject(() => PluginMarket.ReadPackage(Pack(bothInfo with { AppCompatibility = [new(1, "4.1.0"), new(1, "4.1.2")] })));
-    Reject(() => PluginMarket.ReadPackage(Pack(bothInfo with { AppCompatibility = [new(2, "1.1.0", "1.0.0")] })));
-
-    // 先确认内置公钥能验证 Node crypto.sign 生成的 DER 签名。
-    PluginTrust.ResetForTests();
-    Check(PluginTrust.Verify(Encoding.UTF8.GetBytes("node-signed payload"),
-        "MEUCIDBBfBa9vaCxzbY89r4pB+pPsbBGfVLsmd7o2REi6vJcAiEAynUtERoXG5E7MCTc5kSfQfVyynmZlOQqoUt52XpShwc="));
-    PluginTrust.UsePublicKeysForTests(Convert.ToBase64String(signingKey.ExportSubjectPublicKeyInfo()));
-
-    var signedBytes = Encoding.UTF8.GetBytes("signed payload");
-    var signed = Convert.ToBase64String(signingKey.SignData(signedBytes, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence));
-    Check(PluginTrust.Verify(signedBytes, signed));
-    Check(!PluginTrust.Verify(signedBytes, signed + "x"));
-    // 市场签名暂时隐藏：开关保持 false，但验签能力本身必须还在，恢复后无需重写。
-    Check(!PluginMarket.MarketSignatureEnabled);
-    Check(PluginMarket.SafeText("正常\n伪造", 80) == "正常 伪造");
-    Check(!PluginMarket.SafeText("A\u202EB", 80).Contains('\u202E'));
-    Check(PluginMarket.SafeMultiline("第一行\n第二行\u0000") == "第一行\n第二行");
-
-    Reject(() => PluginMarket.ReadPackage(Pack(info with { Id = "../escape" })));
-    Reject(() => PluginMarket.ReadPackage(Pack(info, "../plugin.wasm")));
-    Reject(() => PluginMarket.ReadPackage(Pack(info with { Id = "nul" })));
-    var market = new PluginMarket(dir);
-    var package = Path.Combine(dir, "sample.zip");
-    File.WriteAllBytes(package, Pack(info with { MinAppVersion = "5.0.0" }));
-    Reject(() => market.InstallLocal(package));
-    File.WriteAllBytes(package, Pack(info));
-    Check(!market.InstallLocal(package, (incoming, current) =>
-    {
-        Check(incoming == info && current == null);
-        return false;
-    }));
-    Check(!Directory.Exists(Path.Combine(dir, "data")));
-    market.InstallLocal(package);
-    Check(market.Installed().Single() == info);
-    Check(!market.Enabled(info.Id));
-    market.SetEnabled(info.Id, true);
-    Check(market.Enabled(info.Id));
-    var foreignAuthor = info with { Version = "1.1.0", Author = "别人" };
-    File.WriteAllBytes(package, Pack(foreignAuthor));
-    Reject(() => market.InstallLocal(package));
-    Check(market.Installed().Single() == info && market.Enabled(info.Id));
-    var localUpdate = info with { Version = "1.1.0" };
-    File.WriteAllBytes(package, Pack(localUpdate));
-    Check(!market.InstallLocal(package, (incoming, current) =>
-    {
-        Check(incoming == localUpdate && current == info);
-        return false;
-    }));
-    Check(market.Installed().Single() == info && market.Enabled(info.Id));
+    var market = new PluginMarket(temp);
+    Check(!market.InstallLocal(zipPath, (_, _) => false) && !Directory.Exists(Path.Combine(temp, "data")), "取消安装不写数据");
+    Check(market.InstallLocal(zipPath), "安装有效插件");
+    var data = Path.Combine(temp, "data");
+    var plugins = Path.Combine(data, "plugins");
+    var installed = Path.Combine(plugins, id);
+    var grantPath = Path.Combine(installed, "grant.json");
+    var entryPath = Path.Combine(installed, "plugin.js");
+    Check(market.Installed().Single().Id == id && !File.Exists(grantPath) && !market.Enabled(id), "安装未授权");
+    Reject(() => market.SetEnabled(id, true), "启用必须明确确认完整权限");
+    Reject(() => market.SetMessageSettings(id, "{\"flag\":\"true\"}"), "设置须符合作者 schema");
+    market.SetMessageSettings(id, "{\"flag\":true}");
+    Check(!File.Exists(grantPath), "停用时保存设置不授权");
+    market.SetEnabled(id, true, fullAccessApproved: true);
+    Check(market.Enabled(id), "授权后已启用");
+    var first = JsonNode.Parse(File.ReadAllText(grantPath));
+    Check(first["level"].GetValue<int>() == 4 && first["enabled"].GetValue<bool>() && first["fullAccess"].GetValue<bool>()
+        && first["nodeFullConfirmed"].GetValue<bool>() && !first["chatConfirmed"].GetValue<bool>(), "4 级授权字段");
+    Check(first["packageHash"].GetValue<string>() == Sha(archive) && first["manifestHash"].GetValue<string>() == Sha(manifest)
+        && first["entryHash"].GetValue<string>() == Sha(script), "绑定原 ZIP 和拆包原始字节");
+    Check(first["approvedProviders"][0].GetValue<string>() == "tool.run@1" && first["approvedCalls"].AsArray().Count == 1
+        && first["approvedCalls"][0].GetValue<string>() == "status.read@1", "绑定能力但不授权禁用调用");
+    market.SetMessageSettings(id, "{\"flag\":false}");
+    var next = JsonNode.Parse(File.ReadAllText(grantPath));
+    Check(first["epoch"].GetValue<string>() != next["epoch"].GetValue<string>() && !next["settings"]["flag"].GetValue<bool>(), "修改设置重签授权代次");
     if (args.Length > 0)
     {
-        var runtime = Directory.CreateDirectory(Path.Combine(dir, "runtime"));
-        File.Copy(args[0], Path.Combine(runtime.FullName, "node.exe"));
-        Check(await market.RunAsync(info.Id, "鲸A") == "4");
-        // 未开放的导入应被拒绝，哪怕 WebAssembly 本身有效。
-        var foreign = (byte[])module.Clone();
-        foreign[19] = (byte)'x';
-        File.WriteAllBytes(package, Pack(info with { Version = "1.1.0" }, code: foreign));
-        market.InstallLocal(package);
-        try
-        {
-            await market.RunAsync(info.Id, "测试");
-            throw new Exception("未拒绝未知导入");
-        }
-        catch (InvalidDataException) { }
-    }
-    else
-    {
-        File.WriteAllBytes(package, Pack(info with { Version = "1.1.0" }));
-        market.InstallLocal(package);
-    }
-    Check(market.Installed().Single().Version == "1.1.0" && market.Enabled(info.Id));
-    market.Uninstall(info.Id);
-    Check(market.Installed().Length == 0 && !market.Enabled(info.Id));
-    var persona = new PluginInfo("gentle-chat", "温和聊天", "测试", "1.0.0", "4.1.0", "示例", null, 1,
-        Kind: "persona", MaxAppVersion: "4.1.9");
-    var personaListing = persona with { Download = "https://github.com/example/plugin.zip", Sha256 = new string('a', 64),
-        Signature = "catalog-signature-present" };
-    var personaCatalog = JsonSerializer.SerializeToUtf8Bytes(new[] { personaListing });
-    Check(PluginMarket.ParseCatalog(personaCatalog, 1, "persona").Length == 1);
-    var favorites = PluginMarket.ParseFavoriteStates("""
-        {"favorites":[{"id":"text-counter","count":2,"favorited":true},{"id":"notes","count":0,"favorited":false}]}
-        """u8.ToArray());
-    Check(favorites["text-counter"] == new MarketFavorite("text-counter", 2, true));
-    Check(favorites["notes"].Count == 0 && !favorites["notes"].Favorited);
-    Reject(() => PluginMarket.ParseFavoriteStates("""
-        {"favorites":[{"id":"notes","count":0,"favorited":true}]}
-        """u8.ToArray()));
-    Check(PluginMarket.ParseCatalog(personaCatalog, 1, "tool").Length == 0);
-    Check(PluginMarket.ParseCatalog(personaCatalog, 3, "message").Length == 0);
-    // 回归：市场还没签名时，条目没有 Signature 也必须能解析，否则整个市场会被过滤成空的。
-    var unsignedCatalog = JsonSerializer.SerializeToUtf8Bytes(new[] { personaListing with { Signature = null } });
-    Check(PluginMarket.ParseCatalog(unsignedCatalog, 1, "persona").Length == 1);
-    var codeCatalog = JsonSerializer.SerializeToUtf8Bytes(new[] { info with {
-        Download = "https://github.com/example/plugin.zip", Sha256 = new string('a', 64),
-        Signature = "catalog-signature-present" } });
-    Check(PluginMarket.ParseCatalog(codeCatalog, 1, "persona").Length == 0);
-    Check(PluginMarket.Compatible(persona, "4.1.0"));
-    Check(PluginMarket.Compatible(persona, "4.1.9"));
-    Check(!PluginMarket.Compatible(persona, "4.2.0"));
-    Check(!PluginMarket.Compatible(persona, "4.0.8"));
-    persona = persona with { MaxAppVersion = null };
-    File.WriteAllBytes(package, Pack(persona, "persona.json",
-        System.Text.Encoding.UTF8.GetBytes("""{"customPrompt":"温和自然","personaName":"不可覆盖"}""")));
-    market.InstallLocal(package);
-    Check(!market.Enabled(persona.Id));
-    market.SetEnabled(persona.Id, true);
-    var preset = Path.Combine(dir, "data", "plugins", "gentle-chat.persona.json");
-    using (var json = JsonDocument.Parse(File.ReadAllBytes(preset)))
-    {
-        Check(json.RootElement.GetProperty("customPrompt").GetString() == "温和自然");
-        Check(json.RootElement.GetProperty("personaName").GetString() == "不可覆盖");
-    }
-    market.SetEnabled(persona.Id, false);
-    Check(!File.Exists(preset) && market.Installed().Length == 1);
-    market.Uninstall(persona.Id);
-    Check(market.Installed().Length == 0);
-    var share = Path.Combine(dir, "shared-persona.zip");
-    using (var document = JsonDocument.Parse("""
-        {"schemaVersion":1,"personaName":"小鱼","customPrompt":"","personality":"沉静","ownerName":"老大",
-         "aliases":["小鱼儿"],"masterRoast":true,"proactive":false,"opinions":false,
-         "emoji":"少","emojiChance":0.8,"historyTurns":350,"maxBubbles":4,
-         "master":{"wxids":["must-not-share"]},"apiKey":"must-not-share","permissions":["system.full"]}
-        """))
-    {
-        PersonaPackage.Export(share, document.RootElement, "完整小鱼", "分享者", "portable-fish", "1.0.0");
-    }
-    using (var zip = ZipFile.OpenRead(share))
-    {
-        Check(zip.Entries.Count == 2);
-        Check(zip.GetEntry("plugin.json") != null && zip.GetEntry("persona.json") != null);
-    }
-    var portablePackage = PluginMarket.ReadPackage(File.ReadAllBytes(share));
-    Check(portablePackage.Info.MinAppVersion == "4.1.5" && portablePackage.Info.Kind == "persona");
-    Check(PluginMarket.Compatible(portablePackage.Info, "4.1.5", 1));
-    Check(PluginMarket.Compatible(portablePackage.Info, "1.0.0", 2));
-    Check(!portablePackage.Persona.Contains("must-not-share") && !portablePackage.Persona.Contains("permissions"));
-    Check(market.InstallLocal(share));
-    market.SetEnabled("portable-fish", true);
-    var installedPersona = Path.Combine(dir, "data/plugins/portable-fish.persona.json");
-    using (var json = JsonDocument.Parse(File.ReadAllBytes(installedPersona)))
-    {
-        Check(json.RootElement.GetProperty("masterRoast").GetBoolean());
-        Check(!json.RootElement.GetProperty("proactive").GetBoolean());
-        Check(json.RootElement.GetProperty("emojiChance").GetDouble() == 0.8);
-        Check(json.RootElement.GetProperty("historyTurns").GetInt32() == 350);
-        Check(json.RootElement.GetProperty("customPrompt").GetString() == "");
-        Check(json.RootElement.GetProperty("ownerName").GetString() == "老大");
-    }
-    market.SetEnabled("portable-fish", false);
-    Check(!File.Exists(installedPersona));
-    market.Uninstall("portable-fish");
-    var promptShare = Path.Combine(dir, "prompt-only.zip");
-    using (var document = JsonDocument.Parse("""
-        {"customPrompt":"你是温和的图书管理员。","personaName":"不应分享","masterRoast":true,"emojiChance":0.8}
-        """))
-    {
-        PersonaPackage.Export(promptShare, document.RootElement, "图书管理员", "分享者", "prompt-librarian", "1.0.0", promptOnly: true);
-    }
-    using (var zip = ZipFile.OpenRead(promptShare))
-    {
-        Check(zip.Entries.Count == 2 && zip.GetEntry("persona.json").Length <= 65536);
-        using var json = JsonDocument.Parse(zip.GetEntry("persona.json").Open());
-        Check(json.RootElement.EnumerateObject().Count() == 1);
-        Check(json.RootElement.GetProperty("customPrompt").GetString() == "你是温和的图书管理员。");
-    }
-    Check(PluginMarket.ReadPackage(File.ReadAllBytes(promptShare)).Info.MinAppVersion == "4.1.0");
-    market.InstallLocal(promptShare);
-    market.SetEnabled("prompt-librarian", true);
-    Check(File.Exists(Path.Combine(dir, "data/plugins/prompt-librarian.persona.json")));
-    market.Uninstall("prompt-librarian");
-    var previousZip = File.ReadAllBytes(promptShare);
-    using (var emptyPrompt = JsonDocument.Parse("""{"customPrompt":"  "}"""))
-        Reject(() => PersonaPackage.Export(promptShare, emptyPrompt.RootElement, "空", "分享者", "prompt-empty", "1.0.0", promptOnly: true));
-    using (var largePrompt = JsonDocument.Parse(JsonSerializer.Serialize(new { customPrompt = new string('鱼', 24000) })))
-        Reject(() => PersonaPackage.Export(promptShare, largePrompt.RootElement, "太长", "分享者", "prompt-large", "1.0.0", promptOnly: true));
-    Check(File.ReadAllBytes(promptShare).SequenceEqual(previousZip));
-    Reject(() => PluginMarket.ReadPackage(Pack(persona, "persona.json", Encoding.UTF8.GetBytes("""{"customPrompt":"a","masterRoast":"false"}"""))));
-    Reject(() => PluginMarket.ReadPackage(Pack(persona, "persona.json", Encoding.UTF8.GetBytes("""{"customPrompt":"a","emojiChance":2}"""))));
-    Reject(() => PluginMarket.ReadPackage(Pack(persona, "persona.json", Encoding.UTF8.GetBytes("""{"customPrompt":""}"""))));
-    if (args.Length > 1 && args[1] != "--live")
-    {
-        market.InstallLocal(args[1]);
-        const string summaryId = "chat-summary-demo";
-        market.SetEnabled(summaryId, true);
-        var summary = market.Installed().Single();
-        Check(summary.Api == 2 && summary.HostAction == PluginMarket.DigestAction);
-        try
-        {
-            await market.RunAsync(summaryId, "today");
-            throw new Exception("未授权的宿主能力可以调用");
-        }
-        catch (InvalidOperationException) { }
-        var called = 0;
-        var report = await market.RunAsync(summaryId, "yesterday", PluginMarket.DigestAction, range =>
-        {
-            Check(range == "yesterday");
-            called++;
-            return Task.FromResult("昨日汇总\n测试通过");
-        });
-        Check(called == 1 && report == "昨日汇总\n测试通过");
-        var known = summary with { Download = "https://example.invalid/plugin.zip", Sha256 = new string('a', 64), Signature = "test" };
-        Check(PluginMarket.ParseCatalog(JsonSerializer.SerializeToUtf8Bytes(new[] { known, known with { Api = 99 } }))
-            .Single() == known);
-        var catalogBytes = JsonSerializer.SerializeToUtf8Bytes(new[] { known });
-        var catalogSignature = Convert.ToBase64String(signingKey.SignData(catalogBytes, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence));
-        Check(PluginMarket.ParseSignedCatalog(catalogBytes, catalogSignature).Single() == known);
-        try
-        {
-            PluginMarket.ParseSignedCatalog(catalogBytes, catalogSignature + "x");
-            throw new Exception("未拒绝无效目录签名");
-        }
-        catch (InvalidDataException) { }
-        market.Uninstall(summaryId);
-    }
-    var messageInfo = info with { Id = "message-demo", Api = 3, Kind = "message", MinAppVersion = "4.1.0", Hooks = ["chat.pre_reply"], Permissions = [] };
-    Check(PluginMarket.ReadPackage(Pack(messageInfo with { AppEpoch = 2, MinAppVersion = "1.0.0" })).Info.AppEpoch == 2);
-    Reject(() => PluginMarket.ReadPackage(Pack(messageInfo with { AppEpoch = 2, MinAppVersion = "0.9.0" })));
-    Reject(() => PluginMarket.ReadPackage(Pack(messageInfo with { MinAppVersion = "4.0.8" })));
-    Reject(() => PluginMarket.ReadPackage(Pack(messageInfo with { Hooks = ["unknown"] })));
-    Reject(() => PluginMarket.ReadPackage(Pack(messageInfo with { Permissions = ["filesystem"] })));
-    File.WriteAllBytes(package, Pack(messageInfo));
-    market.InstallLocal(package);
-    Check(!market.Enabled(messageInfo.Id));
-    market.SetEnabled(messageInfo.Id, true);
-    market.SetMessageSettings(messageInfo.Id, "{\"turns\":3}");
-    Check(market.MessageSettings(messageInfo.Id).Contains("3"));
-    var grantFile = Path.Combine(dir, "data", "plugins", "message-demo.flow-grant.json");
-    Check(File.Exists(grantFile));
-    if (args.Length > 2)
-    {
-        var start = new System.Diagnostics.ProcessStartInfo(args[0]) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+        var runtime = Path.GetFullPath(Path.Combine("src", "services", "unifiedPluginRuntime.js"));
+        var start = new ProcessStartInfo(args[0]) { UseShellExecute = false, CreateNoWindow = true };
         start.ArgumentList.Add("-e");
-        start.ArgumentList.Add("const {MessagePlugins}=require(process.argv[1]); console.log(new MessagePlugins({dataDir:process.argv[2]}).installed().map(p=>p.id).join(','));");
-        start.ArgumentList.Add(args[2]);
-        start.ArgumentList.Add(Path.Combine(dir, "data"));
-        using var node = System.Diagnostics.Process.Start(start);
-        var output = await node.StandardOutput.ReadToEndAsync();
+        start.ArgumentList.Add("const { UnifiedPluginRuntime } = require(process.argv[1]); const plugin = new UnifiedPluginRuntime({dataDir:process.argv[2]}).read('unified-tool'); if (!plugin || !plugin.provides['tool.run@1'] || plugin.settings.flag !== false) process.exit(1);");
+        start.ArgumentList.Add(runtime);
+        start.ArgumentList.Add(data);
+        using var node = Process.Start(start);
         await node.WaitForExitAsync();
-        Check(node.ExitCode == 0 && output.Contains(messageInfo.Id));
+        Check(node.ExitCode == 0, "真实 Node runtime 接受 C# 安装与授权");
     }
-    market.SetEnabled(messageInfo.Id, false);
-    Check(!File.Exists(grantFile));
-    market.SetMessageSettings(messageInfo.Id, "{\"turns\":3}");
-    Check(!File.Exists(grantFile) && !market.Enabled(messageInfo.Id));
-    market.SetEnabled(messageInfo.Id, true);
-    Check(market.MessageSettings(messageInfo.Id).Contains("3"));
-    File.WriteAllBytes(package, Pack(messageInfo with { Version = "1.1.0" }));
-    market.InstallLocal(package);
-    Check(!market.Enabled(messageInfo.Id) && !File.Exists(grantFile));
-    var settingsFile = Path.Combine(dir, "data", "plugins", "message-demo.flow-settings.json");
-    var stateFile = Path.Combine(dir, "data", "plugins", "message-demo.0123456789abcdef.state.json");
-    File.WriteAllText(stateFile, "{}");
-    Check(File.Exists(settingsFile) && File.Exists(stateFile));
-    market.Uninstall(messageInfo.Id);
-    Check(!File.Exists(settingsFile) && !File.Exists(stateFile));
-    var nativeInfo = info with { Id = "native-demo", Api = 4, MinAppVersion = "4.1.2", Kind = "tool",
-        Hooks = ["tool.run", "chat.search"], Permissions = ["system.full"] };
-    var script = Encoding.UTF8.GetBytes("module.exports.run = async () => ({text:'你好😀'});");
-    Reject(() => PluginMarket.ReadPackage(Pack(nativeInfo with { MinAppVersion = "4.1.1" }, "plugin.js", script)));
-    Check(PluginMarket.ReadPackage(Pack(nativeInfo with { AppEpoch = 2, MinAppVersion = "1.0.0" }, "plugin.js", script)).Info.AppEpoch == 2);
-    Reject(() => PluginMarket.ReadPackage(Pack(nativeInfo with { Permissions = [] }, "plugin.js", script)));
-    Reject(() => PluginMarket.ReadPackage(Pack(nativeInfo with { ExecutionTimeoutMs = 0 }, "plugin.js", script)));
-    Reject(() => PluginMarket.ReadPackage(Pack(nativeInfo, "plugin.wasm", script)));
-    Reject(() => PluginMarket.ReadPackage(Pack(nativeInfo, "plugin.js", [0xFF, 0xFE])));
-    File.WriteAllBytes(package, Pack(nativeInfo, "plugin.js", script));
-    market.InstallLocal(package);
-    Reject(() => market.SetEnabled(nativeInfo.Id, true));
-    Check(!market.Enabled(nativeInfo.Id));
-    market.SetMessageSettings(nativeInfo.Id, "{\"mode\":\"保持😀\"}");
-    var nativeGrant = Path.Combine(dir, "data", "plugins", "native-demo.flow-grant.json");
-    Check(!File.Exists(nativeGrant));
-    market.SetEnabled(nativeInfo.Id, true, fullAccessApproved: true);
-    using (var grant = JsonDocument.Parse(File.ReadAllBytes(nativeGrant)))
-        Check(grant.RootElement.GetProperty("fullAccess").GetBoolean());
-    var nativeState = Path.Combine(dir, "data", "plugins", "native-demo.test.state.json");
-    File.WriteAllText(nativeState, "{\"counter\":7}");
-    File.WriteAllBytes(package, Pack(nativeInfo with { Version = "1.1.0" }, "plugin.js", script));
-    market.InstallLocal(package);
-    Check(!market.Enabled(nativeInfo.Id) && !File.Exists(nativeGrant));
-    Check(market.MessageSettings(nativeInfo.Id).Contains("保持") && File.ReadAllText(nativeState).Contains("7"));
-    market.SetMessageSettings(nativeInfo.Id, "{}");
-    Check(!File.Exists(nativeGrant));
-    market.Uninstall(nativeInfo.Id);
-    if (args.Length > 1 && args[1] == "--live")
+    File.WriteAllText(entryPath, "exports.providers = {};");
+    Check(!market.Enabled(id), "拆包文件被改动时不再认可授权");
+    Reject(() => market.SetEnabled(id, true, fullAccessApproved: true), "不能直接为已篡改的文件授权");
+    var newer = Encoding.UTF8.GetBytes(baseline.Replace("1.0.0", "1.1.0"));
+    File.WriteAllBytes(zipPath, Pack(newer, "plugin.js", script));
+    Check(market.InstallLocal(zipPath) && !File.Exists(grantPath) && !market.Enabled(id), "更新时撤回授权");
+    Check(market.MessageSettings(id).Contains("false"), "同作者更新保留设置");
+    market.Uninstall(id);
+    Check(market.Installed().Length == 0 && !File.Exists(grantPath) && !File.Exists(entryPath), "卸载移除可执行文件与授权");
+
+    // 启动器只验证 Wasm 文件头；模块完整性、导入及 ABI 交由执行器验证。
+    byte[] wasm = [0, 97, 115, 109, 1, 0, 0, 0];
+    byte[] Restricted(int level, string providers = "\"tool.run@1\":{\"mode\":\"tool\",\"scope\":\"manual\"}", string calls = "[]", string version = "1.0.0") =>
+        Encoding.UTF8.GetBytes($$"""
+            {"format":"whale-plugin/1","level":{{level}},"id":"unified-tool","name":"工具","author":"测试","version":"{{version}}",
+             "minAppVersion":"4.1.5","description":"测试","runtime":"wasm-restricted","entry":"plugin.wasm",
+             "provides":{ {{providers}} },"calls":{{calls}}}
+            """);
+    const string chat = "\"chat.reply@1\":{\"mode\":\"enhance\",\"scope\":\"all\"}";
+    var chatManifest = Encoding.UTF8.GetString(Restricted(3, chat)).TrimEnd();
+    var chatWithDataAccess = Encoding.UTF8.GetBytes(chatManifest[..^1]
+        + ",\"dataAccess\":[\"chat.history\",\"model.prompt\"]}");
+    File.WriteAllBytes(zipPath, Pack(chatWithDataAccess, "plugin.wasm", wasm));
+    Check(market.InstallLocal(zipPath) && !File.Exists(grantPath), "声明额外聊天数据的插件安装时不授权");
+    Reject(() => market.SetEnabled(id, true), "额外聊天数据和当前消息一起确认");
+    Check(!File.Exists(grantPath), "未确认时无授权记录");
+    market.SetEnabled(id, true, chatAccessApproved: true);
+    using (var dataGrant = JsonDocument.Parse(File.ReadAllBytes(grantPath)))
     {
-        var listed = (await PluginMarket.CatalogAsync()).Single(x => x.Id == info.Id);
-        await market.InstallAsync(listed);
-        market.SetEnabled(info.Id, true);
-        Check(await market.RunAsync(info.Id, "鲸A") == "4");
+        Check(dataGrant.RootElement.GetProperty("chatConfirmed").GetBoolean()
+            && dataGrant.RootElement.GetProperty("approvedDataAccess").EnumerateArray().Select(item => item.GetString())
+                .SequenceEqual(new[] { "chat.history", "model.prompt" }), "只记录确认的额外聊天数据");
     }
+    market.Uninstall(id);
+
+    Reject(() => PluginMarket.ReadPackage(Pack(Encoding.UTF8.GetBytes(baseline.Replace("\"level\":4,", "")), "plugin.js", script)), "必须声明等级");
+    Reject(() => PluginMarket.ReadPackage(Pack(Encoding.UTF8.GetBytes(baseline.Replace("\"level\":4", "\"level\":2")), "plugin.js", script)), "低等级不能运行 Node");
+    Reject(() => PluginMarket.ReadPackage(Pack(Restricted(0), "plugin.wasm", wasm)), "拒绝未知等级");
+    Reject(() => PluginMarket.ReadPackage(Pack(Restricted(2, chat), "plugin.wasm", wasm)), "2 级不可声明聊天处理");
+    Reject(() => PluginMarket.ReadPackage(Pack(Restricted(3, calls: "[\"status.read@1\"]"), "plugin.wasm", wasm)), "3 级不可声明宿主调用");
+    Reject(() => PluginMarket.ReadPackage(Pack(Restricted(1), "plugin.js", wasm)), "Wasm 必须使用正确文件名");
+    Reject(() => PluginMarket.ReadPackage(Pack(Restricted(1), "plugin.wasm", script)), "入口必须是 Wasm");
+    var oversizedWasm = new byte[524289];
+    wasm.CopyTo(oversizedWasm, 0);
+    Reject(() => PluginMarket.ReadPackage(Pack(Restricted(2), "plugin.wasm", oversizedWasm)), "按等级限制 Wasm 入口大小");
+
+    for (var level = 1; level <= 3; level++)
+    {
+        File.WriteAllBytes(zipPath, Pack(level == 3 ? Restricted(level, chat) : Restricted(level), "plugin.wasm", wasm));
+        Check(market.InstallLocal(zipPath) && market.Installed().Single().Level == level, $"安装 {level} 级");
+        var wasmPath = Path.Combine(installed, "plugin.wasm");
+        Check(File.Exists(wasmPath) && !File.Exists(entryPath) && !File.Exists(grantPath), "安装对应入口但不授权");
+        if (level == 3)
+        {
+            Reject(() => market.SetEnabled(id, true, fullAccessApproved: true), "3 级聊天需单独确认");
+            market.SetMessageSettings(id, "{}");
+            Check(!File.Exists(grantPath), "修改设置不产生聊天授权");
+        }
+        market.SetEnabled(id, true, chatAccessApproved: level == 3);
+        var grant = JsonNode.Parse(File.ReadAllText(grantPath));
+        Check(market.Enabled(id) && grant["level"].GetValue<int>() == level
+            && !grant["fullAccess"].GetValue<bool>() && !grant["nodeFullConfirmed"].GetValue<bool>()
+            && grant["chatConfirmed"].GetValue<bool>() == (level == 3) && grant["approvedCalls"].AsArray().Count == 0,
+            "受限等级授权不能包含完整权限或宿主调用");
+        if (level == 3)
+        {
+            market.SetMessageSettings(id, "{\"count\":1}");
+            var revisedGrant = JsonNode.Parse(File.ReadAllText(grantPath));
+            Check(revisedGrant["chatConfirmed"].GetValue<bool>() && revisedGrant["epoch"].GetValue<string>() != grant["epoch"].GetValue<string>(), "设置重签保留已有聊天确认");
+            revisedGrant["chatConfirmed"] = false;
+            File.WriteAllText(grantPath, revisedGrant.ToJsonString());
+            Check(!market.Enabled(id), "聊天确认丢失时不认可授权");
+            market.SetMessageSettings(id, "{}");
+            Check(!market.Enabled(id), "修改设置不能补发聊天确认");
+
+            var upgraded = Encoding.UTF8.GetBytes(baseline.Replace("1.0.0", "2.0.0"));
+            File.WriteAllBytes(zipPath, Pack(upgraded, "plugin.js", script));
+            Check(market.InstallLocal(zipPath) && !File.Exists(grantPath) && !File.Exists(wasmPath) && File.Exists(entryPath), "升级等级撤权并替换入口");
+            Reject(() => market.SetEnabled(id, true, chatAccessApproved: true), "3 级确认不能授权 4 级");
+        }
+        market.Uninstall(id);
+        Check(!File.Exists(wasmPath) && !File.Exists(entryPath), "卸载清除对应入口");
+    }
+
+    foreach (var number in new[] { 1, 2, 3, 4 })
+    {
+        var legacyId = $"old-api-{number}";
+        var legacy = new PluginInfo(legacyId, "旧工具", "测试", "1.0.0", "4.1.2", "旧版", "结果", number);
+        var legacyZip = Path.Combine(plugins, legacyId + ".zip");
+        File.WriteAllBytes(legacyZip, Pack(JsonSerializer.SerializeToUtf8Bytes(legacy), number == 4 ? "plugin.js" : "plugin.wasm", script));
+        File.WriteAllText(Path.Combine(plugins, legacyId + ".enabled"), "");
+        Reject(() => PluginMarket.ValidateLocal(legacyZip, "4.1.5"), "旧版可执行 ZIP");
+        Reject(() => market.SetEnabled(legacyId, true, fullAccessApproved: true), "旧版授权");
+        Check(!market.Enabled(legacyId) && market.Installed().Single().Id == legacyId, "旧卡片只能显示和卸载");
+        market.Uninstall(legacyId);
+    }
+
+    var persona = new PluginInfo("gentle-chat", "温和聊天", "测试", "1.0.0", "4.1.0", "示例", null, 1,
+        Kind: "persona", AppCompatibility: [new(1, "4.1.0", "4.1.9"), new(2, "1.0.0", "1.0.9")]);
+    Check(PluginMarket.Compatible(persona, "4.1.5", 1) && PluginMarket.Compatible(persona, "1.0.0", 2)
+        && !PluginMarket.Compatible(persona, "1.0.0", 1), "人设仍支持两代版本范围");
+    var listing = persona with { Download = "https://github.com/example/plugin.zip", Sha256 = new string('a', 64) };
+    var catalog = JsonSerializer.SerializeToUtf8Bytes(new[] { listing, listing with { Api = 4, Kind = "tool" } });
+    Check(PluginCatalog.ParseCatalog(catalog, 1, "persona").Single().Id == persona.Id, "无签名人设目录仍可读且不混入可执行插件");
+    File.WriteAllBytes(zipPath, Pack(JsonSerializer.SerializeToUtf8Bytes(persona), "persona.json", Encoding.UTF8.GetBytes("""{"customPrompt":"温和自然","personaName":"独立人设"}""")));
+    Check(market.InstallLocal(zipPath), "人设可以从本地安装");
+    market.SetEnabled(persona.Id, true);
+    using (var preview = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(plugins, persona.Id + ".persona.json"))))
+        Check(preview.RootElement.GetProperty("personaName").GetString() == "独立人设" && market.Enabled(persona.Id), "人设保留数据路径");
+    market.Uninstall(persona.Id);
+    Check(!market.Enabled(persona.Id), "人设可以停用卸载");
+
+    using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+    PluginTrust.UsePublicKeysForTests(Convert.ToBase64String(key.ExportSubjectPublicKeyInfo()));
+    var sig = Convert.ToBase64String(key.SignData(catalog, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence));
+    Check(!PluginMarket.MarketSignatureEnabled && PluginCatalog.ParseSignedCatalog(catalog, sig).Single().Id == persona.Id, "不启用市场验签，但保留验签原语");
+    Reject(() => PluginCatalog.ParseSignedCatalog(catalog, sig + "x"), "无效签名");
     Console.WriteLine("插件市场回归通过");
 }
 finally
 {
     for (var attempt = 0; ; attempt++)
     {
-        try { Directory.Delete(dir, recursive: true); break; }
-        // Windows 映像文件的短暂占用可在进程退出后释放，持续占用仍然报错。
+        try { Directory.Delete(temp, recursive: true); break; }
         catch (IOException) when (attempt < 5) { await Task.Delay(100 * (attempt + 1)); }
     }
 }

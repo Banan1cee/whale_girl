@@ -2,7 +2,7 @@
 const { promptOf } = require('./support/prompt');
 
 /**
- * 回怼火力：贴吧老哥档。既要有攻击力，也不能越底线。
+ * 回怼台词库只保留普通短句；旧版「最大火力/强制对喷」已移除，不再由宿主注入攻击指令。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const persona = require('../src/persona');
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 
@@ -57,14 +57,13 @@ test('每条台词都是短句，适合微信群聊', () => {
   }
 });
 
-test('真人模型模式下不再念台词库，交给模型现编', async () => {
+test('真人模型模式下不再注入贴吧火力档', async () => {
   const llm = { isMock: false, model: 'qwen-plus', reload() {}, async complete() { return '行，我记住了'; } };
   const { bot, cleanup } = makeBot({ llm, rng: () => 0 });
   const r = await bot.decide(groupMsg('@鲸鲸 你个废物', { atMe: true }));
   assert.equal(r.action, 'reply');
   assert.notEqual(r.reason, 'clapback', '不该直接念库里的句子');
-  assert.match(promptOf(r), /第二条人格：贴吧老哥/);
-  assert.match(promptOf(r), /最大档/);
+  assert.doesNotMatch(promptOf(r), /第二条人格|贴吧老哥|最大档/, '不应再注入攻击性提示');
   cleanup();
 });
 
@@ -77,39 +76,27 @@ test('没被骂时不常驻暴躁性格与火力档', async () => {
   cleanup();
 });
 
-test('骂主人 = 开战，而且提示词里加码', async () => {
+test('骂主人不再触发开战和火力加码', async () => {
   const llm = { isMock: false, model: 'qwen-plus', reload() {}, async complete() { return '你算什么东西' } };
   const { bot, cleanup } = makeBot({ llm });
   const r = await bot.decide(groupMsg('@鲸鲸 你主人就是个废物', { atMe: true }));
-  assert.equal(r.msg.fight, true);
-  assert.equal(r.msg.fightOnMaster, true);
-  assert.match(promptOf(r), /往死里骂/);
+  assert.notEqual(r.msg.fight, true, '不应再写对喷状态');
+  assert.doesNotMatch(promptOf(r), /往死里骂|最大档/);
   cleanup();
 });
 
-test('骂废物这种会被判成开战，走最大火力', async () => {
+test('被骂不再强制最大火力，按普通对话处理', async () => {
   const llm = { isMock: false, model: 'qwen-plus', reload() {}, async complete() { return '你也配' } };
   const { bot, cleanup } = makeBot({ llm });
   for (const word of ['废物', '垃圾', '菜狗', '蠢货']) {
     const r = await bot.decide(groupMsg('@鲸鲸 你个' + word, { atMe: true }));
-    assert.equal(r.msg.fight, true, word + ' 应该触发开战');
-    assert.match(promptOf(r), /直接开到最大档/, word + ' 应该给最大火力提示');
+    assert.notEqual(r.msg.fight, true, word + ' 不应触发开战');
+    assert.doesNotMatch(promptOf(r), /直接开到最大档/, word + ' 不应给火力提示');
   }
   cleanup();
 });
 
-test('按对方脏不脏、骂到第几回合选火力档', () => {
-  assert.ok(persona.clapbackKinds({ dirty: true }).includes('重'));
-  assert.ok(persona.clapbackKinds({ dirty: true }).includes('爹味'));
-  assert.ok(persona.clapbackKinds({ dirty: false }).includes('轻'));
-  assert.ok(!persona.clapbackKinds({ dirty: false }).includes('重'));
-  // 第三回合开始收尾 / 更狠
-  assert.ok(persona.clapbackKinds({ dirty: true, round: 3 }).includes('收尾'));
-  assert.ok(persona.clapbackKinds({ dirty: false, round: 3 }).includes('收尾'));
-  assert.deepEqual(persona.clapbackKinds({ commanded: true }), ['叫滚', '轻']);
-});
-
-test('对喷时模型说软话会被换成狠话', async () => {
+test('模型说软话时不再被宿主换成狠话', async () => {
   const soft = {
     isMock: false, model: 'qwen-plus', reload() {},
     async complete() { return '别生气了，我理解你的感受，我们没必要这样'; },
@@ -117,23 +104,15 @@ test('对喷时模型说软话会被换成狠话', async () => {
   const { bot, cleanup } = makeBot({ llm: soft, rng: () => 0.99 });
   const r = await bot.handle(groupMsg('@鲸鲸 你就是个废物', { atMe: true }));
   assert.equal(r.action, 'reply');
-  assert.doesNotMatch(r.reply, /别生气|我理解|没必要/, '不该出现软话：' + r.reply);
-  assert.ok(texts.includes(r.reply) || /你|爹|爷|急|典|废|骂/.test(r.reply), '应该是库里的硬话：' + r.reply);
+  assert.match(r.reply, /别生气|我理解|没必要/, '应按模型原意保留：' + r.reply);
   cleanup();
 });
 
-test('挨骂时会打两连击（反问/扣帽子 + 补刀）', async () => {
+test('演示模式被骂不再走 clapback 台词库', async () => {
   const { bot, cleanup } = makeBot({ rng: () => 0 });
   const r = await bot.decide(groupMsg('@鲸鲸 你个傻逼', { atMe: true }));
-  assert.equal(r.reason, 'clapback');
-  assert.ok(r.canned.length > 0);
-  // 至少有一次能拼出两段
-  let two = 0;
-  for (let i = 0; i < 30; i += 1) {
-    const one = await bot.decide(groupMsg('@鲸鲸 你个傻逼', { atMe: true, msgId: 'm' + i }));
-    if (one.reason === 'clapback' && one.canned.includes('，')) two += 1;
-  }
-  assert.ok(two > 0, '应该有拼成两连击的回怼');
+  assert.notEqual(r.reason, 'clapback');
+  assert.equal(r.canned, undefined);
   cleanup();
 });
 
@@ -162,30 +141,29 @@ const groupMsg = (text, extra = {}) => ({
   senderId: 'u-x', senderName: '路人', text, chatTitle: '深海鱼塘', ...extra,
 });
 
-test('被骂会真的甩出带脏字的回怼，不是温吞的客套话', async () => {
+test('被骂时演示模式不再强制带脏字回怼', async () => {
   const { bot, cleanup } = makeBot({ rng: () => 0 });
   const r = await bot.decide(groupMsg('@鲸鲸 你个傻逼废物', { atMe: true }));
   assert.equal(r.action, 'reply');
-  assert.equal(r.reason, 'clapback');
-  assert.match(r.canned, /傻逼|他妈|妈的|你爹|爹我|孙子|就这|急了/);
+  assert.notEqual(r.reason, 'clapback');
+  assert.doesNotMatch(String(r.canned || r.text || ''), /傻逼|他妈|妈的|你爹|爹我|孙子/);
   cleanup();
 });
 
-test('对喷时提示词里带贴吧火力档和示例', async () => {
+test('被骂时提示词里不再带贴吧火力档', async () => {
   const { bot, cleanup } = makeBot({ rng: () => 0.99 });
   const r = await bot.decide(groupMsg('@鲸鲸 傻逼东西', { atMe: true }));
   assert.equal(r.action, 'reply');
-  assert.match(promptOf(r), /贴吧老哥/);
-  assert.match(promptOf(r), /急了/);
-  assert.match(promptOf(r), /底线/);
+  assert.doesNotMatch(promptOf(r), /贴吧老哥|最大档|往死里骂/);
   cleanup();
 });
 
-test('对喷时模型能看到原话（不被星号洗掉）', async () => {
+test('被骂时用户原话仍按普通输入清洗', async () => {
   const { bot, cleanup } = makeBot({ rng: () => 0.99 });
   const r = await bot.decide(groupMsg('@鲸鲸 你他妈是个傻逼', { atMe: true }));
   const joined = r.turns.map((t) => t.content).join('\n');
-  assert.match(joined, /你他妈是个傻逼/);
+  assert.doesNotMatch(joined, /你他妈是个傻逼/);
+  assert.match(joined, /\*\*\*/);
   cleanup();
 });
 

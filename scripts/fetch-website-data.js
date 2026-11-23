@@ -5,7 +5,7 @@ const path = require('node:path');
 const { describeError } = require('../src/infra/errors');
 const APP = 'Banan1cee/whale_girl';
 const MARKET = 'Banan1cee/whale-girl-plugins';
-const INDEXES = ['index.json', 'index-v2.json', 'index-v3.json', 'index-v4.json', 'index-personas.json'];
+const INDEXES = ['index-v5.json', 'index-personas.json'];
 
 async function collectPages(readPage) {
   const result = [];
@@ -49,7 +49,13 @@ async function fetchData(token = process.env.GH_TOKEN) {
   ]);
   if (!/^[a-f0-9]{40}$/.test(head.sha)) throw new Error('插件市场源码 commit 无效');
   const catalogs = await Promise.all(INDEXES.map(async index => {
-    const items = await getJson(`https://raw.githubusercontent.com/${MARKET}/${head.sha}/${index}`);
+    let items;
+    try { items = await getJson(`https://raw.githubusercontent.com/${MARKET}/${head.sha}/${index}`); }
+    catch (error) {
+      // 市场尚未发布 index-v5.json 时官网仍可发布人设目录；v5 一旦存在就必须是合法数组。
+      if (index === 'index-v5.json') return [];
+      throw error;
+    }
     if (!Array.isArray(items)) throw new Error(`插件目录格式无效：${index}`);
     return items.map(item => ({ ...item, SourceIndex: index }));
   }));

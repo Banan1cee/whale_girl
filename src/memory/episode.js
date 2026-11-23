@@ -8,14 +8,16 @@
  * 幂等：同一个 episodeId 只写一次 L2（meta.closedEpisodes 去重 + 事件 id 去重 + 写入前检查）。
  */
 const { LIMITS, DAY_MS } = require('./constants');
-const personCard = require('./personCard');
+const record = require('./record');
+const recordStore = require('./recordStore');
 const extractor = require('./extractor');
 const compression = require('./compression');
 const retrieval = require('./retrieval');
 const relations = require('./relations');
-const { personHash } = require('./hash');
 const { describeError } = require('../infra/errors');
 const { tagId } = require('../infra/privacy');
+
+function memoryDirOf(chatStore) { return chatStore.dir; }
 
 const TOPIC_SHIFT_RE = /(换个话题|换话题|不说这个|不聊这个|聊点别的|说点别的|跳过这个话题|别聊了|算了不聊)/;
 
@@ -162,64 +164,161 @@ async function closeEpisode({ chat, chatStore, llm = null, logger = null, now = 
       }
     }
 
-    // 没有发言人（只有机器人自己的消息）：不建卡，只记一条 chat 级关闭
+    // 记录是唯一事实源：这一段的中期内容进 timeline，长期事实进 subjects。
+    // 人物卡只留名册（ensurePerson 只写 uid/name），不再承载记忆正文。
+    const scope = `chat:${chat.hash}`;
+    const source = { chatId: chat.chatId, messageIds };
     for (const speaker of speakers) {
-      const card = chatStore.ensurePerson(chat, speaker.uid, speaker.name);
+      chatStore.ensurePerson(chat, speaker.uid, speaker.name);
       const personFacts = extracted.facts.filter((f) => !f.uid || f.uid === speaker.uid);
-      for (const fact of personFacts) {
-        personCard.addPreference(card, {
-          text: fact.text,
-          confidence: Math.min(0.9, Number(fact.confidence) || 0.7),
-          source: messageIds[messageIds.length - 1] || '',
-          kind: 'fact',
-        }, { chatId: chat.chatId, now });
-      }
       const personTraits = extracted.traits.filter((t) => !t.uid || t.uid === speaker.uid);
-      for (const trait of personTraits) {
-        personCard.addTrait(card, {
-          text: trait.text,
-          confidence: trait.confidence,
-          evidence: (trait.evidence && trait.evidence.length ? trait.evidence : messageIds).slice(-8),
-        }, { chatId: chat.chatId, now });
-      }
       const personThreads = extracted.threads.filter((t) => !t.uid || t.uid === speaker.uid);
-      for (const thread of personThreads) {
-        personCard.addThread(card, { text: thread.text }, { chatId: chat.chatId, now });
-      }
       const personEvents = extracted.events.filter((e) => !e.uid || e.uid === speaker.uid);
+
+      // 长期：事实 / 性格 / 未完成话题 → subjects（同一人一份，合并而不是覆盖）
+      const longRecords = [];
+      for (const fact of personFacts) {
+        longRecords.push(record.makeRecord({
+          kind: 'preference',
+          text: fact.text,
+          ts: now,
+          tier: 'L',
+          scope,
+          subject: speaker.uid,
+          source,
+          confidence: Math.min(0.9, Number(fact.confidence) || 0.7),
+          meta: { tag: 'fact', explicit: false },
+        }));
+      }
+      for (const trait of personTraits) {
+        longRecords.push(record.makeRecord({
+          kind: 'trait',
+          text: trait.text,
+          ts: now,
+          tier: 'L',
+          scope,
+          subject: speaker.uid,
+          source,
+          confidence: trait.confidence,
+          meta: { evidence: (trait.evidence && trait.evidence.length ? trait.evidence : messageIds).slice(-8) },
+        }));
+      }
+      for (const thread of personThreads) {
+        longRecords.push(record.makeRecord({
+          kind: 'thread',
+          text: thread.text,
+          ts: now,
+          tier: 'L',
+          scope,
+          subject: speaker.uid,
+          source,
+          confidence: 0.7,
+          open: true,
+          meta: { status: 'open', lastMentionedAt: now },
+        }));
+      }
+      // 事件里带出的未完成话题也进长期记录：和 fact/trait/thread 一次性合并写入，
+      // 不要每个事件都读一遍 subjects 再写回去
       for (const ev of personEvents) {
-        personCard.addEvent(card, {
-          id: `evt_${ep.id}_${personHash(speaker.uid).slice(0, 6)}${personEvents.indexOf(ev) ? '_' + personEvents.indexOf(ev) : ''}`,
-          date,
-          title: ev.title,
-          summary: ev.summary,
-          keywords: ev.keywords,
-          participants: allUids,
-          importance: ev.importance,
+        if (!ev.threadText) continue;
+        longRecords.push(record.makeRecord({
+          kind: 'thread',
+          text: ev.threadText,
+          ts: now,
+          tier: 'L',
+          scope,
+          subject: speaker.uid,
+          source,
+          confidence: 0.7,
+          open: true,
+          meta: { status: 'open', lastMentionedAt: now },
+        }));
+      }
+      const existing = recordStore.readSubjects(memoryDirOf(chatStore), speaker.uid);
+      const merged = new Map(existing.map((r) => [r.id, r]));
+      for (const item of longRecords) {
+        if (!item) continue;
+        const old = merged.get(item.id);
+        merged.set(item.id, old ? { ...old, ...item, hits: old.hits || 0, ts: old.ts, createdAt: old.createdAt } : item);
+      }
+      // 分 kind 压容量：性格 / 话题 / 偏好各占各的额度
+      const capped = record.capByKind([...merged.values()], {
+        caps: {
+          preference: LIMITS.maxPreferencesPerPerson,
+          fact: LIMITS.maxPreferencesPerPerson,
+          trait: LIMITS.maxTraitsPerPerson,
+          thread: LIMITS.maxThreadsPerPerson,
+        },
+        now,
+      });
+      recordStore.writeSubjects(memoryDirOf(chatStore), speaker.uid, capped);
+
+      // 中期：这一段的事件（没有抽到就给一条兜底事件）
+      const midRecords = [];
+      for (let i = 0; i < personEvents.length; i += 1) {
+        const ev = personEvents[i];
+        midRecords.push(record.makeRecord({
+          kind: 'event',
+          tier: 'M',
+          text: ev.title && ev.summary ? `${ev.title}：${ev.summary}` : (ev.summary || ev.title || '一段聊天'),
+          ts: now,
+          scope,
+          subject: speaker.uid,
+          source,
           confidence: ev.confidence,
-          valence: ev.valence,
-          resolved: ev.resolved,
-          source: { chatId: chat.chatId, messageIds },
-        }, { chatId: chat.chatId, now });
-        if (ev.threadText) personCard.addThread(card, { text: ev.threadText }, { chatId: chat.chatId, now });
+          importance: ev.importance,
+          meta: {
+            date,
+            title: ev.title || '',
+            summary: ev.summary || '',
+            keywords: ev.keywords || [],
+            participants: allUids,
+            valence: ev.valence || 0,
+            resolved: ev.resolved === true,
+            episodeId: ep.id,
+          },
+        }));
         writtenEvents += 1;
       }
-      // 没有抽到具体事件：把整段 episode 压成一条，保证「这段事」不会消失
       if (!personEvents.length) {
-        personCard.addEvent(card, {
-          id: `evt_${ep.id}_${personHash(speaker.uid).slice(0, 6)}`,
-          date,
-          title: (ep.activeTopic || messages.find((m) => m.role === 'user' && m.text) || {}).text?.slice(0, 20) || '一段聊天',
-          summary: summaryText || '这段聊了一会儿。',
-          keywords: [],
-          participants: allUids,
-          importance: 0.5,
+        midRecords.push(record.makeRecord({
+          kind: 'event',
+          tier: 'M',
+          text: (ep.activeTopic || messages.find((m) => m.role === 'user' && m.text) || {}).text?.slice(0, 20) || '一段聊天',
+          ts: now,
+          scope,
+          subject: speaker.uid,
+          source,
           confidence: extracted.fallback ? 0.55 : 0.7,
-          source: { chatId: chat.chatId, messageIds },
-        }, { chatId: chat.chatId, now });
+          importance: 0.5,
+          meta: {
+            date,
+            title: (ep.activeTopic || '一段聊天').slice(0, 20),
+            summary: summaryText || '这段聊了一会儿。',
+            keywords: [],
+            participants: allUids,
+            episodeId: ep.id,
+          },
+        }));
         writtenEvents += 1;
       }
-      chatStore.saveCard(chat, card);
+      if (midRecords.length) recordStore.appendTimeline(chat.dir, midRecords.filter(Boolean));
+    }
+
+    // 这一段自己的摘要也进 timeline（中期），和 summary.json 各自独立：
+    // summary.json 管「prompt 窗口压缩到哪了」，digest 记录管「这段发生过什么」。
+    chatStore.markRecordsDirty(chat);
+    if (summaryText) {
+      recordStore.appendTimeline(chat.dir, [record.makeRecord({
+        kind: 'digest',
+        tier: 'M',
+        text: summaryText,
+        ts: now,
+        scope,
+        source,
+        confidence: 0.7,
+        meta: { fromSeq: ep.messageSeqFrom || 0, toSeq: ep.messageSeqTo || 0, episodeId: ep.id },
+      })].filter(Boolean));
     }
 
     // 幂等标记 + 清空 L3
@@ -303,3 +402,8 @@ module.exports = {
   dateString,
   DAY_MS,
 };
+
+
+
+
+

@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const { createRequire } = require('node:module');
 
 // 执行真实管线模块，只替换持久化接缝；不构造磁盘 Store、不写真实人设或设置。
-const sourceFile = path.join(__dirname, '..', 'src', 'pipeline', 'chat.js');
+const sourceFile = path.join(__dirname, '..', 'src', 'pipeline', 'bot.js');
 const sourceRequire = createRequire(sourceFile);
 const savedByConfig = new WeakMap();
 const personaStore = {

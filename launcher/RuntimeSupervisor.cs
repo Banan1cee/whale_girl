@@ -71,12 +71,51 @@ namespace WhaleLauncher
         public string UsBand = "";
     }
 
+    internal enum DataLockState { Idle, Busy, Stale, Unknown, Recovering, GuardStale, GuardUnknown }
+
+    internal sealed class DataLockInfo
+    {
+        public DataLockState State;
+        public int Pid;
+        public string Purpose = "";
+        public string Path = "";
+        public string Detail = "";
+        public string GuardPath = "";
+        public int GuardPid;
+        public long GuardStartedAt;
+        public string GuardPurpose = "";
+        public string GuardDetail = "";
+    }
+
+    /// <summary>升级维护脚本的只读 status 投影；字段与 Node 契约稳定对应。</summary>
+    internal sealed class MemoryUpgradeStatus
+    {
+        public string Status = "";
+        public int Version;
+        public int TargetVersion;
+        public bool CanAuto;
+        public bool RunnerRequired;
+        public bool RunnerCleanupEligible;
+        public long LegacySources;
+        public long Chats;
+        public long Messages;
+        public string ReceiptStage = "";
+        public string Error = "";
+        public string Message = "";
+        public string BackupPath = "";
+        public JsonElement Raw;
+    }
+
     /// <summary>内核（Node）与桥接（Python）的起停、日志、状态探测。界面只调用这里。</summary>
     public sealed class RuntimeSupervisor : IDisposable
     {
         public string BaseDir { get; }
         // 启动检查完成前及强制态禁止所有业务启动入口，不能只靠主窗口按钮拦截。
         public bool UpdateBlocked { get; set; }
+        // 更新流程开始后禁止再拿 data 目录做离线转换；与 MigrationLockActive 一起覆盖两个方向。
+        public bool UpdateInProgress { get; set; }
+        // 启动失败要能被按钮层立即呈现；只写历史日志会被 Refresh 的状态行覆盖。
+        public string LastStartFailure { get; private set; } = "";
         private LocalConfiguration _localConfiguration;
         private readonly System.Threading.SemaphoreSlim _configurationWrites = new(1, 1);
         internal int PersonaRevision { get; private set; }
@@ -84,6 +123,142 @@ namespace WhaleLauncher
         private ContactDirectory _contacts;
         /// <summary>联系人缓存 / 搜索的统一入口，各页面共用，避免重复请求和搜索规则漂移。</summary>
         public ContactDirectory Contacts => _contacts ??= new ContactDirectory(this);
+
+        private const string DataLockFileName = ".data.lock";
+        private const string DataLockGuardName = ".data.lock.recover";
+
+        private sealed class RawLockInfo
+        {
+            public DataLockState State;
+            public int Pid;
+            public long StartedAt;
+            public string Purpose = "";
+            public string Detail = "";
+        }
+
+        /// <summary>只读解析一个锁/守卫文件；绝不删除、改名或杀进程。</summary>
+        private static RawLockInfo ReadRawLock(string file)
+        {
+            var result = new RawLockInfo { State = DataLockState.Idle };
+            string raw;
+            try { raw = File.ReadAllText(file); }
+            catch (FileNotFoundException) { return result; }
+            catch (DirectoryNotFoundException) { return result; }
+            catch (Exception ex) { result.State = DataLockState.Unknown; result.Detail = ex.GetType().Name; return result; }
+            try
+            {
+                using var document = JsonDocument.Parse(raw);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("version", out var version) || !version.TryGetInt32(out var format) || format != 1
+                    || !root.TryGetProperty("pid", out var pidElement) || !pidElement.TryGetInt32(out var pid) || pid <= 0
+                    || !root.TryGetProperty("token", out var tokenElement) || tokenElement.ValueKind != JsonValueKind.String
+                    || (tokenElement.GetString() ?? "").Length < 8
+                    || !root.TryGetProperty("purpose", out var purposeElement) || purposeElement.ValueKind != JsonValueKind.String
+                    || !root.TryGetProperty("host", out var hostElement) || hostElement.ValueKind != JsonValueKind.String
+                    || !root.TryGetProperty("startedAt", out var startedElement) || !startedElement.TryGetInt64(out var started))
+                {
+                    result.State = DataLockState.Unknown; result.Detail = "invalid_metadata"; return result;
+                }
+                result.Pid = pid;
+                result.Purpose = purposeElement.GetString() ?? "";
+                result.StartedAt = started;
+                if (!string.Equals(hostElement.GetString(), Environment.MachineName, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.State = DataLockState.Unknown; result.Detail = "host_mismatch"; return result;
+                }
+                try
+                {
+                    using var process = Process.GetProcessById(pid);
+                    result.State = process.HasExited ? DataLockState.Stale : DataLockState.Busy;
+                }
+                catch (ArgumentException) { result.State = DataLockState.Stale; }
+                catch (Exception ex) { result.State = DataLockState.Unknown; result.Detail = ex.GetType().Name; }
+                return result;
+            }
+            catch { result.State = DataLockState.Unknown; result.Detail = "invalid_metadata"; return result; }
+        }
+
+        /// <summary>
+        /// 只读检查 data 目录锁与恢复守卫，不杀进程、不删/改名文件。
+        /// 健康主锁优先：主锁持有者活着时，守卫残留不改变“正被占用”的结论。
+        /// 守卫 live=recovering；守卫 pid 确认死亡=guard_stale；守卫坏/未知=guard_unknown；
+        /// 这三种都 fail-closed，由用户按诊断手动处理，启动器不参与恢复。
+        /// </summary>
+        internal DataLockInfo InspectDataLock()
+        {
+            var info = new DataLockInfo
+            {
+                State = DataLockState.Idle,
+                Path = Path.Combine(DataDir, DataLockFileName),
+                GuardPath = Path.Combine(DataDir, DataLockGuardName),
+            };
+            var main = ReadRawLock(info.Path);
+            info.Pid = main.Pid;
+            info.Purpose = main.Purpose;
+            info.Detail = main.Detail;
+            if (main.State == DataLockState.Busy || main.State == DataLockState.Unknown)
+            {
+                info.State = main.State;
+                return info;
+            }
+            var guard = ReadRawLock(info.GuardPath);
+            info.GuardPid = guard.Pid;
+            info.GuardStartedAt = guard.StartedAt;
+            info.GuardPurpose = guard.Purpose;
+            info.GuardDetail = guard.Detail;
+            if (guard.State == DataLockState.Busy) { info.State = DataLockState.Recovering; return info; }
+            if (guard.State == DataLockState.Stale) { info.State = DataLockState.GuardStale; return info; }
+            if (guard.State == DataLockState.Unknown) { info.State = DataLockState.GuardUnknown; return info; }
+            info.State = main.State; // Idle / Stale
+            return info;
+        }
+
+        /// <summary>
+        /// 关窗只需要躲开“真的在写数据”的进程；死守卫/坏守卫没有活动进程，
+        /// 不应该让用户关不掉启动器，诊断留到启动/迁移入口再阻止。
+        /// </summary>
+        internal bool MigrationProcessActive(out string detail)
+        {
+            var info = InspectDataLock();
+            detail = "";
+            if (info.State == DataLockState.Recovering)
+            {
+                detail = "另一个进程正在恢复数据目录锁。";
+                return true;
+            }
+            if (info.State == DataLockState.Busy && info.Purpose == "migration")
+            {
+                detail = "记忆转换工具正在运行。";
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>更新入口只看迁移锁；server 正常持有 data 目录不算“转换中”。</summary>
+        internal bool MigrationLockActive(out string detail)
+        {
+            var info = InspectDataLock();
+            detail = "";
+            if (info.State == DataLockState.Unknown
+                || info.State == DataLockState.Recovering
+                || info.State == DataLockState.GuardStale
+                || info.State == DataLockState.GuardUnknown
+                || (info.State == DataLockState.Busy && info.Purpose == "migration"))
+            {
+                detail = info.State switch
+                {
+                    DataLockState.Unknown => "无法确认数据目录锁的持有者。",
+                    DataLockState.Recovering => "另一个进程正在恢复数据目录锁。",
+                    DataLockState.GuardStale => "上次记忆恢复进程异常退出，需要手动清理锁文件。",
+                    DataLockState.GuardUnknown => "无法确认数据目录恢复守卫。",
+                    _ => "记忆转换工具正在运行。",
+                };
+                return true;
+            }
+            return false;
+        }
+
         private async Task<string> ConfigurationServiceUrlAsync()
         {
             var port = Port;
@@ -114,6 +289,444 @@ namespace WhaleLauncher
                 return url != null ? await Api.PostJson(url, path, body)
                     : await (_localConfiguration ??= new LocalConfiguration(BaseDir)).SaveAsync(path, body);
             }
+            finally { _configurationWrites.Release(); }
+        }
+
+        internal bool MemoryMigrationRunning { get; private set; }
+        private bool _memoryMigrationExitUnconfirmed;
+
+        internal async Task<ApiResult> RunOfflineMemoryMigrationAsync(bool apply)
+        {
+            ApiResult Failure(string error) => new ApiResult { Error = error };
+            await _configurationWrites.WaitAsync();
+            try
+            {
+                if (_disposed || UpdateBlocked) return Failure("请完成更新检查后再转换记忆。");
+                if (UpdateInProgress) return Failure("正在更新，请等更新结束后再转换记忆。");
+                var lockInfo = InspectDataLock();
+                if (lockInfo.State == DataLockState.Recovering)
+                    return Failure("另一个进程正在恢复数据目录锁，请等它结束后再转换记忆。");
+                if (lockInfo.State == DataLockState.GuardStale)
+                    return Failure(DataLockGuardStaleMessage(lockInfo));
+                if (lockInfo.State == DataLockState.GuardUnknown)
+                    return Failure(DataLockGuardUnknownMessage(lockInfo));
+                if (lockInfo.State == DataLockState.Busy || lockInfo.State == DataLockState.Unknown)
+                {
+                    return Failure(lockInfo.State == DataLockState.Unknown
+                        ? "无法确认数据目录锁的持有者，请确认没有其他启动器或转换进程后再试。"
+                        : lockInfo.Purpose == "server"
+                            ? "内核仍占用数据目录，请先停止内核再转换记忆。"
+                            : "另一个记忆转换进程正在运行，请等它结束。");
+                }
+                if (!apply && lockInfo.State == DataLockState.Stale)
+                    return Failure("上次记忆转换没有正常结束，请直接开始转换以安全恢复。");
+                if (_memoryMigrationExitUnconfirmed) return Failure("找不到上次转换进程的退出证明，请确认已退出后重新打开启动器。");
+                if (NodeRunning || BridgeRunning || await ReadHealthyNodePidAsync(Port) > 0)
+                    return Failure("请先停止内核和桥接，再转换记忆。");
+                if (_disposed) return Failure("启动器正在关闭。");
+                var script = Path.Combine(BaseDir, "scripts", "migrate-memory.js");
+                if (!File.Exists(script)) return Failure("安装目录缺少记忆转换工具，请重新安装完整版本。");
+                var start = new ProcessStartInfo(NodeExecutable)
+                {
+                    WorkingDirectory = BaseDir,
+                    UseShellExecute = false, CreateNoWindow = true,
+                    RedirectStandardOutput = true, RedirectStandardError = true,
+                    StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+                };
+                foreach (var arg in new[] { script, "--json", "--from-store", "--data", DataDir })
+                    start.ArgumentList.Add(arg);
+                if (apply) start.ArgumentList.Add("--apply");
+                MemoryMigrationRunning = true;
+                var run = await ProcessRunner.RunAsync(start, null, TimeSpan.FromMinutes(apply ? 10 : 1));
+                if (run.Started && !run.TerminationConfirmed)
+                {
+                    _memoryMigrationExitUnconfirmed = true;
+                    return Failure("无法确认转换进程已退出。请关闭该进程后再重新打开启动器。");
+                }
+                if (run.TimedOut) return Failure("记忆转换工具超时，请检查数据目录与备份后重试。");
+                var busy = MigrationBusyMessage(run.Output);
+                if (busy != null) return Failure(busy);
+                if (!run.Success) return Failure("记忆转换工具失败，请检查数据目录权限和备份。");
+                using var document = JsonDocument.Parse(run.Output);
+                var result = new ApiResult { Root = document.RootElement.Clone() };
+                return result.Bool("ok") && (result.Str("status") == "idle"
+                    || result.Str("status") == (apply ? "done" : "pending"))
+                    ? new ApiResult { Ok = true, Root = result.Root } : Failure("记忆转换工具返回无效结果。");
+            }
+            catch (JsonException) { return Failure("记忆转换工具返回无效结果。"); }
+            finally
+            {
+                MemoryMigrationRunning = false;
+                _configurationWrites.Release();
+            }
+        }
+
+        private string DataLockGuardStaleMessage(DataLockInfo info)
+        {
+            var started = info.GuardStartedAt > 0
+                ? DateTimeOffset.FromUnixTimeMilliseconds(info.GuardStartedAt).UtcDateTime.ToString("o")
+                : "未知";
+            return "上次数据目录锁恢复进程异常退出（pid=" + info.GuardPid + "，startedAt=" + started + "）。"
+                + "请先停止鲸鲸和所有转换重试，确认没有相关进程后手动删除："
+                + info.GuardPath + "（恢复守卫）；仅当主锁 " + info.Path + " 记录的 pid 也已退出时，再删除主锁。程序不会自动删除。";
+        }
+
+        private static string DataLockGuardUnknownMessage(DataLockInfo info)
+        {
+            return "无法确认数据目录恢复守卫的持有者（" + info.GuardPath + "）。"
+                + "请先停止鲸鲸和所有转换重试，确认没有相关进程后手动删除该守卫文件；程序不会自动删除。";
+        }
+
+        private static string MigrationBusyMessage(string output)
+        {
+            if (string.IsNullOrWhiteSpace(output)) return null;
+            try
+            {
+                using var document = JsonDocument.Parse(output);
+                var root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Object
+                    && root.TryGetProperty("status", out var status)
+                    && status.ValueKind == JsonValueKind.String
+                    && status.GetString() == "busy")
+                {
+                    return root.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String
+                        ? message.GetString() : "数据目录正被另一个进程使用。";
+                }
+            }
+            catch { /* 非 JSON 时沿用普通失败话术 */ }
+            return null;
+        }
+
+        // 记忆格式目标版本与 src/memory/formatVersion 保持一致；启动前由 Node 维护脚本再确认一次。
+        private const int MemoryFormatTarget = 3;
+        private const string AutoUpgradeFlag = "--auto-upgrade";
+        private string MaintenanceScript => Path.Combine(BaseDir, "scripts", "migrate", "upgrade-maintenance.js");
+        private string MigrationRunner => Path.Combine(BaseDir, "scripts", "migrate-memory.js");
+
+        private async Task<ProcessRunResult> RunUpgradeToolAsync(string script, string action, TimeSpan timeout)
+        {
+            if (string.IsNullOrWhiteSpace(script) || !File.Exists(script)) return new ProcessRunResult();
+            var start = new ProcessStartInfo(NodeExecutable)
+            {
+                WorkingDirectory = BaseDir,
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+            };
+            start.ArgumentList.Add(script);
+            if (action == AutoUpgradeFlag)
+            {
+                start.ArgumentList.Add(action);
+                start.ArgumentList.Add("--json");
+            }
+            else
+            {
+                start.ArgumentList.Add("--json");
+                if (!string.IsNullOrWhiteSpace(action)) start.ArgumentList.Add(action);
+            }
+            start.ArgumentList.Add("--data");
+            start.ArgumentList.Add(DataDir);
+            return await ProcessRunner.RunAsync(start, null, timeout);
+        }
+
+        private static MemoryUpgradeStatus ParseUpgradeStatus(string output)
+        {
+            if (string.IsNullOrWhiteSpace(output)) return null;
+            try
+            {
+                using var document = JsonDocument.Parse(output);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return null;
+                var status = new MemoryUpgradeStatus
+                {
+                    Raw = root.Clone(),
+                    Status = Str(root, "status"),
+                    Version = (int)Long(root, "version"),
+                    TargetVersion = (int)Long(root, "targetVersion"),
+                    CanAuto = Bool(root, "canAuto"),
+                    RunnerRequired = Bool(root, "runnerRequired"),
+                    RunnerCleanupEligible = Bool(root, "runnerCleanupEligible"),
+                    LegacySources = Long(root, "legacySources"),
+                    Chats = Long(root, "chats"),
+                    Messages = Long(root, "messages"),
+                    Error = Str(root, "error"),
+                    Message = Str(root, "message"),
+                    BackupPath = Str(root, "backupPath"),
+                };
+                if (root.TryGetProperty("receipt", out var receipt) && receipt.ValueKind == JsonValueKind.Object)
+                    status.ReceiptStage = Str(receipt, "stage");
+                return status;
+            }
+            catch { return null; }
+        }
+
+        private int CountOldSources()
+        {
+            var names = new[] { "store.json", "store.json.journal", "memory.json", "memory.json.journal" };
+            var count = 0;
+            foreach (var name in names)
+            {
+                try { if (File.Exists(Path.Combine(DataDir, name))) count++; } catch { /* 只读判断 */ }
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// 维护脚本缺失时的保守回退：manifest 已是 v3 或真正空库才允许启动；
+        /// 有旧数据/旧源但判断不了 → pending，交给上层阻止启动。
+        /// </summary>
+        private MemoryUpgradeStatus InspectFallbackUpgradeStatus()
+        {
+            var memory = Path.Combine(DataDir, "memory");
+            var manifest = Path.Combine(memory, "manifest.json");
+            var version = 0;
+            var hasManifest = File.Exists(manifest);
+            if (hasManifest)
+            {
+                try
+                {
+                    using var document = JsonDocument.Parse(File.ReadAllText(manifest));
+                    if (document.RootElement.ValueKind == JsonValueKind.Object
+                        && document.RootElement.TryGetProperty("formatVersion", out var field)
+                        && field.TryGetInt32(out var parsed)) version = parsed;
+                }
+                catch { /* 坏 manifest 按未知/待处理 */ }
+            }
+            var oldSources = CountOldSources();
+            var hasMemory = Directory.Exists(memory);
+            var legacyLeft = Directory.Exists(Path.Combine(memory, "legacy"));
+            var receiptPending = HasIncompleteUpgradeReceipt();
+            var status = new MemoryUpgradeStatus
+            {
+                TargetVersion = MemoryFormatTarget,
+                Version = version,
+                CanAuto = File.Exists(MigrationRunner),
+                RunnerRequired = !File.Exists(MigrationRunner),
+                LegacySources = oldSources,
+            };
+            // 维护脚本缺失时不能只凭 manifest 猜：legacy 残留/未完成 receipt 说明
+            // 清理或转换仍未完成，必须 fail-closed，等维护工具恢复后再启动。
+            if (!hasMemory && oldSources == 0 && !hasManifest && !legacyLeft && !receiptPending)
+            {
+                status.Status = "idle";
+                return status;
+            }
+            if (version == MemoryFormatTarget && oldSources == 0 && !legacyLeft && !receiptPending)
+            {
+                status.Status = "idle";
+                return status;
+            }
+            status.Status = "pending";
+            return status;
+        }
+
+        private bool HasIncompleteUpgradeReceipt()
+        {
+            var file = Path.Combine(DataDir, "memory-upgrade-receipt.json");
+            if (!File.Exists(file)) return false;
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(file));
+                var stage = Str(document.RootElement, "stage");
+                return string.IsNullOrWhiteSpace(stage) || stage != "done";
+            }
+            catch { return true; }
+        }
+
+        private static bool HasInstallerMarker(string baseDir)
+        {
+            var marker = Path.Combine(baseDir, ".whale-installed.json");
+            if (!File.Exists(marker)) return false;
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(marker));
+                var root = document.RootElement;
+                return root.ValueKind == JsonValueKind.Object
+                    && Long(root, "schemaVersion") == 1
+                    && Str(root, "installer") == "whale-girl";
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// 只有可验证的安装布局才删除 runner：源码目录有 .git 一律保留；
+        /// 安装态优先认 installer-owned marker，其次认根目录 Inno uninstaller 签名。
+        /// 单纯的“没有 .git”不够，导出 zip/源码包也可能没有 .git。
+        /// </summary>
+        private bool IsInstalledLayout()
+        {
+            var git = Path.Combine(BaseDir, ".git");
+            if (File.Exists(git) || Directory.Exists(git)) return false;
+            if (HasInstallerMarker(BaseDir)) return true;
+            var uninstaller = Path.Combine(BaseDir, "unins000.exe");
+            var uninstallerData = Path.Combine(BaseDir, "unins000.dat");
+            if (!File.Exists(uninstaller) || !File.Exists(uninstallerData)) return false;
+            try
+            {
+                var version = FileVersionInfo.GetVersionInfo(uninstaller);
+                return !string.IsNullOrWhiteSpace(version.ProductName)
+                    && version.ProductName.Contains("鲸鲸")
+                    && !string.IsNullOrWhiteSpace(version.ProductVersion);
+            }
+            catch { return false; }
+        }
+
+        private static bool IsReparsePoint(string path)
+        {
+            try { return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0; }
+            catch { return true; }
+        }
+
+        /// <summary>
+        /// 只有 durable receipt/status 明确 done 且 runnerCleanupEligible 才删一次性 runner；
+        /// 退出码 0 本身不够。reparse-point 的 scripts 父目录或 runner 一律不删。
+        /// 删除失败只提示/下次重试，不阻断已经验证过格式的新库启动。
+        /// </summary>
+        private void RemoveRunnerIfEligible(MemoryUpgradeStatus status)
+        {
+            if (status == null || !status.RunnerCleanupEligible) return;
+            if (!File.Exists(MigrationRunner)) return;
+            if (!IsInstalledLayout())
+            {
+                SayWarn("记忆已转换，但当前目录不是可验证的安装布局；保留一次性转换工具");
+                return;
+            }
+            var parent = Path.GetDirectoryName(MigrationRunner);
+            if (string.IsNullOrEmpty(parent) || IsReparsePoint(parent) || IsReparsePoint(MigrationRunner))
+            {
+                SayWarn("记忆已转换，但 scripts 目录/转换工具是重解析点；为安全保留，不自动删除");
+                return;
+            }
+            try
+            {
+                File.Delete(MigrationRunner);
+                Say("已移除一次性记忆转换工具");
+            }
+            catch (Exception ex)
+            {
+                SayWarn("记忆已转换，但一次性工具删除失败；下次启动会重试（" + ex.GetType().Name + "）");
+            }
+        }
+
+        private async Task MaintainBackupsAsync()
+        {
+            if (!File.Exists(MaintenanceScript)) return;
+            try
+            {
+                var run = await RunUpgradeToolAsync(MaintenanceScript, "retention", TimeSpan.FromSeconds(30));
+                if (run.Started && !run.Success)
+                    SayWarn("记忆备份维护未完成（不影响启动）");
+            }
+            catch (Exception ex)
+            {
+                SayWarn("记忆备份维护异常（不影响启动）：" + ex.GetType().Name);
+            }
+        }
+
+        private static string AutoUpgradeFailureMessage(ProcessRunResult run, MemoryUpgradeStatus status)
+        {
+            if (run != null && run.TimedOut) return "自动转换超时；备份保留，下次启动会重试。";
+            if (status != null)
+            {
+                if (status.Status == "busy")
+                    return string.IsNullOrWhiteSpace(status.Message) ? "数据目录被另一个进程占用。" : status.Message;
+                if (status.Status == "future") return "记忆格式来自更高版本，不能自动降级；请升级启动器。";
+                if (status.Status == "invalid" || status.Status == "unreadable")
+                    return "记忆格式无法读取或已损坏；已停止自动升级，请检查备份。";
+                if (status.Status == "failed" || status.Status == "backup_failed" || status.Status == "cleanup_pending")
+                    return "自动转换未完成（备份已保留），下次启动会重试。";
+            }
+            if (run != null && run.ExitCode == 2) return "数据目录被另一个进程占用。";
+            if (run != null && run.ExitCode == 3) return "记忆格式无法自动升级；已停止，请检查备份。";
+            return "自动转换失败（退出码 " + (run?.ExitCode?.ToString() ?? "?") + "）；内核和桥接不会启动。";
+        }
+
+        /// <summary>
+        /// 启动前自动流程（调用方必须已持有 _configurationWrites）：
+        /// retention(best effort) → maintenance status → 必要时 --auto-upgrade；
+        /// 只有 durable status=idle 才放行内核；pending 一律 auto+runner，不再因 version==target 走在线导入。
+        /// </summary>
+        internal async Task<ApiResult> AutoForStartCoreAsync()
+        {
+            ApiResult Failure(string error) => new ApiResult { Error = error };
+            ApiResult Ok(MemoryUpgradeStatus status)
+                => new ApiResult { Ok = true, Root = status != null && status.Raw.ValueKind != JsonValueKind.Undefined ? status.Raw : default };
+            if (_disposed) return Failure("启动器正在关闭。");
+            if (UpdateBlocked) return Failure("正在检查更新或当前版本必须更新，暂不能启动服务。");
+            if (UpdateInProgress) return Failure("正在更新，请等更新结束后再启动服务。");
+            if (NodeRunning || BridgeRunning) return Failure("请先停止内核和桥接，再检查记忆格式。");
+            MemoryMigrationRunning = true;
+            try
+            {
+                await MaintainBackupsAsync();
+                var status = await QueryUpgradeStatusAsync();
+                if (status == null)
+                {
+                    status = InspectFallbackUpgradeStatus();
+                    if (status.Status == "pending")
+                        return Failure("记忆维护工具不可用，且检测到待处理旧记忆；请重新安装完整版本后再启动。");
+                    SayWarn("未找到记忆维护工具，按 manifest 判断已就绪");
+                }
+                if (status.Status == "idle")
+                {
+                    RemoveRunnerIfEligible(status);
+                    return Ok(status);
+                }
+                if (status.Status != "pending")
+                    return Failure("记忆格式状态为 " + status.Status + "，不能自动升级；内核和桥接不会启动。");
+                // pending 一律走自动转换：current v3+混合旧源、cleanup_pending 清理重试都必须在启动前完成；
+                // runner 已删/CanAuto=false 时不能退回“在线导入”否则旧源会一直留在磁盘上。
+                if (!status.CanAuto || !File.Exists(MigrationRunner))
+                    return Failure("发现待转换旧记忆，但安装目录缺少自动转换工具；请重新安装完整版本。");
+                Say($"发现旧版记忆，正在自动转换（{status.Chats} 个会话 / {status.Messages} 条原文）…");
+                var run = await RunUpgradeToolAsync(MigrationRunner, AutoUpgradeFlag, TimeSpan.FromMinutes(10));
+                if (run.Started && !run.TerminationConfirmed)
+                {
+                    _memoryMigrationExitUnconfirmed = true;
+                    return Failure("无法确认自动转换进程已退出；请关闭该进程后重新打开启动器。");
+                }
+                var result = ParseUpgradeStatus(run.Output);
+                if (run.Success && result != null && (result.Status == "done" || result.Status == "idle"))
+                {
+                    // 退出码 0 不足以下结论：必须以 durable status 为 idle 才能放行内核；
+                    // done 后 durable 未完成/未知一律阻止，避免“报告成功但收据没写”启动半成品。
+                    var durable = await QueryUpgradeStatusAsync();
+                    if (durable == null || durable.Status != "idle")
+                    {
+                        return Failure("自动转换报告完成，但维护状态不是 idle（无法确认完成收据）；内核和桥接不会启动。");
+                    }
+                    if (result.Status == "done")
+                        Say($"旧记忆已自动转换（{result.Chats} 个会话 / {result.Messages} 条原文），备份已归档并保留 30 天");
+                    // 删除失败只是 warning；已由 durable idle 验证的新库可以继续启动。
+                    RemoveRunnerIfEligible(durable);
+                    return result.Status == "done" ? Ok(result) : Ok(durable);
+                }
+                return Failure(AutoUpgradeFailureMessage(run, result));
+            }
+            catch (Exception ex)
+            {
+                return Failure("自动转换异常（" + ex.GetType().Name + "）；内核和桥接不会启动。");
+            }
+            finally
+            {
+                MemoryMigrationRunning = false;
+            }
+        }
+
+        private async Task<MemoryUpgradeStatus> QueryUpgradeStatusAsync()
+        {
+            if (!File.Exists(MaintenanceScript)) return null;
+            var run = await RunUpgradeToolAsync(MaintenanceScript, "status", TimeSpan.FromSeconds(30));
+            if (!run.Success) return null;
+            return ParseUpgradeStatus(run.Output);
+        }
+
+        /// <summary>设置页“重新检查”用；内部同样走自动流程，不弹确认。</summary>
+        internal async Task<ApiResult> RunAutoMemoryUpgradeAsync()
+        {
+            if (!_configurationWrites.Wait(0))
+                return new ApiResult { Error = "启动器正在保存配置或转换记忆，请稍后再试。" };
+            try { return await AutoForStartCoreAsync(); }
             finally { _configurationWrites.Release(); }
         }
 
@@ -326,13 +939,54 @@ namespace WhaleLauncher
             catch { return 0; }
         }
 
-        public void StartNode()
+        private string NodeExecutable
+        {
+            get
+            {
+                var bundled = Path.Combine(BaseDir, "runtime", "node.exe");
+                return File.Exists(bundled) ? bundled : "node";
+            }
+        }
+
+        // 低层测试/诊断 seam；生产入口全部走 StartAllAsync（自动升级在启动内核前）。
+        internal void StartNode()
+        {
+            if (!_configurationWrites.Wait(0))
+            {
+                SayWarn("启动器正在保存配置或转换记忆，请稍后再启动服务");
+                return;
+            }
+            try { StartNodeCore(); }
+            finally { _configurationWrites.Release(); }
+        }
+
+        private void StartNodeCore()
         {
             if (UpdateBlocked) { SayWarn("正在检查更新或当前版本必须更新，暂不能启动服务"); return; }
-            if (NodeRunning) return;
-            var exe = Path.Combine(BaseDir, "runtime", "node.exe");
-            if (!File.Exists(exe)) exe = "node";
-            _node = Launch(exe, "server.js --no-browser", "K", "内核");
+            if (_disposed || _memoryMigrationExitUnconfirmed || NodeRunning) return;
+            var lockInfo = InspectDataLock();
+            switch (lockInfo.State)
+            {
+                case DataLockState.Busy:
+                    SayWarn(lockInfo.Purpose == "migration"
+                        ? "记忆正在转换，暂不能启动内核"
+                        : "数据目录正被另一个实例占用，暂不能启动内核");
+                    return;
+                case DataLockState.Unknown:
+                    SayWarn("无法确认数据目录锁（可能元数据损坏）；请先停止鲸鲸和转换重试，再检查 data\\.data.lock；程序不会自动删除");
+                    return;
+                case DataLockState.Recovering:
+                    SayWarn("另一个进程正在恢复数据目录锁，请稍后再启动内核");
+                    return;
+                case DataLockState.GuardStale:
+                case DataLockState.GuardUnknown:
+                    SayWarn("数据目录锁需要人工恢复：请先停止鲸鲸和所有转换重试，再按设置页提示处理；程序不会自动删除锁文件");
+                    return;
+                case DataLockState.Stale:
+                    SayWarn("上次记忆转换没有正常结束；启动内核时会自动恢复");
+                    break;
+            }
+            _node = Launch(NodeExecutable, "server.js --no-browser", "K", "内核");
         }
 
         public async Task<bool> WaitForNodeAsync()
@@ -403,7 +1057,19 @@ namespace WhaleLauncher
 
         public async Task StartAllAsync(bool clearRestartHistory = true)
         {
-            if (UpdateBlocked) { SayWarn("正在检查更新或当前版本必须更新，请先完成更新"); return; }
+            LastStartFailure = "";
+            if (UpdateBlocked)
+            {
+                LastStartFailure = "正在检查更新或当前版本必须更新，请先完成更新";
+                SayWarn(LastStartFailure);
+                return;
+            }
+            if (UpdateInProgress)
+            {
+                LastStartFailure = "正在更新，请等更新结束后再启动服务";
+                SayWarn(LastStartFailure);
+                return;
+            }
             // 主窗口原来不清零，诊断入口原来清零；复用启动顺序不能顺带改变重启刹车。
             if (clearRestartHistory)
             {
@@ -412,13 +1078,66 @@ namespace WhaleLauncher
             await _configurationWrites.WaitAsync();
             try
             {
+                if (_memoryMigrationExitUnconfirmed)
+                {
+                    LastStartFailure = "无法确认记忆转换进程已退出，请手动确认后重新打开启动器";
+                    SayWarn(LastStartFailure);
+                    return;
+                }
+                void StartBlocked(string message)
+                {
+                    LastStartFailure = message;
+                    SayWarn(message);
+                }
                 if (!NodeRunning && await ReadHealthyNodePidAsync(Port) > 0)
                 {
                     Say("内核已在后台运行，请用原来的方式管理它");
                     return;
                 }
-                StartNode();
+                // 已在跑就不做离线迁移（迁移要求无内核）；保持原有重启/补桥接语义。
+                if (NodeRunning)
+                {
+                    if (await WaitForNodeAsync()) StartBridge();
+                    return;
+                }
+                var lockInfo = InspectDataLock();
+                if (lockInfo.State == DataLockState.Busy)
+                {
+                    StartBlocked(lockInfo.Purpose == "migration"
+                        ? "记忆正在转换，暂不能启动服务"
+                        : "数据目录正被另一个实例占用，暂不能启动服务");
+                    return;
+                }
+                if (lockInfo.State == DataLockState.Unknown)
+                {
+                    StartBlocked("无法确认数据目录锁（可能元数据损坏）；请先停止鲸鲸和转换重试，再检查 data\\.data.lock；程序不会自动删除");
+                    return;
+                }
+                if (lockInfo.State == DataLockState.Recovering)
+                {
+                    StartBlocked("另一个进程正在恢复数据目录锁，请稍后再启动服务");
+                    return;
+                }
+                if (lockInfo.State == DataLockState.GuardStale || lockInfo.State == DataLockState.GuardUnknown)
+                {
+                    StartBlocked("数据目录锁需要人工恢复：请先停止鲸鲸和所有转换重试，再按设置页提示处理；程序不会自动删除锁文件");
+                    return;
+                }
+                // 启动按钮/重启/诊断入口统一走这里：自动检查并转换旧记忆，失败绝不启动内核和桥接。
+                var upgrade = await AutoForStartCoreAsync();
+                if (!upgrade.Ok)
+                {
+                    LastStartFailure = "记忆自动升级失败，内核和桥接不会启动：" + Api.Message(upgrade);
+                    SayError(LastStartFailure);
+                    return;
+                }
+                StartNodeCore();
                 if (await WaitForNodeAsync()) StartBridge();
+                else
+                {
+                    LastStartFailure = "内核启动失败，请查看诊断日志；桥接不会启动";
+                    SayError(LastStartFailure);
+                }
             }
             finally { _configurationWrites.Release(); }
         }

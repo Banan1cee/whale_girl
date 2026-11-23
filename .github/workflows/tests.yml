@@ -199,6 +199,11 @@ jobs:
         shell: pwsh
         run: node scripts/test-tasks.js --task launcher-dialog-smoke --report artifacts/test-tasks/launcher-dialog-smoke.json
 
+      - name: 启动器主题包解析回归（纯 JSON，不启动界面）
+        if: always()
+        shell: pwsh
+        run: node scripts/test-tasks.js --task launcher-theme-checks --report artifacts/test-tasks/launcher-theme-checks.json
+
       - name: 打包朋友圈覆盖测试补丁（4.1.7）
         if: success() && startsWith(github.head_ref, 'fix/moments-')
         shell: pwsh

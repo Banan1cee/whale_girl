@@ -29,6 +29,7 @@ test('API 接入：四个页签 + 搜索 API 单开关 + 关闭清列表删 Key'
   assert.match(settings, /websearch\.zhihu\.accessSecret/);
   assert.match(settings, /ClearSecretsAsync/);
   assert.match(settings, /关闭搜索 API 会/);
+  assert.match(settings, /DeepSeek 官方 deepseek-flash 时，走模型内建搜索，不会自动调用下方独立搜索服务/);
   assert.match(saver, /\/api\/config\/clear-secrets/);
   assert.ok(!/Path = "websearch\.enabled"/.test(settings), '本地搜索开关应删除');
 });

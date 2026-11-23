@@ -190,6 +190,7 @@ const DEFAULT_CONFIG = {
     // API 搜索：一个总开关；开启后才使用 providers 里勾选的搜索 API。
     api: { enabled: true, followChat: true, providers: [] },
     deepseek: { apiKey: '' },
+    qwen: { apiKey: '' },
     // 知乎开放平台：免费额度有限，默认 4999 次/天，超了只走本地搜索。
     zhihu: { accessSecret: '', dailyLimit: 4999 },
   },
@@ -238,14 +239,11 @@ const DEFAULT_CONFIG = {
   },
   // 图片理解：默认智谱 GLM-4V-Flash（免费）
   features: {
-    javascriptPlugins: false,
+    plugins: false,
     stickers: false,
-    // 系统提示词静态化（前缀缓存）：关掉 = 回到「每轮都塞时间/心情/说话人」的旧行为
-    staticSystem: true,
     // 环境信息注入（系统 / 时区 / 所在地）：关掉 = system 里没有 <env> 块
     envContext: true,
     groupAddressGuard: true,
-    fightQuoteCheck: true,
     mediaCleanup: true,
     memorySnapshot: true,
     // 群聊关系加载（A 提到 B）：默认开，可在「实验开关」里关

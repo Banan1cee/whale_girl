@@ -525,6 +525,35 @@ class DeepSeekClient {
     return '';
   }
 
+  supportsNativeProtocol() {
+    if (this.isMock || this.provider !== 'deepseek') return false;
+    try {
+      const url = new URL(this.endpoint());
+      return url.origin === 'https://api.deepseek.com' && !url.username && !url.password && /^\/(?:v1\/)?chat\/completions$/.test(url.pathname) && !url.search && !url.hash;
+    } catch {
+      return false;
+    }
+  }
+
+  supportsWebSearch() {
+    return this.supportsNativeProtocol() && String(this.model || '').trim().toLowerCase() === 'deepseek-flash';
+  }
+
+  formatTurns(turns = [], latestReminder) {
+    const source = Array.isArray(turns) ? turns.slice() : [];
+    if (latestReminder && source.length && source[source.length - 1]?.role === 'user') {
+      source.splice(source.length - 1, 0, { role: 'latest_reminder', content: String(latestReminder) });
+    }
+    return source.flatMap((turn) => {
+      if (!turn || !turn.content) return [];
+      const role = turn.role === 'assistant' ? 'assistant' : turn.role === 'system' ? 'system' : turn.role === 'latest_reminder' && this.supportsNativeProtocol() ? 'latest_reminder' : 'user';
+      if (role === 'latest_reminder' && !this.supportsNativeProtocol()) return [{ role: 'system', content: String(turn.content) }];
+      const message = { role, content: turn.content };
+      if (role === 'assistant' && this.supportsNativeProtocol() && Array.isArray(turn.server_tool_calls)) message.server_tool_calls = turn.server_tool_calls;
+      return [message];
+    });
+  }
+
   describe() {
     return {
       mock: this.isMock,
@@ -553,40 +582,37 @@ class DeepSeekClient {
   buildPayload({
     system, turns = [], stream = false, maxTokens, safe = false,
     thinking, allowOverflow = false, thinkingParam, bigBudget = false,
+    webSearch = false, readUrl = false, safetyCheck = false, title = false, latestReminder,
   }) {
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
-    for (const t of turns) {
-      if (!t || !t.content) continue;
-      const role = t.role === 'assistant' ? 'assistant' : t.role === 'system' ? 'system' : 'user';
-      messages.push({ role, content: t.content });
-    }
+    messages.push(...this.formatTurns(turns, latestReminder));
     const plan = this.thinkingPlan();
     const capabilities = resolveModelCapabilities(this.model);
     const caps = this._capsFor();
-    // 用户的选择；关不干净的模型（gpt-5 / O 系）由预算那一步单独处理，参数照样可以省
     const modeOn = thinking === undefined ? this.thinking === true : thinking === true;
     const params = thinkingParam !== undefined
       ? thinkingParam
       : ((caps && (modeOn ? caps.on : caps.off)) || (modeOn ? plan.on : plan.off)[0] || {});
     let budget = this._budgetFor({ maxTokens, safe, allowOverflow, modeOn, plan, caps });
     if (bigBudget && plan.canDisable === false) {
-      // 关不掉思考：加大预算再试一次（封顶 8000，别无限烧）
       budget = Math.min(8000, Math.max(Number(this.thinkingMaxTokens) || 5000, budget) * 2);
     }
     const payload = { model: this.model, messages, stream };
-    if (capabilities.supportsTemperature) {
-      payload.temperature = normalizeTemperature(this.temperature, { safe, provider: this.provider });
+    if (this.supportsWebSearch()) {
+      const tools = [];
+      if (webSearch === true) tools.push({ type: 'deepseek_web_search' });
+      if (readUrl === true) tools.push({ type: 'deepseek_read_url' });
+      if (tools.length) payload.tools = tools;
     }
+    if (this.supportsNativeProtocol() && safetyCheck === true) payload.safety_check = { level: 'high' };
+    if (this.supportsNativeProtocol() && title === true) payload.title = { enabled: true };
+    if (capabilities.supportsTemperature) payload.temperature = normalizeTemperature(this.temperature, { safe, provider: this.provider });
     payload[capabilities.maxTokensField] = budget;
-    // 惩罚项会逼模型避开常用词，是「乱说话」的元凶之一；跑飞重试时一律不带
     if (!safe && capabilities.supportsFrequencyPenalty && this.frequencyPenalty) payload.frequency_penalty = this.frequencyPenalty;
     if (!safe && capabilities.supportsPresencePenalty && this.presencePenalty) payload.presence_penalty = this.presencePenalty;
-    // 思考参数：极少数兼容服务不认任何写法，此时 params 是空对象，什么都不发
     if (params && typeof params === 'object') Object.assign(payload, params);
-    // DeepSeek 流式默认不回 usage；显式要一下，用来校准 token 估算。
-    // 其它兼容服务不认这个字段，别硬塞。
-    if (stream && this.provider === 'deepseek') payload.stream_options = { include_usage: true };
+    if (stream && this.supportsNativeProtocol()) payload.stream_options = { include_usage: true };
     return payload;
   }
 
@@ -734,7 +760,7 @@ class DeepSeekClient {
    *   5) 仍空 → 抛 LlmError(empty, detail)，detail 带 finish/usage/reasoning_tokens。
    * 参数被 400/422 拒时（不同服务商字段名不一样），按候选表换下一档再试。
    */
-  async complete({ system, turns, maxTokens, signal, thinking, allowOverflow = false, purpose = 'background', requestContext } = {}) {
+  async complete({ system, turns, maxTokens, signal, thinking, allowOverflow = false, purpose = 'background', requestContext, webSearch = false, readUrl = false, title = false, safetyCheck = false, latestReminder, onWebSearch, onTitle } = {}) {
     const requestId = requestIdOf(requestContext);
     this.lastUsage = null;
     let lastErr = null;
@@ -769,6 +795,11 @@ class DeepSeekClient {
           allowOverflow: allowOverflow && !thinkingFallback,
           thinkingParam,
           bigBudget,
+          webSearch,
+          readUrl,
+          title,
+          safetyCheck,
+          latestReminder,
         });
         const { res } = await this._open(payload, { stream: false, signal });
         if (res.statusCode !== 200) throw await this._errorFrom(res, { signal });
@@ -795,9 +826,17 @@ class DeepSeekClient {
           });
         }
         const choice = (json && json.choices && json.choices[0]) || {};
+        const refusal = choice.message && choice.message.refusal;
+        if (choice.finish_reason === 'content_filter' || refusal) {
+          throw new LlmError('呜…这段内容人家不能继续回答，我们换个安全的话题好不好？', {
+            code: 'refusal', detail: 'content_filter', retryable: false,
+          });
+        }
         const reasoningTokens = reasoningTokensOf(json);
         // 思考内容永不拼进正文：reasoning_content / reasoning / reasoning_details 只用于诊断
         const text = stripThinking(pickText(choice.message)).trim();
+        const annotations = Array.isArray(choice.message?.annotations) ? choice.message.annotations : [];
+        const serverToolCalls = Array.isArray(choice.message?.server_tool_calls) ? choice.message.server_tool_calls : [];
         if (!text) {
           const emptyDetail = describeEmpty(json, choice);
           // ② 思考吃满：关掉思考 + 原预算再要一次。这是 episode 抽取空响应的根因。
@@ -849,6 +888,12 @@ class DeepSeekClient {
           this.logger.debug(
             `DeepSeek 完成：${payload.messages.length} 条消息，输出 ${text.length} 字${safe ? '（保守参数）' : ''}`
           );
+        if (this.supportsNativeProtocol() && title && typeof onTitle === 'function' && typeof choice.message?.title === 'string' && choice.message.title) {
+          onTitle(choice.message.title);
+        }
+        if ((webSearch || readUrl) && this.supportsWebSearch() && (annotations.length || serverToolCalls.length) && typeof onWebSearch === 'function') {
+          onWebSearch({ annotations, serverToolCalls });
+        }
         return truncated ? cutToSentence(text) : text;
       } catch (err) {
         if (signal && signal.aborted) throw new LlmError('aborted', { code: 'aborted' });
@@ -966,17 +1011,24 @@ class DeepSeekClient {
   /**
    * 流式，异步生成器，每次 yield 一段新增文本。
    */
-  async *stream({ system, turns, signal, purpose = 'background', requestContext }) {
+  async *stream({ system, turns, signal, purpose = 'background', requestContext, webSearch = false, readUrl = false, title = false, safetyCheck = false, latestReminder, onWebSearch, onTitle } = {}) {
     const requestId = requestIdOf(requestContext);
     this.lastUsage = null;
-    const payload = this.buildPayload({ system, turns, stream: true });
+    const payload = this.buildPayload({ system, turns, stream: true, webSearch, readUrl, title, safetyCheck, latestReminder });
+    const moderated = payload.safety_check?.level === 'high';
     const { req, res } = await this._open(payload, { signal, stream: true });
     if (res.statusCode !== 200) throw await this._errorFrom(res);
     res.setEncoding('utf8');
     let buffer = '';
     let sent = 0;
+    let buffered = '';
+    let refused = false;
+    let responseTitle = '';
     // 一个字都没吐时也要留下证据：finish_reason 能区分「预算打满」和「模型真的没说话」
     let lastFinish = '';
+    let terminal = false;
+    let annotations = [];
+    let serverToolCalls = [];
     try {
       for await (const chunk of res) {
         buffer += chunk;
@@ -987,11 +1039,7 @@ class DeepSeekClient {
         buffer = lastBreak >= 0 ? buffer.slice(lastBreak).replace(/^\r?\n\r?\n/, '') : buffer;
         for (const data of events) {
           if (data === '[DONE]') {
-            // 有内容就正常收尾；一个字都没吐时不能在这里 return（否则跳过后面的空响应诊断）
-            if (sent) {
-              this.logger && this.logger.debug(`DeepSeek 流式结束：${sent} 字`);
-              return;
-            }
+            terminal = true;
             break;
           }
           let json;
@@ -1007,13 +1055,21 @@ class DeepSeekClient {
           const finish = json?.choices?.[0]?.finish_reason;
           if (finish) lastFinish = finish;
           const delta = json?.choices?.[0]?.delta;
+          const message = json?.choices?.[0]?.message;
+          if (finish === 'content_filter' || message?.refusal || delta?.refusal) refused = true;
+          if (typeof message?.title === 'string') responseTitle = message.title;
+          if (typeof delta?.title === 'string') responseTitle = delta.title;
+          if (Array.isArray(delta?.annotations)) annotations = delta.annotations;
+          if (Array.isArray(delta?.server_tool_calls)) serverToolCalls = delta.server_tool_calls;
           // 思考内容（delta.reasoning_content 等）只诊断、整段丢弃，绝不拼进正文
           const piece = pickText(delta);
           if (piece) {
             sent += piece.length;
-            yield piece;
+            if (moderated) buffered += piece;
+            else yield piece;
           }
         }
+        if (terminal) break;
       }
     } catch (err) {
       if (err instanceof LlmError) throw err;
@@ -1023,6 +1079,17 @@ class DeepSeekClient {
       try { req.destroy(); } catch { /* ignore */ }
       try { res.destroy(); } catch { /* ignore */ }
     }
+    if (moderated && (!terminal || !['stop', 'length'].includes(lastFinish)) && !refused) {
+      throw new LlmError(FRIENDLY.empty, { code: 'incomplete_stream', detail: '安全检查流缺少成功终止标记' });
+    }
+    if (refused) {
+      throw new LlmError('呜…这段内容人家不能继续回答，我们换个安全的话题好不好？', { code: 'refusal', detail: 'content_filter' });
+    }
+    if (this.supportsWebSearch() && (webSearch || readUrl) && (annotations.length || serverToolCalls.length) && typeof onWebSearch === 'function') {
+      onWebSearch({ annotations, serverToolCalls });
+    }
+    if (this.supportsNativeProtocol() && title && typeof onTitle === 'function' && responseTitle) onTitle(responseTitle);
+    if (moderated && buffered) yield buffered;
     if (!sent) {
       throw new LlmError(FRIENDLY.empty, {
         code: 'empty',

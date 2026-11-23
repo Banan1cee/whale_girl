@@ -18,7 +18,7 @@ test('voice enable and per-chat scope are read live and default off',t=>{
   fs.writeFileSync(path.join(dir,'voice-send.json'),JSON.stringify({Enabled:'true'}));assert.equal(policy.enabled(config,false),false);
 });
 test('voice request reaches the normal group reply model without replacing the reply content',async t=>{
-  const {Bot}=require('../src/pipeline/chat');const {Store}=require('../src/memory/store');const {loadConfig}=require('../src/infra/config');
+  const {Bot}=require('../src/pipeline/bot');const {Store}=require('../src/memory/store');const {loadConfig}=require('../src/infra/config');
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'auto-voice-chat-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   fs.writeFileSync(path.join(dir,'config.json'),JSON.stringify({group:{requireAt:true,freeChat:false},care:{enabled:false}}));
   const config=loadConfig({root:dir,env:{}});fs.mkdirSync(config.paths.dataDir,{recursive:true});

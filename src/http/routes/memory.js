@@ -3,7 +3,14 @@
 const path = require('node:path');
 const { json, readBody } = require('../util');
 const { isLoopbackRequest } = require('../security');
-const migrate = require('../../memory/migrate');
+// 旧格式导入只在用户显式点「识别转换记忆」时用到，因此按需加载：
+// 迁移代码整体在 scripts/ 下，不参与启动路径（见 scripts/check-legacy.js）。
+const IMPORT_SCRIPT = path.join(__dirname, '..', '..', '..', 'scripts', 'migrate', 'import-4.0.js');
+let importer = null;
+function legacyImport() {
+  if (!importer) importer = require(IMPORT_SCRIPT);
+  return importer;
+}
 const { describeError, errorMessage } = require('../../infra/errors');
 
 /**
@@ -70,7 +77,7 @@ module.exports = function register(router) {
   router.get('/api/memory/import/status', (runtime, req, res) => {
     if (!isLoopbackRequest(req)) return json(res, 403, { ok: false, error: '旧记忆检测只允许在本机操作' });
     try {
-      const status = migrate.legacyStatus({ memoryDir: memoryDirOf(runtime), chatStore: runtime.store.chatStore });
+      const status = legacyImport().legacyStatus({ memoryDir: memoryDirOf(runtime), chatStore: runtime.store.chatStore });
       return json(res, 200, { ok: true, ...status });
     } catch (err) {
       runtime.logger.warn('旧记忆检测失败：' + describeError(err));
@@ -80,13 +87,13 @@ module.exports = function register(router) {
 
   router.get('/api/memory/import/notice', (runtime, req, res) => {
     if (!isLoopbackRequest(req)) return json(res, 403, { ok: false, error: '旧记忆提示只允许在本机操作' });
-    return json(res, 200, { ok: true, notice: migrate.readImportNotice(memoryDirOf(runtime)) });
+    return json(res, 200, { ok: true, notice: legacyImport().readImportNotice(memoryDirOf(runtime)) });
   });
 
   router.post('/api/memory/import/ack', (runtime, req, res) => {
     if (!isLoopbackRequest(req)) return json(res, 403, { ok: false, error: '旧记忆提示只允许在本机操作' });
     try {
-      return json(res, 200, { ok: true, ...migrate.ackImportNotice(memoryDirOf(runtime)) });
+      return json(res, 200, { ok: true, ...legacyImport().ackImportNotice(memoryDirOf(runtime)) });
     } catch (err) {
       // 不要 String(err)：异常对象可能把堆栈带进响应（CodeQL js/stack-trace-exposure）。
       return json(res, 500, { ok: false, error: errorMessage(err, '确认旧记忆提示失败') });
@@ -99,7 +106,7 @@ module.exports = function register(router) {
     running = true;
     try {
       const memoryDir = memoryDirOf(runtime);
-      const result = migrate.migrateIfNeeded({
+      const result = legacyImport().migrateIfNeeded({
         memoryDir,
         chatStore: runtime.store.chatStore,
         logger: runtime.logger,
@@ -134,3 +141,4 @@ module.exports = function register(router) {
     }
   });
 };
+

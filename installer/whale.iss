@@ -1,12 +1,11 @@
-﻿; 鲸鲸 4.0 — 安装脚本（Inno Setup 7）
+; 鲸鲸 4.0 — 安装脚本（Inno Setup 7）
 ;
 ; 设计要点：
 ;   1. 装到 %LOCALAPPDATA%\Programs\鲸鲸，**安装过程零 UAC**；
 ;   2. 启动器（WhaleLauncher.exe）带 requireAdministrator 清单：微信是管理员，
 ;      桥接必须同级才能改 gate / 读进程；拖拽已用 ChangeWindowMessageFilterEx 放行；
 ;   3. runtime\wheelhouse 只是构建缓存，不进包（省 117MB）；
-;   4. 界面只有启动器，所以 docs/、scripts/、launcher 源码、安装脚本
-;      本身都不进包 —— 装完的目录里只剩运行需要的东西；
+;   4. 安装目录仅保留运行所需文件，包括内核与离线记忆转换工具；
 ;   5. 运行环境全在包里：runtime\node.exe、runtime\python\（CPython 3.12 + 依赖）、
 ;      runtime\dotnet\windowsdesktop-runtime-10-win-x64.exe（缺 .NET 10 时由 [Code] 提权装）。
 ;
@@ -85,6 +84,10 @@ Type: filesandordirs; Name: "{app}\runtime\vb-cable"
 ; （4.0 的 CI 烟测就是这么发现 comtypes.tools 缺文件的）。
 Source: "..\launcher\publish\WhaleLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\server.js"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\scripts\migrate-memory.js"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\scripts\migrate\import-4.0.js"; DestDir: "{app}\scripts\migrate"; Flags: ignoreversion
+Source: "..\scripts\migrate\archive.js"; DestDir: "{app}\scripts\migrate"; Flags: ignoreversion
+Source: "..\scripts\migrate\upgrade-maintenance.js"; DestDir: "{app}\scripts\migrate"; Flags: ignoreversion
 Source: "..\package.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\config\config.example.json"; DestDir: "{app}\config"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
@@ -116,6 +119,8 @@ Filename: "{app}\VB-CABLE虚拟声卡\VBCABLE_Setup_x64.exe"; Description: "安�
 Filename: "{app}\{#AppExe}"; Description: "启动{#AppName}"; Verb: "runas"; Flags: shellexec postinstall skipifsilent
 
 [UninstallDelete]
+; 安装标记只在安装目录存在；卸载时清掉，避免残留目录被误认成安装态。
+Type: files; Name: "{app}\.whale-installed.json"
 ; 安装目录内的 data 属于用户数据：卸载时保留，只清运行时垃圾
 Type: filesandordirs; Name: "{app}\data\media-cache"
 ; .NET 运行时安装包（约 60MB）在安装目录里留着，用户重装/修复时还能手动再跑；
@@ -340,6 +345,11 @@ begin
       带 createallsubdirs，装文件时又会把 vb-cable 这个空目录建回来。这里补一刀，
       不然升级完目录里会留一个空的 runtime\vb-cable，用户看着像个坏掉的旧版本。 }
     DelTree(ExpandConstant('{app}\runtime\vb-cable'), True, True, True);
+
+    { 安装标记：启动器只读它来区分“安装目录”和源码 checkout，不据此判断版本。 }
+    if not SaveStringToFile(ExpandConstant('{app}\.whale-installed.json'),
+      '{"schemaVersion":1,"installer":"whale-girl"}', False) then
+      Log('写入 .whale-installed.json 失败');
 
     if IsDesktopRuntimeInstalled() then
       Log('.NET 10 桌面运行时已存在，跳过')

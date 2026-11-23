@@ -56,7 +56,7 @@ The installer bundles the Node.js runtime, Python 3.12, `wechatauto`, and the .N
 | Moments | Reads the selected account's local cache; manual like, comment, and copy-draft |
 | Diary | Writes at most one Markdown entry per day to `data/diary/YYYY/MM-DD.md` |
 | Voice | Transcribes incoming voice (DeepSeek ASR or Alibaba Cloud); optional voice replies through BreezeBlue, MiniMax, or SiliconFlow |
-| Search | Optional DeepSeek/Zhihu search APIs with automatic local Bing/360 fallback; hot lists and link extraction |
+| Search | Native web search on official `deepseek-flash`; other models use optional DeepSeek/Zhihu search APIs with automatic local Bing/360 fallback; hot lists and link extraction |
 | Group admin | Mute/unmute, switch model, change tone, clear memory, and low-battery good-night |
 | Diagnostics | Built-in logs, account checks, UIA self-test, and update checks |
 

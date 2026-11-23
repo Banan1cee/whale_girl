@@ -282,7 +282,7 @@ function careTargets(config, options = {}) {
     const hit = contacts && typeof contacts.get === 'function' ? contacts.get(wxid) : null;
     const isGroup = !isFile && (/@chatroom$/i.test(wxid) || hit?.isGroup === true);
     const name = isFile ? '文件传输助手' : (hit ? hit.label || hit.name : wxid);
-    if (sendDenial(config, { id: wxid, names: [name, hit?.name, hit?.remark], isGroup })) continue;
+    if (sendDenial(config, { chatId: wxid, names: [name, hit?.name, hit?.remark], isGroup })) continue;
     const masterHit = !isGroup && isMasterTarget(config, wxid, contacts);
     if (master && !masterHit) continue;
     if (isGroup ? !groups : !isFile && !masterHit && !others) continue;

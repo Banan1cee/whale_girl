@@ -87,8 +87,8 @@ test('二进制里的调试路径与源码托管链接会被扫出来', () => {
   for(const repo of ['whale_girl','whale_gril'])assert.deepEqual(scanBinaryBuffer(Buffer.from('https://raw.github'+'usercontent.com/Banan1cee/'+repo+'/main/release-manifest.json')),[]);
 });
 
-test('官方 Api 3 目录不误报，其他仓库和相似文件名仍检查', () => {
-  const catalogs = ['index-v3.json', 'index-v4.json', 'index-personas.json'];
+test('官方市场目录不误报，其他仓库和相似文件名仍检查', () => {
+  const catalogs = ['index-v5.json', 'index-personas.json'];
   for (const catalog of catalogs) {
     const official = 'https://raw.github' + 'usercontent.com/Banan1cee/whale-girl-plugins/main/' + catalog;
     for (const encoding of ['utf8', 'utf16le']) {

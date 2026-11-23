@@ -2,10 +2,12 @@
 
 const personaStore = require('../../persona/store');
 const presets = require('../../persona/presets');
-const { applyPersonaPatch, savePersonaPreset, deletePersonaPreset, renamePersonaPreset, currentPersonaWarnings } = require('../../services/persona');
-const { checkPersonaTokens } = require('../../persona/tokenCheck');
+const {
+  savePersonaPreset, deletePersonaPreset, renamePersonaPreset, currentPersonaWarnings,
+  shareDocument, importPersonaPreset,
+} = require('../../services/persona');
 const { json, readBody } = require('../util');
-const { saveSettings } = require('../../infra/config');
+const { hostCall } = require('../../services/features/hostCall');
 
 module.exports = function register(router) {
   router.get('/api/persona', (runtime, req, res) => {
@@ -28,7 +30,8 @@ module.exports = function register(router) {
 
   router.post('/api/persona', async (runtime, req, res) => {
     const body = await readBody(req);
-    const result = await applyPersonaPatch(runtime, body);
+    // 人设保存与插件 host.call 走同一个能力：校验、限长、落盘只有一份实现。
+    const result = await hostCall(runtime, 'persona.write@1', body);
     return json(res, result && result.ok ? 200 : 400, result);
   });
 
@@ -38,9 +41,10 @@ module.exports = function register(router) {
   });
 
   router.post('/api/persona/export', (runtime, req, res) => {
-    const persona = presets.fromConfig(runtime.config);
-    if (persona.customPrompt.length > 24000) return json(res, 400, { ok: false, error: '可分享包的自定义提示词最多 24000 字符，请先精简；当前人设未修改。' });
-    return json(res, 200, { ok: true, persona });
+    // 限长规则与离线保存共用同一份（services/persona.js）。
+    const { document, overLimit } = shareDocument(runtime.config);
+    if (overLimit) return json(res, 400, { ok: false, error: '可分享包的自定义提示词最多 24000 字符，请先精简；当前人设未修改。' });
+    return json(res, 200, { ok: true, persona: document });
   });
 
   // 预览：只回内容、不写盘 —— 页面选到哪版就先把那版填进输入框，
@@ -64,30 +68,28 @@ module.exports = function register(router) {
 
   router.post('/api/persona/preset', async (runtime, req, res) => {
     const body = await readBody(req);
-    const preset = presets.load(runtime.config, body && body.id);
-    if (!preset) return json(res, 404, { ok: false, error: '没有这个人设预设' });
-    const patch = presets.toPatch(preset);
-    if (!patch) return json(res, 400, { ok: false, error: '这个人设预设是空的' });
-    // 记下来源，页面上能直接看到「现在用的是哪一版」
-    patch.sourcePreset = preset.id;
-    // 导入预设同样做一次精确 token 校验，避免导进一个会顶爆单轮上限的人设
-    const tokenCheck = await checkPersonaTokens(runtime, patch);
-    if (tokenCheck.overLimit) {
-      runtime.logger.warn(`人设预设 ${preset.id} 太长，拒绝导入：${tokenCheck.tokens} token`);
-      return json(res, 400, {
+    // 取预设、token 闸、写盘、热更新与离线保存共用同一份实现。
+    const result = await importPersonaPreset(runtime, body);
+    if (!result.ok) {
+      if (result.code === 'too_long') {
+        const check = result.tokenCheck || {};
+        return json(res, 400, {
+          ok: false,
+          error: `这个人设预设太长：${check.exact ? '' : '约 '}${check.tokens} token，超过当前上限 ${check.limit}。`,
+          tokenCheck: result.tokenCheck,
+        });
+      }
+      return json(res, result.status || 400, {
         ok: false,
-        error: `这个人设预设太长：${tokenCheck.exact ? '' : '约 '}${tokenCheck.tokens} token，超过当前上限 ${tokenCheck.limit}。`,
-        tokenCheck,
+        // 在线保持原有的预览/导入文案；离线才用“没有可导入的人设预设”。
+        error: result.error || (result.code === 'preset_empty' ? '这个人设预设是空的' : '没有这个人设预设'),
       });
     }
-    personaStore.save(runtime.config, patch);
-    if (patch.ownerName !== undefined) saveSettings(runtime.config, { userName: runtime.config.persona.ownerName });
-    runtime.logger.info(`人设预设：已导入 ${preset.id}（${preset.version || '无版本号'}，${tokenCheck.tokens} token）`);
     return json(res, 200, {
       ok: true,
-      applied: { id: preset.id, version: preset.version || '', name: preset.name || '' },
-      persona: personaStore.summary(runtime.config),
-      tokenCheck,
+      applied: result.applied,
+      persona: result.persona,
+      tokenCheck: result.tokenCheck,
     });
   });
 

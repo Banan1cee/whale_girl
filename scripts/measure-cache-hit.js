@@ -1,10 +1,10 @@
 'use strict';
 
 /**
- * 实测「system 静态化」前后的前缀缓存命中情况（私聊 / 群聊各 3 轮）。
+ * 实测 system 静态前缀的缓存命中情况（私聊 / 群聊各 3 轮）。
  *
  * 为什么要单独跑：cacheHitTokens 只有服务商返回的 usage 才有，本地估算看不出前缀
- * 到底命没命中。这个脚本走真实接口，两种开关各跑一遍，结果可以直接贴进 PR。
+ * 到底命没命中。这个脚本走真实接口，结果可以直接贴进 PR。
  *
  * 用法（Key 只从环境变量 / 参数读，不落盘）：
  *   set OPENCODE_API_KEY=oc_sk_xxx      # OpenCode Go
@@ -57,9 +57,8 @@ const TEXTS = {
 };
 const MEMORY = '【这个聊天里的 TA】小海：怕黑、在写毕业论文。\n【相关事件】昨天聊过加班。\n【这段之前聊过】加班、论文、周末去哪。';
 
-function configFor(staticSystem) {
+function configFor() {
   const config = loadConfig({ root: ROOT, env: process.env });
-  config.features = { ...(config.features || {}), staticSystem };
   if (PROVIDER) config.provider = PROVIDER;
   // Key 只挂内存里，不写 settings.json
   config.llm = { ...(config.llm || {}), apiKey: KEY };
@@ -108,8 +107,8 @@ function cachedTokens(usage = {}) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-async function runScenario({ runtime, chatType, staticSystem, sessionId }) {
-  const config = configFor(staticSystem);
+async function runScenario({ runtime, chatType, sessionId }) {
+  const config = configFor();
   const resolved = resolveRuntime(config);
   const isGroup = chatType === 'group';
   const nonce = crypto.randomBytes(4).toString('hex');
@@ -175,15 +174,13 @@ async function main() {
   lines.push('| --- | --- | --- | --- | --- | --- |');
   let meta = '';
 
-  for (const staticSystem of [false, true]) {
-    for (const chatType of ['private', 'group']) {
-      const label = (chatType === 'private' ? '私聊' : '群聊') + (staticSystem ? '（静态 system）' : '（旧行为）');
-      const { rows, model, provider } = await runScenario({ chatType, staticSystem, sessionId });
-      if (!meta) meta = `模型：${model}（${provider}）　口径：usage 里的缓存命中数\n`;
-      for (const r of rows) {
-        const rate = r.prompt ? ((r.cached / r.prompt) * 100).toFixed(1) + '%' : '-';
-        lines.push(`| ${label} | 第 ${r.round} 轮 | ${r.prompt} | ${r.cached} | ${r.prompt - r.cached} | ${rate} |`);
-      }
+  for (const chatType of ['private', 'group']) {
+    const label = chatType === 'private' ? '私聊' : '群聊';
+    const { rows, model, provider } = await runScenario({ chatType, sessionId });
+    if (!meta) meta = `模型：${model}（${provider}）　口径：usage 里的缓存命中数\n`;
+    for (const r of rows) {
+      const rate = r.prompt ? ((r.cached / r.prompt) * 100).toFixed(1) + '%' : '-';
+      lines.push(`| ${label} | 第 ${r.round} 轮 | ${r.prompt} | ${r.cached} | ${r.prompt - r.cached} | ${rate} |`);
     }
   }
 

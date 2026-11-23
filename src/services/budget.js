@@ -150,7 +150,7 @@ function estimate(config, {
   // 服务商缓存的是「前缀」：system 在最前面、历史只往后追加，所以稳定期命中的是
   //   人设 + 历史里除了最后两条以外的部分
   // （上一轮的 user 消息里挂过记忆块 + 本轮状态、这一轮的又换了，那一段每轮都要重算）。
-  // staticSystem 之后 system 是稳定的，但尾部「本轮状态」有 200~400 token，一起算进这部分。
+  // 当前 system 前缀稳定，但尾部「本轮状态」有 200~400 token，也要计入预算。
   const TAIL_REFRESH = 320;   // 最后两条消息（记忆块 + 本轮状态）≈ 320 token
   const promptTokens = systemTokens + plan.memory + plan.summary + plan.recent;   // 一轮真实输入（reserve 是余量，不算正文）
   const hitTokens = Math.min(promptTokens, systemTokens + Math.max(0, plan.recent - TAIL_REFRESH));

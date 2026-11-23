@@ -71,6 +71,16 @@ class BridgeStartupReadyTests(unittest.TestCase):
         self.assertEqual(token({'gateway': {'wechat': {'inboundToken': 'custom'}}}), 'custom')
         self.assertEqual(token({'gateway': {'wechat': {'inboundToken': ''}}}), '')
 
+    def test_step_logging_stays_off_unless_requested(self):
+        # 每步耗时日志会把诊断面板刷满，默认不打开；卡死时靠 _STEP 报出停在哪一步。
+        root = Path(__file__).resolve().parents[1]
+        app = (root / 'bridge' / 'app.py').read_text(encoding='utf-8')
+        code = [line for line in app.splitlines() if not line.lstrip().startswith('#')]
+        self.assertFalse([line for line in code if 'WHALE_STEPLOG' in line], '启动流程不再默认打开逐步日志')
+        compat = (root / 'examples' / 'uia_compat.py').read_text(encoding='utf-8')
+        self.assertIn('os.environ.get("WHALE_STEPLOG")', compat, '逐步日志仍要能按需打开')
+        self.assertIn('"since": 0.0', compat, '步骤与耗时始终记录，供卡死时排查')
+
     def test_after_listener_starts_bridge_reaches_ready_marker(self):
         # 运行启动最后一段，隔离微信数据库、窗口和线程。以前残留的日志在这里访问未定义的 exc。
         file = Path(__file__).resolve().parents[1] / 'bridge' / 'app.py'

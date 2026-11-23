@@ -30,7 +30,6 @@ function boot(overrides = {}) {
 test('开关默认值都在 DEFAULT_CONFIG 里（不写配置也有）', () => {
   const { root, cfg } = boot();
   assert.equal(cfg.features.groupAddressGuard, true, '群聊分清对象默认开');
-  assert.equal(cfg.features.fightQuoteCheck, true, '开火需原话依据默认开');
   assert.equal(cfg.features.mediaCleanup, true);
   assert.equal(cfg.features.memorySnapshot, true);
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 6, retryDelay: 60 });
@@ -55,9 +54,9 @@ test('每个开关都有 label/desc，启动器才显示得出来', () => {
 });
 
 test('L1：@ 了别人时不算在说她（用 mentionedNames 判）', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src', 'pipeline', 'chat.js'), 'utf8');
+  const src = fs.readFileSync(path.join(ROOT, 'src', 'pipeline', 'bot.js'), 'utf8');
   assert.match(src, /msg\.mentionedNames/, '必须用到桥接传来的 @ 名单');
-  assert.match(src, /talkingToOthers/, '要有「在跟别人说话」的判断');
+  assert.match(src, /directedElsewhere/, '要保留「这条是在跟别人说话」的判断');
 });
 
 test('L1：「机器人」不再裸算叫她，要带指代', () => {
@@ -66,9 +65,10 @@ test('L1：「机器人」不再裸算叫她，要带指代', () => {
   assert.match(src, /这个\|那个\|你\|破\|臭\|傻\|烂\|死/, '机器人需要带指代才算叫她');
 });
 
-test('L2/L3：开火要有原话依据，否则降级', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src', 'pipeline', 'chat.js'), 'utf8');
-  assert.match(src, /开怼缺少原话依据/, '要有 finalize 兜底');
+test('L2/L3：旧版开火原话核对已随对喷逻辑删除', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'src', 'pipeline', 'bot.js'), 'utf8');
+  assert.doesNotMatch(src, /开怼缺少原话依据/, '不应保留旧版开火核对');
+  assert.doesNotMatch(src, /msg\.fight\b/, '不应再写入对喷状态');
 });
 
 test('L3：群聊提示词要求先判断在跟谁说话', () => {
@@ -94,7 +94,7 @@ test('功能开关 API：能读、能写、写错 key 报错', async () => {
       await fetch(`${inst.url}/api/features`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', origin: inst.url },
-        body: JSON.stringify({ key: 'fightQuoteCheck', value: false }),
+        body: JSON.stringify({ key: 'mediaCleanup', value: false }),
       })
     ).json();
     assert.equal(off.ok, true);
@@ -102,7 +102,7 @@ test('功能开关 API：能读、能写、写错 key 报错', async () => {
 
     // 写进文件了吗
     const saved = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
-    assert.equal(saved.features.fightQuoteCheck, false, '开关要落盘');
+    assert.equal(saved.features.mediaCleanup, false, '开关要落盘');
 
     const bad = await (
       await fetch(`${inst.url}/api/features`, {

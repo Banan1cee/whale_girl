@@ -11,6 +11,7 @@ const path = require('node:path');
 
 const backup = require('../src/memory/backup');
 const { Store } = require('../src/memory/store');
+const { migrateIfNeeded } = require('../scripts/migrate/import-4.0');
 
 function seed({ settings } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-mem-bk-'));
@@ -145,7 +146,7 @@ test('路径穿越/结构不对的备份要被拦下', () => {
   cleanup(root);
 });
 
-test('旧版 v1 备份（files.store）能恢复，下一次启动走迁移', () => {
+test('旧版 v1 备份（files.store）能恢复，恢复后由显式导入接管', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-mem-v1-'));
   const data = path.join(root, 'data');
   fs.mkdirSync(data, { recursive: true });
@@ -167,6 +168,9 @@ test('旧版 v1 备份（files.store）能恢复，下一次启动走迁移', ()
   const info = backup.restoreFromFile(root, dest);
   assert.ok(info.restored.some((x) => x.includes('store.json')));
   const store = new Store({ file: path.join(data, 'store.json'), logger: null });
+  // 4.3 起运行时不再自动导入旧格式：恢复后由启动器「识别转换记忆」或脚本显式导入
+  migrateIfNeeded({ memoryDir: path.join(data, 'memory'), chatStore: store.chatStore });
+  store.chatStore.load();
   assert.equal(store.messages('wechat:u:a', 10)[0].text, '旧备份里的话');
   store.close();
   cleanup(root);
@@ -221,3 +225,4 @@ test('备份/恢复：自建人设预设和隐藏标记一起带走', () => {
   cleanup(root);
   cleanup(fresh);
 });
+

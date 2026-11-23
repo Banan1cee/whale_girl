@@ -1363,7 +1363,7 @@ namespace WhaleLauncher.Views
             if (!AppDialog.Confirm(Window.GetWindow(this),
                 "会清空：聊天记忆、API Key、人设调教、主人名单、网关令牌、所有设置。\n" +
                 "清空前会先自动备份到 backup\\reset-时间戳\\，但恢复要自己手动捞。",
-                "重置全部（恢复出厂）", okText: "继续")) return;
+                "重置全部（恢复出厂）", okText: "继续", critical: true)) return;
 
             if (!AppDialog.Confirm(Window.GetWindow(this),
                 "真的要清空所有数据和设置吗？\n这一步不可撤销，只能从 backup\\reset-* 手动恢复。",

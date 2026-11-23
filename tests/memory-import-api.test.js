@@ -68,12 +68,20 @@ async function postJson(url, payload = {}) {
   return { status: res.status, body: await res.json() };
 }
 
-test('启动时自动迁移旧 store.json，并留下待确认报告', async () => {
+test('启动不再自动迁移旧 store.json；接口能检测并显式导入', async () => {
   const app = await boot({ store: legacyStore() });
   try {
     const status = await getJson(app.url + '/api/memory/import/status');
     assert.equal(status.ok, true);
-    assert.equal(status.pending, false, '启动时已经迁完，不该还挂着待转换');
+    assert.equal(status.pending, true, '4.3 起启动路径不碰旧格式，必须等用户显式导入');
+
+    const before = await getJson(app.url + '/api/memory/import/notice');
+    assert.equal(before.notice, null, '没导入过就不该有报告');
+
+    const imported = await postJson(app.url + '/api/memory/import');
+    assert.equal(imported.body.ok, true);
+    assert.equal(imported.body.idle, false, '应当真的转换了');
+    assert.equal(imported.body.imported, 2);
 
     const notice = await getJson(app.url + '/api/memory/import/notice');
     assert.equal(notice.ok, true);
@@ -95,7 +103,7 @@ test('启动时自动迁移旧 store.json，并留下待确认报告', async () 
 });
 
 test('旧记忆确认失败只回一行文案，不把异常堆栈带进响应', async () => {
-  const migrate = require('../src/memory/migrate');
+  const migrate = require('../scripts/migrate/import-4.0');
   const original = migrate.ackImportNotice;
   // 没有 message、只有堆栈的异常：旧代码的 String(err) 会把它原样返回给启动器。
   migrate.ackImportNotice = () => {
@@ -167,3 +175,4 @@ test('同名 chat 已存在时：一键转换按时间合并，不重复', async
     fs.rmSync(app.root, { recursive: true, force: true, maxRetries: 8, retryDelay: 60 });
   }
 });
+

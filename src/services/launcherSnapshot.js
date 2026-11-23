@@ -10,10 +10,15 @@ const presets = require('../persona/presets');
 const features = require('../infra/features');
 const { ReminderService } = require('./reminderService');
 
-const { applyPersonaPatch, savePersonaPreset, deletePersonaPreset, renamePersonaPreset, currentPersonaWarnings } = require('./persona');
+const {
+  applyPersonaPatch, savePersonaPreset, deletePersonaPreset, renamePersonaPreset, currentPersonaWarnings,
+  shareDocument, importPersonaPreset,
+} = require('./persona');
 const { DiaryService } = require('./diary');
 const { MomentsPublisher } = require('./momentsPublisher');
-const { prepareFeatureCommand, momentsSettings, prepareMomentsSettingsPatch, prepareMomentsPublishPatch } = require('./configCommands');
+const {
+  applyFeatureToggle, momentsSettings, prepareMomentsSettingsPatch, applyMomentsSettings, prepareMomentsPublishPatch,
+} = require('./configCommands');
 
 async function saveLocalConfiguration(root, { path, body }, env = process.env) {
   const config = loadConfig({ root, env, readOnly: true });
@@ -37,24 +42,34 @@ async function saveLocalConfiguration(root, { path, body }, env = process.env) {
     case '/api/persona/preset/rename': return renamePersonaPreset(runtime, body);
     case '/api/persona/preset/reset-market': return presets.resetMarketCopy(config, body.id);
     case '/api/persona/export': {
-      const document = presets.fromConfig(config);
-      return document.customPrompt.length <= 24000 ? { ok: true, persona: document }
-        : { ok: false, error: '可分享包的自定义提示词最多 24000 字符，请先精简。' };
+      const { document, overLimit } = shareDocument(config);
+      return overLimit ? { ok: false, error: '可分享包的自定义提示词最多 24000 字符，请先精简。' }
+        : { ok: true, persona: document };
     }
     case '/api/persona/preset': {
-      const patch = presets.toPatch(presets.load(config, body.id));
-      return patch ? applyPersonaPatch(runtime, { ...patch, sourcePreset: body.id })
-        : { ok: false, error: '没有可导入的人设预设' };
+      const result = await importPersonaPreset(runtime, body);
+      if (!result.ok) {
+        // 离线保持原合同：缺预设/空预设同一句；超限保留共享实现抛出的原文。
+        return { ok: false, error: result.code === 'too_long' ? result.error : '没有可导入的人设预设' };
+      }
+      return {
+        ok: true,
+        persona: result.persona,
+        tokenCheck: result.tokenCheck,
+        warnings: result.warnings,
+        llm: result.llm,
+      };
     }
     case '/api/features': {
-      let command;
-      try { command = prepareFeatureCommand(body); }
-      catch { return { ok: false, error: '无效的功能设置' }; }
-      save(command.patch);
+      try { applyFeatureToggle(runtime, body); } catch (err) {
+        // 参数问题沿用离线原来的固定文案；写盘其它故障原样抛给最外层返回真实原因。
+        if (err && err.statusCode === 400) return { ok: false, error: '无效的功能设置' };
+        throw err;
+      }
       return { ok: true, features: features.list(config) };
     }
     case '/api/moments/settings':
-      save(prepareMomentsSettingsPatch(body));
+      applyMomentsSettings(runtime, prepareMomentsSettingsPatch(body));
       return momentsSettings(config);
     case '/api/moments/publish-settings': {
       const publisher = new MomentsPublisher({ config });

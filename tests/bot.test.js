@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { Store } = require('../src/memory/store');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 
@@ -106,6 +106,21 @@ test('追加表情按整轮剩余字数决定，完整保留能放下的表情',
         }
       }
     }
+  } finally { cleanup(); }
+});
+
+test('发一个「？」不再自动接、也不再原样回问号，交给模型', async () => {
+  const { bot, cleanup } = makeBot();
+  try {
+    const group = await bot.decide(groupMsg('？'));
+    assert.equal(group.action, 'ignore', '群里没 @ 她时不再被一个问号叫出来');
+    assert.equal(group.reason, 'question_mark');
+    const groupAddressed = await bot.decide(groupMsg('？', { atMe: true }));
+    assert.equal(groupAddressed.action, 'reply');
+    assert.equal(groupAddressed.canned, undefined, '@ 她只发「？」也走模型，不用固定话术');
+    const priv = await bot.decide(privateMsg('？'));
+    assert.equal(priv.action, 'reply');
+    assert.equal(priv.canned, undefined, '私聊问号同样走模型');
   } finally { cleanup(); }
 });
 
@@ -292,9 +307,21 @@ test('消息里有链接时会先读链接，并把内容写进提示词', async
   assert.equal(d.action, 'reply');
   assert.match(promptOf(d), /对方发的链接/);
   assert.match(promptOf(d), /猫猫跳舞视频/);
-  assert.match(promptOf(d), /失败时准确说明未取得内容/);
+  assert.match(promptOf(d), /只有标题或摘要时不当作完整内容/);
+  assert.match(promptOf(d), /不猜视频情节/);
   assert.doesNotMatch(promptOf(d), /你刚点开看了这些信息/);
   cleanup();
+});
+
+test('读到网页正文片段时只按实际取得的片段回答', async () => {
+  const linkReader = async (url) => ({ ok: true, url, kind: 'web', title: '演示文章', article: '正文里的独立证据' });
+  const { bot, cleanup } = makeBot({ linkReader });
+  try {
+    const d = await bot.decide(privateMsg('读一下 https://example.com/article'));
+    assert.equal(d.action, 'reply');
+    assert.match(promptOf(d), /正文片段：正文里的独立证据/);
+    assert.match(promptOf(d), /读到正文片段时只依据取得的片段/);
+  } finally { cleanup(); }
 });
 
 test('链接读不到时也不会崩', async () => {
@@ -313,6 +340,11 @@ test('魔咒：主人输入才生效，其他人输入无效', async () => {
   assert.equal(denied.action, 'reply', '非主人魔咒按普通对话处理');
   assert.equal(denied.commandType, undefined);
   assert.equal(bot.store.getState(denied.key).adminUntil || 0, 0);
+  assert.doesNotMatch(JSON.stringify(denied.msg), /test-spell/);
+  assert.match(JSON.stringify(denied.turns), /已隐藏/);
+  assert.doesNotMatch(JSON.stringify(denied.turns), /test-spell/);
+  assert.doesNotMatch(promptOf(denied), /test-spell/);
+  assert.doesNotMatch(JSON.stringify(bot.store.messages(denied.key, 20)), /test-spell/);
 
   const ok = await bot.decide(privateMsg('test-spell', { platform: 'wechat', senderName: 'Master', senderId: 'wxid_test_master' }));
   assert.equal(ok.action, 'command');

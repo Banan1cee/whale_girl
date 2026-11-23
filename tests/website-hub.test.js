@@ -32,10 +32,11 @@ async function main() {
     const preview = release('v4.2.0-rc.1', { prerelease: true });
     const data = { latest, stars: 1234, releases: [latest, old, preview, release('v9.0.0', { draft: true })],
       fetchedAt: '2026-11-13T08:00:00Z', sourceCommit: 'a'.repeat(40), plugins: [{
-        Id: 'text-counter', Name: '<测试插件>', Author: 'Banan1cee', Api: 1, Version: '1.0.0',
-        MinAppVersion: '4.1.0', Description: '真实目录内容。', Sha256: 'b'.repeat(64),
+        Id: 'text-counter', Name: '<测试插件>', Author: 'Banan1cee', Api: 5, Level: 2, Kind: 'plugin',
+        Version: '1.0.0', MinAppVersion: '4.3.0', Description: '真实目录内容。', Sha256: 'b'.repeat(64),
+        Provides: { 'tool.run@1': { mode: 'tool', scope: 'manual' } }, Calls: [], DataAccess: [],
         Download: 'https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/packages/text-counter-1.0.0.zip',
-        SourceIndex: 'index.json',
+        SourceIndex: 'index-v5.json',
       }] };
     buildSite({ root, output, data });
     const read = file => fs.readFileSync(path.join(output, file), 'utf8');
@@ -101,20 +102,18 @@ async function main() {
     const commentPage = read('downloads/v4.1.0/index.html');
     assert.doesNotMatch(commentPage, /&lt;!--/, '移除注释时不拼接出新的注释起始标记');
     assert.match(commentPage, /&lt;script&gt;仅显示文本&lt;\/script&gt;/);
-    const scriptPlugin = { ...data.plugins[0], Id: 'script-tool', Name: '脚本工具', Api: 4,
-      Kind: 'tool', MinAppVersion: '4.1.2', SourceIndex: 'index-v4.json', Permissions: ['system.full'],
+    const scriptPlugin = { ...data.plugins[0], Id: 'script-tool', Name: '脚本工具', Api: 5, Level: 4,
+      Kind: 'plugin', MinAppVersion: '4.3.0', SourceIndex: 'index-v5.json', Calls: [], DataAccess: [],
       Download: 'https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/packages/script-tool-1.0.0.zip' };
     buildSite({ root, output, data: { ...data, plugins: [...data.plugins, scriptPlugin] } });
     const scriptPage = read('plugins/script-tool/index.html');
-    assert.match(scriptPage, /JavaScript 插件不是沙箱/);
-    assert.match(scriptPage, /system\.full/);
+    assert.match(scriptPage, /4 级插件拥有完整系统权限/);
+    assert.match(scriptPage, /等级/);
     assert.match(scriptPage, /功能尚未正式发布/);
-    assert.match(scriptPage, /实验性/);
-    assert.throws(() => buildSite({ root, output, data: { ...data, plugins: [{ ...scriptPlugin, MinAppVersion: '4.1.0' }] } }), /4\.1\.2/);
-    assert.throws(() => buildSite({ root, output, data: { ...data, plugins: [{ ...scriptPlugin, Permissions: [] }] } }), /完整系统权限/);
-    assert.throws(() => buildSite({ root, output, data: { ...data, plugins: [{ ...scriptPlugin, SourceIndex: 'index-v3.json' }] } }), /目录/);
-    buildSite({ root, output, data: { ...data, plugins: [{ ...scriptPlugin, Kind: 'message' }] } });
-    assert.match(read('plugins/index.html'), /data-kind="message"/);
+    assert.throws(() => buildSite({ root, output, data: { ...data, plugins: [{ ...scriptPlugin, Permissions: ['system.full'] }] } }), /旧接口/);
+    assert.throws(() => buildSite({ root, output, data: { ...data, plugins: [{ ...scriptPlugin, SourceIndex: 'index-v3.json' }] } }), /清单/);
+    buildSite({ root, output, data: { ...data, plugins: [{ ...scriptPlugin }] } });
+    assert.match(read('plugins/index.html'), /data-kind="plugin"/);
     buildSite({ root, output, data, tips: { updatedAt: '2026-11-13', entries: [
       { id: 'tip-example-a', date: '2026-11-12', amountMinor: 10, currency: 'CNY', consent: false },
       { id: 'tip-example-b', date: '2026-10-12', amountMinor: 20, currency: 'CNY', consent: true, name: '<示意昵称>', message: '<script>不可执行</script>' },

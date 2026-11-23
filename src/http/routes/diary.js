@@ -2,6 +2,7 @@
 
 const { json } = require('../util');
 const { isLoopbackRequest } = require('../security');
+const { hostCall, respond } = require('../../services/features/hostCall');
 
 module.exports = function register(router) {
   const local = (req) => {
@@ -9,12 +10,11 @@ module.exports = function register(router) {
   };
   router.get('/api/diary', (runtime, req, res) => {
     local(req);
-    return json(res, 200, { ok: true, ...runtime.diary.status() });
+    return respond(hostCall(runtime, 'diary.status@1', {}), out => json(res, 200, { ok: true, ...out.status }));
   });
   router.post('/api/diary/generate', (runtime, req, res) => {
     local(req);
     // 模型调用可能超过启动器 HTTP 超时，先返回任务状态，再由原页面轮询结果。
-    void runtime.diary.generate();
-    return json(res, 202, { ok: true, ...runtime.diary.status() });
+    return respond(hostCall(runtime, 'diary.generate@1', {}), out => json(res, 202, { ok: true, ...out.status }));
   });
 };

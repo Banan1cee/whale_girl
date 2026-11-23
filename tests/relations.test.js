@@ -24,7 +24,7 @@ const { Store } = require('../src/memory/store');
 const relations = require('../src/memory/relations');
 const extractor = require('../src/memory/extractor');
 const { estimateBudgetTokens } = require('../src/memory/tokens');
-const { Bot } = require('../src/pipeline/chat');
+const { Bot } = require('../src/pipeline/bot');
 const { DEFAULT_CONFIG } = require('../src/infra/config');
 const features = require('../src/infra/features');
 

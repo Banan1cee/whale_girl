@@ -34,7 +34,11 @@ namespace WhaleLauncher
             try
             {
                 Appearance.Load();
-                Trace("loaded theme=" + Appearance.Theme + " backdrop=" + Appearance.Backdrop + " has=" + Appearance.HasBackdrop);
+                Appearance.LoadThemePackage();
+                Trace("loaded theme=" + Appearance.Theme + " backdrop=" + Appearance.Backdrop + " has=" + Appearance.HasBackdrop
+                    + " package=" + (Appearance.HasThemePackage ? Appearance.ActiveThemeName : "-")
+                    + " active=" + Appearance.HasTheme
+                    + (Appearance.ThemeUnavailableReason.Length > 0 ? " reason=" + Appearance.ThemeUnavailableReason : ""));
                 Appearance.ApplyTheme();
                 Trace("theme applied");
 
