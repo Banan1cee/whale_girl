@@ -449,6 +449,38 @@ class ReminderService {
     return { ok: true, item: { ...item } };
   }
 
+  /**
+   * 按会话内的自然语言目标撤回提醒。候选不唯一时不做猜测，交给上层提示用户指明哪一条。
+   */
+  cancelMatching(wxid, { query = '', day = '' } = {}) {
+    const active = this.pendingFor(wxid);
+    const norm = (value) => String(value || '').toLowerCase()
+      .replace(/[\s，,。.!！？?；;：:、"'“”‘’（）()【】\[\]]/g, '');
+    const q = norm(query);
+    let candidates = q
+      ? active.filter((item) => {
+        const body = norm(item.text);
+        return body === q || body.includes(q) || q.includes(body);
+      })
+      : [];
+
+    if (!candidates.length && day) {
+      const direct = { 今天: 0, 明天: 1, 后天: 2, 大后天: 3 };
+      if (Object.prototype.hasOwnProperty.call(direct, day)) {
+        const tz = time.resolveTimeZone(this.config);
+        const target = time.dayKeyOf(time.addDays(time.parts(this.now(), tz), direct[day]));
+        candidates = active.filter((item) => time.dayKey(item.dueAt, tz) === target);
+      }
+    }
+
+    // 「第三天的事情取消」没有固定日历含义；只有唯一待办时才可安全撤回。
+    if (!candidates.length && !q && active.length === 1) candidates = active;
+    if (candidates.length > 1) return { cancelled: 0, ambiguous: true, candidates: candidates.map((item) => ({ ...item })) };
+    let cancelled = 0;
+    for (const item of candidates) if (this.cancel(item.id).ok) cancelled += 1;
+    return { cancelled, ambiguous: false, candidates: candidates.map((item) => ({ ...item })) };
+  }
+
   /** 给启动器看的列表（新的在前） */
   list({ limit = 100 } = {}) {
     // 日记通知是内核自己的存档发送，不混进「提醒」列表。

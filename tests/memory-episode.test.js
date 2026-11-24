@@ -187,6 +187,175 @@ test('parseEpisode：越界 uid / 缺字段都能兜住', () => {
   assert.equal(extractor.parseEpisode('没有 JSON'), null);
 });
 
+test('parseEpisode：结构化事实保留主体、操作、证据与被替换 ID', () => {
+  const extractor = require('../src/memory/extractor');
+  const parsed = extractor.parseEpisode(JSON.stringify({
+    summary: '口味变化',
+    facts: [{
+      uid: 'u1', subject: 'self', key: 'drink', operation: 'replace',
+      text: '现在不喜欢无糖乌龙茶', confidence: 0.95,
+      evidence: ['m2'], supersedesIds: ['pf_old'],
+    }],
+  }));
+  assert.deepEqual(parsed.facts[0], {
+    uid: 'u1', subject: 'self', key: 'drink', operation: 'replace',
+    text: '现在不喜欢无糖乌龙茶', confidence: 0.95,
+    evidence: ['m2'], supersedesIds: ['pf_old'], kind: 'fact',
+  });
+});
+
+test('episode 抽取把当前人物卡事实作为可引用的更新上下文传给模型', async () => {
+  const extractor = require('../src/memory/extractor');
+  let request;
+  const llm = {
+    isMock: false,
+    async complete(value) {
+      request = value;
+      return JSON.stringify({ summary: '口味更新', facts: [] });
+    },
+  };
+  await extractor.extractEpisode({
+    messages: [{ id: 'm2', role: 'user', uid: 'u1', name: '小海', text: '现在不喜欢无糖乌龙茶了' }],
+    speakers: [{ uid: 'u1', name: '小海' }],
+    existingFacts: { u1: [{ id: 'pf_old', subject: 'self', key: 'drink', text: '我喜欢无糖乌龙茶' }] },
+    llm,
+  });
+  assert.match(request.turns[0].content, /pf_old/);
+  assert.match(request.turns[0].content, /我喜欢无糖乌龙茶/);
+});
+
+test('episode 抽取拒绝把一次性行为升级为长期偏好', async () => {
+  const extractor = require('../src/memory/extractor');
+  const llm = {
+    isMock: false,
+    async complete() {
+      return JSON.stringify({ summary: '喝饮料', facts: [{
+        uid: 'u1', subject: 'self', key: 'preference:drink', operation: 'set',
+        text: '今天喝的是无糖乌龙茶', confidence: 0.9, evidence: ['m1'],
+      }] });
+    },
+  };
+  const out = await extractor.extractEpisode({
+    messages: [{ id: 'm1', role: 'user', uid: 'u1', name: '小海', text: '我今天喝了无糖乌龙茶' }],
+    speakers: [{ uid: 'u1', name: '小海' }], llm,
+  });
+  assert.deepEqual(out.facts, []);
+});
+
+test('episode 抽取不能用本人事实 ID 撤回第三方事实', async () => {
+  const extractor = require('../src/memory/extractor');
+  const llm = {
+    isMock: false,
+    async complete() {
+      return JSON.stringify({ summary: '口味变化', facts: [{
+        uid: 'u1', subject: 'self', key: 'preference:food', operation: 'retract',
+        text: '不喜欢米饼', confidence: 0.95, evidence: ['m1'], supersedesIds: ['pf_partner'],
+      }] });
+    },
+  };
+  const out = await extractor.extractEpisode({
+    messages: [{ id: 'm1', role: 'user', uid: 'u1', text: '我不喜欢米饼' }],
+    speakers: [{ uid: 'u1', name: '小海' }],
+    existingFacts: { u1: [{ id: 'pf_partner', subject: 'partner', key: 'preference:food', text: '对象喜欢米饼' }] },
+    llm,
+  });
+  assert.deepEqual(out.facts, []);
+});
+
+test('episode 落卡：模型替换会关闭旧偏好，并保留当前否定状态', async () => {
+  const { store, dir } = tempStore();
+  try {
+    const key = 'wechat:u:model-update';
+    const t0 = Date.now() - 60000;
+    store.appendMessage(key, { role: 'user', name: '小海', uid: 'u1', text: '最近喝茶比较多', ts: t0 });
+    const chat = store.chatStore.chats.get(key);
+    const card = store.chatStore.ensurePerson(chat, 'u1', '小海');
+    const old = personCard.addPreference(card, {
+      text: '我喜欢喝无糖乌龙茶', key: 'preference:drink', subject: 'self', kind: 'preference', confidence: 0.9,
+    }, { chatId: chat.chatId, now: t0 + 1 });
+    store.chatStore.saveCard(chat, card);
+    store.appendMessage(key, { role: 'user', name: '小海', uid: 'u1', text: '我之前喝无糖乌龙茶，发现现在不喜欢了', ts: t0 + 1000 });
+    const updateMessage = chat.messages[chat.messages.length - 1];
+    const llm = {
+      isMock: false,
+      async complete() {
+        return JSON.stringify({ summary: '口味变化', facts: [{
+          uid: 'u1', subject: 'self', key: 'preference:drink', operation: 'retract',
+          text: '现在不喜欢喝无糖乌龙茶', confidence: 0.95,
+          evidence: [updateMessage.id], supersedesIds: [old.id], kind: 'taboo',
+        }] });
+      },
+    };
+    await store.closeEpisode(key, { llm, now: t0 + 2000 });
+    const active = personCard.activePreferences(store.chatStore.getCard(chat, 'u1'));
+    assert.equal(active.length, 1);
+    assert.equal(active[0].text, '现在不喜欢喝无糖乌龙茶');
+    assert.equal(active[0].kind, 'taboo');
+    assert.ok(chat.people.get('u1').preferences.some((item) => item.id === old.id && item.superseded));
+  } finally {
+    store.close();
+    cleanup(dir);
+  }
+});
+
+test('episode 落卡：第三方偏好保留 subject，不冒充用户本人', async () => {
+  const { store, dir } = tempStore();
+  try {
+    const key = 'wechat:u:partner-fact';
+    const t0 = Date.now() - 60000;
+    store.appendMessage(key, { role: 'user', name: '小海', uid: 'u1', text: '我对象喜欢吃米饼', ts: t0 });
+    const chat = store.chatStore.chats.get(key);
+    const message = chat.messages[chat.messages.length - 1];
+    const llm = {
+      isMock: false,
+      async complete() {
+        return JSON.stringify({ summary: '对象的口味', facts: [{
+          uid: 'u1', subject: 'partner', key: 'preference:food', operation: 'set',
+          text: '对象喜欢吃米饼', confidence: 0.9, evidence: [message.id],
+        }] });
+      },
+    };
+    await store.closeEpisode(key, { llm, now: t0 + 1000 });
+    const active = personCard.activePreferences(store.chatStore.getCard(chat, 'u1'));
+    assert.equal(active.length, 1);
+    assert.equal(active[0].subject, 'partner');
+    assert.equal(active[0].key, 'preference:food');
+  } finally {
+    store.close();
+    cleanup(dir);
+  }
+});
+
+test('episode 落卡：同一段内没有旧 ID 时仍只保留最终 replace 状态', async () => {
+  const { store, dir } = tempStore();
+  try {
+    const key = 'wechat:u:partner-replace-same-episode';
+    const t0 = Date.now() - 60000;
+    store.appendMessage(key, { role: 'user', name: '小海', uid: 'u1', text: '我对象之前喜欢吃米饼', ts: t0 });
+    store.appendMessage(key, { role: 'user', name: '小海', uid: 'u1', text: '我对象现在不喜欢吃米饼了', ts: t0 + 1000 });
+    const chat = store.chatStore.chats.get(key);
+    const updateMessage = chat.messages[chat.messages.length - 1];
+    const llm = {
+      isMock: false,
+      async complete() {
+        return JSON.stringify({ summary: '对象口味变化', facts: [{
+          uid: 'u1', subject: 'partner', key: 'preference:food', operation: 'replace',
+          text: '对象现在不喜欢吃米饼', confidence: 0.9,
+          evidence: [updateMessage.id], supersedesIds: [], kind: 'preference',
+        }] });
+      },
+    };
+    await store.closeEpisode(key, { llm, now: t0 + 2000 });
+    const active = personCard.activePreferences(store.chatStore.getCard(chat, 'u1'));
+    assert.equal(active.length, 1);
+    assert.equal(active[0].subject, 'partner');
+    assert.equal(active[0].text, '对象现在不喜欢吃米饼');
+  } finally {
+    store.close();
+    cleanup(dir);
+  }
+});
+
 test('启动恢复：关闭 30 分钟以上，重启后补写上一条 episode 的 L2', async () => {
   const { store, file, dir } = tempStore();
   const key = 'wechat:u:a';
