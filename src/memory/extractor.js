@@ -52,6 +52,25 @@ function extractSelfFacts(text, { msgId = '', now = Date.now() } = {}) {
     return { facts: [{ text: clampText(`是${wrong[1]}`, 80), confidence: 1, source, explicit: true }] };
   }
 
+  // 历史偏好撤回：「我以前喜欢喝茶，现在不喜欢了」。
+  // 这不是一次新的偏好陈述，而是要关闭同一主题下已经写入的正向偏好。
+  const withdrawn = /^我(?:以前|之前|原来|曾经)\s*(?:喜欢|爱)\s*([^，,。！!？?]+?)\s*[，,]\s*现在\s*(?:不再|不)\s*(?:喜欢|爱)(?:了)?/.exec(body);
+  if (withdrawn) {
+    const subject = clampText(withdrawn[1], 40);
+    return {
+      facts: [{
+        text: `我不喜欢${subject}`,
+        key: `pref:${subject}`,
+        kind: 'taboo',
+        confidence: 1,
+        source,
+        explicit: true,
+        supersedes: [`我喜欢${subject}`, `我爱${subject}`],
+      }],
+      correction: { old: `喜欢${subject}`, new: `不喜欢${subject}` },
+    };
+  }
+
   if (QUESTION_RE.test(body) && !manual) return { facts: [] };
 
   let m = /^我(?:叫|的名字(?:是|叫)?|就叫)\s*([\u4e00-\u9fa5A-Za-z0-9_·]{1,12})/.exec(body);
@@ -121,9 +140,11 @@ function lightweightCandidates(messages, { now = Date.now() } = {}) {
 
 const EPISODE_SYSTEM = [
   '你在整理一段聊天 episode，供以后回忆用。只输出 JSON，不要解释、不要代码块。',
-  '格式：{"summary":"...","facts":[{"uid":"u1","text":"...","confidence":0.8}],"traits":[{"uid":"u1","text":"...","confidence":0.7,"evidence":["msg_1"]}],"events":[{"uid":"u1","title":"≤20字","summary":"60~150字","keywords":["..."],"importance":0.6,"confidence":0.8}],"threads":[{"uid":"u1","text":"..."}],"relations":[{"a":"u1","b":"u2","text":"同事","confidence":0.8}]}',
+  '格式：{"summary":"...","facts":[{"uid":"u1","subject":"self","key":"preference:drink","operation":"set|replace|retract","kind":"preference|taboo|fact|recent","text":"...","confidence":0.8,"evidence":["msg_1"],"supersedesIds":["pf_old"]}],"traits":[{"uid":"u1","text":"...","confidence":0.7,"evidence":["msg_1"]}],"events":[{"uid":"u1","title":"≤20字","summary":"60~150字","keywords":["..."],"importance":0.6,"confidence":0.8}],"threads":[{"uid":"u1","text":"..."}],"relations":[{"a":"u1","b":"u2","text":"同事","confidence":0.8}]}',
   'summary：80~150 字，写这段在聊什么、情绪基调、有没有没解决的事；群聊必须保留「谁说的」，不要揉成「用户说」。',
-  'facts：只写这些人自己明确说过的、以后还用得上的事实；第三人称转述、玩笑、假设、反问不写。',
+  'facts：只写这些人自己明确说过的、以后还用得上的事实；第三人称转述、玩笑、假设、反问不写。subject 用 self 表示发言人本人；对象、伴侣、朋友等第三方用稳定短标签（如 partner、friend:小明），不要把第三方事实伪装成 self。text 要明确写出 subject 对应的人。明确偏好用 kind=preference/taboo；稳定背景用 fact；短期信息用 recent（默认不要进长期 facts）。',
+  'facts 的 operation：新事实用 set；同一 subject+key 的当前值变化用 replace；明确表示旧事实不再成立用 retract。replace/retract 优先填写已有事实列表里的 supersedesIds，不能编造 ID。若旧状态只出现在本段聊天、人物卡里没有旧 ID，仍必须输出当前最终状态（可用 set，或 replace 且 supersedesIds 为空），不能因为没有 ID 就把长期事实省略。',
+  'facts 的 key 必须稳定、短小、可复用（如 preference:drink、preference:food、location）；value 放在 text 里写完整事实，短期一次性行为不要作为长期 fact。',
   'traits：至少两次独立观察才写，confidence ≥ 0.65，evidence 填消息 id；一次情绪不写。',
   'events：一段事一条，不要每句话一条；summary 60~150 字。',
   'relations：只写两人之间明确说出口的关系（朋友 / 同事 / 同学 / 室友 / 情侣 / 夫妻 / 兄弟 / 姐妹 / 亲戚等），text ≤40 字；a、b 都必须是下面发言人列表里的 uid，不确定就不写。',
@@ -170,7 +191,19 @@ function parseEpisode(raw) {
     if (!f) return null;
     const body = clampText(typeof f === 'string' ? f : f.text, 60);
     if (!body) return null;
-    return { uid: String(f.uid || ''), text: body, confidence: clamp01(f.confidence, 0.6) };
+    const operation = ['set', 'replace', 'retract'].includes(String(f.operation || '').toLowerCase())
+      ? String(f.operation).toLowerCase() : 'set';
+    return {
+      uid: String(f.uid || ''),
+      subject: clampText(f.subject || 'self', 40) || 'self',
+      key: clampText(f.key, 60),
+      operation,
+      text: body,
+      confidence: clamp01(f.confidence, 0.6),
+      evidence: (Array.isArray(f.evidence) ? f.evidence : []).map((x) => clampText(x, 120)).filter(Boolean).slice(0, 8),
+      supersedesIds: (Array.isArray(f.supersedesIds) ? f.supersedesIds : []).map((x) => clampText(x, 48)).filter(Boolean).slice(0, 8),
+      kind: ['preference', 'taboo', 'fact', 'recent'].includes(String(f.kind || '')) ? String(f.kind) : 'fact',
+    };
   }).filter(Boolean);
   const traits = (Array.isArray(obj.traits) ? obj.traits : []).slice(0, 8).map((t) => {
     if (!t) return null;
@@ -221,6 +254,13 @@ function clamp01(v, fallback) {
   return Math.max(0, Math.min(1, n));
 }
 
+function isTransientActionEvidence(text) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!/(?:今天|刚刚|刚才|这次|此刻|正在)/.test(s)) return false;
+  if (/(?:喜欢|爱上|更喜欢|偏爱|讨厌|不喜欢|不再|不爱|以后|从今|过敏|不能吃|搬到|搬去|辞职|离职|分手|结婚|毕业|确诊)/.test(s)) return false;
+  return /(?:喝了|吃了|买了|去了|看到|看了|读了|做了|穿了|试了|听了|用了|玩了|参加了|遇到|聊了)/.test(s);
+}
+
 /** 抽取式兜底摘要：保留谁说了什么，不退化成「用户说」 */
 function extractiveSummary(messages, maxChars = 160) {
   const parts = [];
@@ -240,7 +280,20 @@ function extractiveSummary(messages, maxChars = 160) {
  * 批量抽取。失败返回规则兜底（不抛），调用方可以照常写 L2。
  * @returns {Promise<{summary:string,facts:Array,traits:Array,events:Array,threads:Array,fallback?:boolean}>}
  */
-async function extractEpisode({ messages, llm, speakers = [], logger = null, now = Date.now() }) {
+function existingFactsPrompt(existingFacts = {}) {
+  const rows = [];
+  for (const [uid, facts] of Object.entries(existingFacts || {})) {
+    for (const fact of Array.isArray(facts) ? facts.slice(0, 30) : []) {
+      const id = clampText(fact && fact.id, 48);
+      const textValue = clampText(fact && fact.text, 80);
+      if (!id || !textValue) continue;
+      rows.push(`${uid} | ${id} | subject=${clampText(fact.subject || 'self', 40)} | key=${clampText(fact.key, 60)} | ${textValue}`);
+    }
+  }
+  return rows.length ? rows.join('\n') : '（当前人物卡没有可供更新的长期事实）';
+}
+
+async function extractEpisode({ messages, llm, speakers = [], existingFacts = {}, logger = null, now = Date.now() }) {
   const users = (messages || []).filter((m) => m && m.role === 'user' && m.text);
   const fallback = () => {
     const facts = [];
@@ -266,7 +319,7 @@ async function extractEpisode({ messages, llm, speakers = [], logger = null, now
       system: EPISODE_SYSTEM,
       turns: [{
         role: 'user',
-        content: `发言人：${speakerText}\n\n聊天记录：\n${transcript(messages)}`,
+        content: `发言人：${speakerText}\n\n当前人物卡中的已有事实（只能引用这里出现的 ID）：\n${existingFactsPrompt(existingFacts)}\n\n聊天记录：\n${transcript(messages)}`,
       }],
       // 这是全流程最长最抽象的一次请求：思考 token 也计入 max_tokens，
       // 700 会被思考吃光 → finish=length、content 为空。必须关思考 + 单独给预算。
@@ -287,6 +340,32 @@ async function extractEpisode({ messages, llm, speakers = [], logger = null, now
       return allowed.has(item.uid) ? item : null;
     };
     parsed.facts = parsed.facts.map(fix).filter(Boolean);
+    const userMessageIds = new Map();
+    const userMessagesById = new Map();
+    for (const message of users) {
+      if (!message.id || !message.uid) continue;
+      if (!userMessageIds.has(String(message.uid))) userMessageIds.set(String(message.uid), new Set());
+      userMessageIds.get(String(message.uid)).add(String(message.id));
+      userMessagesById.set(String(message.id), message);
+    }
+    const knownFactIds = new Map(Object.entries(existingFacts || {}).map(([uid, facts]) => [
+      String(uid), new Map((Array.isArray(facts) ? facts : [])
+        .filter((fact) => fact && fact.id)
+        .map((fact) => [String(fact.id), String(fact.subject || 'self')])),
+    ]));
+    parsed.facts = parsed.facts.map((fact) => {
+      const evidence = userMessageIds.get(fact.uid) || new Set();
+      fact.evidence = fact.evidence.filter((id) => evidence.has(id));
+      const known = knownFactIds.get(fact.uid) || new Map();
+      fact.supersedesIds = fact.supersedesIds.filter((id) => known.get(id) === fact.subject);
+      if (fact.operation === 'set' && fact.kind !== 'recent'
+        && fact.evidence.length > 0
+        && fact.evidence.every((id) => isTransientActionEvidence(userMessagesById.get(id)?.text))) return null;
+      if (fact.operation === 'retract' && (!fact.supersedesIds.length || !fact.evidence.length)) return null;
+      if (fact.operation === 'replace' && !fact.key) fact.operation = 'set';
+      if (fact.operation === 'replace' && fact.supersedesIds.length === 0 && !fact.key) return null;
+      return fact;
+    }).filter(Boolean);
     parsed.traits = parsed.traits.map(fix).filter(Boolean);
     parsed.events = parsed.events.map(fix).filter(Boolean);
     parsed.threads = parsed.threads.map(fix).filter(Boolean);
@@ -313,6 +392,8 @@ module.exports = {
   cleanIncoming,
   extractSelfFacts,
   applyFacts,
+  existingFactsPrompt,
+  isTransientActionEvidence,
   lightweightCandidates,
   parseEpisode,
   extractiveSummary,

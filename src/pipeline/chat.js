@@ -187,7 +187,7 @@ class Bot {
     const text = String((clean && clean.text) || '').trim();
     if (!text || text.length > 120) return null;
 
-    // 取消 / 查看：只处理「取消提醒」「提醒列表」这种整句
+    // 取消 / 查看：既支持整句「取消提醒」，也支持指向某一条待办的自然语言撤回。
     if (/^(?:取消|删除|清空)(?:所有|全部)?提醒[。.!！~～]*$/.test(text)) {
       if (isGroup && !isVerifiedOwner(this.config, msg)) {
         return { action: 'reply', key, msg, atMe, canned: '群里的提醒统一由已绑定 ID 的主人取消，避免误删其他人的提醒。', reason: 'not_owner' };
@@ -198,6 +198,19 @@ class Bot {
       for (const item of pending) if (service.cancel(item.id).ok) cancelled += 1;
       const sending = pending.length - cancelled;
       return { action: 'reply', key, msg, atMe, canned: `取消了 ${cancelled} 条提醒。${sending ? `另有 ${sending} 条正在发送，无法保证撤回，请等待发送结果。` : ''}`, reason: 'reminder_cancel' };
+    }
+    const cancellation = reminderCore.parseReminderCancellation(text);
+    if (cancellation) {
+      if (isGroup && !isVerifiedOwner(this.config, msg)) {
+        return { action: 'reply', key, msg, atMe, canned: '群里的提醒统一由已绑定 ID 的主人取消，避免误删其他人的提醒。', reason: 'not_owner' };
+      }
+      const result = service.cancelMatching(msg.chatId, cancellation);
+      if (result.ambiguous) {
+        const lines = result.candidates.slice(0, 5).map((it) => `${reminderCore.describeWhen(new Date(it.dueAt), now, tz)} ${it.text}`);
+        return { action: 'reply', key, msg, atMe, canned: '我找到多条提醒，请说清楚要取消哪一条：' + lines.join('；'), reason: 'reminder_cancel_ambiguous' };
+      }
+      if (!result.cancelled) return { action: 'reply', key, msg, atMe, canned: '没有找到对应的待发提醒。', reason: 'reminder_cancel' };
+      return { action: 'reply', key, msg, atMe, canned: `已经取消 ${result.cancelled} 条提醒。`, reason: 'reminder_cancel' };
     }
     if (/^(?:提醒列表|我的提醒|有哪些提醒)[。.!！~～?？]*$/.test(text)) {
       const pending = service.pendingFor(msg.chatId);
