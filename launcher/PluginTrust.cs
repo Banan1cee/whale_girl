@@ -11,7 +11,7 @@ namespace WhaleLauncher
     /// DER 序列再 Base64。公钥可以轮换，多个公钥用逗号或换行分隔。
     ///
     /// 当前公钥指纹（SHA-256）：135bd43efa206a50668291659154e74cb85779ca33cb13da61176b15736f7418
-    /// 私钥只放在维护者离线环境，禁止入库；签名方法见 docs/插件市场签名.md。
+    /// 私钥只放在维护者离线环境，禁止入库；签名方法见 docs/插件市场规范.md 的「目录与插件包签名」一节。
     /// </summary>
     internal static class PluginTrust
     {

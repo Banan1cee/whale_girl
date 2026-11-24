@@ -9,7 +9,7 @@
 - 修改插件清单、权限或执行入口前，先看 `docs/插件协议.md`。包只含 `plugin.json` 和对应等级的入口（1–3 级 `plugin.wasm`，4 级 `plugin.js`）。宿主、启动器和作者 CLI 以 `src/services/pluginProtocolRegistry.json` 为等级、能力、模式、作用域及输入输出 schema 的唯一来源。
 - 作者工具：`npm run plugin -- init|validate|test|pack|trial`，模板在 `templates/plugins/`。validate/test/trial 都是静态检查，不执行插件代码，不安装、不授权。
 - 授权绑定安装包摘要、清单与入口原始字节、授权代次、批准的 provider/call 和设置快照；改设置即重签，旧代次迟到结果丢弃。Node 插件以完整系统权限运行，**不是沙箱**，启用必须逐个确认。
-- 插件回到宿主只能走 `host.call`，且必须是清单声明、宿主启用的能力（见 `docs/插件SDK.md` 的全量表；`message.submit@1` 是保留能力，发送用 `message.send@1`）。不要新增通用 `/api/*` 代理。
+- 插件回到宿主只能走 `host.call`，且必须是清单声明、宿主启用的能力（见 `docs/插件协议.md` 的《宿主能力全表》；`message.submit@1` 是保留能力，发送用 `message.send@1`）。不要新增通用 `/api/*` 代理。
 - 功能通信只有一个入口：`runtime.capabilities.invokeHost(能力名, 输入)`。HTTP 路由、桥接取件和插件 `host.call` 都走它，能力实现在 `src/services/features/*`；路由只保留传输层（回环校验、桥接 token、readBody、状态码、二进制流）。新增功能＝先在 `pluginProtocolRegistry.json` 登记能力，再写 handler，最后让路由/插件调用它；不要在路由里直接调服务层再另开一套 SDK。
 - 内核同进程里的内部装配（如日记把正文交给提醒发送队列、Bot 拼提示词时同步读日记）保留直连：它们要同步语义或只是回调装配，套异步能力层会改行为。这条边界写在这里，别被后来的“统一”顺手改坏。
 - 所有插件配置、手动运行、授权都在插件卡片的「设置」。插件不得自行加左侧入口；手动执行只允许 `tool.run@1`。

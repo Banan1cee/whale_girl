@@ -96,6 +96,9 @@ The full field list is in [`docs/设置说明.md`](docs/设置说明.md). Owner 
 | [`docs/维护手册.md`](docs/维护手册.md) | Recovery, logs, backup, and factory reset |
 | [`docs/架构总览.md`](docs/架构总览.md) | Kernel, bridge, launcher, and data flow |
 | [`docs/打包与签名.md`](docs/打包与签名.md) | Build, packaging, signing, and release steps |
+| [`docs/插件协议.md`](docs/插件协议.md) | whale-plugin/1 protocol and full host-capability table |
+| [`docs/插件作者入门.md`](docs/插件作者入门.md) | Step-by-step plugin author recipe (Node/Wasm/theme) |
+| [`docs/插件市场规范.md`](docs/插件市场规范.md) | Marketplace rules, index-v5 adaptation, signing |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Full change history |
 
 ## Project structure

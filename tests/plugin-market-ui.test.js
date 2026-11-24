@@ -70,7 +70,8 @@ test('市场签名暂时隐藏，验签代码、公钥和签名工具保留', ()
   assert.match(trust, /ECDsa/);
   assert.match(trust, /ImportSubjectPublicKeyInfo/);
   assert.ok(fs.existsSync(path.join(__dirname, '..', 'scripts', 'plugin-market-sign.js')));
-  assert.ok(fs.existsSync(path.join(__dirname, '..', 'docs', '插件市场签名.md')));
+  const signRules = fs.readFileSync(path.join(__dirname, '..', 'docs', '插件市场规范.md'), 'utf8');
+  assert.match(signRules, /ECDSA|签名/, '市场规范里应保留签名规则');
   assert.doesNotMatch(page, /来源：市场目录（已签名）|来源：未签名目录/);
 });
 

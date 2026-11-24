@@ -9,7 +9,7 @@
  *   node scripts/plugin-market-sign.js verify index.json --signature-file index.json.sig --public-key public.pem
  *
  * catalog 会生成 index.json.sig；package 只输出 Base64 签名，由维护者填进目录条目的 Signature 字段。
- * 私钥只能放在离线环境，不要提交到任何仓库。详细流程见 docs/插件市场签名.md。
+ * 私钥只能放在离线环境，不要提交到任何仓库。详细流程见 docs/插件市场规范.md 的「目录与插件包签名」一节。
  */
 
 const fs = require('node:fs');

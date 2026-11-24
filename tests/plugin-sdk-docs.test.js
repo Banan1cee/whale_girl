@@ -16,7 +16,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const registry = require('../src/services/pluginProtocolRegistry.json');
 
-const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', '插件SDK.md'), 'utf8');
+const fullDoc = fs.readFileSync(path.join(__dirname, '..', 'docs', '插件协议.md'), 'utf8');
+// 只取「宿主能力全表」一节，避免把协议里的扩展点摘要表当成能力表。
+const tableStart = fullDoc.indexOf('## 4.1 宿主能力全表');
+const tableEnd = tableStart >= 0 ? fullDoc.indexOf('\n## 5. ', tableStart) : -1;
+const doc = tableStart >= 0 ? fullDoc.slice(tableStart, tableEnd > tableStart ? tableEnd : undefined) : fullDoc;
 
 function tableRows() {
   const rows = new Map();
