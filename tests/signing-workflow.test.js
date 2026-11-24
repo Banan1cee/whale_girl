@@ -58,7 +58,12 @@ test('SignPath 上传/取件参数成对，且两轮签的都校验状态', () =
 });
 
 test('只有手动测试信任测试证书，且安装前验证两轮签名和包内启动器', () => {
-  assert.match(wf, /信任 SignPath 测试证书[^\n]*\n\s+if: env\.SIGNPATH_TEST == 'true'/);
+  const trust = wf.slice(idx('信任 SignPath 测试证书'), idx('上传未签名启动器'));
+  assert.match(trust, /if: env\.SIGNPATH_TEST == 'true'/);
+  assert.match(trust, /timeout-minutes: 2/);
+  assert.match(trust, /\$env:RUNNER_ENVIRONMENT -ne 'github-hosted'/);
+  assert.match(trust, /Cert:\\LocalMachine\\Root/);
+  assert.doesNotMatch(trust, /Cert:\\CurrentUser\\Root/);
   assert.equal((wf.match(/\$sig\.SignerCertificate\.Thumbprint -ne \$env:SIGNPATH_TEST_THUMBPRINT/g) || []).length, 2);
   assert.match(wf, /if \(\$installedHash -ne \$signedHash\)/);
   assert.match(wf, /name: \$\{\{ env\.SIGNPATH_TEST == 'true' && 'whale-girl-test-signed-setup'/);

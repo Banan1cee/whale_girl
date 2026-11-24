@@ -304,11 +304,16 @@ jobs:
 
       - name: 信任 SignPath 测试证书（仅临时构建机）
         if: env.SIGNPATH_TEST == 'true'
+        timeout-minutes: 2
         shell: pwsh
         run: |
+          if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+            throw '测试证书只能导入 GitHub 托管的临时构建机。'
+          }
+          # 当前用户的根证书存储可能弹出确认，后台 runner 无法应答。
           $certPath = '.github/signpath/signpath-test.cer'
-          $cert = Import-Certificate -FilePath $certPath -CertStoreLocation 'Cert:\CurrentUser\Root' -ErrorAction Stop
-          $null = Import-Certificate -FilePath $certPath -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' -ErrorAction Stop
+          $cert = Import-Certificate -FilePath $certPath -CertStoreLocation 'Cert:\LocalMachine\Root' -ErrorAction Stop
+          $null = Import-Certificate -FilePath $certPath -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' -ErrorAction Stop
           "SIGNPATH_TEST_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
 
       - name: 上传未签名启动器（SignPath 取件用）
