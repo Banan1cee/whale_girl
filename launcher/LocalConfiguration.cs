@@ -18,6 +18,7 @@ namespace WhaleLauncher
         public LocalConfiguration(string root) { _root = root; }
 
         public Task<ApiResult> ReadAsync(string path, bool forceRefresh = false) => RunAsync(path, null, forceRefresh);
+        internal Task<ApiResult> ReadSnapshotAsync() => RunAsync(null, null, forceRefresh: true);
         public Task<ApiResult> PreviewPersonaPresetAsync(string id) => RunAsync(null, null, presetId: id);
 
         public Task<ApiResult> SaveAsync(string path, object body)
@@ -67,6 +68,8 @@ namespace WhaleLauncher
                     _snapshot = doc.RootElement.Clone();
                     _loadedAt = DateTime.UtcNow;
                 }
+                if (path == null)
+                    return new ApiResult { Ok = true, StatusCode = 200, Root = _snapshot };
                 if (!_snapshot.TryGetProperty(path, out var payload))
                     return new ApiResult { Ok = false, Error = "此功能需要启动内核。" };
                 return new ApiResult { Ok = true, StatusCode = 200, Root = payload.Clone() };

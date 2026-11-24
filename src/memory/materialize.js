@@ -46,6 +46,7 @@ function cardFromRecords(records, { uid = '', chatId = '', name = '', nickname =
       id: r.id,
       text: r.text,
       key: (r.meta && r.meta.key) || '',
+      subject: (r.meta && r.meta.subject) || 'self',
       kind: (r.meta && r.meta.tag) || 'fact',
       confidence: r.confidence,
       source: (r.source && r.source.messageIds && r.source.messageIds[0]) || '',

@@ -275,23 +275,6 @@ class ReceiverMixin:
             G.log('群聊称呼：%s' % (' / '.join(G.safe_name(x) for x in names[:10])))
         return names
 
-    def is_latest_message(self, username, msg):
-        """这条是不是当前会话的最后一条。
-
-        只有是当前最后一条时，才让 WeChatAuto 走 ``quote_msg(target_text=None)`` 的「引用最近
-        一条」新路径（UIA 行控件 + 像素重心，图片/表情也能定位）。如果生成回复
-        期间又来了新消息，宁可不引用，也不要引用错人。
-        """
-        try:
-            latest = self.db.get_messages(username, limit=1)
-        except Exception:
-            return False
-        if not latest:
-            return False
-        cur = latest[0]
-        return (str(cur.get('local_id')) == str(msg.get('local_id'))
-                and str(cur.get('shard') or '') == str(msg.get('shard') or ''))
-
     def describe_image(self, msg):
         try:
             import base64
@@ -922,10 +905,7 @@ class ReceiverMixin:
                     G.log('真 @ 失败，退回普通文本：', G.safe_name(mention))
                     if not line.startswith('@'):
                         line = '@%s %s' % (mention, line)
-                quote_latest = bool(first and G.QUOTE_REPLY
-                                    and data.get('commandType') != 'admin_spell'
-                                    and self.is_latest_message(username, msg))
-                if not self.send_text(line, target, username, quote_latest=quote_latest):
+                if not self.send_text(line, target, username):
                     if isinstance(data.get('sticker'), dict):
                         self.cancel_reply_sticker(data['sticker'], username)
                     G.log('[delivery] stage=text result=failed reason=send_failed remainingBubbles=cancelled stickers=cancelled')

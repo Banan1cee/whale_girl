@@ -4,62 +4,27 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
-using System.Windows.Media;
-using System.Windows.Media.Effects;
 
 namespace WhaleLauncher.Views
 {
-    public partial class PluginMarketPage : UserControl, IPageSectionHost
+    public partial class PluginMarketPage : UserControl
     {
-        private const string DisclaimerResource = "WhaleLauncher.PluginDisclaimer.md";
-        private const string DisclaimerAckPath = "plugins.disclaimer.acknowledged";
-        private const string DisclaimerHashPath = "plugins.disclaimer.documentHash";
-
         private readonly PluginMarket _market;
         private readonly RuntimeSupervisor _sup;
         private readonly string _version;
         private PluginInfo[] _catalog = [];
         private Dictionary<int, PluginFeedback> _feedback = new();
+        private Dictionary<string, MarketFavorite> _favorites = new();
+        private string _category = "";
         private bool _showInstalled;
-        private bool _showDeveloper;
         private bool _busy;
-        private PluginDisclaimerGate _gate;
-        private readonly List<GateOverride> _gateOverrides = new();
-        private int _visitToken;
-        private bool _contentBlocked;
-
-        private sealed record GateOverride(FrameworkElement Element, bool Enabled, Effect Effect);
-
-        // ── 区块元数据（P2）：总开关、免责声明、卡片/动态状态、开发者说明与详情
-        //    表单都不参与隐藏；页面是 Grid/Dock 跨容器布局，排序会破坏行/列结构，
-        //    所以全部 CanMove=false。 ──
-        private static readonly PageSectionDescriptor[] PluginMarketSections =
-        {
-            new PageSectionDescriptor("header", "市场操作与总开关", canHide: false, canMove: false),
-            new PageSectionDescriptor("disclaimer", "第三方插件免责声明", canHide: false, canMove: false),
-            new PageSectionDescriptor("cards", "插件卡片与动态状态", canHide: false, canMove: false),
-            new PageSectionDescriptor("developer", "开发者说明与本地校验", canHide: false, canMove: false),
-            new PageSectionDescriptor("docs", "免责声明入口", canHide: false, canMove: false),
-        };
-
-        string IPageSectionHost.PageId => "plugins";
-        IReadOnlyList<PageSectionDescriptor> IPageSectionHost.SectionDescriptors => PluginMarketSections;
-        IReadOnlyList<PageSectionBinding> IPageSectionHost.SectionBindings => new[]
-        {
-            new PageSectionBinding("header", SectionHeader),
-            new PageSectionBinding("disclaimer", SectionDisclaimer),
-            new PageSectionBinding("cards", CardsScroll),
-            new PageSectionBinding("developer", DeveloperContent),
-            new PageSectionBinding("docs", SectionDocs),
-        };
 
         internal PluginMarketPage(PluginMarket market, string version, RuntimeSupervisor sup)
         {
@@ -67,30 +32,15 @@ namespace WhaleLauncher.Views
             _sup = sup;
             _version = version;
             InitializeComponent();
-            Loaded += OnPageLoaded;
-            Unloaded += OnPageUnloaded;
-        }
-
-        private void OnPageLoaded(object sender, RoutedEventArgs e)
-        {
-            // 缓存页重入也会走 Loaded：每次进入都重新读取确认状态，不靠内存记忆。
-            var token = ++_visitToken;
-            DisposeGate();
-            BlockContent();
-            _ = InitializePageAsync(token);
-        }
-
-        private void OnPageUnloaded(object sender, RoutedEventArgs e)
-        {
-            // 异步读写可能迟到：代次失效后不允许再解锁 / 重新装回门禁。
-            _visitToken++;
-            DisposeGate();
-            UnblockContent();
-        }
-
-        private async Task InitializePageAsync(int token)
-        {
-            await Task.WhenAll(LoadFeatureStateAsync(token), EnsureDisclaimerAsync(token));
+            TryMigrateLegacyThemeAfterGate();
+            Loaded += async (_, _) =>
+            {
+                var config = await _sup.ReadConfigurationAsync("/api/features");
+                if (config.Ok && config.Prop("features").ValueKind == JsonValueKind.Array)
+                    PluginsEnabled.IsChecked = config.Prop("features").EnumerateArray()
+                        .Any(f => f.GetProperty("key").GetString() == "plugins" && f.GetProperty("value").ValueKind == JsonValueKind.True);
+                if (_catalog.Length == 0) await RefreshCatalog();
+            };
         }
 
         private LauncherTheme ReadTheme(PluginInfo info) => LauncherThemes.Parse(_market.ThemeBytes(info));
@@ -165,521 +115,6 @@ namespace WhaleLauncher.Views
             catch { /* 旧主题仍可继续生效；迁移失败留到下次明确进入 */ }
         }
 
-        private async Task LoadFeatureStateAsync(int token)
-        {
-            try
-            {
-                var config = await _sup.ReadConfigurationAsync("/api/features");
-                if (token != _visitToken) return;
-                if (config.Ok && config.Prop("features").ValueKind == JsonValueKind.Array)
-                    PluginsEnabled.IsChecked = config.Prop("features").EnumerateArray()
-                        .Any(f => f.GetProperty("key").GetString() == "plugins" && f.GetProperty("value").ValueKind == JsonValueKind.True);
-                if (_catalog.Length == 0) await RefreshCatalog();
-            }
-            catch { /* 读取失败不阻塞免责声明门禁 */ }
-        }
-
-        private async Task EnsureDisclaimerAsync(int token)
-        {
-            var (text, hash) = LoadDisclaimer();
-            var readOk = false;
-            var acknowledgedRaw = false;
-            var storedHash = "";
-            try
-            {
-                var config = await _sup.ReadConfigurationAsync("/api/config");
-                if (token != _visitToken) return;
-                readOk = TryReadDisclaimerAck(config, out acknowledgedRaw, out storedHash);
-                if (!readOk)
-                {
-                    Status.Text = "读取免责声明确认状态失败，需要重新阅读。";
-                }
-            }
-            catch (Exception ex)
-            {
-                if (token != _visitToken) return;
-                Status.Text = "读取免责声明确认状态失败，需要重新阅读：" + ex.Message;
-            }
-            if (token != _visitToken) return;
-
-            var hashMatches = string.Equals(storedHash, hash, StringComparison.OrdinalIgnoreCase);
-            if (readOk && acknowledgedRaw && hashMatches)
-            {
-                UnblockContent();
-                TryMigrateLegacyThemeAfterGate();
-                return;
-            }
-            if (readOk && acknowledgedRaw && !hashMatches)
-            {
-                // 正文更新：旧确认自动失效；用同一配置通道把确认字段复位（失败也不放行）。
-                _ = ResetStaleAcknowledgementAsync(token);
-            }
-            ShowDisclaimerGate(text, hash, token);
-        }
-
-        /// <summary>严格读取：只有落盘/接口里的布尔 true 且是当前正文的摘要才算已读。</summary>
-        private static bool TryReadDisclaimerAck(ApiResult config, out bool acknowledged, out string hash)
-        {
-            acknowledged = false;
-            hash = "";
-            if (!config.Ok || config.Root.ValueKind != JsonValueKind.Object) return false;
-            if (!config.Root.TryGetProperty("config", out var root) || root.ValueKind != JsonValueKind.Object) return true;
-            if (!root.TryGetProperty("plugins", out var plugins) || plugins.ValueKind != JsonValueKind.Object) return true;
-            if (!plugins.TryGetProperty("disclaimer", out var disclaimer) || disclaimer.ValueKind != JsonValueKind.Object) return true;
-            acknowledged = disclaimer.TryGetProperty("acknowledged", out var flag) && flag.ValueKind == JsonValueKind.True;
-            if (disclaimer.TryGetProperty("documentHash", out var stored) && stored.ValueKind == JsonValueKind.String)
-                hash = stored.GetString() ?? "";
-            return true;
-        }
-
-        private async Task ResetStaleAcknowledgementAsync(int token)
-        {
-            try
-            {
-                var result = await _sup.PatchConfigurationAsync(new Dictionary<string, object>
-                {
-                    [DisclaimerAckPath] = false,
-                });
-                if (token != _visitToken) return;
-                if (!result.Ok) Status.Text = "免责声明已更新；旧确认状态重置失败，但仍需重新阅读。";
-            }
-            catch (Exception ex)
-            {
-                if (token == _visitToken) Status.Text = "免责声明已更新；旧确认状态重置失败，但仍需重新阅读：" + ex.Message;
-            }
-        }
-
-        private void ShowDisclaimerGate(string text, string hash, int token)
-        {
-            if (_gate != null) return;
-            var gate = new PluginDisclaimerGate(text, () => SaveAcknowledgementAsync(hash, token));
-            gate.Accepted += () => OnDisclaimerAccepted(gate, token);
-            _gate = gate;
-            GateHost.Children.Add(gate);
-            GateHost.Visibility = Visibility.Visible;
-        }
-
-        private async Task<(bool Ok, string Error)> SaveAcknowledgementAsync(string hash, int token)
-        {
-            if (token != _visitToken) return (false, "页面已离开，请重新进入后再确认。");
-            try
-            {
-                var result = await _sup.PatchConfigurationAsync(new Dictionary<string, object>
-                {
-                    [DisclaimerAckPath] = true,
-                    [DisclaimerHashPath] = hash,
-                });
-                if (token != _visitToken) return (false, "页面已离开，请重新进入后再确认。");
-                if (!result.Ok) return (false, Api.Message(result));
-                // 写盘接口不保证事务：写完再按接口/落盘实际值读回核对，确认严格 true 且摘要匹配才放行。
-                var check = await _sup.ReadConfigurationAsync("/api/config");
-                if (token != _visitToken) return (false, "页面已离开，请重新进入后再确认。");
-                if (!TryReadDisclaimerAck(check, out var acknowledged, out var storedHash))
-                    return (false, "保存后读取确认状态失败。");
-                if (!acknowledged || !string.Equals(storedHash, hash, StringComparison.OrdinalIgnoreCase))
-                    return (false, "配置未按预期保存，请重试。");
-                return (true, "");
-            }
-            catch (Exception ex)
-            {
-                return (false, ex.Message);
-            }
-        }
-
-        private void OnDisclaimerAccepted(PluginDisclaimerGate gate, int token)
-        {
-            if (!Dispatcher.CheckAccess())
-            {
-                _ = Dispatcher.BeginInvoke(new Action(() => OnDisclaimerAccepted(gate, token)));
-                return;
-            }
-            if (token != _visitToken) return;
-            if (!ReferenceEquals(_gate, gate)) return;
-            DisposeGate();
-            UnblockContent();
-            TryMigrateLegacyThemeAfterGate();
-            Status.Text = "免责声明已确认。";
-        }
-
-        private void DisposeGate()
-        {
-            var gate = _gate;
-            _gate = null;
-            if (GateHost != null) GateHost.Children.Clear();
-            if (GateHost != null) GateHost.Visibility = Visibility.Collapsed;
-            gate?.Dispose();
-        }
-
-        private void BlockContent()
-        {
-            if (_contentBlocked) return;
-            foreach (var element in new FrameworkElement[] { ListPanel, DetailPanel, SectionDocs })
-            {
-                _gateOverrides.Add(new GateOverride(element, element.IsEnabled, element.Effect));
-                element.IsEnabled = false;
-                element.Effect = new BlurEffect { Radius = 8 };
-            }
-            _contentBlocked = true;
-        }
-
-        private void UnblockContent()
-        {
-            foreach (var item in _gateOverrides)
-            {
-                item.Element.IsEnabled = item.Enabled;
-                item.Element.Effect = item.Effect;
-            }
-            _gateOverrides.Clear();
-            _contentBlocked = false;
-        }
-
-        private static (string Text, string Hash) LoadDisclaimer()
-        {
-            byte[] raw;
-            using (var stream = typeof(PluginMarketPage).Assembly.GetManifestResourceStream(DisclaimerResource))
-            {
-                if (stream == null)
-                {
-                    const string fallback = "免责声明文档缺失，请修复启动器安装后再进入插件页。";
-                    return (fallback, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fallback))).ToLowerInvariant());
-                }
-                using var buffer = new MemoryStream();
-                stream.CopyTo(buffer);
-                raw = buffer.ToArray();
-            }
-            // 用规范换行后的正文做确定性摘要：跨平台构建不因 CRLF 变化而误判「正文更新」。
-            var text = Encoding.UTF8.GetString(raw).TrimStart('\uFEFF').Replace("\r\n", "\n").Replace('\r', '\n');
-            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
-            var display = Regex.Replace(text, @"(?m)^#{1,6} |^```.*$|\*\*|`", "");
-            return (display, hash);
-        }
-
-        private async void OnPluginsEnabled(object sender, RoutedEventArgs e)
-        {
-            PluginsEnabled.IsEnabled = false;
-            try
-            {
-                var result = await _sup.SaveConfigurationAsync("/api/features", new { key = "plugins", value = PluginsEnabled.IsChecked == true });
-                if (!result.Ok) { PluginsEnabled.IsChecked = PluginsEnabled.IsChecked != true; Status.Text = Api.Message(result); }
-                else Status.Text = PluginsEnabled.IsChecked == true ? "总开关已开，各插件仍须单独启用。" : "已关闭统一协议插件。";
-            }
-            catch (Exception ex) { PluginsEnabled.IsChecked = PluginsEnabled.IsChecked != true; Status.Text = Api.FriendlyError(ex); }
-            finally { PluginsEnabled.IsEnabled = true; }
-        }
-
-        private async void OnRefresh(object sender, RoutedEventArgs e) => await RefreshCatalog();
-
-        private Task RefreshCatalog() => WithStatus(async () =>
-        {
-            _catalog = await PluginCatalog.CatalogAsync();
-            Render();
-            if (_catalog.Any(info => info.DiscussionIssue > 0))
-            {
-                try { _feedback = await PluginCatalog.FeedbackAsync(); }
-                catch (Exception ex) when (ex is HttpRequestException or InvalidDataException or JsonException
-                    or OperationCanceledException or InvalidOperationException or KeyNotFoundException) { }
-            }
-            return $"市场收录 {_catalog.Length} 个插件";
-        });
-
-        private void OnSearch(object sender, TextChangedEventArgs e) => Render();
-        private void OnDiscover(object sender, RoutedEventArgs e) { _showInstalled = false; _showDeveloper = false; Render(); }
-        private void OnInstalled(object sender, RoutedEventArgs e) { _showInstalled = true; _showDeveloper = false; Render(); }
-        private void OnDeveloper(object sender, RoutedEventArgs e) { _showInstalled = false; _showDeveloper = true; Render(); }
-
-        private void OnMarketReadme(object sender, RoutedEventArgs e) => PluginDeveloperLinks.Open(PluginDeveloperLinks.Readme, Window.GetWindow(this));
-        private void OnMarketExamples(object sender, RoutedEventArgs e) => PluginDeveloperLinks.Open(PluginDeveloperLinks.Examples, Window.GetWindow(this));
-        private void OnMarketIssues(object sender, RoutedEventArgs e) => PluginDeveloperLinks.Open(PluginDeveloperLinks.Issues, Window.GetWindow(this));
-        private void OnMarketSubmit(object sender, RoutedEventArgs e) => PluginDeveloperLinks.Open(PluginDeveloperLinks.Submit, Window.GetWindow(this));
-
-        private async void OnValidatePackage(object sender, RoutedEventArgs e)
-        {
-            if (_busy) return;
-            var file = AppFilePicker.Open("选择要校验的插件 ZIP", ".zip");
-            if (file == null) return;
-            ValidationResult.Text = "正在只读校验…";
-            try
-            {
-                var package = await Task.Run(() => PluginMarket.ValidateLocal(file, _version,
-                    UpdateManifestService.LocalEpoch(_sup.BaseDir)));
-                var info = package.Info;
-                var kind = info.IsPersona ? "人设预设" : PermissionLabel(info);
-                ValidationResult.Text = $"ZIP 结构、清单和当前客户端兼容性通过。\n{PluginMarket.SafeText(info.Name, 80)} · {info.Id} · v{info.Version} · {kind}\n{info.CompatibilityLabel}"
-                    + (info.IsUnified ? "\n" + CapabilityDetails(info) + "\n统一协议插件仅供本地试装，市场尚未开放投稿。" : "")
-                    + "\n此操作未安装、启用或写入插件数据；仍需按市场要求提交源码、包和试装信息。";
-            }
-            catch (Exception ex) { ValidationResult.Text = "ZIP 校验失败：" + ex.Message; }
-        }
-
-        private async void OnLocal(object sender, RoutedEventArgs e)
-        {
-            if (_busy) return;
-            var file = AppFilePicker.Open("选择鲸鲸插件包", ".zip");
-            if (file == null) return;
-            await WithStatus(async () =>
-            {
-                var installed = await Task.Run(() => _market.InstallLocal(file,
-                    (info, current) => Dispatcher.Invoke(() => ConfirmLocalInstall(info, current))));
-                if (!installed) return "已取消安装。";
-                _showInstalled = true;
-                return "已安装，可在「已安装」里启用。";
-            });
-        }
-
-        private bool ConfirmLocalInstall(PluginInfo info, PluginInfo current)
-        {
-            var kind = info.IsPersona ? "人设预设" : PermissionLabel(info);
-            var details = $"{PluginMarket.SafeText(info.Name, 80)} · {info.Version}（{kind}）"
-                + $"\n包内自报作者 · {PluginMarket.SafeText(info.Author, 80)}";
-            if (info.IsUnified) details += "\n" + CapabilityDetails(info);
-            if (info.IsTheme) details += "\n纯数据主题：没有执行体、不申请系统权限，启用只改变启动器外观。";
-            if (current != null)
-            {
-                details += $"\n将替换已安装的「{PluginMarket.SafeText(current.Name, 80)}」{current.Version}。";
-                if (!PluginMarket.SameAuthor(current.Author, info.Author))
-                    details += $"\n⚠ 作者已变化：{PluginMarket.SafeText(current.Author, 80)} → {PluginMarket.SafeText(info.Author, 80)}。"
-                        + "\n只有在确认新作者可信时才继续。";
-            }
-            if (info.IsPersona)
-                details += "\n\n应用人设会替换包内包含的人设和表达设置。停用或卸载后，已应用的人设仍会保留。";
-            return AppDialog.Confirm(Window.GetWindow(this),
-                "此本地 ZIP 未经鲸鲸插件市场审核或签名。请确认你信任文件的提供者。\n\n" + details,
-                "安装本地插件", danger: true, okText: "仍然安装");
-        }
-
-        private async Task WithStatus(Func<Task<string>> action)
-        {
-            if (_busy) return;
-            _busy = true;
-            Status.Text = "正在处理…";
-            try { Status.Text = await action(); }
-            catch (Exception ex) { Status.Text = "操作失败：" + ex.Message; }
-            finally { _busy = false; Render(); }
-        }
-
-        private void Render()
-        {
-            if (Cards == null) return;
-            Cards.Children.Clear();
-            Discover.Style = (Style)FindResource(!_showInstalled && !_showDeveloper ? "Primary" : "Ghost");
-            Installed.Style = (Style)FindResource(_showInstalled ? "Primary" : "Ghost");
-            Developer.Style = (Style)FindResource(_showDeveloper ? "Primary" : "Ghost");
-            CardsScroll.Visibility = _showDeveloper ? Visibility.Collapsed : Visibility.Visible;
-            DeveloperContent.Visibility = _showDeveloper ? Visibility.Visible : Visibility.Collapsed;
-            if (_showDeveloper) return;
-            try
-            {
-                var local = _market.Installed().ToDictionary(p => p.Id);
-                var query = Search.Text.Trim();
-                var entries = _showInstalled
-                    ? local.Values.Where(p => p.IsUnified || p.IsPersona || p.IsTheme).AsEnumerable()
-                    : _catalog.Where(p => p.IsUnified || p.IsPersona || p.IsTheme).AsEnumerable();
-                foreach (var info in entries.Where(p => (p.Name + " " + p.Author + " " + p.Description)
-                    .Contains(query, StringComparison.OrdinalIgnoreCase)))
-                {
-                    var body = new StackPanel();
-                    var card = new Border { Style = (Style)FindResource("Card"), Child = body, Width = 286,
-                        Margin = new Thickness(0, 0, 12, 12), Padding = new Thickness(14) };
-                    body.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80),
-                        FontSize = 17, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-                    body.Children.Add(Small(PluginMarket.SafeText(info.Author, 80) + "  ·  v" + info.Version));
-                    body.Children.Add(Small(PluginMarket.SafeText(info.Description, 600)));
-                    body.Children.Add(Small(info.CompatibilityLabel));
-                    // 市场签名暂时隐藏，卡片不再显示已签名 / 未签名目录的标注。
-                    body.Children.Add(Small(info.IsTheme
-                        ? "0 级 · 纯数据主题（无执行体、无系统权限）"
-                        : info.IsUnified ? PermissionLabel(info) + "；当前仅支持本地安装"
-                        : "类型：人设预设"));
-                    if (info.IsUnified) body.Children.Add(Small(CapabilityDetails(info)));
-                    var buttons = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
-                    body.Children.Add(buttons);
-                    local.TryGetValue(info.Id, out var current);
-                    if (_showInstalled)
-                    {
-                        var enabled = info.IsTheme ? ThemeActive(info) : _market.Enabled(info.Id);
-                        if (info.IsTheme)
-                        {
-                            // 主题没有执行体/权限，不需要授权记录；启用=应用外观，停用=恢复内置。
-                            AddButton(buttons, enabled ? "停用" : "启用", () =>
-                            {
-                                if (enabled)
-                                {
-                                    if (!Appearance.ClearThemePackage(out var clearError)) throw new InvalidOperationException(clearError);
-                                    return Task.FromResult("已停用主题，恢复内置外观。");
-                                }
-                                var theme = ReadTheme(info);
-                                if (!Appearance.SetThemePackage(theme, out var applyError, info.Id)) throw new InvalidOperationException(applyError);
-                                return Task.FromResult("已启用主题。外观设置页只提供预览，管理统一走插件卡片。");
-                            });
-                            AddButton(buttons, "卸载", () =>
-                            {
-                                if (enabled)
-                                {
-                                    if (!Appearance.ClearThemePackage(out var clearError)) throw new InvalidOperationException(clearError);
-                                }
-                                _market.Uninstall(info.Id);
-                                return Task.FromResult("已卸载");
-                            }, false);
-                        }
-                        else if (info.IsUnified || info.IsPersona) AddButton(buttons, enabled ? "停用" : "启用", () =>
-                        {
-                            var fullAccessApproved = false;
-                            var chatAccessApproved = false;
-                            if (!enabled && info.RequiresFullAccess)
-                            {
-                                fullAccessApproved = AppDialog.Confirm(Window.GetWindow(this),
-                                    "此插件以当前 Windows 用户权限执行，不是沙箱。它可以访问网络、文件和系统命令。声明的调用仅约束宿主 SDK，不限制代码本身。停用权限不能撤销既有副作用。\n\n"
-                                    + CapabilityDetails(info), "授权 4 级插件", danger: true, okText: "确认完整系统权限并启用");
-                                if (!fullAccessApproved) return Task.FromResult("已取消启用");
-                            }
-                            if (!enabled && info.RequiresChatAccess)
-                            {
-                                chatAccessApproved = AppDialog.Confirm(Window.GetWindow(this),
-                                    "此插件会自动收到当前聊天消息和回复草稿，并按声明的模式参与回复处理。它在受限 Wasm 环境运行，不能直接联网、读写文件或执行系统命令。\n\n"
-                                    + CapabilityDetails(info), "授权 3 级插件", okText: "允许访问当前聊天并启用", critical: true);
-                                if (!chatAccessApproved) return Task.FromResult("已取消启用");
-                            }
-                            _market.SetEnabled(info.Id, !enabled, fullAccessApproved, chatAccessApproved);
-                            return Task.FromResult(enabled ? "已停用" : info.IsUnified
-                                ? "插件已授权；还需打开插件总开关并启动内核。"
-                                : "已启用，点击「设置」可预览和应用人设。");
-                        });
-                        AddButton(buttons, "卸载", () =>
-                        {
-                            _market.Uninstall(info.Id);
-                            return Task.FromResult("已卸载");
-                        }, false);
-                        if (info.IsTheme)
-                        {
-                            // 主题由插件卡片统一管理，不提供独立设置/授权入口。
-                        }
-                        else
-                        {
-                            var settings = new Button { Content = "设置", Style = (Style)FindResource("Ghost"),
-                                IsEnabled = (info.IsUnified || (enabled && info.IsPersona)) && PluginMarket.Compatible(info, _version, UpdateManifestService.LocalEpoch(_sup.BaseDir)) };
-                            settings.Click += async (_, _) =>
-                            {
-                                if (info.IsUnified) ShowMessageSettings(info);
-                                else if (info.IsPersona) await ShowPersonaSettings(info);
-                            };
-                            buttons.Children.Add(settings);
-                        }
-                    }
-                    else if (!PluginMarket.Compatible(info, _version, UpdateManifestService.LocalEpoch(_sup.BaseDir)))
-                        body.Children.Add(Small("此版本与你的鲸鲸不兼容"));
-                    else if (current != null && !PluginMarket.SameAuthor(current.Author, info.Author))
-                        body.Children.Add(Small("作者与已安装版本不一致，请先卸载旧版本再安装"));
-                    else if (current == null || Version.Parse(info.Version) > Version.Parse(current.Version))
-                        AddButton(buttons, current == null ? "安装" : "更新", async () =>
-                        {
-                            await _market.InstallAsync(info);
-                            return "已安装 v" + info.Version + "，可在「已安装」管理。";
-                        });
-                    else body.Children.Add(Small("已安装"));
-                    var listing = _showInstalled ? _catalog.FirstOrDefault(p => p.Id == info.Id) : info;
-                    AddFeedback(body, listing?.DiscussionIssue ?? 0);
-                    Cards.Children.Add(card);
-                }
-                if (Cards.Children.Count == 0)
-                    Cards.Children.Add(Small(_showInstalled ? "没有符合条件的已安装插件。" : "没有符合条件的市场插件。"));
-            }
-            catch (Exception ex) { Status.Text = "读取插件失败：" + ex.Message; }
-        }
-
-        private void AddFeedback(Panel card, int issue)
-        {
-            if (issue <= 0)
-            {
-                card.Children.Add(Small("评论与收藏 · 暂未开放"));
-                return;
-            }
-            _feedback.TryGetValue(issue, out var stats);
-            var row = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
-            card.Children.Add(row);
-            AddButton(row, "评论 " + (stats?.Comments.ToString() ?? "—"), () => OpenFeedback(issue, "#new_comment_field"), false);
-            AddButton(row, "♡ 收藏 " + (stats?.Favorites.ToString() ?? "—"), () => OpenFeedback(issue, ""), false);
-        }
-
-        private static Task<string> OpenFeedback(int issue, string fragment)
-        {
-            var url = $"https://github.com/Banan1cee/whale-girl-plugins/issues/{issue}{fragment}";
-            using var browser = Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            return Task.FromResult("在 GitHub 登录后可以评论或点爱心。");
-        }
-
-        private async Task ShowPersonaSettings(PluginInfo info)
-        {
-            var panel = new StackPanel();
-            panel.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80), Style = (Style)FindResource("H1") });
-            var hint = Small(_sup.NodeRunning ? "正在加载预览…" : "请先启动内核，再打开设置预览和应用。");
-            panel.Children.Add(hint);
-            ShowDetail(panel);
-            if (!_sup.NodeRunning) return;
-            var id = "market-" + info.Id;
-            var preview = await Api.Get(_sup.Url, "/api/persona/preset?id=" + Uri.EscapeDataString(id));
-            if (!preview.Ok)
-            {
-                hint.Text = "预览失败：" + Api.Message(preview);
-                return;
-            }
-            var patch = preview.Prop("patch");
-            if (patch.ValueKind != JsonValueKind.Object || !patch.TryGetProperty("customPrompt", out var prompt)
-                || prompt.ValueKind != JsonValueKind.String)
-            {
-                hint.Text = "没有可预览的人设正文。";
-                return;
-            }
-            hint.Text = "应用人设及其表达、长度设置。应用后可在人设页直接修改，本地修改不影响原始下载包。";
-            panel.Children.Add(new TextBox
-            {
-                Text = PluginMarket.SafeMultiline(prompt.GetString()), IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
-                MaxHeight = 280, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Margin = new Thickness(0, 8, 0, 8)
-            });
-            panel.Children.Add(new TextBox
-            {
-                Text = patch.GetRawText(), IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
-                MaxHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Margin = new Thickness(0, 0, 0, 8)
-            });
-            var apply = new Button
-            {
-                Content = "应用此人设", Style = (Style)FindResource("Primary"),
-                HorizontalAlignment = HorizontalAlignment.Left
-            };
-            panel.Children.Add(apply);
-            apply.Click += async (_, _) =>
-            {
-                if (!AppDialog.Confirm(Window.GetWindow(this), "将这份人设应用到当前鲸鲸？", "应用人设",
-                    okText: "应用")) return;
-                apply.IsEnabled = false;
-                try
-                {
-                    var result = await Api.PostJson(_sup.Url, "/api/persona/preset", new { id });
-                    hint.Text = result.Ok ? "已应用人设。" : "应用失败：" + Api.Message(result);
-                }
-                finally { apply.IsEnabled = true; }
-            };
-        }
-
-        private void ShowDetail(object content)
-        {
-            DetailContent.Content = content;
-            ListPanel.Visibility = Visibility.Collapsed;
-            DetailPanel.Visibility = Visibility.Visible;
-        }
-
-        private void OnBack(object sender, RoutedEventArgs e)
-        {
-            DetailContent.Content = null;
-            DetailPanel.Visibility = Visibility.Collapsed;
-            ListPanel.Visibility = Visibility.Visible;
-            Render();
-        }
-
-        private void OnDownloadGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginDownloadGuide");
-        private void OnDisclaimer(object sender, RoutedEventArgs e) => ShowGuide("PluginDisclaimer");
-
         private static string PermissionLabel(PluginInfo info) =>
             PluginMarket.LevelName(info.Level) ?? "未知等级";
 
@@ -739,6 +174,427 @@ namespace WhaleLauncher.Views
             "message.send@1" => "message.send@1（向微信排队发送消息；排队不等于已送达）",
             _ => call,
         };
+
+        private async void OnPluginsEnabled(object sender, RoutedEventArgs e)
+        {
+            PluginsEnabled.IsEnabled = false;
+            try
+            {
+                var result = await _sup.SaveConfigurationAsync("/api/features", new { key = "plugins", value = PluginsEnabled.IsChecked == true });
+                if (!result.Ok) { PluginsEnabled.IsChecked = PluginsEnabled.IsChecked != true; Status.Text = Api.Message(result); }
+                else Status.Text = PluginsEnabled.IsChecked == true ? "总开关已开，仍需逐个确认插件权限。" : "已关闭统一协议插件。";
+            }
+            catch (Exception ex) { PluginsEnabled.IsChecked = PluginsEnabled.IsChecked != true; Status.Text = Api.FriendlyError(ex); }
+            finally { PluginsEnabled.IsEnabled = true; }
+        }
+
+        private async void OnRefresh(object sender, RoutedEventArgs e) => await RefreshCatalog();
+
+        private Task RefreshCatalog() => WithStatus(async () =>
+        {
+            _catalog = await PluginCatalog.CatalogAsync();
+            Render();
+            var feedback = OptionalMarketData(() => PluginCatalog.FeedbackAsync());
+            var favorites = OptionalMarketData(() => _market.FavoritesAsync(_catalog.Select(plugin => plugin.Id)));
+            _feedback = await feedback ?? _feedback;
+            _favorites = await favorites ?? _favorites;
+            return $"市场收录 {_catalog.Length} 个插件";
+        });
+
+        private static async Task<T> OptionalMarketData<T>(Func<Task<T>> load) where T : class
+        {
+            try { return await load(); }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or JsonException
+                or OperationCanceledException or InvalidOperationException or KeyNotFoundException) { return null; }
+        }
+
+        private void OnSearch(object sender, TextChangedEventArgs e) => Render();
+        private void OnDiscover(object sender, RoutedEventArgs e) { _showInstalled = false; Render(); }
+        private void OnInstalled(object sender, RoutedEventArgs e) { _showInstalled = true; Render(); }
+
+        private void OnCategory(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: string category } || _category == category) return;
+            _category = category;
+            Render();
+        }
+
+        private void OnToggleDocuments(object sender, RoutedEventArgs e)
+        {
+            var expanded = DocumentsPanel.Visibility != Visibility.Visible;
+            SetDocumentsExpanded(expanded);
+            if (expanded) MarketScroll.ScrollToTop();
+        }
+
+        private void SetDocumentsExpanded(bool expanded)
+        {
+            DocumentsPanel.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+            DocumentsToggle.Content = expanded ? "文档（必看） ▴" : "文档（必看） ▾";
+            AutomationProperties.SetHelpText(DocumentsToggle, expanded ? "收起文档列表" : "展开文档列表");
+        }
+
+        private async void OnLocal(object sender, RoutedEventArgs e)
+        {
+            if (_busy) return;
+            var file = AppFilePicker.Open("选择鲸鲸插件包", ".zip");
+            if (file == null) return;
+            await WithStatus(async () =>
+            {
+                PluginInfo selected = null;
+                var installed = await Task.Run(() => _market.InstallLocal(file, (info, current) => Dispatcher.Invoke(() =>
+                {
+                    selected = info;
+                    return ConfirmLocalInstall(info, current);
+                })));
+                if (!installed) return "已取消安装。";
+                if (selected?.IsPersona == true) _sup.NotifyPersonaChanged();
+                _showInstalled = true;
+                _category = "";
+                Search.Clear();
+                return "已安装，可在「已安装」里启用。";
+            });
+        }
+
+        private bool ConfirmLocalInstall(PluginInfo info, PluginInfo current)
+        {
+            var kind = info.IsPersona ? "人设预设" : PermissionLabel(info);
+            var details = $"{PluginMarket.SafeText(info.Name, 80)} · {info.Version}（{kind}）"
+                + $"\n包内自报作者 · {PluginMarket.SafeText(info.Author, 80)}";
+            if (info.IsUnified) details += "\n" + CapabilityDetails(info);
+            if (info.IsTheme) details += "\n纯数据主题：没有执行体、不申请系统权限，启用只改变启动器外观。";
+            if (current != null)
+            {
+                details += $"\n将替换已安装的「{PluginMarket.SafeText(current.Name, 80)}」{current.Version}。";
+                if (!PluginMarket.SameAuthor(current.Author, info.Author))
+                    details += $"\n⚠ 作者已变化：{PluginMarket.SafeText(current.Author, 80)} → {PluginMarket.SafeText(info.Author, 80)}。"
+                        + "\n只有在确认新作者可信时才继续。";
+            }
+            if (info.IsPersona)
+                details += "\n\n应用人设会替换包内包含的人设和表达设置。停用或卸载后，已应用的人设仍会保留。";
+            return AppDialog.Confirm(Window.GetWindow(this),
+                "此本地 ZIP 未经鲸鲸插件市场审核或签名。请确认你信任文件的提供者。\n\n" + details,
+                "安装本地插件", danger: true, okText: "仍然安装");
+        }
+
+        private async Task WithStatus(Func<Task<string>> action)
+        {
+            if (_busy) return;
+            _busy = true;
+            Status.Text = "正在处理…";
+            try { Status.Text = await action(); }
+            catch (Exception ex) { Status.Text = "操作失败：" + ex.Message; }
+            finally { _busy = false; Render(); }
+        }
+
+        private void Render()
+        {
+            if (Cards == null) return;
+            Cards.Children.Clear();
+            Cards.RowDefinitions.Clear();
+            Discover.Style = (Style)FindResource(_showInstalled ? "Ghost" : "Primary");
+            Installed.Style = (Style)FindResource(_showInstalled ? "Primary" : "Ghost");
+            foreach (var button in Categories.Children.OfType<Button>())
+            {
+                var selected = Equals(button.Tag, _category);
+                button.Style = (Style)FindResource(selected ? "Primary" : "Ghost");
+                AutomationProperties.SetItemStatus(button, selected ? "已选择" : "");
+            }
+            try
+            {
+                var local = _market.Installed().ToDictionary(p => p.Id);
+                var query = Search.Text.Trim();
+                var entries = (_showInstalled ? local.Values.AsEnumerable() : _catalog.AsEnumerable()).Where(p => p.IsUnified || p.IsPersona || p.IsTheme);
+                var columns = Cards.ColumnDefinitions.Count;
+                foreach (var info in entries.Where(p => (_category.Length == 0 || (_category == "tool" ? (p.IsUnified && p.Provides?.ContainsKey("tool.run@1") == true) : _category == "message" ? (p.IsUnified && p.Provides?.Keys.Any(k => k.StartsWith("chat.", StringComparison.Ordinal)) == true) : p.Kind == _category))
+                    && (p.Name + " " + p.Author + " " + p.Description).Contains(query, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var index = Cards.Children.Count;
+                    var column = index % columns;
+                    var body = new StackPanel();
+                    var card = new Border { Style = (Style)FindResource("Card"), Child = body,
+                        Margin = new Thickness(0, 0, column == columns - 1 ? 0 : 12, 12), Padding = new Thickness(14) };
+                    var header = new DockPanel { LastChildFill = true };
+                    var author = new StackPanel();
+                    var documents = new Button
+                    {
+                        Content = "相关文档", Style = (Style)FindResource("Ghost"),
+                        VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0)
+                    };
+                    DockPanel.SetDock(documents, Dock.Right);
+                    documents.Click += (_, _) => ShowPluginDocuments(info, !_showInstalled ||
+                        _catalog.Any(entry => entry.Id == info.Id && entry.Version == info.Version &&
+                            entry.Api == info.Api && PluginMarket.SameAuthor(entry.Author, info.Author)));
+                    header.Children.Add(documents);
+                    author.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80),
+                        FontSize = 17, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                    author.Children.Add(Small(PluginMarket.SafeText(info.Author, 80) + "  ·  v" + info.Version));
+                    header.Children.Add(author);
+                    body.Children.Add(header);
+                    body.Children.Add(Small(PluginMarket.SafeText(info.Description, 600)));
+                    body.Children.Add(Small(info.CompatibilityLabel));
+                    // 市场签名暂时隐藏，卡片不再显示已签名 / 未签名目录的标注。
+                    body.Children.Add(Small(info.IsTheme ? "0 级 · 纯数据主题" : info.IsUnified ? PermissionLabel(info) : info.IsPersona ? "类型：人设预设" : "旧版插件（不可执行）"));
+                    var buttons = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
+                    body.Children.Add(buttons);
+                    local.TryGetValue(info.Id, out var current);
+                    if (_showInstalled)
+                    {
+                        var enabled = info.IsTheme ? ThemeActive(info) : _market.Enabled(info.Id);
+                        if (info.IsTheme)
+                        {
+                            // 主题没有执行体/权限，不需要授权记录；启用=应用外观，停用=恢复内置。
+                            AddButton(buttons, enabled ? "停用" : "启用", () =>
+                            {
+                                if (enabled)
+                                {
+                                    if (!Appearance.ClearThemePackage(out var clearError)) throw new InvalidOperationException(clearError);
+                                    return Task.FromResult("已停用主题，恢复内置外观。");
+                                }
+                                var theme = ReadTheme(info);
+                                if (!Appearance.SetThemePackage(theme, out var applyError, info.Id)) throw new InvalidOperationException(applyError);
+                                return Task.FromResult("已启用主题。外观设置页只提供预览，管理统一走插件卡片。");
+                            });
+                            if (!info.IsTheme) AddButton(buttons, "卸载", () =>
+                            {
+                                if (enabled)
+                                {
+                                    if (!Appearance.ClearThemePackage(out var clearError)) throw new InvalidOperationException(clearError);
+                                }
+                                _market.Uninstall(info.Id);
+                                return Task.FromResult("已卸载");
+                            }, false);
+                        }
+                        else if (info.IsUnified || info.IsPersona) AddButton(buttons, enabled ? "停用" : "启用", () =>
+                        {
+                            var fullAccessApproved = false;
+                            var chatAccessApproved = false;
+                            if (!enabled && info.RequiresFullAccess)
+                            {
+                                fullAccessApproved = AppDialog.Confirm(Window.GetWindow(this),
+                                    "此插件以当前 Windows 用户权限执行，不是沙箱。它可以访问网络、文件和系统命令。声明的调用仅约束宿主 SDK，不限制代码本身。停用权限不能撤销既有副作用。\n\n"
+                                    + CapabilityDetails(info), "授权 4 级插件", danger: true, okText: "确认完整系统权限并启用");
+                                if (!fullAccessApproved) return Task.FromResult("已取消启用");
+                            }
+                            if (!enabled && info.RequiresChatAccess)
+                            {
+                                chatAccessApproved = AppDialog.Confirm(Window.GetWindow(this),
+                                    "此插件会自动收到当前聊天消息和回复草稿，并按声明的模式参与回复处理。它在受限 Wasm 环境运行，不能直接联网、读写文件或执行系统命令。\n\n"
+                                    + CapabilityDetails(info), "授权 3 级插件", okText: "允许访问当前聊天并启用", critical: true);
+                                if (!chatAccessApproved) return Task.FromResult("已取消启用");
+                            }
+                            _market.SetEnabled(info.Id, !enabled, fullAccessApproved, chatAccessApproved);
+                            return Task.FromResult(enabled ? "已停用" : info.IsUnified
+                                ? "插件已授权；还需打开插件总开关并启动内核。"
+                                : "已启用，点击「设置」可预览和应用人设。");
+                        });
+                        if (!info.IsTheme) AddButton(buttons, "卸载", () =>
+                        {
+                            _market.Uninstall(info.Id);
+                            return Task.FromResult("已卸载");
+                        }, false);
+                        if (info.IsTheme)
+                        {
+                            // 主题由插件卡片统一管理，不提供独立设置/授权入口。
+                        }
+                        else
+                        {
+                            var settings = new Button { Content = "设置", Style = (Style)FindResource("Ghost"),
+                                IsEnabled = (info.IsUnified || (enabled && info.IsPersona)) && PluginMarket.Compatible(info, _version, UpdateManifestService.LocalEpoch(_sup.BaseDir)) };
+                            settings.Click += async (_, _) =>
+                            {
+                                if (info.IsUnified) ShowMessageSettings(info);
+                                else if (info.IsPersona) await ShowPersonaSettings(info);
+                            };
+                            buttons.Children.Add(settings);
+                        }
+                    }
+                    else if (!PluginMarket.Compatible(info, _version, UpdateManifestService.LocalEpoch(_sup.BaseDir)))
+                        body.Children.Add(Small("此版本与你的鲸鲸不兼容"));
+                    else if (current != null && !PluginMarket.SameAuthor(current.Author, info.Author))
+                        body.Children.Add(Small("作者与已安装版本不一致，请先卸载旧版本再安装"));
+                    else if (current == null || Version.Parse(info.Version) > Version.Parse(current.Version))
+                        AddButton(buttons, current == null ? "安装" : "更新", async () =>
+                        {
+                            await _market.InstallAsync(info);
+                            if (info.IsPersona) _sup.NotifyPersonaChanged();
+                            return "已安装 v" + info.Version + "，可在「已安装」管理。";
+                        });
+                    else body.Children.Add(Small("已安装"));
+                    var listing = _showInstalled ? _catalog.FirstOrDefault(p => p.Id == info.Id) : info;
+                    if (listing != null) AddMarketActivity(body, listing);
+                    if (column == 0) Cards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                    Grid.SetRow(card, index / columns);
+                    Grid.SetColumn(card, column);
+                    Cards.Children.Add(card);
+                }
+                if (Cards.Children.Count == 0)
+                {
+                    var empty = Small(_showInstalled ? "没有符合条件的已安装插件。" : "没有符合条件的市场插件。");
+                    Grid.SetColumnSpan(empty, columns);
+                    Cards.Children.Add(empty);
+                }
+            }
+            catch (Exception ex) { Status.Text = "读取插件失败：" + ex.Message; }
+        }
+
+        private void AddMarketActivity(Panel card, PluginInfo listing)
+        {
+            var issue = listing.DiscussionIssue;
+            var row = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
+            card.Children.Add(row);
+            if (issue > 0)
+            {
+                _feedback.TryGetValue(issue, out var stats);
+                AddButton(row, "评论 " + (stats?.Comments.ToString() ?? "—"), () => OpenFeedback(issue), false);
+            }
+
+            _favorites.TryGetValue(listing.Id, out var favorite);
+            var favorited = favorite?.Favorited == true;
+            AddButton(row, (favorited ? "♥ 已收藏 " : "♡ 收藏 ") + (favorite?.Count.ToString("N0") ?? "—"), async () =>
+            {
+                var saved = await _market.SetFavoriteAsync(listing.Id, !favorited);
+                _favorites[listing.Id] = saved;
+                return saved.Favorited ? "已收藏" : "已取消收藏";
+            }, false);
+        }
+
+        private static Task<string> OpenFeedback(int issue)
+        {
+            var url = $"https://github.com/Banan1cee/whale-girl-plugins/issues/{issue}#new_comment_field";
+            using var browser = Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            return Task.FromResult("在 GitHub 登录后可以评论。");
+        }
+
+        private async Task ShowPersonaSettings(PluginInfo info)
+        {
+            var panel = new StackPanel();
+            panel.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80), Style = (Style)FindResource("H1") });
+            var hint = Small("正在加载预览…");
+            panel.Children.Add(hint);
+            ShowDetail(panel);
+            var id = "market-" + info.Id;
+            var preview = await _sup.PreviewPersonaPresetAsync(id);
+            if (!preview.Ok)
+            {
+                hint.Text = "预览失败：" + Api.Message(preview);
+                return;
+            }
+            var patch = preview.Prop("patch");
+            if (patch.ValueKind != JsonValueKind.Object || !patch.TryGetProperty("customPrompt", out var prompt)
+                || prompt.ValueKind != JsonValueKind.String)
+            {
+                hint.Text = "没有可预览的人设正文。";
+                return;
+            }
+            hint.Text = "应用人设及其表达、长度设置。应用后可在人设页直接修改，本地修改不影响原始下载包。";
+            panel.Children.Add(new TextBox
+            {
+                Text = PluginMarket.SafeMultiline(prompt.GetString()), IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
+                MaxHeight = 280, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Margin = new Thickness(0, 8, 0, 8)
+            });
+            panel.Children.Add(new TextBox
+            {
+                Text = patch.GetRawText(), IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
+                MaxHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+            var apply = new Button
+            {
+                Content = "应用此人设", Style = (Style)FindResource("Primary"),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            panel.Children.Add(apply);
+            apply.Click += async (_, _) =>
+            {
+                if (!AppDialog.Confirm(Window.GetWindow(this), "将这份人设应用到当前鲸鲸？", "应用人设",
+                    okText: "应用")) return;
+                apply.IsEnabled = false;
+                try
+                {
+                    var result = await _sup.SaveConfigurationAsync("/api/persona/preset", new { id });
+                    if (result.Ok) _sup.NotifyPersonaChanged();
+                    hint.Text = result.Ok ? "已应用人设。" : "应用失败：" + Api.Message(result);
+                }
+                finally { apply.IsEnabled = true; }
+            };
+        }
+
+        private void ShowDetail(object content)
+        {
+            SetDocumentsExpanded(false);
+            DetailContent.Content = content;
+            ListPanel.Visibility = Visibility.Collapsed;
+            DetailPanel.Visibility = Visibility.Visible;
+        }
+
+        private void OnBack(object sender, RoutedEventArgs e)
+        {
+            DetailContent.Content = null;
+            DetailPanel.Visibility = Visibility.Collapsed;
+            ListPanel.Visibility = Visibility.Visible;
+            Render();
+        }
+
+        private void OnDownloadGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginDownloadGuide");
+        private void OnDisclaimer(object sender, RoutedEventArgs e) => ShowGuide("PluginDisclaimer");
+
+        private void ShowPluginDocuments(PluginInfo info, bool inCatalog)
+        {
+            var body = new DockPanel { Margin = new Thickness(12) };
+            var heading = Small(PluginMarket.SafeText(info.Name, 80) + " · 相关文档");
+            DockPanel.SetDock(heading, Dock.Top);
+            body.Children.Add(heading);
+            if (!inCatalog)
+            {
+                body.Children.Add(Small("这个安装版本没有匹配的市场文档。"));
+                ShowDetail(body);
+                return;
+            }
+
+            var tabs = new WrapPanel { Margin = new Thickness(0, 10, 0, 10) };
+            DockPanel.SetDock(tabs, Dock.Top);
+            body.Children.Add(tabs);
+            var readme = new Button { Content = "README", Margin = new Thickness(0, 0, 8, 0) };
+            var tutorial = new Button { Content = "使用教程" };
+            tabs.Children.Add(readme);
+            tabs.Children.Add(tutorial);
+            var viewer = new TextBox
+            {
+                IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(12)
+            };
+            body.Children.Add(viewer);
+
+            var request = 0;
+            async Task LoadAsync(bool showTutorial)
+            {
+                var current = ++request;
+                readme.Style = (Style)FindResource(showTutorial ? "Ghost" : "Primary");
+                tutorial.Style = (Style)FindResource(showTutorial ? "Primary" : "Ghost");
+                viewer.Text = "正在读取文档…";
+                string content;
+                try
+                {
+                    var text = await PluginMarket.ReadDocumentAsync(info.Id, showTutorial);
+                    content = string.IsNullOrWhiteSpace(text)
+                        ? (showTutorial ? "作者还没有提供独立教程，可查看 README。" : "作者还没有提供 README，可查看使用教程。")
+                        : text;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or OperationCanceledException)
+                {
+                    content = "文档暂时无法读取，请检查网络后点选重试。";
+                }
+                if (current != request || !ReferenceEquals(DetailContent.Content, body)) return;
+                viewer.Text = content;
+                viewer.ScrollToHome();
+            }
+
+            readme.Click += async (_, _) => await LoadAsync(false);
+            tutorial.Click += async (_, _) => await LoadAsync(true);
+            ShowDetail(body);
+            _ = LoadAsync(false);
+        }
 
         private void ShowMessageSettings(PluginInfo info)
         {
@@ -826,6 +682,7 @@ namespace WhaleLauncher.Views
         private void OnSecurityGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginSecurityGuide");
         private void OnAuthorGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginAuthorGuide");
         private void OnProtocolGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginProtocolGuide");
+
 
         private void ShowGuide(string resource)
         {

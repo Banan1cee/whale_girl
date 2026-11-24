@@ -254,39 +254,11 @@ class Store {
     const id = String(uid || '');
     if (!id || !Array.isArray(facts) || !facts.length) return;
     const existing = recordStore.readSubjects(this.memoryDir, id);
-    const byId = new Map(existing.map((r) => [r.id, r]));
-    for (const fact of facts) {
-      const item = record.makeRecord({
-        kind: 'preference',
-        text: fact.text,
-        ts: entry.ts,
-        tier: 'L',
-        scope: `chat:${chat.hash}`,
-        subject: id,
-        source: { chatId: chat.chatId, messageIds: [entry.id] },
-        confidence: fact.confidence,
-        meta: { key: fact.key || '', tag: fact.kind || 'fact', explicit: true },
-      });
-      if (!item) continue;
-      // 同义自述去重：同一个 key（比如 name / city）或同一句话，只更新不新增。
-      // 记录 id 含消息 id，所以「同一句话发两遍」会得到两个 id —— 必须在这里按内容合并。
-      const textKey = personCard.normalizeText(item.text);
-      const dup = [...byId.values()].find((r) => r.state === 'active'
-        && ((item.meta.key && r.meta && r.meta.key === item.meta.key)
-          || (textKey && personCard.normalizeText(r.text) === textKey)));
-      if (dup) {
-        byId.set(dup.id, {
-          ...dup,
-          confidence: Math.max(Number(dup.confidence) || 0, Number(item.confidence) || 0),
-          hits: (Number(dup.hits) || 0) + 1,
-          meta: { ...(dup.meta || {}), ...(item.meta || {}), lastMentionedAt: entry.ts },
-        });
-        continue;
-      }
-      const old = byId.get(item.id);
-      byId.set(item.id, old ? { ...old, ...item, hits: old.hits || 0, ts: old.ts } : item);
-    }
-    const capped = record.capByKind([...byId.values()], {
+    const merged = record.mergeFacts(existing, facts, {
+      uid: id, scope: `chat:${chat.hash}`, source: { chatId: chat.chatId, messageIds: [entry.id] },
+      now: entry.ts, explicit: true,
+    });
+    const capped = record.capByKind(merged, {
       caps: { preference: LIMITS.maxPreferencesPerPerson, fact: LIMITS.maxPreferencesPerPerson },
       now: entry.ts,
     });

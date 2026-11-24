@@ -288,6 +288,37 @@ function markDeleted(record, now = Date.now()) {
   return { ...record, state: 'deleted', deletedAt: now };
 }
 
+/** 同一会话/人物主体的当前事实更新；旧记录只归档，不把正文重新写回名册。 */
+function mergeFacts(existing, facts, { uid, scope, source, now, explicit = false } = {}) {
+  const result = new Map(existing.map(item => [item.id, item]));
+  for (const fact of facts) {
+    const subject = fact.subject || 'self';
+    const ids = new Set(fact.supersedesIds || []);
+    const texts = (fact.supersedes || []).map(value => cleanText(value).replace(/[，。！？,.!?\s]/g, ''));
+    const normalize = value => cleanText(value).replace(/[，。！？,.!?\s]/g, '');
+    const candidates = [...result.values()].filter(item => item.scope === scope && item.subject === uid
+      && item.state === 'active' && ['preference', 'fact'].includes(item.kind)
+      && (item.meta?.subject || 'self') === subject);
+    const item = makeRecord({ kind: 'preference', text: fact.text, ts: now, tier: 'L', scope, subject: uid,
+      source, confidence: fact.confidence,
+      meta: { subject, key: fact.key || '', tag: fact.kind || 'fact', explicit } });
+    if (fact.kind === 'recent') continue;
+    for (const old of candidates) {
+      const replaced = ids.has(old.id) || texts.some(text => normalize(old.text).includes(text))
+        || (fact.key && old.meta?.key === fact.key && normalize(old.text) !== normalize(fact.text));
+      if (replaced) result.set(old.id, { ...old, state: 'archived', archivedAt: now,
+        meta: { ...old.meta, superseded: true }, updatedAt: now });
+    }
+    if (!item) continue;
+    const duplicate = candidates.find(old => result.get(old.id)?.state === 'active'
+      && normalize(old.text) === normalize(item.text) && (old.meta?.key || '') === item.meta.key);
+    if (duplicate) result.set(duplicate.id, { ...duplicate, confidence: Math.max(duplicate.confidence, item.confidence),
+      hits: (duplicate.hits || 0) + 1, meta: { ...duplicate.meta, ...item.meta, lastMentionedAt: now } });
+    else result.set(item.id, item);
+  }
+  return [...result.values()];
+}
+
 module.exports = {
   TIERS,
   KINDS,
@@ -307,6 +338,7 @@ module.exports = {
   capRecords,
   capByKind,
   markDeleted,
+  mergeFacts,
 };
 
 

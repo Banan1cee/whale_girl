@@ -78,6 +78,16 @@ test('明确让她提醒时才认（提醒我 / 叫我 / 别忘）', () => {
   }
 });
 
+test('自然语言撤回能提取目标，而不是当成新提醒', () => {
+  assert.deepEqual(reminder.parseReminderCancellation('第三天的事情取消'), {
+    query: '', day: '第三天', vague: true,
+  });
+  assert.deepEqual(reminder.parseReminderCancellation('明天别提醒我买菜'), {
+    query: '买菜', day: '明天', vague: false,
+  });
+  assert.equal(reminder.parseReminderCancellation('我今天不喜欢喝茶'), null);
+});
+
 test('回执里带时间和事情', () => {
   const out = reminder.parseReminder('明天八点提醒我带伞', NOW);
   const text = reminder.confirmText(out, { now: NOW });
@@ -317,6 +327,21 @@ test('「取消提醒」和「提醒列表」都能用', async (t) => {
   const cancel = await bot.decide(msg('取消提醒'));
   assert.match(cancel.canned, /取消/);
   assert.equal(bot.reminders.pendingFor('wxid_a').length, 0);
+});
+
+test('第二天说「第三天的事情取消」不会在第三天继续提醒', async (t) => {
+  const { config } = fixture(t);
+  const now = new Date(NOW);
+  const { bot } = makeBot(t, config, now);
+  const msg = (text) => ({ platform: 'wechat', chatId: 'wxid_a', chatType: 'private', senderId: 'u1', senderName: '阿螈', text });
+  await bot.decide(msg('后天八点提醒我提交报告'));
+  now.setDate(now.getDate() + 1);
+  const cancel = await bot.decide(msg('第三天的事情取消'));
+  assert.equal(cancel.reason, 'reminder_cancel');
+  assert.match(cancel.canned, /已经取消 1 条/);
+  now.setDate(now.getDate() + 1);
+  assert.equal(bot.reminders.due().length, 0);
+  assert.equal(bot.reminders.list()[0].status, 'cancelled');
 });
 
 test('普通聊天不会被提醒分支吃掉', async (t) => {

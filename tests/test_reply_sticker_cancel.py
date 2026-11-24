@@ -18,7 +18,7 @@ class ReplyStickerCancelTests(unittest.TestCase):
         self.env = dict(sticker_config_now=Mock(return_value={}),
                         LOCAL_HTTP=SimpleNamespace(post=self.http),
                         sticker_base='http://test.invalid', sticker_headers={'x-bot-token': 'test-only'},
-                        log=Mock(), QUOTE_REPLY=False, time=SimpleNamespace(sleep=Mock()),
+                        log=Mock(), time=SimpleNamespace(sleep=Mock()),
                         data={'sticker': self.item}, username='peer-test', target='测试会话',
                         first=True, mention=None, is_group=False,
                         bubbles=['first', 'second'], send_text=Mock(return_value=False))

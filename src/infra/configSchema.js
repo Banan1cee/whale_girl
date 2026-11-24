@@ -148,7 +148,6 @@ const FIELDS = {
   // ---- 微信桥接（bridge/engine.py 直接读这几个）----
   'wechat.backgroundSend': { type: 'bool' },
   'wechat.keyboardFallback': { type: 'bool' },
-  'wechat.quoteReply': { type: 'bool' },
   'wechat.whitelistOnly': { type: 'bool' },
   'wechat.accountGuard': { type: 'bool' },
   'wechat.bgSend.enabled': { type: 'bool' },

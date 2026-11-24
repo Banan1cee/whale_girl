@@ -89,6 +89,11 @@ try
     Reject(() => PluginMarket.ReadPackage(Pack(ScheduledManifest("""{"mode":"schedule","scope":"all","intervalSeconds":86401}"""), "plugin.js", scheduledEntry)), "拒绝越界周期");
     Reject(() => PluginMarket.ReadPackage(Pack(manifest, "../plugin.js", script)), "禁止 ZIP 路径穿越");
     Reject(() => PluginMarket.ReadPackage(Pack(manifest, "plugin.js", [0xff, 0xfe])), "入口必须是 UTF-8");
+    Check(PluginMarket.DocumentUrl("context-notes", tutorial: false) ==
+        "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/plugins/context-notes/README.md", "市场README地址");
+    Check(PluginMarket.DocumentUrl("context-notes", tutorial: true).EndsWith("/context-notes/GUIDE.md"), "市场教程地址");
+    Reject(() => PluginMarket.DocumentUrl("../context-notes", tutorial: false), "文档地址拒绝无效插件ID");
+
 
     var market = new PluginMarket(temp);
     Check(!market.InstallLocal(zipPath, (_, _) => false) && !Directory.Exists(Path.Combine(temp, "data")), "取消安装不写数据");

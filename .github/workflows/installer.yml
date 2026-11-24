@@ -446,7 +446,8 @@ jobs:
             return $p
           }
 
-          $installArgs = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=$dir", "/LOG=$log")
+          # 保留默认勾选的控制台，CI 不下载或安装系统级 Tailscale。
+          $installArgs = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/MERGETASKS="!phoneconsole\tailscale"', "/DIR=$dir", "/LOG=$log")
           Write-Output '阶段 1/5 静默安装…'
           $proc = Invoke-Quiet $setup $installArgs 900 '静默安装' $log
           Write-Output "安装程序退出码：$($proc.ExitCode)"
@@ -467,12 +468,30 @@ jobs:
             'runtime\python\python312.zip',
             'runtime\manifest.json',
             'VB-CABLE虚拟声卡\VBCABLE_Setup_x64.exe',
-            'VB-CABLE虚拟声卡\readme.txt'
+            'VB-CABLE虚拟声卡\readme.txt',
+            '手机远程控制\1 - 下载或安装 Tailscale.cmd',
+            '手机远程控制\2 - 一键打开控制台.cmd',
+            '手机远程控制\3 - 一键复制手机访问地址.cmd',
+            '手机远程控制\windows-setup.ps1',
+            '手机远程控制\server.js',
+            '手机远程控制\launcher-control.js',
+            '手机远程控制\README.md',
+            '手机远程控制\public\index.html',
+            '手机远程控制\public\app.js',
+            '手机远程控制\public\app.css'
           )
           $missing = $expect | Where-Object { -not (Test-Path (Join-Path $dir $_)) }
           if ($missing) {
             Write-Output "::error title=安装后缺文件::$($missing -join '、')"
             exit 1
+          }
+          $consoleDir = Join-Path $dir '手机远程控制'
+          $bom = [IO.File]::ReadAllBytes((Join-Path $consoleDir 'windows-setup.ps1'))
+          if ($bom.Length -lt 3 -or $bom[0] -ne 0xef -or $bom[1] -ne 0xbb -or $bom[2] -ne 0xbf) {
+            throw 'windows-setup.ps1 缺少 UTF-8 BOM，Windows PowerShell 5.1 无法正确读取中文'
+          }
+          if (Get-ChildItem $consoleDir -Filter '*.msi' -Recurse -File) {
+            throw '手机远程控制不应嵌入第三方 MSI'
           }
 
           node scripts/release-resources.js verify-tree installer $dir . --payload
@@ -585,7 +604,7 @@ jobs:
 
           # 安装器是 GUI 子系统程序：必须 Start-Process + 显式超时，卡住时能杀进程并留证据。
           function Invoke-Setup([string]$label, [string]$logPath) {
-            $p = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$dir","/LOG=$logPath") -PassThru
+            $p = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/MERGETASKS="!phoneconsole\tailscale"',"/DIR=$dir","/LOG=$logPath") -PassThru
             if (-not $p.WaitForExit(900000)) {
               try { $p.Kill() } catch { }
               Write-Output "::error title=$label 超时::900 秒没结束，已杀进程；日志见 $logPath"
@@ -614,6 +633,7 @@ jobs:
           Set-Content -LiteralPath "$dir\runtime\vb-cable\VBCABLE_Setup_x64.exe" -Value 'old exe' -Encoding utf8
           Set-Content -LiteralPath "$dir\src\http\static.js" -Value '// old static' -Encoding utf8
           Set-Content -LiteralPath "$dir\src\adapters\bilibili.js" -Value '// old adapter' -Encoding utf8
+          Set-Content -LiteralPath "$dir\手机远程控制\3 - 显示配对 Key.cmd" -Value '@echo off' -Encoding ascii
           Set-Content -LiteralPath "$dir\data\keep-me.txt" -Value 'keep' -Encoding utf8
           if (-not (Test-Path "$dir\config.json")) {
             Set-Content -LiteralPath "$dir\config.json" -Value '{"apiKey":"probe","custom":123}' -Encoding utf8
@@ -630,7 +650,7 @@ jobs:
           foreach ($old in @("$dir\personas", "$dir\resources", "$dir\runtime\vb-cable")) {
             if (Test-Path $old) { $problems += "旧目录还在：$old" }
           }
-          foreach ($f in @("$dir\src\http\static.js", "$dir\src\adapters\bilibili.js")) {
+          foreach ($f in @("$dir\src\http\static.js", "$dir\src\adapters\bilibili.js", "$dir\手机远程控制\3 - 显示配对 Key.cmd")) {
             if (Test-Path $f) { $problems += "旧文件还在：$f" }
           }
           if (-not (Test-Path "$dir\VB-CABLE虚拟声卡\VBCABLE_Setup_x64.exe")) {

@@ -35,6 +35,8 @@ namespace WhaleLauncher
         private bool _busy;
         private bool _refreshing;
         private bool _memoryNoticeChecked;
+        private PhoneControl _phoneControl;
+        private readonly PhoneFeatures _phoneFeatures;
 
         // 官网和赞助入口固定在侧栏底部；链接写死，不依赖内核或网络配置，断网时浏览器自行提示。
         private const string OfficialSite = "https://bot.zyyc.cc/";
@@ -63,6 +65,7 @@ namespace WhaleLauncher
             _sup = new RuntimeSupervisor(dir);
             _sup.UpdateBlocked = true;
             _pluginMarket = new PluginMarket(dir);
+            _phoneFeatures = new PhoneFeatures(_sup, _pluginMarket);
 
             // 正式版不该显示成 v4.0-alpha：那会让用户以为自己装的是测试版，
             // 而且强制更新拿这个版本号做比较，后缀只会添乱。
@@ -89,6 +92,16 @@ namespace WhaleLauncher
             Loaded += async (_, __) =>
             {
                 Nav.SelectedIndex = 0;
+                try
+                {
+                    if (File.Exists(Path.Combine(dir, "手机远程控制", "server.js")) ||
+                        File.Exists(Path.Combine(dir, "tools", "remote-console", "server.js")))
+                    {
+                        _phoneControl ??= new PhoneControl(dir, (action, payload) =>
+                            Dispatcher.InvokeAsync(() => RunPhoneActionAsync(action, payload)).Task.Unwrap());
+                    }
+                }
+                catch (Exception ex) { _sup.SayWarn("手机控制接口启动失败：" + ex.GetType().Name); }
                 await SilentUpdateCheckAsync(allowBlocking: true);
                 await RefreshAsync();
             };
@@ -97,8 +110,108 @@ namespace WhaleLauncher
             {
                 Appearance.Changed -= OnAppearanceChanged;
                 _timer.Stop();
+                _phoneControl?.Dispose();
                 _sup.Dispose();
             };
+        }
+
+        private async Task<object> RunPhoneActionAsync(string action, JsonElement payload)
+        {
+            if ((action is "start" or "restart" or "restart-bridge" or "restart-wechat" or "voice-install-driver") &&
+                !PhoneControl.AllowsProcessLaunch())
+                return new { ok = false, error = "启动器正以管理员权限运行，请在电脑上启动或重启程序。" };
+            if (PhoneFeatures.Handles(action)) return await _phoneFeatures.RunAsync(action, payload);
+            if (action == "configuration-read" || action == "configuration-save")
+            {
+                if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty("path", out var pathValue) ||
+                    pathValue.ValueKind != JsonValueKind.String) return new { ok = false, error = "设置路径无效。" };
+                var path = pathValue.GetString();
+                var reading = action == "configuration-read";
+                var canRead = path is "/api/config" or "/api/persona" or "/api/persona/presets" or "/api/features"
+                    or "/api/moments/settings" or "/api/moments/publish-settings" or "/api/reminders" or "/api/settings";
+                var canWrite = path is "/api/config" or "/api/persona" or "/api/persona/preset" or "/api/features"
+                    or "/api/settings" or "/api/moments/settings" or "/api/moments/publish-settings";
+                if ((reading && !canRead) || (!reading && !canWrite))
+                    return new { ok = false, error = "这个设置不能通过手机调整。" };
+                ApiResult result;
+                if (reading)
+                    result = await _sup.ReadConfigurationAsync(path);
+                else
+                {
+                    if (!payload.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Object)
+                        return new { ok = false, error = "设置内容无效。" };
+                    result = await _sup.SaveConfigurationAsync(path, body);
+                }
+                return result.Ok ? new { ok = true, data = result.Root } : new { ok = false, error = result.Error };
+            }
+            if (action == "diagnostics")
+            {
+                var current = await _sup.ProbeAsync();
+                return new
+                {
+                    ok = true,
+                    kernelRunning = current.NodeUp,
+                    kernelReady = current.NodeReady,
+                    bridgeRunning = current.BridgeUp,
+                    bridgeOnline = current.BrOnline,
+                    wechatAccountVerified = current.BrAccountOk,
+                    updateBlocked = _sup.UpdateBlocked,
+                    processLaunchAllowed = PhoneControl.AllowsProcessLaunch(),
+                    logs = _sup.History(120).Select(line => new
+                    {
+                        time = line.At.ToString("HH:mm:ss"),
+                        source = line.Src,
+                        level = line.Level.ToString(),
+                        text = line.Text.Length > 1500 ? line.Text.Substring(0, 1500) : line.Text,
+                    }),
+                };
+            }
+
+            if (action != "start" && action != "stop" && action != "restart" &&
+                action != "restart-bridge" && action != "restart-wechat")
+                return new { ok = false, error = "未知操作。" };
+            if (_busy || _updating)
+                return new { ok = false, error = "启动器正在执行另一项操作。" };
+            _busy = true;
+            BtnToggle.IsEnabled = BtnRestart.IsEnabled = false;
+            try
+            {
+                if (_sup.UpdateBlocked && action != "stop")
+                    return new { ok = false, error = "请等待启动器检查更新或先完成必须的更新。" };
+                var before = await _sup.ProbeAsync();
+                if (before.ExternalNode && action != "restart-wechat")
+                    return new { ok = false, error = "内核由其他进程启动，请先通过原入口停止它。" };
+
+                switch (action)
+                {
+                    case "start":
+                    case "restart":
+                        if (action == "restart") await Task.Run(_sup.StopAll);
+                        await _sup.StartAllAsync();
+                        return _sup.NodeRunning && (await _sup.ProbeAsync()).NodeReady
+                            ? new { ok = true, message = "内核已启动。" }
+                            : new { ok = false, error = "内核未就绪，请查看诊断。" };
+                    case "stop":
+                        await Task.Run(_sup.StopAll);
+                        return new { ok = true, message = "内核和桥接已停止。" };
+                    case "restart-bridge":
+                        if (!_sup.NodeRunning) return new { ok = false, error = "请先启动内核。" };
+                        await Task.Run(_sup.RestartBridge);
+                        return _sup.BridgeRunning
+                            ? new { ok = true, message = "桥接进程已启动，等待微信连接。" }
+                            : new { ok = false, error = "桥接未启动，请查看诊断。" };
+                    default:
+                        var error = await _sup.RestartWeChatAsync();
+                        return error == null
+                            ? new { ok = true, message = "微信已重新打开。若微信要求登录，请在电脑上确认。" }
+                            : new { ok = false, error };
+                }
+            }
+            finally
+            {
+                _busy = false;
+                await RefreshAsync();
+            }
         }
 
         // ── 检查更新（左下角按钮 + 右上角小横幅）────────────────

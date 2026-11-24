@@ -138,7 +138,11 @@ async function closeEpisode({ chat, chatStore, llm = null, logger = null, now = 
     const speakers = speakersOf(messages);
     const date = episodeDate(messages, ep, now);
     const allUids = speakers.map((s) => s.uid);
-    const extracted = await extractor.extractEpisode({ messages, llm, speakers, logger, now });
+    const existingFacts = Object.fromEntries(speakers.map((speaker) => {
+      const card = chatStore.getCard(chat, speaker.uid);
+      return [speaker.uid, card ? (card.preferences || []).filter(item => !item.deleted && !item.superseded).map(({ id, subject, key, text }) => ({ id, subject, key, text })) : []];
+    }));
+    const extracted = await extractor.extractEpisode({ messages, llm, speakers, existingFacts, logger, now });
     if (chat.deleted) return { closed: false, reason: 'deleted', episodeId: ep.id };
     const summaryText = String(extracted.summary || '').replace(/\s+/g, ' ').trim().slice(0, 400)
       || extractor.extractiveSummary(messages, 200);
@@ -177,19 +181,6 @@ async function closeEpisode({ chat, chatStore, llm = null, logger = null, now = 
 
       // 长期：事实 / 性格 / 未完成话题 → subjects（同一人一份，合并而不是覆盖）
       const longRecords = [];
-      for (const fact of personFacts) {
-        longRecords.push(record.makeRecord({
-          kind: 'preference',
-          text: fact.text,
-          ts: now,
-          tier: 'L',
-          scope,
-          subject: speaker.uid,
-          source,
-          confidence: Math.min(0.9, Number(fact.confidence) || 0.7),
-          meta: { tag: 'fact', explicit: false },
-        }));
-      }
       for (const trait of personTraits) {
         longRecords.push(record.makeRecord({
           kind: 'trait',
@@ -234,7 +225,8 @@ async function closeEpisode({ chat, chatStore, llm = null, logger = null, now = 
           meta: { status: 'open', lastMentionedAt: now },
         }));
       }
-      const existing = recordStore.readSubjects(memoryDirOf(chatStore), speaker.uid);
+      const existing = record.mergeFacts(recordStore.readSubjects(memoryDirOf(chatStore), speaker.uid), personFacts,
+        { uid: speaker.uid, scope, source, now });
       const merged = new Map(existing.map((r) => [r.id, r]));
       for (const item of longRecords) {
         if (!item) continue;

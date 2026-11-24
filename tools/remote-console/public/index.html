@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101e32">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>鲸鲸远程控制台</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.png">
+  <link rel="apple-touch-icon" href="/icon-180.png">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <div class="brand"><img src="/icon.png" alt="" width="38" height="38"><span>鲸鲸<span class="brand-detail">远程控制台</span></span></div>
+      <button id="logout" class="button secondary" type="button" hidden>锁定</button>
+    </div>
+  </header>
+
+  <main>
+    <p id="feedback" class="notice" role="status" hidden></p>
+    <noscript>请在浏览器里启用 JavaScript。</noscript>
+
+    <section id="login" class="card login" aria-labelledby="login-title">
+      <h1 id="login-title">连接你的鲸鲸</h1>
+      <p>打开电脑上的控制台窗口，复制配对密钥。</p>
+      <form id="pair-form">
+        <label for="key">配对密钥</label>
+        <input id="key" name="pairing-key" type="password" required maxlength="80"
+          autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="粘贴配对密钥">
+        <button id="connect" class="button primary" type="submit">连接控制台</button>
+      </form>
+    </section>
+
+    <div id="dashboard" hidden>
+      <nav id="launcher-nav" class="launcher-nav" aria-label="鲸鲸功能"></nav>
+      <div class="page-heading" data-page="status">
+        <div><h1>运行概览</h1><p id="updated">等待同步</p></div>
+        <button id="refresh" class="button secondary" type="button">刷新状态</button>
+      </div>
+      <section class="summary" aria-label="运行状态" data-page="status">
+        <div class="summary-main">
+          <span id="kernel" class="indicator">等待连接</span>
+          <h2 id="bot-name">鲸鲸</h2>
+          <p id="model">—</p>
+        </div>
+        <div class="metrics">
+          <div class="metric"><span>微信桥接</span><strong id="bridge">—</strong><small id="bridge-detail"></small></div>
+          <div class="metric"><span>内核运行时间</span><strong id="uptime">—</strong><small id="version"></small></div>
+        </div>
+      </section>
+      <p id="offline" class="notice" hidden>内核已停止。可以在「状态」页启动。</p>
+
+      <section class="card page-card" data-page="status">
+        <h2>内核与桥接</h2>
+        <div class="actions">
+          <button class="button primary" type="button" data-action="start">启动内核</button>
+          <button class="button secondary" type="button" data-action="stop">停止内核</button>
+          <button class="button secondary" type="button" data-action="restart">重启内核</button>
+        </div>
+      </section>
+
+      <section class="card page-card" data-page="persona" aria-labelledby="persona-title" hidden>
+          <h2 id="persona-title">人设与预设</h2>
+          <p id="current-persona" class="current">—</p>
+          <form id="persona-form">
+            <label for="preset">切换到预设</label>
+            <select id="preset" disabled><option value="">载入人设中</option></select>
+            <button id="apply" class="button primary" type="submit" disabled>应用人设</button>
+          </form>
+          <div class="actions preset-actions">
+            <button id="save-preset" class="button secondary" type="button">另存为预设</button>
+            <button id="rename-preset" class="button secondary" type="button">重命名</button>
+            <button id="delete-preset" class="button secondary" type="button">移除预设</button>
+          </div>
+      </section>
+      <section class="card page-card" data-page="persona" hidden>
+        <h2>内在性格</h2>
+        <button id="load-identity" class="button secondary" type="button">重新读取</button>
+        <form id="identity-form" hidden>
+          <label>使用新版人设行为 <input type="checkbox" name="newBehavior"></label>
+          <label>名字 <input name="name" maxlength="40"></label>
+          <label>年龄 <input name="age" maxlength="24"></label>
+          <label>职业 <input name="job" maxlength="80"></label>
+          <label>性格 <textarea name="personality" maxlength="500" rows="3"></textarea></label>
+          <label>外观 <textarea name="appearance" maxlength="400" rows="2"></textarea></label>
+          <label>背景经历 <textarea name="background" maxlength="1000" rows="3"></textarea></label>
+          <label>自定义提示词 <textarea name="customPrompt" maxlength="24000" rows="5"></textarea></label>
+          <label>主人称呼 <input name="ownerName" maxlength="80"></label>
+          <label>主动顶嘴 <input type="checkbox" name="masterRoast"></label>
+          <label>主动延伸话题 <input type="checkbox" name="proactive"></label>
+          <label>主动表达观点 <input type="checkbox" name="opinions"></label>
+          <button class="button primary" type="submit">保存人设</button>
+        </form>
+      </section>
+      <section class="card page-card" data-page="settings" hidden>
+        <h2>API 接入 · 聊天（文本）</h2>
+        <form id="model-form" hidden autocomplete="off">
+          <label>服务商 <select name="provider"></select></label>
+          <label>模型 <input name="model" maxlength="80" required></label>
+          <label>接口地址 <input name="baseUrl" maxlength="300" inputmode="url"></label>
+          <label>API Key <input name="apiKey" type="password" maxlength="250"></label>
+          <label>开启思考 <input name="thinking" type="checkbox"></label>
+          <small id="model-key-state"></small>
+          <button class="button primary" type="submit">保存聊天模型</button>
+        </form>
+      </section>
+      <section class="card page-card" data-page="bridge" hidden>
+        <h2>微信桥接</h2>
+        <div class="actions">
+          <button class="button secondary" type="button" data-action="restart-bridge">重启桥接</button>
+          <button class="button primary" type="button" data-action="restart-wechat">一键重启微信</button>
+        </div>
+      </section>
+      <section class="card page-card" data-page="diagnostics" hidden>
+        <h2>诊断</h2>
+        <div class="actions">
+          <button id="diagnostic-refresh" class="button secondary" type="button">重新自检</button>
+          <label><input id="diagnostic-errors" type="checkbox"> 仅异常</label>
+          <button id="diagnostic-clear" class="button secondary" type="button">清屏</button>
+          <button id="diagnostic-export" class="button secondary" type="button">导出日志</button>
+        </div>
+        <p id="diagnostic-status" role="status"></p>
+        <h3>内核与桥接日志</h3>
+        <pre id="diagnostic-log" class="diagnostic-log" tabindex="0" aria-label="诊断日志"></pre>
+      </section>
+      <section id="page-summary" class="card page-card" hidden></section>
+      <section id="advanced-panel" class="card advanced" aria-labelledby="advanced-title" hidden>
+        <h2 id="advanced-title">详细设置</h2>
+        <button id="load-editor" class="button secondary" type="button">读取电脑端设置</button>
+        <p id="editor-status" role="status" hidden></p>
+        <div id="editor"></div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

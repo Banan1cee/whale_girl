@@ -20,7 +20,7 @@ namespace WhaleLauncher
         private static readonly HttpClient Http = CreateClient();
         private static readonly JsonSerializerOptions ReadOptions = new() { PropertyNameCaseInsensitive = true };
 
-        private sealed class DownloadMissingException : IOException
+        internal sealed class DownloadMissingException : IOException
         {
             internal DownloadMissingException() : base("下载文件不存在") { }
         }

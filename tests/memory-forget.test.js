@@ -10,6 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const personCard = require('../src/memory/personCard');
+const { extractSelfFacts, applyFacts } = require('../src/memory/extractor');
 const { LIMITS } = require('../src/memory/constants');
 const { Store } = require('../src/memory/store');
 const record = require('../src/memory/record');
@@ -44,6 +45,54 @@ test('偏好：重复不叠加，近似合并', () => {
   personCard.addPreference(card, { text: '喜欢猫的', confidence: 0.8, source: 'm3' }, { chatId: card.chatId, now: NOW });
   assert.equal(personCard.activePreferences(card).length, 1);
   assert.equal(personCard.activePreferences(card)[0].confidence, 0.9);
+});
+
+test('快速抽取：历史偏好明确撤回后，原偏好不再是 active', () => {
+  const card = newCard();
+  for (const [i, text] of [
+    '我喜欢喝无糖乌龙茶',
+    '我以前喜欢喝无糖乌龙茶，现在不喜欢了',
+  ].entries()) {
+    const { facts } = extractSelfFacts(text, { msgId: `m${i}`, now: NOW + i });
+    applyFacts(card, facts, { chatId: card.chatId, now: NOW + i });
+  }
+  const active = personCard.activePreferences(card);
+  assert.equal(active.length, 1);
+  assert.equal(active[0].text, '我不喜欢喝无糖乌龙茶');
+  assert.equal(active[0].kind, 'taboo');
+  assert.ok(card.preferences.some((item) => item.text === '我喜欢喝无糖乌龙茶' && item.superseded));
+});
+
+test('模型事实：按主体与 key 更新，只让明确引用的旧事实失效', () => {
+  const card = newCard();
+  const old = personCard.addPreference(card, {
+    text: '我喜欢无糖乌龙茶', key: 'self:drink', subject: 'self', kind: 'preference', confidence: 0.9,
+  }, { chatId: card.chatId, now: NOW });
+  const unrelated = personCard.addPreference(card, {
+    text: '我喜欢米饼', key: 'self:food', subject: 'self', kind: 'preference', confidence: 0.9,
+  }, { chatId: card.chatId, now: NOW + 1 });
+  const updated = personCard.addPreference(card, {
+    text: '我现在不喜欢无糖乌龙茶', key: 'self:drink', subject: 'self', kind: 'taboo',
+    confidence: 0.95, supersedesIds: [old.id],
+  }, { chatId: card.chatId, now: NOW + 2 });
+  const active = personCard.activePreferences(card);
+  assert.ok(old.superseded);
+  assert.ok(active.some((item) => item.id === updated.id));
+  assert.ok(active.some((item) => item.id === unrelated.id));
+  assert.equal(old.subject, 'self');
+});
+
+test('模型撤回：未知或跨主体 ID 不会删除任何事实', () => {
+  const card = newCard();
+  const item = personCard.addPreference(card, {
+    text: '对象喜欢吃米饼', key: '对象:food', subject: '对象', kind: 'preference', confidence: 0.9,
+  }, { chatId: card.chatId, now: NOW });
+  assert.equal(personCard.retractPreferences(card, ['not-an-id'], { chatId: card.chatId, now: NOW + 1 }), 0);
+  assert.throws(
+    () => personCard.retractPreferences(card, [item.id], { chatId: 'another-chat', now: NOW + 1 }),
+    /跨聊天/,
+  );
+  assert.equal(personCard.activePreferences(card).length, 1);
 });
 
 test('纠正：旧值 superseded，新值置信度 1.0', () => {

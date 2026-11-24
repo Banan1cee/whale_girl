@@ -93,12 +93,11 @@ test('开发者入口链接官方材料并提供只读 ZIP 校验', () => {
   const xaml = read('launcher/Views/PluginMarketPage.xaml');
   const page = read('launcher/Views/PluginMarketPage.xaml.cs');
   const links = read('launcher/PluginDeveloperLinks.cs');
-  assert.match(xaml, /Content="开发者"/);
-  assert.match(xaml, /校验本地 ZIP/);
-  assert.match(xaml, /市场 README \/ 投稿说明/);
-  assert.match(page, /PluginMarket\.ValidateLocal/);
-  assert.match(page, /PluginDeveloperLinks\.Submit/);
-  assert.match(page, /未安装、启用或写入插件数据/);
+  assert.match(xaml, /x:Name="DocumentsToggle"/);
+  assert.match(xaml, /Content="插件作者入门"/);
+  assert.match(xaml, /Click="OnProtocolGuide"/);
+  assert.match(page, /SetDocumentsExpanded/);
+  assert.match(page, /ShowGuide\("PluginProtocolGuide"\)/);
   assert.match(links, /https:\/\/github\.com\/Banan1cee\/whale-girl-plugins/);
   assert.match(links, /\/pulls/);
 });

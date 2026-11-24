@@ -85,7 +85,6 @@ def runtime_snapshot(config, environ=None):
     values = {
         'STALE_AFTER': stale, 'LOG_LEVEL': level if level in ('debug', 'info', 'error') else 'info',
         'MESSAGE_SETTLE_MS': message_settle_ms, 'GROUP_MAX_BATCH_WAIT_MS': group_max_wait_ms,
-        'QUOTE_REPLY': as_bool(w.get('quoteReply', False), False),
         'KEYBOARD_FALLBACK': as_bool(w.get('keyboardFallback', True), True),
         'BACKGROUND_SEND': not moments_foreground and as_bool(w.get('backgroundSend', True), True),
         'MOMENTS_FORCE_FOREGROUND': moments_foreground,

@@ -172,6 +172,29 @@ function looksLikeReminder(text) {
 
 const TAIL_RE = /\s*(记得|哦|啊|呀|嘛|吧|谢谢|谢了|辛苦了)[。.!！~～]*\s*$/;
 
+/**
+ * 解析对已有提醒的自然语言撤回，例如「第三天的事情取消」「明天别提醒我买菜」。
+ * 只负责提取意图和可选查询词，具体候选筛选仍由提醒服务按会话完成。
+ */
+function parseReminderCancellation(text) {
+  const raw = String(text || '').trim();
+  if (!raw || raw.length > 120) return null;
+  const verb = /(?:取消|撤销|删除|不用|别|不要)\s*(?:提醒)?/.exec(raw);
+  if (!verb) return null;
+  const hasTarget = /(?:提醒|事情|那件事|这个|那个|明天|后天|大后天|第[一二两三四五六七八九十\d]+天)/.test(raw);
+  if (!hasTarget) return null;
+  let query = raw.slice(0, verb.index) + raw.slice(verb.index + verb[0].length);
+  query = query
+    .replace(/第[一二两三四五六七八九十\d]+天(?:的)?(?:事情|事|提醒)?/g, '')
+    .replace(/(?:今天|明天|后天|大后天)(?:的)?(?:事情|事|提醒)?/g, '')
+    .replace(/(?:那件事|这个提醒|那个提醒|提醒我|提醒|事情|事)/g, '')
+    .replace(/^我/, '')
+    .replace(/[，,。.!！?？：:、\s]+/g, '')
+    .trim();
+  const day = (raw.match(/(今天|明天|后天|大后天|第[一二两三四五六七八九十\d]+天)/) || [])[1] || '';
+  return { query: query.slice(0, 80), day, vague: !query };
+}
+
 /** 把「时间 + 提醒我 + 事情」里的事情抽出来 */
 function extractWhat(text) {
   let s = String(text || '').trim();
@@ -227,6 +250,7 @@ function confirmText({ at, what }, { now = new Date(), group = false, who = '', 
 module.exports = {
   parseWhen,
   parseReminder,
+  parseReminderCancellation,
   looksLikeReminder,
   extractWhat,
   describeWhen,

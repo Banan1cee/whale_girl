@@ -103,7 +103,7 @@ class ConfigWatchTests(unittest.TestCase):
         g.reload_config.assert_not_called()
 
     def test_hot_reload_reuses_the_validated_read(self):
-        current = {'wechat': {'quoteReply': True}}
+        current = {'wechat': {'keyboardFallback': False}}
         runtime, g, restart = self.watch({}, current)
         restart.assert_not_called()
         g.read_config.assert_called_once()
@@ -127,7 +127,7 @@ class ConfigWatchTests(unittest.TestCase):
                 self.assertEqual(read(), {})
 
     def test_same_mtime_is_retried_after_an_invalid_read(self):
-        current = {'wechat': {'quoteReply': True}}
+        current = {'wechat': {'keyboardFallback': False}}
         runtime, g, restart = self.watch({}, current, invalid=[ValueError('fixture invalid JSON'), current], rounds=2)
         restart.assert_not_called()
         self.assertEqual(g.read_config.call_count, 2)
@@ -155,7 +155,7 @@ class ConfigSnapshotTests(unittest.TestCase):
         return scope
 
     def test_startup_and_reload_publish_the_same_normalized_values(self):
-        config = {'wechat': {'quoteReply': 'false', 'pipelineWorkers': '6'},
+        config = {'wechat': {'keyboardFallback': 'false', 'pipelineWorkers': '6'},
                   'voice': {'timeoutMs': '1234'}, 'care': {'allowGroups': 'false'}}
         scope = self.scope(config)
         scope['_publish_runtime_config'](config, self.parser.runtime_snapshot(config))
@@ -190,11 +190,11 @@ class ConfigSnapshotTests(unittest.TestCase):
         scope['restart_for_config_change'].assert_not_called()
 
     def test_invalid_shape_does_not_partially_publish(self):
-        before = {'wechat': {'quoteReply': True}}
+        before = {'wechat': {'keyboardFallback': False}}
         scope = self.scope(before)
         self.assertFalse(scope['reload_config'](config={'wechat': 'fixture-invalid-section'}))
         self.assertIs(scope['CURRENT_CONFIG'], before)
-        self.assertTrue(scope['QUOTE_REPLY'])
+        self.assertFalse(scope['KEYBOARD_FALLBACK'])
         scope['resolve_voice_config'].assert_not_called()
 
     def test_worker_environment_override_is_preserved_on_reload(self):
@@ -250,7 +250,7 @@ class DefaultSafetyTests(unittest.TestCase):
     def startup(self, config):
         scope = ConfigSnapshotTests.scope(self, config)
         scope.update(ROOT=self.fixture_root, _BOOT_CONFIG_VALID=True, _cfg=config,
-                     BACKGROUND_SEND=object(), QUOTE_REPLY=object(), CURRENT_CONFIG=object())
+                     BACKGROUND_SEND=object(), CURRENT_CONFIG=object())
         engine = ast.parse((ROOT / 'bridge/engine.py').read_text(encoding='utf-8-sig'))
         boot = next(n for n in engine.body if isinstance(n, ast.If)
                     and isinstance(n.test, ast.Name) and n.test.id == '_BOOT_CONFIG_VALID')
@@ -336,8 +336,8 @@ class DefaultSafetyTests(unittest.TestCase):
                 action.assert_called_once()
                 runtime.force_send_foreground.assert_not_called()
 
-    def assert_quote_path(self, scope, requested=True, allowed=True):
-        runtime, window, events, snapshot = self.window(scope)
+    def assert_plain_text_send(self, scope, allowed=True):
+        runtime, window, _, _ = self.window(scope)
         runtime.__dict__.update(
             dead_chats=set(), dead_chat_until={}, chat_paused=Mock(return_value=False), group_is_alive=Mock(return_value=True), is_self_chat=Mock(return_value=False),
             ui_chat_name=Mock(return_value='fixture-chat'), account_send_allowed=Mock(return_value=allowed),
@@ -352,45 +352,37 @@ class DefaultSafetyTests(unittest.TestCase):
         runtime.aliases_for = Mock(return_value=['fixture-chat'])
         runtime.snapshot_win_state.return_value = {'hwnd': 1, 'fg': 1}
         runtime.snapshot_win_state.side_effect = None
-        g = SimpleNamespace(QUOTE_REPLY=scope['QUOTE_REPLY'], BACKGROUND_SEND=scope['BACKGROUND_SEND'],
+        g = SimpleNamespace(BACKGROUND_SEND=scope['BACKGROUND_SEND'],
             BG_SEND=scope['BG_SEND'], SEND_STATE={}, _SendStateScope=lambda _: nullcontext(),
             time=SimpleNamespace(time=lambda: 10000), log=Mock(), log_error=Mock(), log_throttled=Mock(),
             safe_name=lambda _: 'fixture-chat', ChatIdentityError=self.identity_error,
             DraftDirtyError=type('FixtureDraftError', (Exception,), {}))
         send = load_function('bridge/sender_mixin.py', 'send_text', {'G': g})
-        result = send(runtime, 'fixture text', 'fixture-chat', 'fixture-peer', quote_latest=requested)
+        result = send(runtime, 'fixture text', 'fixture-chat', 'fixture-peer')
         self.assertIs(result, allowed)
+        runtime.gui.quote_msg.assert_not_called()
         if not allowed:
-            runtime.gui.quote_msg.assert_not_called()
             runtime.bg_send.assert_not_called()
             runtime.uia_send.assert_not_called()
-        elif requested and scope['QUOTE_REPLY']:
-            runtime.gui.quote_msg.assert_called_once_with('fixture text', verify=False)
-            runtime.uia_send.assert_not_called()
         else:
-            runtime.gui.quote_msg.assert_not_called()
             runtime.uia_send.assert_called_once_with('fixture text', 'fixture-chat', 'fixture-peer')
 
-    def test_quote_reply_default_configured_and_reload(self):
-        for config, expected in (({}, False), ({'wechat': {}}, False),
-                                 ({'wechat': {'quoteReply': True}}, True),
-                                 ({'wechat': {'quoteReply': 'false'}}, False),
-                                 ({'wechat': {'quoteReply': False}}, False)):
+    def test_removed_quote_setting_is_ignored_at_startup_and_reload(self):
+        for config in ({}, {'wechat': {'quoteReply': True}}, {'wechat': {'quoteReply': 'false'}}):
             scope = self.startup(config)
             for stage in ('startup', 'reload'):
                 with self.subTest(config=config, stage=stage):
                     if stage == 'reload':
                         self.assertTrue(scope['reload_config'](config=config))
-                    self.assertIs(scope['QUOTE_REPLY'], expected)
-                    self.assert_quote_path(scope)
+                    self.assertNotIn('QUOTE_REPLY', scope)
+                    self.assert_plain_text_send(scope)
             self.assertTrue(scope['reload_config'](config={}))
-            self.assertIs(scope['QUOTE_REPLY'], False)
-            self.assert_quote_path(scope)
+            self.assertNotIn('QUOTE_REPLY', scope)
+            self.assert_plain_text_send(scope)
 
-    def test_quote_request_and_identity_gate_remain_required(self):
+    def test_account_guard_still_blocks_plain_text_send(self):
         scope = self.startup({'wechat': {'quoteReply': True}})
-        self.assert_quote_path(scope, requested=False)
-        self.assert_quote_path(scope, requested=True, allowed=False)
+        self.assert_plain_text_send(scope, allowed=False)
 
 
 class LogThrottleTests(unittest.TestCase):

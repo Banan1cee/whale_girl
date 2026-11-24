@@ -46,6 +46,8 @@ Everything is controlled from one Windows launcher. There is no browser UI; `127
 
 The installer bundles the Node.js runtime, Python 3.12, `wechatauto`, and the .NET 10 desktop runtime. The launcher prefers bundled runtimes and falls back to `PATH` only when needed. No `npm install` is required.
 
+The optional mobile console is installed under `手机远程控制`. Follow its [setup guide](tools/remote-console/README.md) to connect over Tailscale.
+
 ## Main features
 
 | Feature | What it does |
