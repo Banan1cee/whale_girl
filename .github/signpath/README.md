@@ -26,7 +26,8 @@ parameters: |
 - **metadata restrictions 是 SignPath Foundation 的硬要求**：`product-name` / `company-name` /
   `product-version` 会去核对 exe 里真实的版本资源，对不上就不给签。
   - 启动器这三个值来自 `launcher/WhaleLauncher.csproj` 的 `<Product>` / `<Company>` / `<Version>`
-  - 安装包来自 `installer/whale.iss` 的 `VersionInfoProductName` / `VersionInfoCompany` / `VersionInfoProductVersion`
+  - 安装包来自 `installer/whale.iss` 的 `VersionInfoProductName` / `VersionInfoCompany` / `VersionInfoProductTextVersion`
+  - 两个 EXE 的 PE 产品名和公司名使用 `WhaleGirl`。SignPath 对旧的中文 PE 产品名报告了额外字符，使用固定 ASCII 标识仍保留精确校验。
   - 版本号必须每次构建都一致，所以用 `${version}` 参数从 CI 传，而不是写死
 - GitHub Actions 上传的是 ZIP，所以 artifact configuration 的文件根元素是 `<zip-file>`，
   `<pe-file>` 写在它里面。SignPath 步骤下载后自动解包。

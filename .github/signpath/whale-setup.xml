@@ -3,14 +3,14 @@
        用通配符；默认 max-matches=1，所以必须只匹配到一个文件。
 
        metadata restrictions 对上 installer/whale.iss 里的
-       VersionInfoProductName=鲸鲸 / VersionInfoCompany=鲸鲸 / VersionInfoProductVersion={#AppVersion}。 -->
+       VersionInfoProductName / VersionInfoCompany / VersionInfoProductTextVersion。 -->
   <parameters>
     <parameter name="version" required="true" />
   </parameters>
   <zip-file>
     <pe-file path="whale-girl-*-setup.exe"
-             product-name="鲸鲸"
-             company-name="鲸鲸"
+             product-name="WhaleGirl"
+             company-name="WhaleGirl"
              product-version="${version}">
       <authenticode-sign />
     </pe-file>

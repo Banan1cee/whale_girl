@@ -19,9 +19,10 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <ProductVersion>$(Version)</ProductVersion>
     <FileVersion>4.1.7.0</FileVersion>
-    <Product>鲸鲸</Product>
+    <!-- PE 的产品名和公司名供 SignPath 精确匹配，界面仍用中文标题。 -->
+    <Product>WhaleGirl</Product>
     <AssemblyTitle>鲸鲸 · 启动器</AssemblyTitle>
-    <Company>鲸鲸</Company>
+    <Company>WhaleGirl</Company>
     <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
     <!-- 不要调试符号：exe 的 debug 目录会写进编译机上的 PDB 绝对路径，
          发布出去等于把本机用户目录带进仓库（隐私扫描和 CI 都会红）。 -->

@@ -10,8 +10,8 @@
   </parameters>
   <zip-file>
     <pe-file path="WhaleLauncher.exe"
-             product-name="鲸鲸"
-             company-name="鲸鲸"
+             product-name="WhaleGirl"
+             company-name="WhaleGirl"
              product-version="${version}">
       <authenticode-sign />
     </pe-file>

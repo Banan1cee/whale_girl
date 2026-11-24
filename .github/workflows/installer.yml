@@ -297,6 +297,9 @@ jobs:
           $exe = Get-Item .\WhaleLauncher.exe
           if ($exe.VersionInfo.FileVersion -ne $meta.fileVersion) { throw '启动器实际FileVersion与预期不一致' }
           if ($exe.VersionInfo.ProductVersion -ne $meta.productVersion) { throw '启动器实际ProductVersion与预期不一致' }
+          if ($env:SIGNING_MODE -eq 'signpath' -and ($exe.VersionInfo.ProductName -cne 'WhaleGirl' -or $exe.VersionInfo.CompanyName -cne 'WhaleGirl')) {
+            throw '启动器的 PE 产品名或公司名与 SignPath 配置不一致。'
+          }
           Write-Output ("启动器：{0:N0} KB，文件版本 {1}" -f ($exe.Length / 1KB), $exe.VersionInfo.FileVersion)
 
       # ---------- 签名（第 1 轮：启动器）----------
@@ -400,6 +403,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw '安装器输入程序资源不完整' }
           & $env:ISCC "installer\whale.iss" "--define=AppVersion=$env:version"
           if ($LASTEXITCODE -ne 0) { Write-Output '::error title=安装包编译失败::ISCC 退出码非 0，看上面的编译日志'; exit 1 }
+          if ($env:SIGNING_MODE -eq 'signpath') {
+            $setup = Get-Item -LiteralPath "artifacts/setup/whale-girl-$($env:version)-setup.exe"
+            $info = $setup.VersionInfo
+            if ($info.ProductName -cne 'WhaleGirl' -or $info.CompanyName -cne 'WhaleGirl' -or $info.ProductVersion -cne $env:version) {
+              throw '安装包的 PE 产品名、公司名或版本号与 SignPath 配置不一致。'
+            }
+          }
           Get-ChildItem artifacts/setup | Select-Object Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } } | Format-Table -AutoSize
 
       # ---------- 签名（第 2 轮：安装包）----------

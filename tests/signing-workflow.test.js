@@ -103,11 +103,18 @@ test('artifact configuration 带 metadata restrictions，版本号从 parameters
   // SignPath Foundation 要求用 file metadata restrictions 约束产品名/版本，
   // 否则审核不过；版本每次构建必须一致，所以走 ${version} 参数而不是写死。
   const dir = path.join(root, '.github/signpath');
+  const csproj = fs.readFileSync(path.join(root, 'launcher/WhaleLauncher.csproj'), 'utf8');
+  const iss = fs.readFileSync(path.join(root, 'installer/whale.iss'), 'utf8');
+  assert.match(csproj, /<Product>WhaleGirl<\/Product>/);
+  assert.match(csproj, /<Company>WhaleGirl<\/Company>/);
+  assert.match(iss, /^VersionInfoProductName=WhaleGirl$/m);
+  assert.match(iss, /^VersionInfoCompany=WhaleGirl$/m);
+  assert.match(iss, /^VersionInfoProductTextVersion=\{#AppVersion\}$/m);
   for (const file of ['whale-launcher.xml', 'whale-setup.xml']) {
     const xml = fs.readFileSync(path.join(dir, file), 'utf8');
     assert.match(xml, /<parameter name="version" required="true" \/>/, `${file} 缺 version 参数定义`);
-    assert.match(xml, /product-name="鲸鲸"/, `${file} 缺 product-name 约束`);
-    assert.match(xml, /company-name="鲸鲸"/, `${file} 缺 company-name 约束`);
+    assert.match(xml, /product-name="WhaleGirl"/, `${file} 缺 product-name 约束`);
+    assert.match(xml, /company-name="WhaleGirl"/, `${file} 缺 company-name 约束`);
     assert.match(xml, /product-version="\$\{version\}"/, `${file} 缺 product-version 约束`);
   }
   // 两轮签名都要把 version 传进去

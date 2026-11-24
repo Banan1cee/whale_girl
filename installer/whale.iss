@@ -39,8 +39,10 @@ RestartApplications=no
 ; 签名之后也能和证书信息对上。
 VersionInfoVersion={#AppVersion}
 VersionInfoProductVersion={#AppVersion}
-VersionInfoProductName={#AppName}
-VersionInfoCompany=鲸鲸
+VersionInfoProductTextVersion={#AppVersion}
+; PE 的签名标识用 ASCII，安装向导仍用 AppName 和 AppPublisher。
+VersionInfoProductName=WhaleGirl
+VersionInfoCompany=WhaleGirl
 VersionInfoDescription={#AppName} 安装程序
 VersionInfoCopyright=Copyright (C) 2026 鲸鲸
 OutputDir=..\artifacts\setup
