@@ -113,6 +113,31 @@
                 <TextBlock x:Name="SwitchHint" Style="{StaticResource Small}" Margin="0,6,0,0"
                            Text="文字发送方式改了会立刻写回配置。" />
 
+                <WrapPanel Margin="0,8,0,0">
+                    <TextBlock Text="拍一拍" Style="{StaticResource Label}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                    <CheckBox x:Name="ChkPat" Content="启用" Foreground="{DynamicResource Text}" FontSize="12"
+                              VerticalAlignment="Center" Click="OnTogglePat" Margin="0,0,16,0"
+                              ToolTip="关闭后不识别拍一拍、不回应，私聊说「拍拍我」也不会拍" />
+                    <TextBlock Text="回话概率" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ui:NumberField x:Name="TxtPatReply" Width="44" VerticalAlignment="Center" LostFocus="OnSavePat"
+                                    Minimum="0" Maximum="100" Fallback="100" Label="回话概率" />
+                    <TextBlock Text="%" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="4,0,14,0" />
+                    <TextBlock Text="回拍概率" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ui:NumberField x:Name="TxtPatBack" Width="44" VerticalAlignment="Center" LostFocus="OnSavePat"
+                                    Minimum="0" Maximum="100" Fallback="100" Label="回拍概率" />
+                    <TextBlock Text="%" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="4,0,14,0" />
+                    <TextBlock Text="间隔" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ui:NumberField x:Name="TxtPatCooldown" Width="48" VerticalAlignment="Center" LostFocus="OnSavePat"
+                                    Minimum="0" Maximum="3600" Fallback="8" Label="回拍间隔" />
+                    <TextBlock Text="秒" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="4,0,14,0" />
+                    <TextBlock Text="每小时" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ui:NumberField x:Name="TxtPatMaxHour" Width="44" VerticalAlignment="Center" LostFocus="OnSavePat"
+                                    Minimum="0" Maximum="200" Fallback="0" Label="每小时次数" />
+                    <TextBlock Text="次（0=不限）" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="4,0,0,0" />
+                </WrapPanel>
+                <TextBlock x:Name="PatHint" Style="{StaticResource Small}" Margin="0,4,0,0" TextWrapping="Wrap"
+                           Text="别人拍她时按概率回一句话、并/或拍回去；群里只回话、不主动拍（无法指定拍谁）。概率按每次被拍独立摇。" />
+
                 <TextBlock Text="账号与发送" Style="{StaticResource Label}" Margin="0,10,0,6" />
                 <WrapPanel>
                     <TextBlock Text="固定用哪个号" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="0,0,6,0" />

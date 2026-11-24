@@ -6,6 +6,10 @@ import re
 import threading
 
 import engine as G
+try:
+    from pat import parse_pat, targets_self, looks_like_pat
+except ImportError:  # 测试里按 bridge.receiver_mixin 导入时走包内相对路径
+    from .pat import parse_pat, targets_self, looks_like_pat
 
 
 # 识别一条媒体最多等多久。长截图会拆成 2~3 段、每段一次看图请求（单次请求超时
@@ -226,6 +230,26 @@ class ReceiverMixin:
             if value:
                 ids.add(value)
         return ids
+
+    def _pat_feature_on(self):
+        """features.pat 开关（桥接侧也尊重，关了就和以前一样直接跳过）。"""
+        cfg = getattr(G, 'CURRENT_CONFIG', None) or {}
+        features = cfg.get('features') if isinstance(cfg, dict) else None
+        value = (features or {}).get('pat', True)
+        if isinstance(value, str):
+            return value.strip().lower() not in ('0', 'false', 'off', 'no')
+        return bool(value)
+
+    def _pat_self_names(self, chat=''):
+        """拍一拍提示里「被拍的人」要匹配的名字（人设名/别名/登录昵称）。"""
+        try:
+            return self.self_mention_names(chat)
+        except Exception:
+            names = list(getattr(self, 'aliases', None) or [])
+            nick = str(getattr(self, '_self_nick', '') or '').strip()
+            if nick:
+                names.append(nick)
+            return names
 
     def self_mention_names(self, chat=''):
         """当前「她」在群里可能被 @ 到的名字。
@@ -601,6 +625,12 @@ class ReceiverMixin:
             return ''
 
     def on_message_inner(self, msg, listener):
+        # 拍一拍的解析按需导入：tests/bridge_ast.py 会把函数抽出来在 mock env 里执行，
+        # 模块级 import 在那里是未定义名字；函数内 import 在真实运行时只查一次 sys.modules。
+        try:
+            from pat import looks_like_pat, parse_pat, targets_self
+        except Exception:
+            from .pat import looks_like_pat, parse_pat, targets_self
 
         def media_failed(kind):
             """识别失败补一条能把「哪条、谁的、为什么没回」对上的 error 日志。
@@ -650,6 +680,14 @@ class ReceiverMixin:
                 return
             mtype = msg.get('type') or ''
             content = G.fix_garbled((msg.get('content') or '').strip())
+            # 拍一拍在库里是 appmsg/系统提示，先把「谁拍了谁」解析出来，
+            # 后面的卡片/引用分支才不会把这条当「没有可读正文」丢掉。
+            pat_event = parse_pat(content) if looks_like_pat(mtype, content) else None
+            at_me_pat = False
+            if pat_event is not None:
+                # 用收敛后的「A 拍了拍 B」交给后面的查重/落库/提示词；
+                # 原始 appmsg XML 里没有可读正文，不能留在 content 里。
+                content = pat_event.get('text') or content
             media_placeholder = False
             is_emoji = mtype in ('表情', '动画表情') or (mtype == '图片' and '<emoji' in content)
             if is_emoji:
@@ -692,6 +730,11 @@ class ReceiverMixin:
                 if not content:
                     skipped('引用消息里没有可读内容')
                     return
+            if pat_event is not None:
+                # 拍一拍提示已经收敛成「谁拍了拍谁」的纯文本：置 _quote_parsed
+                # 让下面的卡片分支不再把它当「没有 <url> 的卡片」丢掉，
+                # 同时文本分支也不会把原始 XML 写回 content。
+                _quote_parsed = True
             if not _quote_parsed and mtype not in ('文本', '语音', '图片', '表情', '动画表情'):
                 if '移出群聊' in content or '移出' in content:
                     self.dead_chats.add(username)
@@ -748,13 +791,34 @@ class ReceiverMixin:
             if G.duplicate_guard(username, sender, _guard_text):
                 G.log('跳过重复消息：', G.safe_name(nickname), '：', G.safe_text(content))
                 return
-            if '拍了拍' in content and '<url>' not in content:
-                G.log('跳过拍一拍提示：', G.safe_text(content))
-                return
+            if pat_event is not None:
+                if not self._pat_feature_on():
+                    G.log('拍一拍功能已关闭，跳过：', G.safe_text(pat_event.get('target')))
+                    return
+                # 自己刚拍完别人时，微信也会生成一条「鲸鲸 拍了拍 X」；
+                # 名字没对上（对方给账号设了备注）也不能把它当成对方拍自己。
+                if not is_group and G.time.time() - float(getattr(self, 'PAT_SENT', {}).get(username, 0) or 0) < 15:
+                    G.log('跳过拍一拍提示（刚主动拍过，避免自己拍自己）')
+                    return
+                _pat_names = self._pat_self_names(username)
+                # 自己刚拍完别人时，微信也会生成一条「鲸鲸 拍了拍 X」；
+                # 不拦掉的话私聊里会把自己的动作当成对方拍自己，来回刷。
+                _pat_source = str(pat_event.get('source') or '').strip()
+                if _pat_source and targets_self({'target': _pat_source}, _pat_names):
+                    G.log('跳过拍一拍提示（是我自己拍的）：', G.safe_text(_pat_source))
+                    return
+                if is_group and not targets_self(pat_event, _pat_names):
+                    G.log('跳过拍一拍提示（拍的不是我）：', G.safe_text(pat_event.get('target')))
+                    return
+                at_me_pat = True
+                # 交给模型的是自然语言事件，不是原始引号标题；人设清理也不会把「鲸鲸」抠掉。
+                content = '%s 在微信里拍了拍你' % (_pat_source or nickname)
+                G.log('收到拍一拍：', G.safe_name(_pat_source or nickname),
+                      '→', G.safe_name(pat_event.get('target') or ''))
             _names = self.self_mention_names(username) if is_group else []
             _mention = G.mention.analyze(
                 content, _names, self.display_name(username) if is_group else '')
-            addressed = bool(_mention['addressed'])
+            addressed = bool(_mention['addressed']) or at_me_pat
             _structured = None
             if is_group and '@' in content:
                 # 优先用 source 里的 atuserlist（wxid），昵称改名也不会漏；
@@ -808,6 +872,9 @@ class ReceiverMixin:
                     G.log('引用图片读取：%s' % ('已识别' if description else '未取到或未识别'))
                 content = quote_content_text(quote, description)
             payload = {'chat_id': username, 'chat_type': 'group' if is_group else 'private', 'user_id': sender or 'unknown', 'senderId': sender or 'unknown', 'sender_id': sender or 'unknown', 'senderName': nickname, 'nickname': nickname, 'text': content, 'msg_id': '%s:%s:%s' % (username, msg.get('shard') or '', msg.get('local_id')), 'at_me': addressed, 'mentioned_names': _mentioned_names, 'self_names': _payload_names, 'chat_title': self.display_name(username) if is_group else ''}
+            if at_me_pat:
+                payload['pat'] = True
+                payload['at_me'] = True
             try:
                 headers = {'x-whale-bridge': '1'}
                 if self.token:
@@ -844,7 +911,14 @@ class ReceiverMixin:
             if G.CONN_STATE.get('ok') is not True:
                 G.CONN_STATE['ok'] = True
                 G.log('已连上鲸鲸服务：', self.bot_url.rsplit('/webhook', 1)[0])
+            target = self.display_name(username)
+            pat_requested = data.get('pat') is True
+            if pat_requested:
+                # 内核决定用微信「拍一拍」回应：先拍，再按需发正文。
+                self.send_pat(target, username)
             if data.get('action') != 'reply' or not data.get('reply'):
+                if pat_requested:
+                    return
                 # 私聊也要留一条：否则“为什么没回”在日志里完全空白。
                 G.log_throttled(
                     'no-reply:%s:%s' % (username, msg.get('local_id')),
@@ -857,7 +931,6 @@ class ReceiverMixin:
                 G.MOCK_NOTICED['done'] = True
                 G.log('[!] 服务端现在是「演示模式」：没配置 API Key，她回的是内置台词，不是真模型。')
                 G.log('    去启动器「设置」填一把 Key（DeepSeek / 智谱 都行）就会切成真模型。')
-            target = self.display_name(username)
             bubbles = data.get('bubbles')
             if not isinstance(bubbles, list):
                 bubbles = [data['reply']]

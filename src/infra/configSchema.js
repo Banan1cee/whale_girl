@@ -82,6 +82,12 @@ const FIELDS = {
   'memory.maxMessages': { type: 'int', min: 2, max: 2000 },
   'memory.maxNotesPerUser': { type: 'int', min: 0, max: 200 },
 
+  // ---- 拍一拍 ----
+  'pat.replyChance': { type: 'float', min: 0, max: 1 },
+  'pat.backChance': { type: 'float', min: 0, max: 1 },
+  'pat.cooldownSec': { type: 'int', min: 0, max: 3600 },
+  'pat.maxPerHour': { type: 'int', min: 0, max: 200 },
+
   // ---- 管理员 / 主动搭话 ----
   'admin.minutes': { type: 'int', min: 1, max: 1440 },
   'care.enabled': { type: 'bool' },

@@ -48,6 +48,8 @@ function normalizeInbound(payload, platform) {
   const mentions = firstDefined(body, ['mentioned_names', 'mentionedNames', 'mention_names', 'mentions']);
   const selfNames = firstDefined(body, ['self_names', 'selfNames', 'bot_names', 'botNames']);
   const noReply = toBool(firstDefined(body, ['no_reply', 'noReply']));
+  // 拍一拍事件：桥接把微信的系统提示转成一条带 pat 标记的入站消息。
+  const pat = toBool(firstDefined(body, ['pat', 'pat_event', 'patEvent']));
 
   return {
     platform,
@@ -65,6 +67,7 @@ function normalizeInbound(payload, platform) {
     msgId: String(firstDefined(body, ['msg_id', 'msgId', 'message_id', 'messageId', 'id']) ?? ''),
     chatTitle: String(firstDefined(body, ['chat_title', 'chatTitle', 'room_name', 'roomName', 'group_name', 'groupName', 'title']) ?? ''),
     noReply,
+    pat,
   };
 }
 
@@ -201,11 +204,18 @@ class Gateway {
     const localWechat = local && this.platform === 'wechat';
     const result = await this.bot.handle(msg, { localWechat });
     this.logger?.debug?.(`[${this.platform}] event=gateway.result action=${result.action || '-'} reason=${result.reason || '-'} bubbles=${(result.bubbles || []).length}`);
+    // 拍一拍：只有本地微信桥接能执行 UIA 右键头像；外部 outboundUrl 网关不支持。
+    const wantsPat = localWechat && result.pat === true;
+    if (wantsPat || result.action === 'reply') {
+      const reason = sendDenial(this.bot.config, { id: msg.chatId, names: [msg.chatTitle], isGroup: msg.chatType === 'group', platform: this.platform });
+      if (reason) return { ok: true, action: 'ignore', reason };
+    }
+    if (wantsPat && (result.action !== 'reply' || !result.reply)) {
+      return { ok: true, action: 'pat', pat: true };
+    }
     if (result.action !== 'reply' || !result.reply) {
       return { ok: true, action: 'ignore', reason: result.reason || 'ignored' };
     }
-    const reason = sendDenial(this.bot.config, { id: msg.chatId, names: [msg.chatTitle], isGroup: msg.chatType === 'group', platform: this.platform });
-    if (reason) return { ok: true, action: 'ignore', reason };
     if (localWechat && result.reason === 'sticker_request' && result.sticker) {
       return { ok: true, action: 'reply', reply: result.reply, stickerOnly: true, sticker: result.sticker };
     }
@@ -258,6 +268,7 @@ class Gateway {
       action: 'reply',
       reply: result.reply,
       bubbles: result.bubbles || [result.reply],
+      ...(wantsPat ? { pat: true } : {}),
       ...(sticker ? { sticker } : {}),
       ...(localWechat && result.separateText ? { separateText: true } : {}),
       // 群里要真的 @ 某人时，桥接据此调 at_member
