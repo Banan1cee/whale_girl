@@ -386,7 +386,7 @@ class MediaFailureLogTests(unittest.TestCase):
             'ONLY_CHATS': [], 'is_system_notice': lambda *_: False, 'duplicate_guard': lambda *_: False,
             'aliases': [], 'token': '', 'bot_url': 'http://localhost/webhook/wechat',
             'CONN_STATE': {'ok': True}, 'rate_guard': lambda *_: True,
-            'STICKER_TEST_ON': False, 'QUOTE_REPLY': False,
+            'STICKER_TEST_ON': False,
             'voice_reply': types.SimpleNamespace(settings=Mock(), choose=Mock(return_value=True)),
             'send_text': Mock(return_value=True), 'send_voice_reply': Mock(return_value=True),
         })
@@ -395,8 +395,8 @@ class MediaFailureLogTests(unittest.TestCase):
         env['on_message_inner'](self.message('文本', content='请分条发'), None)
         env['send_voice_reply'].assert_not_called()
         self.assertEqual(env['send_text'].call_args_list, [
-            call('先保存', '好友', 'peer', quote_latest=False),
-            call('再重启', '好友', 'peer', quote_latest=False),
+            call('先保存', '好友', 'peer'),
+            call('再重启', '好友', 'peer'),
         ])
 
     def test_emoji_failure_logs_error_and_sends_nothing(self):

@@ -98,12 +98,7 @@ PIPELINE_WORKERS = 4
 PIPELINE_QUEUE_LIMIT = 8
 MESSAGE_SETTLE_MS = 1500
 GROUP_MAX_BATCH_WAIT_MS = 5000
-# 下面这 7 个开关必须在**读配置之前**就有默认值：config.json 解析失败时
-# （手填 Windows 路径写了单反斜杠就是典型），上面那个 try 会在 json.load 处
-# 整段中断，后面所有赋值一个都执行不到。以前没有默认值，main() 里一读
-# QUOTE_REPLY 就 NameError → 桥接退出码 1，用户只看到一句看不懂的 traceback。
-# 默认值必须和下面 try 里 _wechat.get(...) 的兜底值一模一样。
-QUOTE_REPLY = False
+# 配置读取失败时仍使用这些安全默认值。
 KEYBOARD_FALLBACK = True
 BACKGROUND_SEND = True
 MOMENTS_FORCE_FOREGROUND = False
@@ -221,7 +216,7 @@ def reload_config(path=None, *, config=None):
 
     返回是否真的重新加载了。
     """
-    global QUOTE_REPLY, KEYBOARD_FALLBACK, BACKGROUND_SEND, LOW_BATTERY_PCT, GOODNIGHT_TEXT
+    global KEYBOARD_FALLBACK, BACKGROUND_SEND, LOW_BATTERY_PCT, GOODNIGHT_TEXT
     global BG_SEND, PIPELINE_WORKERS, PIPELINE_QUEUE_LIMIT, MESSAGE_SETTLE_MS, GROUP_MAX_BATCH_WAIT_MS
     global ACCOUNT_GUARD, WINDOW_HWND, STICKER_TEST_ON, STICKER_COLLECT
     global CARE_ENABLED, CARE_QUIET_MIN

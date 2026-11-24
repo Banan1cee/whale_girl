@@ -4,10 +4,10 @@
  * 两条互相独立、但都会让桥接直接起不来的 bug：
  *
  * 1) config.json 解析失败（手填路径单反斜杠）时，engine.py 读配置的那段
- *    `try` 在 json.load 处整段中断，QUOTE_REPLY 等 7 个开关一个都赋不上值，
+ *    `try` 在 json.load 处整段中断，KEYBOARD_FALLBACK 等开关一个都赋不上值，
  *    而它们以前**没有模块级默认值** → main() 里一读就 NameError → 退出码 1。
  * 2) 桥接模块化后，app.py / 各 mixin 只 `import engine as G`，但代码里还留着
- *    拆分前的裸名 `QUOTE_REPLY`、`MessagePipeline`、`uia_boot`……
+ *    拆分前的裸名 `KEYBOARD_FALLBACK`、`MessagePipeline`、`uia_boot`……
  *    这些名字在自己模块里根本不存在 → 运行到那一行才 NameError。
  *
  * 这里用「AST 扫裸名」+「拿坏 config.json 真的 import 一遍」两条路一起盯。
@@ -26,7 +26,6 @@ const hasPy = Boolean(py);
 const bridgeDir = path.join(root, 'bridge');
 
 const ENGINE_GLOBALS = [
-  'QUOTE_REPLY',
   'KEYBOARD_FALLBACK',
   'BACKGROUND_SEND',
   'ACCOUNT_GUARD',
@@ -50,7 +49,7 @@ function lastJsonLine(out) {
   return JSON.parse(lines[lines.length - 1]);
 }
 
-test('engine.py 给 7 个配置开关都留了模块级默认值（读配置之前）', () => {
+test('engine.py 在读配置前给配置开关设置模块级默认值', () => {
   const src = fs.readFileSync(path.join(bridgeDir, 'engine.py'), 'utf8');
   for (const name of ENGINE_GLOBALS) {
     assert.match(
@@ -60,14 +59,13 @@ test('engine.py 给 7 个配置开关都留了模块级默认值（读配置之�
     );
   }
   // 默认值要和 try 里 _wechat.get(...) 的兜底值一致，不能是随手写的
-  assert.match(src, /^QUOTE_REPLY = False$/m, 'quoteReply 的默认就是关');
   assert.match(src, /^KEYBOARD_FALLBACK = True$/m);
   assert.match(src, /^BACKGROUND_SEND = True$/m);
   assert.match(src, /^ACCOUNT_GUARD = True$/m);
   assert.match(src, /^GOODNIGHT_TEXT = '晚安/m);
 });
 
-test('config.json 是坏的：engine 仍能导入，7 个全局都在（修复前是 NameError）', { skip: !hasPy && '本地没有可用 Python' }, (t) => {
+test('config.json 损坏时 engine 仍能导入且保留配置默认值', { skip: !hasPy && '本地没有可用 Python' }, (t) => {
   const fixture = createBridgeFixture(t);
   const tmp = fixture.root;
   // 和事故现场一样：Windows 路径只写了一个反斜杠 → Invalid \escape

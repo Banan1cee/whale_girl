@@ -22,6 +22,8 @@ const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
 
 const iss = read('installer/whale.iss');
 const page = read('launcher/Views/VoiceSendPage.cs');
+const remote = read('launcher/PhoneFeatures.cs');
+const packageSource = read('launcher/VbCablePackage.cs');
 const guide = read('launcher/Views/VoiceSendGuide.cs');
 const wf = read('.github/workflows/installer.yml');
 const fetch = read('scripts/fetch-vb-cable.ps1');
@@ -107,10 +109,13 @@ test('whale.iss：覆盖安装三件套（占用检测 / 沿用原目录 / 不�
 });
 
 test('启动器：先找新位置，再兜底旧安装位置', () => {
-  assert.ok(page.includes(`Path.Combine(root,"${FOLDER}","${EXE}")`), 'VoiceSendPage.cs 没有优先找新位置的 exe');
-  assert.ok(page.includes('Path.Combine(root,"runtime","vb-cable"'), 'VoiceSendPage.cs 没保留 4.0.4 及更早安装位置的兜底');
-  assert.ok(page.includes('安装目录\\\\' + FOLDER + '\\\\' + EXE), '找不到驱动时没告诉用户准确位置');
-  assert.ok(page.includes('https://vb-audio.com/Cable/'), '找不到驱动时没给官网退路');
+  assert.match(page, /VbCablePackage\.OpenInstaller\(root\)/);
+  assert.match(remote, /VbCablePackage\.OpenInstaller\(_root\)/);
+  const current = packageSource.indexOf(`Path.Combine(root, "${FOLDER}", installer)`);
+  const legacy = packageSource.indexOf('Path.Combine(root, "runtime", "vb-cable", installer)');
+  assert.ok(current >= 0 && legacy > current, '先使用新安装位置，再回退到旧安装位置');
+  assert.ok(packageSource.includes('安装目录\\\\' + FOLDER + '\\\\' + EXE), '找不到驱动时显示准确位置');
+  assert.ok(packageSource.includes('https://vb-audio.com/Cable/'), '找不到驱动时提供官网下载地址');
 });
 
 test('教程：两处提到声卡安装包时都说明在新文件夹', () => {

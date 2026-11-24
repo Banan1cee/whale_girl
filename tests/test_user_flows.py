@@ -51,7 +51,7 @@ class BridgeUserFlows(unittest.TestCase):
             db=types.SimpleNamespace(get_nickname=lambda s: '好友'), display_name=lambda s: '好友',
             is_system_notice=lambda *a: False, duplicate_guard=lambda *a: False,
             LOCAL_HTTP=http, token='test', bot_url='http://localhost/webhook/wechat',
-            CONN_STATE={}, MOCK_NOTICED={'done': False}, QUOTE_REPLY=False,
+            CONN_STATE={}, MOCK_NOTICED={'done': False},
             rate_guard=lambda *a: True, send_at=lambda *a: False,
             send_text=lambda text, *a, **k: sent.append(text) or send_ok,
             STICKER_TEST_ON=True, claim_and_send_sticker=lambda *a, **k: stickers.append(a))
@@ -64,27 +64,13 @@ class BridgeUserFlows(unittest.TestCase):
     def message(self, **changes):
         return dict(username='peer', sender_username='friend', type='文本', content='问题', create_time=200., local_id=1, **changes)
 
-    def test_is_latest_message_compares_local_id_and_shard(self):
-        env = {'db': types.SimpleNamespace(
-            get_messages=lambda u, limit=1: [{'local_id': 7, 'shard': 1}])}
-        fn = function('is_latest_message', env)
-        self.assertTrue(fn('peer', {'local_id': 7, 'shard': 1}))
-        self.assertFalse(fn('peer', {'local_id': 8, 'shard': 1}))
-        self.assertFalse(fn('peer', {'local_id': 7, 'shard': 2}))
-        self.assertFalse(fn('peer', {'local_id': 7}))
-
-    def test_quote_latest_only_when_message_is_still_last(self):
-        env, clock, sent, _, _ = self.env()
-        env['QUOTE_REPLY'] = True
-        env['is_latest_message'] = lambda u, m: True
+    def test_reply_sends_plain_text_without_querying_latest_message(self):
+        env, _, _, _, _ = self.env()
+        env['db'].get_messages = Mock(side_effect=AssertionError('回复无需读取最后一条消息'))
         env['send_text'] = Mock(return_value=True)
         function('on_message_inner', env)(self.message(), None)
-        env['send_text'].assert_called_once_with('回答', '好友', 'peer', quote_latest=True)
-
-        env['is_latest_message'] = lambda u, m: False
-        env['send_text'] = Mock(return_value=True)
-        function('on_message_inner', env)(self.message(), None)
-        env['send_text'].assert_called_once_with('回答', '好友', 'peer', quote_latest=False)
+        env['send_text'].assert_called_once_with('回答', '好友', 'peer')
+        env['db'].get_messages.assert_not_called()
 
     def test_slow_image_recognition_does_not_make_fresh_message_stale(self):
         env, clock, sent, _, _ = self.env()
