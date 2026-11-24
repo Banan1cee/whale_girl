@@ -156,6 +156,7 @@ function normalizeBySpec(value, spec) {
 function publicConfig(config) {
   const internal = new Set(['env', 'paths', 'root', 'configExists', 'configError']);
   const out = JSON.parse(JSON.stringify(config, (k, v) => (internal.has(k) ? undefined : v)));
+  if (out.wechat) delete out.wechat.quoteReply;
   // env 是「进程环境变量 + config.json 的 env 段」的合体，不能整份吐给界面；
   // 但时区/地点是用户设置，必须让设置页读得到。只回这三个安全字段。
   const envCfg = (config && config.env) || {};
@@ -317,7 +318,7 @@ function prepareConfigPatch(config, patch) {
   const errors = [];
   for (const [dotted, value] of Object.entries(patch)) {
     const p = String(dotted || '').trim();
-    if (!p) continue;
+    if (!p || p === 'wechat.quoteReply') continue;
     // 密钥留空 = 不改（界面上看不到已存的 Key，不能一保存就把它清了）
     if (SECRET_PATHS.has(p) && p !== 'admin.spell' && (value === '' || value === null || value === undefined)) continue;
     try {

@@ -458,7 +458,7 @@ class SenderMixin:
         G.log_throttled('send-policy-unavailable', '发言范围：内核未确认允许发送，已暂停', ttl=60)
         return False
 
-    def send_text(self, text, chat_display_name, chat_username='', force=False, quote_latest=False):
+    def send_text(self, text, chat_display_name, chat_username='', force=False):
         from send_attempt import logical_operation, prepared_adapter, bind_runtime_identity
         pending = getattr(self, '_text_send_inflight', None)
         if pending is not None and pending.is_alive():
@@ -544,51 +544,6 @@ class SenderMixin:
                     G.log('初始化微信窗口驱动…（会抢一下焦点，约 5~10 秒）')
                     self.gui = self.new_window_driver()
             self.bind_gui_window(self.gui)
-            # 兜底的目标是送出正文。引用定位失败和已经尝试发送在旧驱动里
-            # 都可能返回不确定，进入引用动作后无法安全地回退为普通文字。
-            if quote_latest and G.QUOTE_REPLY and not foreground_fallback:
-                G.SEND_STATE['start'] = G.time.time()
-                try:
-                    from send_input import is_blank, input_value
-                    if not operation.reserve('quote'):
-                        return operation.result.handled
-
-                    def quote_in_target():
-                        u = self.gui._get_uia()
-                        if u is None:
-                            raise G.ChatIdentityError('引用回复读不到当前会话')
-                        keys = self.aliases_for(chat_username, chat_display_name) or [chat_display_name]
-                        if u.current_chat() not in keys:
-                            if not operation.can_continue() or not u.open_chat(keys):
-                                raise G.ChatIdentityError('引用回复无法打开目标会话')
-                        self._require_chat_identity(u, chat_display_name, keys, '引用')
-                        if not is_blank(input_value(u)):
-                            raise G.DraftDirtyError('引用回复输入框有草稿或不可读')
-                        if not bind_runtime_identity(operation, self, chat_username):
-                            raise G.ChatIdentityError('引用准备期间账号或目标改变')
-                        if (not self.account_send_allowed('引用复核') or not self.send_policy_allows(chat_username, chat_display_name)
-                                or not self.sticker_quarantine_allows(chat_username, chat_display_name)):
-                            operation.record('cancelled', 'quote_gate_changed')
-                            return False
-                        window = self.snapshot_win_state()
-                        if not window['hwnd'] or window['fg'] != window['hwnd']:
-                            operation.record('cancelled', 'quote_foreground_lost')
-                            return False
-                        # 已打开并核对会话。传 who 会触发上游再次搜索，让核对的结果失效。
-                        return operation.opaque('quote', lambda: self.gui.quote_msg(text, verify=False))
-
-                    if self.with_window_on_top(quote_in_target, require_foreground=True):
-                        G.log('引用回复阶段=%s（仅处理，不声明确认送达）' % operation.result.status, display)
-                        return True
-                    G.log('引用回复未确认浮层/发送，回退普通发送：', display)
-                except (G.ChatIdentityError, G.DraftDirtyError) as e:
-                    operation.record('identity_mismatch' if isinstance(e, G.ChatIdentityError) else 'draft_dirty', type(e).__name__)
-                    return False
-                except Exception as e:
-                    if operation.effect_started:
-                        operation.record('uncertain', 'quote_exception')
-                        return True
-                    G.log('引用准备未完成，尚未输入：', type(e).__name__)
             uia_available = False
             try:
                 uia_available = self.gui._get_uia() is not None

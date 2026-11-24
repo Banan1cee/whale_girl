@@ -22,7 +22,30 @@ public sealed class AutoVoiceSettings
     public string Instructions { get; set; } = "";
     public string RecordingHotkey { get; set; } = "Ctrl+Alt";
     public double SynthTimeoutSec { get; set; } = 85;
-    public static AutoVoiceSettings Load(string root) => JsonSerializer.Deserialize<AutoVoiceSettings>(File.ReadAllText(Path.Combine(root,"data","voice-send.json")));
+    private static string SettingsPath(string root) => Path.Combine(root, "data", "voice-send.json");
+    public static AutoVoiceSettings Load(string root) => JsonSerializer.Deserialize<AutoVoiceSettings>(File.ReadAllText(SettingsPath(root)));
+    internal static AutoVoiceSettings LoadOrDefault(string root) => File.Exists(SettingsPath(root))
+        ? Load(root) ?? new AutoVoiceSettings() : new AutoVoiceSettings();
+    internal void Save(string root)
+    {
+        var path = SettingsPath(root);
+        Directory.CreateDirectory(Path.GetDirectoryName(path));
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(this));
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally { try { File.Delete(temporary); } catch (IOException) { } }
+    }
+    internal static AutoVoiceSettings SetEnabled(string root, bool enabled)
+    {
+        var settings = LoadOrDefault(root);
+        settings.Enabled = enabled;
+        settings.Save(root);
+        if (!enabled) CancelJobs(root);
+        return settings;
+    }
     public static bool IsEnabled(string root) { try { return Load(root)?.Enabled == true; } catch { return false; } }
     public static void CancelJobs(string root)
     {

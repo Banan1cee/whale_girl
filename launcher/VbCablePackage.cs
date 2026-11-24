@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -8,6 +9,17 @@ namespace WhaleLauncher;
 
 public static class VbCablePackage
 {
+    internal static void OpenInstaller(string root)
+    {
+        const string installer = "VBCABLE_Setup_x64.exe";
+        var exe = Path.Combine(root, "VB-CABLE虚拟声卡", installer);
+        if (!File.Exists(exe)) exe = Path.Combine(root, "runtime", "vb-cable", installer);
+        if (!File.Exists(exe)) throw new ArgumentException("找不到驱动安装程序：安装目录\\VB-CABLE虚拟声卡\\VBCABLE_Setup_x64.exe。也可从 https://vb-audio.com/Cable/ 下载。");
+        using var installerLock = new FileStream(exe, FileMode.Open, FileAccess.Read, FileShare.Read);
+        Validate(Path.GetDirectoryName(exe));
+        Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true, Verb = "runas" });
+    }
+
     public static string[] Problems(string directory)
     {
         using var resource = typeof(VbCablePackage).Assembly.GetManifestResourceStream("WhaleLauncher.VbCablePack45.json");

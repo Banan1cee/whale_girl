@@ -52,7 +52,7 @@ test('config.json 解析失败：applyConfigPatch 拒绝写入，文件一个字
   const runtime = makeRuntime(root);
 
   assert.throws(
-    () => applyConfigPatch(runtime, { 'wechat.quoteReply': false }),
+    () => applyConfigPatch(runtime, { 'wechat.keyboardFallback': false }),
     (err) => err.statusCode === 500 && /config\.json/.test(err.message),
     '坏文件要抛 500 并说清是 config.json 的问题'
   );

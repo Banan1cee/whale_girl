@@ -181,22 +181,22 @@ test('安装包只在第二位版本号增加（新增功能）时构建', () =>
   assert.doesNotMatch(gate, /shell:\s*pwsh/, 'version-gate 不能再用 PowerShell');
 });
 
-test('引用回复默认关闭（开着的话每条要多走一遍 UI，回复明显变慢）', () => {
+test('旧版引用回复配置在启动和热更新后不再改变发送路径', () => {
   const bundled = path.join(root, 'runtime/python/python.exe');
   const python = process.env.WHALE_TEST_PYTHON || (fs.existsSync(bundled) ? bundled : 'python');
   const behavior = spawnSync(python, ['-B', path.join(root, 'tests/test_refactor_t13_runtime.py'),
-    'DefaultSafetyTests.test_quote_reply_default_configured_and_reload',
-    'DefaultSafetyTests.test_quote_request_and_identity_gate_remain_required'], {
+    'DefaultSafetyTests.test_removed_quote_setting_is_ignored_at_startup_and_reload',
+    'DefaultSafetyTests.test_account_guard_still_blocks_plain_text_send'], {
     cwd: root, encoding: 'utf8', timeout: 30000,
     env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   assert.ifError(behavior.error);
   assert.equal(behavior.status, 0, behavior.stdout + behavior.stderr);
-  assert.match(behavior.stderr, /Ran 2 tests/, '必须实际执行启动、热重载、配置覆盖和引用发送闸回归');
+  assert.match(behavior.stderr, /Ran 2 tests/, '必须实际执行启动、热重载和发送账号闸回归');
   assert.match(behavior.stderr, /(?:^|\r?\n)OK(?:\r?\n|$)/);
   const example = JSON.parse(fs.readFileSync(path.join(root, 'config', 'config.example.json'), 'utf8').replace(/^\uFEFF/, ''));
-  assert.equal(example.wechat.quoteReply, false, 'config.example 里也应该是 false');
+  assert.equal(Object.hasOwn(example.wechat, 'quoteReply'), false);
 });
 
 test('桥接启动失败要区分「缺 VC++ 运行库」和「缺 pip 包」', () => {

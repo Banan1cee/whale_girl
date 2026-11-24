@@ -64,7 +64,7 @@ namespace WhaleLauncher.Views
         private bool _loading;
         private bool _configLoaded;      // 已经成功全量回填过一次（M30：周期刷新据此判断要不要补）
         private bool _loadedOnline;
-        private bool _loadingConfig;     // 全量回填在途，防止载入和定时器双跑
+        private long? _loadingConfigGeneration;
         private DateTime _lastLoad = DateTime.MinValue;
         public SettingsPage(RuntimeSupervisor sup)
         {
@@ -77,7 +77,8 @@ namespace WhaleLauncher.Views
                 _pageLifetime.Activate();
                 var generation = _pageLifetime.Capture();
                 MainScroll.ScrollToTop();
-                await RefreshAsync();
+                _lastLoad = DateTime.MinValue;
+                await LoadConfigAsync();
                 if (_pageLifetime.IsCurrent(generation))
                     foreach (var refresh in _refreshBudgetHints) refresh();
             };
@@ -2483,76 +2484,80 @@ namespace WhaleLauncher.Views
         }
 
         // ── 读写 ────────────────────────────────────────────────
-        /// <summary>
-        /// 周期刷新（MainWindow 2 秒定时器驱动）：只更新状态行，不动表单——
-        /// 否则会把用户正在编辑的值冲掉，随后 LostFocus 又把旧值写回服务端（M30）。
-        /// 全量回填只在页面载入（Loaded）做；表单还没载入过（比如内核后启动）时补一次。
-        /// </summary>
-        public async Task RefreshAsync()
-        {
-            if (_configLoaded && _loadedOnline != _sup.NodeRunning)
-            {
-                _configLoaded = false;
-                _lastLoad = DateTime.MinValue;
-            }
-            KernelHint.Text = _sup.NodeRunning
-                ? "改完立即写回 config.json（密钥留空表示不改）"
-                : "可保存到本地，启动后生效。";
-            if (!_configLoaded) await LoadConfigAsync();      // 还没回填过，补一次
-        }
+        // 周期轮询只补初次读取或内核切换，避免覆盖正在编辑的表单。
+        public Task RefreshAsync()
+            => !_configLoaded || _loadedOnline != _sup.SettingsServiceObserved
+                ? LoadConfigAsync() : Task.CompletedTask;
 
-        /// <summary>全量回填：把服务端的值刷回所有表单控件（跳过正在编辑的）。</summary>
         private async Task LoadConfigAsync()
         {
-            if ((DateTime.Now - _lastLoad).TotalSeconds < 5) return;   // 节流：≥5 秒一次（照 SettingsPage 原有做法）
-            if (_loadingConfig) return;
-            _loadingConfig = true;
-            _lastLoad = DateTime.Now;
             var generation = _pageLifetime.Capture();
+            if (!_pageLifetime.IsCurrent(generation) || _loadingConfigGeneration == generation
+                || (DateTime.Now - _lastLoad).TotalSeconds < 5) return;
+            _loadingConfigGeneration = generation;
+            _lastLoad = DateTime.Now;
             var revision = _configurationRevision;
+            bool CanApply() => _pageLifetime.IsCurrent(generation) && revision == _configurationRevision;
             try
             {
-                var cfg = await _sup.ReadConfigurationAsync("/api/config");
-                if (!_pageLifetime.IsCurrent(generation)) return;
-                if (!cfg.Ok) { KernelHint.Text = cfg.Error; return; }
-                var settings = await _sup.ReadConfigurationAsync("/api/settings");
-                if (!_pageLifetime.IsCurrent(generation) || revision != _configurationRevision)
-                {
-                    _lastLoad = DateTime.MinValue;
-                    return;
-                }
-                var config = cfg.Prop("config");
-                var secrets = cfg.Prop("secrets");
-                var secretMasks = cfg.Prop("secretMasks");
-                foreach (var loader in _secretMaskLoaders)
-                    loader.Value(JsonRead.Str(secretMasks, loader.Key));
-                _adminSpellStatus.Text = secrets.ValueKind == JsonValueKind.Object &&
-                    secrets.TryGetProperty("admin.spell", out var spell) && spell.ValueKind == JsonValueKind.True
-                    ? "已设置" : "未设置";
-                _loading = true;
-                try
-                {
-                    foreach (var kv in _loaders)
-                        kv.Value(GetPath(config, kv.Key));
-                }
-                finally { _loading = false; }
+                if (!_configLoaded) KernelHint.Text = "正在读取本地设置…";
+                var local = await _sup.ReadSettingsSnapshotAsync(online: false);
+                if (!CanApply()) return;
+                ApplySettingsSnapshot(local, online: false);
 
-                if (settings.Ok)
-                {
-                    var provs = new Dictionary<string, JsonElement>();
-                    var p = settings.Prop("providers");
-                    if (p.ValueKind == JsonValueKind.Object)
-                        foreach (var it in p.EnumerateObject()) provs[it.Name] = it.Value;
-                    _loadModel?.Invoke(settings.Root, provs);
-                    _loadVision?.Invoke(settings.Root);
-                }
-                _configLoaded = true;
-                _loadedOnline = _sup.NodeRunning;
+                if (!_sup.SettingsServiceObserved) return;
+                var live = await _sup.ReadSettingsSnapshotAsync(online: true);
+                if (CanApply()) ApplySettingsSnapshot(live, online: true);
             }
             finally
             {
-                _loadingConfig = false;
+                // 快速离开再进入时，新一轮读取不能被旧页面挡住。
+                if (_loadingConfigGeneration == generation) _loadingConfigGeneration = null;
+                if (_pageLifetime.IsCurrent(generation) && revision != _configurationRevision)
+                    _lastLoad = DateTime.MinValue;
             }
+        }
+
+        private void ApplySettingsSnapshot((ApiResult Config, ApiResult Settings) snapshot, bool online)
+        {
+            var (cfg, settings) = snapshot;
+            var config = cfg.Prop("config");
+            if (!cfg.Ok || !settings.Ok || config.ValueKind != JsonValueKind.Object || settings.Root.ValueKind != JsonValueKind.Object)
+            {
+                if (!_configLoaded)
+                {
+                    var error = !cfg.Ok ? cfg.Error : settings.Error;
+                    KernelHint.Text = string.IsNullOrEmpty(error) ? "设置读取失败，稍后重试。" : error;
+                }
+                return;
+            }
+
+            var secrets = cfg.Prop("secrets");
+            var secretMasks = cfg.Prop("secretMasks");
+            foreach (var loader in _secretMaskLoaders)
+                loader.Value(JsonRead.Str(secretMasks, loader.Key));
+            _adminSpellStatus.Text = secrets.ValueKind == JsonValueKind.Object &&
+                secrets.TryGetProperty("admin.spell", out var spell) && spell.ValueKind == JsonValueKind.True
+                ? "已设置" : "未设置";
+            _loading = true;
+            try
+            {
+                foreach (var kv in _loaders)
+                    kv.Value(GetPath(config, kv.Key));
+            }
+            finally { _loading = false; }
+
+            var providers = new Dictionary<string, JsonElement>();
+            var p = settings.Prop("providers");
+            if (p.ValueKind == JsonValueKind.Object)
+                foreach (var it in p.EnumerateObject()) providers[it.Name] = it.Value;
+            _loadModel?.Invoke(settings.Root, providers);
+            _loadVision?.Invoke(settings.Root);
+            _configLoaded = true;
+            _loadedOnline = online;
+            KernelHint.Text = online
+                ? "改完立即写回 config.json（密钥留空表示不改）"
+                : "已读取本地设置，密钥留空表示保留原值。";
         }
 
         private static JsonElement GetPath(JsonElement root, string dotted)

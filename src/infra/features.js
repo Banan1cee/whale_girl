@@ -120,13 +120,6 @@ const REGISTRY = [
     desc: '没聊的时候她自己来一句「在干啥」。默认开但只私聊，不会进群；群里突然说早安很容易社死。',
     default: true,
   },
-  {
-    key: 'quoteReply',
-    path: 'wechat.quoteReply',
-    label: '引用回复（慢，默认关）',
-    desc: '开启后每条回复都带「引用原消息」，视觉上更清楚，但每条要多走一遍 UI，实测慢好几秒。',
-    default: false,
-  },
 ];
 
 const BY_KEY = new Map(REGISTRY.map((f) => [f.key, f]));

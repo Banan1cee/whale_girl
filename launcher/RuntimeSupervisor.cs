@@ -78,6 +78,9 @@ namespace WhaleLauncher
         // 启动检查完成前及强制态禁止所有业务启动入口，不能只靠主窗口按钮拦截。
         public bool UpdateBlocked { get; set; }
         private LocalConfiguration _localConfiguration;
+        private int _observedExternalSettingsPort;
+        internal bool SettingsServiceObserved => NodeRunning ||
+            (_observedExternalSettingsPort != 0 && _observedExternalSettingsPort == Port);
         private readonly System.Threading.SemaphoreSlim _configurationWrites = new(1, 1);
         internal int PersonaRevision { get; private set; }
         internal void NotifyPersonaChanged() => PersonaRevision++;
@@ -96,6 +99,39 @@ namespace WhaleLauncher
             var url = await ConfigurationServiceUrlAsync();
             return url != null ? await Api.Get(url, path)
                 : await (_localConfiguration ??= new LocalConfiguration(BaseDir)).ReadAsync(path, forceRefresh);
+        }
+
+        internal async Task<(ApiResult Config, ApiResult Settings)> ReadSettingsSnapshotAsync(bool online)
+        {
+            const string configPath = "/api/config";
+            const string settingsPath = "/api/settings";
+            if (online)
+            {
+                // 状态轮询只提示何时值得刷新。实际在线请求仍确认内核身份。
+                var url = await ConfigurationServiceUrlAsync();
+                if (url == null)
+                {
+                    var unavailable = new ApiResult { Error = "内核未就绪" };
+                    return (unavailable, unavailable);
+                }
+
+                var config = Api.Get(url, configPath, timeoutSeconds: 2);
+                var settings = Api.Get(url, settingsPath, timeoutSeconds: 2);
+                await Task.WhenAll(config, settings);
+                return (await config, await settings);
+            }
+
+            var snapshot = await (_localConfiguration ??= new LocalConfiguration(BaseDir)).ReadSnapshotAsync();
+            if (!snapshot.Ok) return (snapshot, snapshot);
+
+            ApiResult Read(string path)
+            {
+                var value = snapshot.Prop(path);
+                return value.ValueKind == JsonValueKind.Object
+                    ? new ApiResult { Ok = true, StatusCode = 200, Root = value }
+                    : new ApiResult { Error = "本地设置不完整" };
+            }
+            return (Read(configPath), Read(settingsPath));
         }
 
         internal async Task<ApiResult> PreviewPersonaPresetAsync(string id)
@@ -437,6 +473,70 @@ namespace WhaleLauncher
             }
         }
 
+        public async Task<string> RestartWeChatAsync()
+        {
+            using var current = Process.GetCurrentProcess();
+            var candidates = Process.GetProcessesByName("Weixin").Concat(Process.GetProcessesByName("WeChat")).ToArray();
+            try
+            {
+                var sessionClients = candidates.Where(process => process.SessionId == current.SessionId && !process.HasExited).ToArray();
+                var clients = sessionClients.Length == 1 ? sessionClients :
+                    sessionClients.Where(process => process.MainWindowHandle != IntPtr.Zero).ToArray();
+                if (clients.Length != 1)
+                    return clients.Length == 0 ? "电脑上未找到微信主窗口。" : "检测到多个微信实例，请在电脑上选择后再重启。";
+                var client = clients[0];
+                var executable = client.MainModule?.FileName;
+                if (string.IsNullOrEmpty(executable) || !File.Exists(executable)) return "无法确认当前微信的程序路径。";
+                // 重启由提权的启动器执行。锁定并验证正在使用的安装文件，防止路径被调包。
+                using var executableLock = File.Open(executable, FileMode.Open, FileAccess.Read, FileShare.Read);
+                if (!WechatSignature.Verify(executable)) return "当前微信程序未通过腾讯签名校验，请在电脑上检查安装。";
+
+                bool restartBridge;
+                lock (_processLock)
+                {
+                    restartBridge = BridgeRunning;
+                    _bridgeWanted = false;
+                    _restartGeneration++;
+                    Kill(_bridge, "B", "桥接");
+                    _bridge = null;
+                }
+                try
+                {
+                    if (!client.HasExited && client.CloseMainWindow())
+                    {
+                        using var graceful = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        try { await client.WaitForExitAsync(graceful.Token); }
+                        catch (OperationCanceledException) { }
+                    }
+                    if (!client.HasExited)
+                    {
+                        client.Kill();
+                        using var wait = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        await client.WaitForExitAsync(wait.Token);
+                    }
+                    using var started = Process.Start(new ProcessStartInfo(executable)
+                    {
+                        UseShellExecute = true,
+                        WorkingDirectory = Path.GetDirectoryName(executable),
+                    });
+                    return started == null ? "Windows 未能重新打开微信。" : null;
+                }
+                finally
+                {
+                    if (restartBridge && NodeRunning) StartBridge();
+                }
+            }
+            catch (Exception ex)
+            {
+                SayWarn("手机请求重启微信失败：" + ex.GetType().Name);
+                return "无法重启微信，请查看诊断。";
+            }
+            finally
+            {
+                foreach (var candidate in candidates) candidate.Dispose();
+            }
+        }
+
         private Process Launch(string exe, string args, string src, string what)
         {
             try
@@ -574,6 +674,7 @@ namespace WhaleLauncher
                 s.NodeUp = true;
                 s.ExternalNode = true;
             }
+            _observedExternalSettingsPort = s.ExternalNode ? s.Port : 0;
 
             if (s.NodeUp)
             {

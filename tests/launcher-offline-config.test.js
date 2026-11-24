@@ -21,7 +21,7 @@ test('未启动内核也能读取保存的人设、模型、高级选项及提�
   const root = fixture(t);
   write(root, 'config.json', { persona: { name: '本地名字', ownerName: '本地称呼' },
     deepseek: { temperature: 1.15, apiKey: 'test-offline-key' },
-    wechat: { quoteReply: true }, group: { requireAt: false } });
+    wechat: { quoteReply: true, accountGuard: false }, group: { requireAt: false } });
   write(root, 'data/settings.json', { provider: 'custom', model: 'test-model', baseUrl: 'http://127.0.0.1:19191/v1', temperature: 1.25 });
   write(root, 'data/persona.json', { personality: '保存的性格', privateMaxChars: 188 });
   const files = ['config.json', 'data/settings.json', 'data/persona.json'];
@@ -32,7 +32,8 @@ test('未启动内核也能读取保存的人设、模型、高级选项及提�
   assert.equal(snapshot['/api/persona'].persona.privateMaxChars, 188);
   assert.equal(snapshot['/api/settings'].model, 'test-model');
   assert.equal(snapshot['/api/settings'].userName, '本地称呼');
-  assert.equal(snapshot['/api/config'].config.wechat.quoteReply, true);
+  assert.equal(snapshot['/api/config'].config.wechat.accountGuard, false);
+  assert.equal(Object.hasOwn(snapshot['/api/config'].config.wechat, 'quoteReply'), false);
   assert.equal(snapshot['/api/config'].config.group.requireAt, false);
   assert.ok(snapshot['/api/features'].features.length > 0);
   assert.equal(snapshot['/api/reminders'].ok, true);
@@ -92,7 +93,7 @@ test('offline saves persist model, persona and Moments settings without launchin
     cwd: root, encoding: 'utf8', timeout: 15000, input: JSON.stringify({ path, body }),
   }));
   for (const [route, body] of [
-    ['/api/config', { patch: { 'group.requireAt': false } }],
+    ['/api/config', { patch: { 'group.requireAt': false, wechat: { quoteReply: true } } }],
     ['/api/settings', { provider: 'custom', model: 'offline-model', baseUrl: 'http://127.0.0.1:19191/v1' }],
     ['/api/persona', { name: '离线人设' }],
     ['/api/moments/publish-settings', { featureEnabled: true, enabled: false, withImage: true, interval: 8, maxPerDay: 2 }],
@@ -104,6 +105,8 @@ test('offline saves persist model, persona and Moments settings without launchin
   assert.equal(save('/api/moments/publish-settings', { featureEnabled: true, enabled: true }).ok, false);
   const snapshot = readSnapshot(root, {});
   assert.equal(snapshot['/api/config'].config.group.requireAt, false);
+  const stored = JSON.parse(fs.readFileSync(path.join(root, 'data/config.json'), 'utf8'));
+  assert.equal(stored.wechat?.quoteReply, undefined);
   assert.equal(snapshot['/api/settings'].model, 'offline-model');
   assert.equal(snapshot['/api/persona'].persona.name, '离线人设');
   assert.equal(snapshot['/api/moments/publish-settings'].interval, 8);
