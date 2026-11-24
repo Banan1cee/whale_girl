@@ -439,7 +439,6 @@ namespace WhaleLauncher.Views
 
                 var momentsForeground = JsonRead.Bool(JsonRead.Prop(cfg, "moments"), "publishFeatureEnabled");
                 ChkGuard.IsChecked = JsonRead.Bool(wx, "accountGuard");
-                ChkQuote.IsChecked = JsonRead.Bool(wx, "quoteReply");
 
                 var enabled = true;
                 var fallback = true;
@@ -494,18 +493,6 @@ namespace WhaleLauncher.Views
                 ["wechat"] = new Dictionary<string, object>
                 {
                     ["accountGuard"] = ChkGuard.IsChecked == true
-                }
-            });
-        }
-
-        private async void OnToggleQuote(object sender, RoutedEventArgs e)
-        {
-            if (_loading) return;
-            await PatchAsync(new Dictionary<string, object>
-            {
-                ["wechat"] = new Dictionary<string, object>
-                {
-                    ["quoteReply"] = ChkQuote.IsChecked == true
                 }
             });
         }

@@ -50,7 +50,7 @@ test('每个开关都有 label/desc，启动器才显示得出来', () => {
     assert.ok(f.key && f.label && f.desc, '开关要有 key/label/desc');
     assert.equal(typeof f.value, 'boolean');
   }
-  assert.ok(list.some((f) => f.key === 'quoteReply' && f.default === false), '引用回复默认必须是关');
+  assert.ok(!list.some((f) => f.key === 'quoteReply'), '已经移除的发送引用开关不出现在功能列表');
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 6, retryDelay: 60 });
 });
 

@@ -61,6 +61,8 @@ Name: "chinese"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务："; Flags: checkedonce
+Name: "phoneconsole"; Description: "预装手机远程控制"; GroupDescription: "附加任务："
+Name: "phoneconsole\tailscale"; Description: "从官网下载并安装 Tailscale（需要联网）"
 
 ; 覆盖安装前先清掉「只有旧版本才有」的东西。Inno 在装文件之前统一处理这一段。
 ; 绝不能在这里放用户数据或运行期库：删不掉（进程占用）会让整次安装失败。
@@ -74,6 +76,8 @@ Type: files; Name: "{app}\src\http\static.js"
 Type: files; Name: "{app}\src\adapters\bilibili.js"
 ; 虚拟声卡安装包从 runtime\vb-cable 挪到安装目录根部
 Type: filesandordirs; Name: "{app}\runtime\vb-cable"
+; 旧测试版把 Key 放在独立的第 3 步，新版在第 2 步显示 Key。
+Type: files; Name: "{app}\手机远程控制\3 - 显示配对 Key.cmd"; Tasks: phoneconsole
 
 ; 注意：这里绝不能写 *.zip。CPython embeddable 的标准库就是
 ; runtime\python\python312.zip，排掉它用户装完 python 直接报
@@ -95,6 +99,15 @@ Source: "..\assets\personas\*"; DestDir: "{app}\assets\personas"; Flags: ignorev
 Source: "..\assets\*.txt"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "clapback-fight.txt"
 Source: "..\assets\stickers\*"; DestDir: "{app}\assets\stickers"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\examples\*"; DestDir: "{app}\examples"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__\*,*.pyc"
+Source: "..\tools\remote-console\1 - 下载或安装 Tailscale.cmd"; DestDir: "{app}\手机远程控制"; Flags: ignoreversion; Tasks: phoneconsole
+Source: "..\tools\remote-console\2 - 一键打开控制台.cmd"; DestDir: "{app}\手机远程控制"; Flags: ignoreversion; Tasks: phoneconsole
+Source: "..\tools\remote-console\3 - 一键复制手机访问地址.cmd"; DestDir: "{app}\手机远程控制"; Flags: ignoreversion; Tasks: phoneconsole
+Source: "..\tools\remote-console\windows-setup.ps1"; DestDir: "{app}\手机远程控制"; Flags: ignoreversion; Tasks: phoneconsole
+Source: "..\tools\remote-console\server.js"; DestDir: "{app}\手机远程控制"; Flags: ignoreversion; Tasks: phoneconsole
+Source: "..\tools\remote-console\launcher-control.js"; DestDir: "{app}\手机远程控制"; Flags: ignoreversion; Tasks: phoneconsole
+Source: "..\tools\remote-console\README.md"; DestDir: "{app}\手机远程控制"; Flags: ignoreversion; Tasks: phoneconsole
+Source: "..\tools\remote-console\public\*"; DestDir: "{app}\手机远程控制\public"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: phoneconsole
+Source: "..\scripts\install-tailscale.ps1"; Flags: dontcopy
 ; runtime：内置 node.exe + CPython + .NET 运行时安装包；wheelhouse 是构建缓存，不进包
 ; （它也是 CPython 标准库 python312.zip 所在目录，所以绝不能整体排除 *.zip）
 ; 注意：pythonwin 目录里放着 win32ui.pyd / win32uiole.pyd，wechatauto 截图要用，绝不能整目录排除。
@@ -108,6 +121,7 @@ Source: "..\runtime\vb-cable\*"; DestDir: "{app}\VB-CABLE虚拟声卡"; \
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+Name: "{group}\手机远程控制"; Filename: "{app}\手机远程控制"; Tasks: phoneconsole
 
 [Run]
 Filename: "{app}\VB-CABLE虚拟声卡\VBCABLE_Setup_x64.exe"; Description: "安装 VB-CABLE 虚拟声卡（安装包在「VB-CABLE虚拟声卡」文件夹里；VB-Audio Donationware）"; Verb: "runas"; Flags: shellexec postinstall skipifsilent unchecked; Check: FileExists(ExpandConstant('{app}\VB-CABLE虚拟声卡\VBCABLE_Setup_x64.exe'))
@@ -136,6 +150,9 @@ Type: files; Name: "{app}\runtime\dotnet\*.exe"
 const
   DotnetMajor = '10';
   DotnetInstallerName = 'windowsdesktop-runtime-10-win-x64.exe';
+
+var
+  TailscaleNeedsRestart: Boolean;
 
 { 目录名必须是纯版本号（10.0.14）。10.0.14.bak 这类改名残留不算。 }
 function IsRuntimeVersionName(const Name: String): Boolean;
@@ -325,6 +342,48 @@ begin
               '请手动退出鲸鲸（任务管理器结束 WhaleLauncher.exe）后重试。';
 end;
 
+procedure InstallTailscale;
+var
+  Architecture, Parameters: String;
+  ExitCode: Integer;
+begin
+  if RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\Tailscale') then
+    Exit;
+
+  if IsArm64 then
+    Architecture := 'arm64'
+  else
+    Architecture := 'amd64';
+
+  try
+    ExtractTemporaryFile('install-tailscale.ps1');
+    Parameters := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+      ExpandConstant('{tmp}\install-tailscale.ps1') + '" -Architecture ' + Architecture;
+    if ExecAndLogOutput(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      Parameters, '', SW_SHOWNORMAL, ewWaitUntilTerminated, ExitCode, nil) then
+    begin
+      Log('Tailscale 安装返回：' + IntToStr(ExitCode));
+      if (ExitCode = 0) or (ExitCode = 3010) then
+      begin
+        TailscaleNeedsRestart := ExitCode = 3010;
+        Exit;
+      end;
+    end
+    else
+      Log('无法启动 Tailscale 安装脚本：' + IntToStr(ExitCode));
+  except
+    Log('Tailscale 安装出错：' + GetExceptionMessage);
+  end;
+
+  SuppressibleMsgBox('鲸鲸已安装。Tailscale 未装好，若要使用手机远程控制，请联网后双击' + #13#10 +
+    ExpandConstant('{app}\手机远程控制\1 - 下载或安装 Tailscale.cmd') + '。', mbInformation, MB_OK, IDOK);
+end;
+
+function NeedRestart: Boolean;
+begin
+  Result := TailscaleNeedsRestart;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   Log('CurStepChanged 触发，CurStep=' + IntToStr(Ord(CurStep)));
@@ -369,6 +428,9 @@ begin
         Log('删除 .NET 运行时安装包失败，已忽略');
       RemoveDir(ExpandConstant('{app}\runtime\dotnet'));
     end;
+
+    if WizardIsTaskSelected('phoneconsole\tailscale') then
+      InstallTailscale();
   end;
 end;
 

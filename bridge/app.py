@@ -156,7 +156,6 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
         self.token = G.bridge_config.wechat_token(self.cfg)
         self.bot_url = G.build_bot_url(self.cfg)
         self.aliases = ((self.cfg.get('persona') or {}).get('aliases') or []) + [(self.cfg.get('persona') or {}).get('name') or '鲸鲸']
-        G.log('引用回复：%s（关掉更快，需要时在 config.json 把 wechat.quoteReply 设 true）' % ('开' if G.QUOTE_REPLY else '关'))
         G.log('连接微信 4.x 数据库（只读）…')
         if self.token:
             G.log('webhook token：已读取（长度 %d，内容不进日志）' % len(self.token))

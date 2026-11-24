@@ -102,8 +102,6 @@
                 <WrapPanel>
                     <CheckBox x:Name="ChkGuard" Content="双开守卫" Foreground="{DynamicResource Text}" FontSize="12"
                               VerticalAlignment="Center" Click="OnToggleGuard" Margin="0,0,22,0" />
-                    <CheckBox x:Name="ChkQuote" Content="引用回复" Foreground="{DynamicResource Text}" FontSize="12"
-                              VerticalAlignment="Center" Click="OnToggleQuote" Margin="0,0,22,0" />
                     <TextBlock Text="文字发送方式" Style="{StaticResource Label}" VerticalAlignment="Center" Margin="0,0,8,0" />
                     <ComboBox x:Name="CmbSend" Width="210" FontSize="12" VerticalAlignment="Center"
                               SelectionChanged="OnSendModeChanged" />
@@ -113,7 +111,7 @@
                 <TextBlock x:Name="ForegroundLockHint" Text="朋友圈已开启，微信强制前台发送。"
                            Style="{StaticResource Small}" Margin="0,6,0,0" Visibility="Collapsed" />
                 <TextBlock x:Name="SwitchHint" Style="{StaticResource Small}" Margin="0,6,0,0"
-                           Text="引用回复会让每条多等好几秒。文字发送方式改了会立刻写回配置。" />
+                           Text="文字发送方式改了会立刻写回配置。" />
 
                 <TextBlock Text="账号与发送" Style="{StaticResource Label}" Margin="0,10,0,6" />
                 <WrapPanel>

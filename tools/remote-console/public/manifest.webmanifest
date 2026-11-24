@@ -1,0 +1,15 @@
+{
+  "id": "/",
+  "name": "鲸鲸远程控制台",
+  "short_name": "鲸鲸控制台",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f2f6fb",
+  "theme_color": "#101e32",
+  "icons": [
+    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/icon.png", "sizes": "512x512", "type": "image/png"}
+  ]
+}

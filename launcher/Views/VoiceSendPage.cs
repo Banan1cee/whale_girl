@@ -180,12 +180,7 @@ public sealed class VoiceSendPage : UserControl
 
         Card("虚拟声卡驱动","运行包只附带官方安装文件；解压、打开启动器和打开实验开关都不会替你安装 Windows 驱动。");
         driverButton=Button("安装 VB-CABLE 官方驱动",_=>{
-            string exe=Path.Combine(root,"VB-CABLE虚拟声卡","VBCABLE_Setup_x64.exe");
-            // 兼容 4.0.4 及更早安装位置（老安装包把它埋在 runtime\vb-cable）
-            if(!File.Exists(exe))exe=Path.Combine(root,"runtime","vb-cable","VBCABLE_Setup_x64.exe");
-            if(!File.Exists(exe))throw new Exception("找不到驱动安装程序：安装目录\\VB-CABLE虚拟声卡\\VBCABLE_Setup_x64.exe；也可以从 https://vb-audio.com/Cable/ 下载");
-            VbCablePackage.Validate(Path.GetDirectoryName(exe));
-            Process.Start(new ProcessStartInfo(exe){UseShellExecute=true,Verb="runas"});
+            VbCablePackage.OpenInstaller(root);
             status.Text="完成官方安装并按提示重启后刷新声卡。VB-CABLE 为 VB-Audio Donationware，可向官方捐赠。";
             return Task.CompletedTask;
         });
@@ -321,9 +316,8 @@ public sealed class VoiceSendPage : UserControl
         bool on=experimental.IsChecked==true;
         try
         {
-            var current=File.Exists(file)?AutoVoiceSettings.Load(root):new AutoVoiceSettings();
-            current.Enabled=on;Write(current);saved=current;
-            if(!on){requests.Cancel();key.Clear();draftKeys.Clear();panel.Visibility=Visibility.Collapsed;AutoVoiceSettings.CancelJobs(root);}
+            saved=AutoVoiceSettings.SetEnabled(root,on);
+            if(!on){requests.Cancel();key.Clear();draftKeys.Clear();panel.Visibility=Visibility.Collapsed;}
             else
             {
                 if(requests.IsCancellationRequested){requests.Dispose();requests=new();}
@@ -338,11 +332,6 @@ public sealed class VoiceSendPage : UserControl
             panel.Visibility=saved.Enabled?Visibility.Visible:Visibility.Collapsed;
             AppDialog.Show(Window.GetWindow(this), "实验开关未保存："+ex.Message, "语音发送", danger: true);
         }
-    }
-    void Write(AutoVoiceSettings settings)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(file));
-        File.WriteAllText(file+".tmp",JsonSerializer.Serialize(settings));File.Move(file+".tmp",file,true);
     }
     void RefreshDevices()
     {
@@ -383,7 +372,7 @@ public sealed class VoiceSendPage : UserControl
     }
     void Save()
     {
-        if(experimental.IsChecked!=true)throw new Exception("请先打开实验开关");
+        if(experimental.IsChecked!=true || !AutoVoiceSettings.IsEnabled(root))throw new Exception("请先打开实验开关，或刷新读取手机上的设置");
         if(!probability.TryRead(out var chance))throw new Exception(probability.ErrorText);
         if(!synthTimeout.TryRead(out var seconds))throw new Exception(synthTimeout.ErrorText);
         var hotkey=RecordingShortcut.Parse(shortcut.Text);
@@ -392,7 +381,7 @@ public sealed class VoiceSendPage : UserControl
         RememberProfile();
         var value=new AutoVoiceSettings{Enabled=true,Provider=providerId,Address=SpeechProviders.Get(providerId).BaseUrl,Profiles=new(profiles),Probability=chance,Groups=groups.IsChecked==true,Private=privates.IsChecked==true,Model=model.Text.Trim(),Voice=voice.Text.Trim(),Instructions=instructions.Text.Trim(),Device=d.Id,RecordingHotkey=hotkey.Label};
         value.SynthTimeoutSec=seconds;
-        Write(value);saved=value;shortcut.Text=hotkey.Label;
+        value.Save(root);saved=value;shortcut.Text=hotkey.Label;
         status.Text="已保存，微信录音快捷键："+hotkey.Label+"。关闭实验开关立即停止后续语音任务。";
     }
 }

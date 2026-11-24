@@ -58,7 +58,7 @@ class SafeFixture(unittest.TestCase):
         self.state.SEND_STATE.update(active=False, start=0.0, budget=40.0)
         g = SimpleNamespace(time=SimpleNamespace(time=lambda: self.wall[0], monotonic=lambda: self.mono[0], sleep=Mock()),
             BACKGROUND_SEND=True, STICKER_TEST_ON=False, BG_SEND={'enabled': background, 'fallback': True},
-            QUOTE_REPLY=False, KEYBOARD_FALLBACK=False, SEND_STATE=self.state.SEND_STATE,
+            KEYBOARD_FALLBACK=False, SEND_STATE=self.state.SEND_STATE,
             _SendStateScope=self.state._SendStateScope, ChatIdentityError=self.state.ChatIdentityError,
             DraftDirtyError=self.state.DraftDirtyError, _chat_identity_level=self.state._chat_identity_level,
             ROOT=self.root, os=SimpleNamespace(path=SimpleNamespace(join=lambda *parts: '/'.join(parts))),
@@ -196,11 +196,10 @@ class AttemptTests(SafeFixture):
 
     def test_auto_uses_verified_foreground_when_legacy_invoke_would_be_needed(self):
         runtime, g, uia, methods = self.runtime(background=True)
-        g.QUOTE_REPLY = True
         self.bg.send.return_value = (False, 'foreground_required')
         uia.send_text.return_value = True
         for text in ('first reply', 'new reply after idle'):
-            self.assertTrue(methods['send_text'](runtime, text, 'fixture-room', 'fixture-peer', quote_latest=True))
+            self.assertTrue(methods['send_text'](runtime, text, 'fixture-room', 'fixture-peer'))
             self.mono[0] += 900
         self.assertEqual([call.args[0] for call in uia.send_text.call_args_list],
                          ['first reply', 'new reply after idle'])
@@ -235,12 +234,7 @@ class AttemptTests(SafeFixture):
         self.assertTrue(methods['send_text'](runtime, 'next text', 'fixture-room', 'fixture-peer'))
         uia.send_text.assert_called_once_with('next text')
 
-    def test_quote_and_mention_opaque_failures_are_not_plain_text_fallbacks(self):
-        runtime, g, uia, methods = self.runtime()
-        g.QUOTE_REPLY = True
-        self.assertTrue(methods['send_text'](runtime, 'fixture text', 'fixture-room', 'fixture-peer', quote_latest=True))
-        runtime.gui.quote_msg.assert_called_once()
-        uia.send_text.assert_not_called()
+    def test_mention_opaque_failure_is_not_plain_text_fallback(self):
         runtime, g, uia, methods = self.runtime()
         self.assertTrue(methods['send_at'](runtime, 'fixture-member', 'fixture text', 'fixture-room', 'fixture-peer'))
         runtime.gui.at_member.assert_called_once()
@@ -281,36 +275,6 @@ class AttemptTests(SafeFixture):
         self.assertTrue(methods['send_text'](runtime, 'fixture text', 'fixture-room', 'fixture-peer'))
         self.bg.send.assert_called_once()
         runtime.force_send_foreground.assert_not_called()
-        uia.send_text.assert_not_called()
-
-    def test_quote_opens_target_before_typing_in_another_chat(self):
-        runtime, g, uia, methods = self.runtime()
-        g.QUOTE_REPLY = True
-        uia.current_chat.return_value = 'fixture-other'
-
-        def open_chat(_keys):
-            uia.current_chat.return_value = 'fixture-room'
-            return True
-
-        uia.open_chat.side_effect = open_chat
-        self.assertTrue(methods['send_text'](runtime, 'fixture text', 'fixture-room', 'fixture-peer', quote_latest=True))
-        uia.open_chat.assert_called_once_with(['fixture-room'])
-        runtime.gui.quote_msg.assert_called_once()
-
-    def test_quote_rejects_wrong_chat_even_if_open_reports_success(self):
-        runtime, g, uia, methods = self.runtime()
-        g.QUOTE_REPLY = True
-        uia.current_chat.return_value = 'fixture-other'
-        self.assertFalse(methods['send_text'](runtime, 'fixture text', 'fixture-room', 'fixture-peer', quote_latest=True))
-        uia.open_chat.assert_called_once()
-        runtime.gui.quote_msg.assert_not_called()
-
-    def test_quote_stops_when_user_leaves_foreground_during_preparation(self):
-        runtime, g, uia, methods = self.runtime()
-        g.QUOTE_REPLY = True
-        runtime.snapshot_win_state.side_effect = [{'hwnd': 123, 'fg': 123}, {'hwnd': 123, 'fg': 321}]
-        self.assertFalse(methods['send_text'](runtime, 'fixture text', 'fixture-room', 'fixture-peer', quote_latest=True))
-        runtime.gui.quote_msg.assert_not_called()
         uia.send_text.assert_not_called()
 
     def test_native_uia_composer_draft_or_failed_read_never_allows_input(self):

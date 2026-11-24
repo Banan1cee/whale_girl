@@ -437,6 +437,70 @@ namespace WhaleLauncher
             }
         }
 
+        public async Task<string> RestartWeChatAsync()
+        {
+            using var current = Process.GetCurrentProcess();
+            var candidates = Process.GetProcessesByName("Weixin").Concat(Process.GetProcessesByName("WeChat")).ToArray();
+            try
+            {
+                var sessionClients = candidates.Where(process => process.SessionId == current.SessionId && !process.HasExited).ToArray();
+                var clients = sessionClients.Length == 1 ? sessionClients :
+                    sessionClients.Where(process => process.MainWindowHandle != IntPtr.Zero).ToArray();
+                if (clients.Length != 1)
+                    return clients.Length == 0 ? "电脑上未找到微信主窗口。" : "检测到多个微信实例，请在电脑上选择后再重启。";
+                var client = clients[0];
+                var executable = client.MainModule?.FileName;
+                if (string.IsNullOrEmpty(executable) || !File.Exists(executable)) return "无法确认当前微信的程序路径。";
+                // 重启由提权的启动器执行。锁定并验证正在使用的安装文件，防止路径被调包。
+                using var executableLock = File.Open(executable, FileMode.Open, FileAccess.Read, FileShare.Read);
+                if (!WechatSignature.Verify(executable)) return "当前微信程序未通过腾讯签名校验，请在电脑上检查安装。";
+
+                bool restartBridge;
+                lock (_processLock)
+                {
+                    restartBridge = BridgeRunning;
+                    _bridgeWanted = false;
+                    _restartGeneration++;
+                    Kill(_bridge, "B", "桥接");
+                    _bridge = null;
+                }
+                try
+                {
+                    if (!client.HasExited && client.CloseMainWindow())
+                    {
+                        using var graceful = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        try { await client.WaitForExitAsync(graceful.Token); }
+                        catch (OperationCanceledException) { }
+                    }
+                    if (!client.HasExited)
+                    {
+                        client.Kill();
+                        using var wait = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        await client.WaitForExitAsync(wait.Token);
+                    }
+                    using var started = Process.Start(new ProcessStartInfo(executable)
+                    {
+                        UseShellExecute = true,
+                        WorkingDirectory = Path.GetDirectoryName(executable),
+                    });
+                    return started == null ? "Windows 未能重新打开微信。" : null;
+                }
+                finally
+                {
+                    if (restartBridge && NodeRunning) StartBridge();
+                }
+            }
+            catch (Exception ex)
+            {
+                SayWarn("手机请求重启微信失败：" + ex.GetType().Name);
+                return "无法重启微信，请查看诊断。";
+            }
+            finally
+            {
+                foreach (var candidate in candidates) candidate.Dispose();
+            }
+        }
+
         private Process Launch(string exe, string args, string src, string what)
         {
             try
