@@ -267,14 +267,34 @@ namespace WhaleLauncher
             }
         }
 
-        private static async Task<byte[]> DownloadAsync(string url, int limit, bool feedback = false, bool stopOnNotFound = false)
+        internal static string DocumentUrl(string id, bool tutorial)
+        {
+            if (!ValidId(id)) throw new InvalidDataException("插件 ID 无效");
+            var filename = tutorial ? "GUIDE.md" : "README.md";
+            return $"https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/plugins/{id}/{filename}";
+        }
+
+        internal static async Task<string> ReadDocumentAsync(string id, bool tutorial)
+        {
+            try
+            {
+                var bytes = await DownloadAsync(DocumentUrl(id, tutorial), 64 * 1024,
+                    stopOnNotFound: true, timeoutSeconds: 5);
+                return SafeMultiline(new UTF8Encoding(false, true).GetString(bytes).TrimStart('\uFEFF'));
+            }
+            catch (DownloadMissingException) { return null; }
+            catch (DecoderFallbackException) { throw new InvalidDataException("文档须使用 UTF-8"); }
+        }
+
+        private static async Task<byte[]> DownloadAsync(string url, int limit, bool feedback = false,
+            bool stopOnNotFound = false, int? timeoutSeconds = null)
         {
             Exception last = null;
             foreach (var candidate in DownloadCandidates(url))
             {
                 try
                 {
-                    return await DownloadOnce(candidate, limit, feedback, stopOnNotFound);
+                    return await DownloadOnce(candidate, limit, feedback, stopOnNotFound, timeoutSeconds);
                 }
                 catch (DownloadMissingException) { throw; }
                 catch (Exception ex) when (ex is HttpRequestException or InvalidDataException
@@ -286,10 +306,10 @@ namespace WhaleLauncher
             throw last ?? new InvalidDataException("插件下载失败");
         }
 
-        private static async Task<byte[]> DownloadOnce(string url, int limit, bool feedback = false, bool stopOnNotFound = false)
+        private static async Task<byte[]> DownloadOnce(string url, int limit, bool feedback, bool stopOnNotFound, int? timeoutSeconds)
         {
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) throw new InvalidDataException("下载地址无效");
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(feedback ? 5 : 20));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds ?? (feedback ? 5 : 20)));
             for (var hop = 0; hop < 5; hop++)
             {
                 var allowedHost = uri.Host is "raw.githubusercontent.com" or "github.com" or "release-assets.githubusercontent.com"

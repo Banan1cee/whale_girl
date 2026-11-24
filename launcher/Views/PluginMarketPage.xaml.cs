@@ -180,9 +180,23 @@ namespace WhaleLauncher.Views
                     var body = new StackPanel();
                     var card = new Border { Style = (Style)FindResource("Card"), Child = body,
                         Margin = new Thickness(0, 0, column == columns - 1 ? 0 : 12, 12), Padding = new Thickness(14) };
-                    body.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80),
+                    var header = new DockPanel { LastChildFill = true };
+                    var author = new StackPanel();
+                    var documents = new Button
+                    {
+                        Content = "相关文档", Style = (Style)FindResource("Ghost"),
+                        VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0)
+                    };
+                    DockPanel.SetDock(documents, Dock.Right);
+                    documents.Click += (_, _) => ShowPluginDocuments(info, !_showInstalled ||
+                        _catalog.Any(entry => entry.Id == info.Id && entry.Version == info.Version &&
+                            entry.Api == info.Api && PluginMarket.SameAuthor(entry.Author, info.Author)));
+                    header.Children.Add(documents);
+                    author.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80),
                         FontSize = 17, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-                    body.Children.Add(Small(PluginMarket.SafeText(info.Author, 80) + "  ·  v" + info.Version));
+                    author.Children.Add(Small(PluginMarket.SafeText(info.Author, 80) + "  ·  v" + info.Version));
+                    header.Children.Add(author);
+                    body.Children.Add(header);
                     body.Children.Add(Small(PluginMarket.SafeText(info.Description, 600)));
                     body.Children.Add(Small(info.CompatibilityLabel));
                     // 市场签名暂时隐藏，卡片不再显示已签名 / 未签名目录的标注。
@@ -360,13 +374,71 @@ namespace WhaleLauncher.Views
         private void OnDownloadGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginDownloadGuide");
         private void OnDisclaimer(object sender, RoutedEventArgs e) => ShowGuide("PluginDisclaimer");
 
+        private void ShowPluginDocuments(PluginInfo info, bool inCatalog)
+        {
+            var body = new DockPanel { Margin = new Thickness(12) };
+            var heading = Small(PluginMarket.SafeText(info.Name, 80) + " · 相关文档");
+            DockPanel.SetDock(heading, Dock.Top);
+            body.Children.Add(heading);
+            if (!inCatalog)
+            {
+                body.Children.Add(Small("这个安装版本没有匹配的市场文档。"));
+                ShowDetail(body);
+                return;
+            }
+
+            var tabs = new WrapPanel { Margin = new Thickness(0, 10, 0, 10) };
+            DockPanel.SetDock(tabs, Dock.Top);
+            body.Children.Add(tabs);
+            var readme = new Button { Content = "README", Margin = new Thickness(0, 0, 8, 0) };
+            var tutorial = new Button { Content = "使用教程" };
+            tabs.Children.Add(readme);
+            tabs.Children.Add(tutorial);
+            var viewer = new TextBox
+            {
+                IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(12)
+            };
+            body.Children.Add(viewer);
+
+            var request = 0;
+            async Task LoadAsync(bool showTutorial)
+            {
+                var current = ++request;
+                readme.Style = (Style)FindResource(showTutorial ? "Ghost" : "Primary");
+                tutorial.Style = (Style)FindResource(showTutorial ? "Primary" : "Ghost");
+                viewer.Text = "正在读取文档…";
+                string content;
+                try
+                {
+                    var text = await PluginMarket.ReadDocumentAsync(info.Id, showTutorial);
+                    content = string.IsNullOrWhiteSpace(text)
+                        ? (showTutorial ? "作者还没有提供独立教程，可查看 README。" : "作者还没有提供 README，可查看使用教程。")
+                        : text;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or OperationCanceledException)
+                {
+                    content = "文档暂时无法读取，请检查网络后点选重试。";
+                }
+                if (current != request || !ReferenceEquals(DetailContent.Content, body)) return;
+                viewer.Text = content;
+                viewer.ScrollToHome();
+            }
+
+            readme.Click += async (_, _) => await LoadAsync(false);
+            tutorial.Click += async (_, _) => await LoadAsync(true);
+            ShowDetail(body);
+            _ = LoadAsync(false);
+        }
+
         private void ShowMessageSettings(PluginInfo info)
         {
             var body = new StackPanel { Margin = new Thickness(12) };
             body.Children.Add(Small(PluginMarket.SafeText(info.Name, 80) + " · 消息流程设置"));
             body.Children.Add(Small("扩展点：" + string.Join("、", info.Hooks ?? Array.Empty<string>())
                 + "\n附加权限：" + string.Join("、", info.Permissions ?? Array.Empty<string>())));
-            body.Children.Add(Small("由插件作者提供配置 JSON。保存后自动用于后续消息。停用可结束持续授权。"));
+            body.Children.Add(Small("在卡片「相关文档」查阅作者提供的配置样例。这里保存的是插件的 JSON 设置，有配置项时可按样例填写。"));
+            body.Children.Add(Small("没有配置项时可保留 {}。保存后的设置会用于后续调用。"));
             var editor = new TextBox { Text = _market.MessageSettings(info.Id), AcceptsReturn = true,
                 TextWrapping = TextWrapping.Wrap, MinHeight = 160, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             body.Children.Add(editor);
