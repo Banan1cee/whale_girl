@@ -25,6 +25,10 @@ on:
         description: '版本号（如 4.0.0；留空 = tag 去 v，否则读 package.json）'
         required: false
         default: ''
+      signpath_test:
+        description: '使用 SignPath 测试证书签名（仅分支手动运行）'
+        type: boolean
+        default: false
   push:
     branches:
       # 测试分支：推送即构建，便于在没有 tag 的情况下验证流水线。
@@ -54,11 +58,15 @@ env:
   PYTHONIOENCODING: utf-8
   DOTNET_NOLOGO: '1'
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-  # 签名走哪条路（仓库 Settings → Variables 里改）：
-  #   signpath = SignPath.io 免费 OSS 签名（不需要证书，签名在 SignPath 服务器上做）
+  # SignPath 测试只由分支手动勾选；正式签名必须同时满足 tag 和仓库变量。
+  # 其它运行保留 PFX 兼容流程。
   #   pfx      = 自备 PFX 证书 + secrets（老路子，还留着）
   #   留空     = 不签名，摘要里写明
-  SIGNING_MODE: ${{ vars.SIGNING_MODE }}
+  SIGNPATH_TEST: ${{ github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && inputs.signpath_test }}
+  SIGNING_MODE: >-
+    ${{ (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && inputs.signpath_test
+         || github.ref_type == 'tag' && vars.SIGNING_MODE == 'signpath') && 'signpath'
+        || vars.SIGNING_MODE == 'pfx' && 'pfx' || '' }}
 
 jobs:
   version-gate:
@@ -107,6 +115,35 @@ jobs:
     steps:
       - name: 检出
         uses: actions/checkout@v4
+
+      - name: 检查测试签名触发方式
+        if: github.event_name == 'workflow_dispatch' && inputs.signpath_test && github.ref_type != 'branch'
+        shell: pwsh
+        run: throw '测试签名请从分支手动运行。'
+
+      - name: 检查 SignPath 配置
+        if: env.SIGNING_MODE == 'signpath'
+        shell: pwsh
+        env:
+          SIGNPATH_ORG_ID: ${{ vars.SIGNPATH_ORG_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          $org = [guid]::Empty
+          if (-not [guid]::TryParse($env:SIGNPATH_ORG_ID, [ref]$org) -or $org -eq [guid]::Empty) {
+            throw '请在仓库 Variables 中填写 SignPath 的 SIGNPATH_ORG_ID。'
+          }
+          if (-not $env:SIGNPATH_PROJECT_SLUG) { throw '请在仓库 Variables 中填写 SIGNPATH_PROJECT_SLUG。' }
+          if (-not $env:SIGNPATH_API_TOKEN) { throw '请在仓库 Secrets 中添加 SIGNPATH_API_TOKEN。' }
+          if ($env:SIGNPATH_TEST -eq 'true') {
+            $certPath = '.github/signpath/signpath-test.cer'
+            if (-not (Test-Path -LiteralPath $certPath -PathType Leaf)) {
+              throw '请把 test-signing 对应的公开证书放在 .github/signpath/signpath-test.cer。'
+            }
+            if ([Security.Cryptography.X509Certificates.X509Certificate2]::GetCertContentType((Resolve-Path $certPath).Path) -ne 'Cert') {
+              throw '测试证书须为单张 X.509 公开证书（.cer）。'
+            }
+          }
 
       # 版本和仓库别的地方对齐：Node 24、Python 3.12、.NET 10 SDK
       - name: Node 24（构建机用，取 node.exe 进包）
@@ -264,7 +301,15 @@ jobs:
 
       # ---------- 签名（第 1 轮：启动器）----------
       # 顺序不能反：启动器必须先签、后编译安装包，否则包里嵌的还是未签名 exe。
-      # 两条路线二选一，由仓库变量 SIGNING_MODE 决定。
+
+      - name: 信任 SignPath 测试证书（仅临时构建机）
+        if: env.SIGNPATH_TEST == 'true'
+        shell: pwsh
+        run: |
+          $certPath = '.github/signpath/signpath-test.cer'
+          $cert = Import-Certificate -FilePath $certPath -CertStoreLocation 'Cert:\CurrentUser\Root' -ErrorAction Stop
+          $null = Import-Certificate -FilePath $certPath -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' -ErrorAction Stop
+          "SIGNPATH_TEST_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
 
       - name: 上传未签名启动器（SignPath 取件用）
         id: upload-unsigned-launcher
@@ -273,9 +318,8 @@ jobs:
         with:
           name: unsigned-launcher
           path: WhaleLauncher.exe
-          # 不打包成 zip：SignPath 那步加 skip-decompress，直接签裸 exe
-          # （对应 SignPath 里的 artifact configuration 根元素是 <pe-file>）
-          archive: false
+          # v4 上传的是 ZIP，对应 SignPath 后台的 <zip-file>。
+          compression-level: 0
           retention-days: 1
           if-no-files-found: error
 
@@ -292,7 +336,6 @@ jobs:
           github-artifact-id: ${{ steps.upload-unsigned-launcher.outputs.artifact-id }}
           wait-for-completion: true
           output-artifact-directory: signed/launcher
-          skip-decompress: true
           # SignPath 的 metadata restrictions 用 ${version} 核对 exe 里的产品版本，
           # 传错就等于签不上（artifact configuration 里 required="true"）
           parameters: |
@@ -307,14 +350,17 @@ jobs:
             Write-Output "::error title=SignPath 回包不对::signed/launcher 里应有 1 个 WhaleLauncher.exe，实际 $($signed.Count)"
             exit 1
           }
-          Copy-Item $signed[0].FullName .\WhaleLauncher.exe -Force
-          Copy-Item $signed[0].FullName .\launcher\publish\WhaleLauncher.exe -Force
-          $sig = Get-AuthenticodeSignature .\WhaleLauncher.exe
+          $sig = Get-AuthenticodeSignature -LiteralPath $signed[0].FullName
           Write-Output "启动器签名：$($sig.Status) / $($sig.SignerCertificate.Subject)"
           if ($sig.Status -ne 'Valid') {
             Write-Output '::error title=SignPath 签名无效::拿回来的 exe 不是 Valid 签名'
             exit 1
           }
+          if ($env:SIGNPATH_TEST -eq 'true' -and $sig.SignerCertificate.Thumbprint -ne $env:SIGNPATH_TEST_THUMBPRINT) {
+            throw '启动器签名证书与 test-signing 公开证书不一致。'
+          }
+          Copy-Item $signed[0].FullName .\WhaleLauncher.exe -Force
+          Copy-Item $signed[0].FullName .\launcher\publish\WhaleLauncher.exe -Force
 
       - name: 签启动器（PFX 证书，没有证书就跳过）
         if: env.SIGNING_MODE != 'signpath'
@@ -360,7 +406,7 @@ jobs:
         with:
           name: unsigned-setup
           path: artifacts/setup/*.exe
-          archive: false
+          compression-level: 0
           retention-days: 1
           if-no-files-found: error
 
@@ -377,7 +423,6 @@ jobs:
           github-artifact-id: ${{ steps.upload-unsigned-setup.outputs.artifact-id }}
           wait-for-completion: true
           output-artifact-directory: signed/setup
-          skip-decompress: true
           parameters: |
             version: ${{ toJSON(env.version) }}
 
@@ -385,18 +430,22 @@ jobs:
         if: env.SIGNING_MODE == 'signpath'
         shell: pwsh
         run: |
-          $signed = @(Get-ChildItem signed/setup -Recurse -Filter '*.exe' -File)
+          $expectedName = "whale-girl-$($env:version)-setup.exe"
+          $signed = @(Get-ChildItem signed/setup -Recurse -Filter $expectedName -File)
           if ($signed.Count -ne 1) {
-            Write-Output "::error title=SignPath 回包不对::signed/setup 里应有 1 个 exe，实际 $($signed.Count)"
+            Write-Output "::error title=SignPath 回包不对::signed/setup 里应有 1 个 $expectedName，实际 $($signed.Count)"
             exit 1
           }
-          Copy-Item $signed[0].FullName (Join-Path 'artifacts/setup' $signed[0].Name) -Force
-          $sig = Get-AuthenticodeSignature (Join-Path 'artifacts/setup' $signed[0].Name)
+          $sig = Get-AuthenticodeSignature -LiteralPath $signed[0].FullName
           Write-Output "安装包签名：$($sig.Status) / $($sig.SignerCertificate.Subject)"
           if ($sig.Status -ne 'Valid') {
             Write-Output '::error title=SignPath 签名无效::拿回来的安装包不是 Valid 签名'
             exit 1
           }
+          if ($env:SIGNPATH_TEST -eq 'true' -and $sig.SignerCertificate.Thumbprint -ne $env:SIGNPATH_TEST_THUMBPRINT) {
+            throw '安装包签名证书与 test-signing 公开证书不一致。'
+          }
+          Copy-Item $signed[0].FullName (Join-Path 'artifacts/setup' $expectedName) -Force
 
       - name: 签安装包（PFX 证书，没有证书就跳过）
         if: env.SIGNING_MODE != 'signpath'
@@ -484,6 +533,11 @@ jobs:
           if ($missing) {
             Write-Output "::error title=安装后缺文件::$($missing -join '、')"
             exit 1
+          }
+          if ($env:SIGNING_MODE -eq 'signpath') {
+            $installedHash = (Get-FileHash -LiteralPath (Join-Path $dir 'WhaleLauncher.exe')).Hash
+            $signedHash = (Get-FileHash -LiteralPath '.\WhaleLauncher.exe').Hash
+            if ($installedHash -ne $signedHash) { throw '安装后的启动器与签好的启动器不一致。' }
           }
           $consoleDir = Join-Path $dir '手机远程控制'
           $bom = [IO.File]::ReadAllBytes((Join-Path $consoleDir 'windows-setup.ps1'))
@@ -734,7 +788,7 @@ jobs:
       - name: 上传安装包
         uses: actions/upload-artifact@v4
         with:
-          name: whale-girl-setup-${{ steps.ver.outputs.version }}
+          name: ${{ env.SIGNPATH_TEST == 'true' && 'whale-girl-test-signed-setup' || 'whale-girl-setup' }}-${{ steps.ver.outputs.version }}
           path: |
             artifacts/setup/*.exe
             artifacts/setup/SHA256SUMS.txt

@@ -7,10 +7,12 @@
   <parameters>
     <parameter name="version" required="true" />
   </parameters>
-  <pe-file path="whale-girl-*-setup.exe"
-           product-name="鲸鲸"
-           company-name="鲸鲸"
-           product-version="${version}">
-    <authenticode-sign />
-  </pe-file>
+  <zip-file>
+    <pe-file path="whale-girl-*-setup.exe"
+             product-name="鲸鲸"
+             company-name="鲸鲸"
+             product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
 </artifact-configuration>

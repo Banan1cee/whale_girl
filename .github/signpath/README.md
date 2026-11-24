@@ -9,7 +9,7 @@ CI 里的两步签名（`.github/workflows/installer.yml`）对应 SignPath 后�
 | Artifact configuration（启动器） | `whale-launcher` | `whale-launcher.xml` 的内容 |
 | Artifact configuration（安装包） | `whale-setup` | `whale-setup.xml` 的内容 |
 | Signing policy（发版） | `release-signing` | 只在 tag 上签；可以配成需要人工审批 |
-| Signing policy（测试） | `test-signing` | 测试分支用，签完只出 Artifact 不发 Release |
+| Signing policy（测试） | `test-signing` | 在分支手动运行时勾选测试签名，只生成测试 Artifact |
 
 CI 里怎么用：
 
@@ -17,7 +17,6 @@ CI 里怎么用：
 signing-policy-slug: ${{ github.ref_type == 'tag' && 'release-signing' || 'test-signing' }}
 artifact-configuration-slug: whale-launcher   # 第二轮换成 whale-setup
 github-artifact-id: ${{ steps.upload-unsigned-*.outputs.artifact-id }}
-skip-decompress: true                          # 配合 upload-artifact 的 archive: false
 parameters: |
   version: ${{ toJSON(env.version) }}          # 填 metadata restrictions 里的 ${version}
 ```
@@ -29,9 +28,11 @@ parameters: |
   - 启动器这三个值来自 `launcher/WhaleLauncher.csproj` 的 `<Product>` / `<Company>` / `<Version>`
   - 安装包来自 `installer/whale.iss` 的 `VersionInfoProductName` / `VersionInfoCompany` / `VersionInfoProductVersion`
   - 版本号必须每次构建都一致，所以用 `${version}` 参数从 CI 传，而不是写死
-- artifact configuration 的根元素是 `<pe-file>`（因为 CI 传的是裸 exe）。如果哪天把
-  `archive: false` 去掉，artifact 会变成 zip，那时根元素必须改成 `<zip-file>`，并去掉
-  `skip-decompress`，否则签名请求会因为根元素对不上直接失败。
+- GitHub Actions 上传的是 ZIP，所以 artifact configuration 的文件根元素是 `<zip-file>`，
+  `<pe-file>` 写在它里面。SignPath 步骤下载后自动解包。
+- `signpath-test.cer` 是 `test-signing` 使用的公开证书。只有手动测试签名时，临时 Windows
+  构建机才信任这张证书。两轮回包都要通过 Authenticode 校验，且实际签名者必须与测试证书一致。
+- 测试产物名是 `whale-girl-test-signed-setup-版本号`。正式签名仅在版本 tag 上按仓库变量启用。
 - 通配符默认 `max-matches=1`：安装包那条 `whale-girl-*-setup.exe` 必须只匹配到一个文件。
 - `pe-file` 只签 PE 本身。安装包里的 `WhaleLauncher.exe` 是**先单独签好**再被 Inno 压进包里的，
   SignPath 不会（也做不到）去改 Inno 里的压缩数据。

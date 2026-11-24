@@ -5,10 +5,9 @@
  *
  * 钉住几件「改错就会悄悄发未签名包」的事：
  *   1. 启动器必须先签、后编译安装包（顺序反了，包里嵌的就是未签名 exe，而且看不出来）
- *   2. SignPath 的上传/取件必须成对：upload-artifact 的 archive: false
- *      对应 signpath step 的 skip-decompress: true
+ *   2. GitHub 上传 ZIP，SignPath 按 ZIP 找到 EXE，取回签名结果后解包
  *   3. 配了 SIGNING_MODE 就必须硬检查签名状态，不能只是打个摘要
- *   4. 两份 artifact configuration 的根元素是 <pe-file>（裸 exe），不是 <zip-file>
+ *   4. 测试签名只在明确选择的分支手动运行，发布签名只在 tag 启用
  */
 
 const test = require('node:test');
@@ -20,8 +19,15 @@ const root = path.resolve(__dirname, '..');
 const wf = fs.readFileSync(path.join(root, '.github/workflows/installer.yml'), 'utf8');
 const idx = (s) => wf.indexOf(s);
 
-test('签名方式由仓库变量 SIGNING_MODE 切换，不配就走 PFX 老路', () => {
-  assert.match(wf, /SIGNING_MODE: \$\{\{ vars\.SIGNING_MODE \}\}/, 'workflow 没读 vars.SIGNING_MODE');
+test('测试签名仅在分支手动开启，正式签名仅在 tag 按仓库配置开启', () => {
+  assert.match(wf, /signpath_test:\n\s+description: .+\n\s+type: boolean\n\s+default: false/);
+  const manualBranch = /github\.event_name == 'workflow_dispatch' && github\.ref_type == 'branch' && inputs\.signpath_test/;
+  const modeBlock = wf.slice(idx('  SIGNING_MODE:'), idx('\njobs:'));
+  assert.match(modeBlock, manualBranch, '测试签名必须由分支手动开启');
+  assert.match(modeBlock, /github\.ref_type == 'tag' && vars\.SIGNING_MODE == 'signpath'/, '正式 SignPath 签名必须由 tag 开启');
+  assert.match(modeBlock, /vars\.SIGNING_MODE == 'pfx' && 'pfx'/, 'PFX 模式仍可用');
+  assert.match(wf, /SIGNPATH_TEST: \$\{\{ github\.event_name == 'workflow_dispatch' && github\.ref_type == 'branch' && inputs\.signpath_test \}\}/);
+  assert.match(wf, /if: github\.event_name == 'workflow_dispatch' && inputs\.signpath_test && github\.ref_type != 'branch'/);
   assert.ok(idx("if: env.SIGNING_MODE == 'signpath'") > 0, '没有 signpath 分支');
   assert.ok(idx("if: env.SIGNING_MODE != 'signpath'") > 0, 'PFX 分支没做互斥');
 });
@@ -38,18 +44,24 @@ test('启动器先签、后编译安装包', () => {
 });
 
 test('SignPath 上传/取件参数成对，且两轮签的都校验状态', () => {
-  // 裸 exe（不走 zip）→ 取件时也要 skip-decompress
-  const uploads = [...wf.matchAll(/archive: false/g)].length;
-  const skips = [...wf.matchAll(/skip-decompress: true/g)].length;
-  assert.equal(uploads, 2, '应该有两处 archive: false（启动器 + 安装包）');
-  assert.equal(skips, 2, '应该有两处 skip-decompress: true');
+  assert.doesNotMatch(wf, /^\s+archive: false\b/m, '上传的 EXE 必须封装成 ZIP');
+  assert.doesNotMatch(wf, /^\s+skip-decompress: true\b/m, 'SignPath 返回的 ZIP 必须解包');
+  assert.match(wf, /output-artifact-directory: signed\/launcher/);
+  assert.match(wf, /output-artifact-directory: signed\/setup/);
 
   assert.match(wf, /artifact-configuration-slug: whale-launcher/);
   assert.match(wf, /artifact-configuration-slug: whale-setup/);
-  assert.match(wf, /signing-policy-slug: \$\{\{ github\.ref_type == 'tag' && 'release-signing' \|\| 'test-signing' \}\}/,
-    'tag 用发版策略、其它用测试策略');
+  assert.equal((wf.match(/signing-policy-slug: \$\{\{ github\.ref_type == 'tag' && 'release-signing' \|\| 'test-signing' \}\}/g) || []).length, 2,
+    '两轮都要选对签名策略');
   assert.equal((wf.match(/if \(\$sig\.Status -ne 'Valid'\)/g) || []).length >= 2, true,
     '两轮签名都要回读校验，不能只看文件在不在');
+});
+
+test('只有手动测试信任测试证书，且安装前验证两轮签名和包内启动器', () => {
+  assert.match(wf, /信任 SignPath 测试证书[^\n]*\n\s+if: env\.SIGNPATH_TEST == 'true'/);
+  assert.equal((wf.match(/\$sig\.SignerCertificate\.Thumbprint -ne \$env:SIGNPATH_TEST_THUMBPRINT/g) || []).length, 2);
+  assert.match(wf, /if \(\$installedHash -ne \$signedHash\)/);
+  assert.match(wf, /name: \$\{\{ env\.SIGNPATH_TEST == 'true' && 'whale-girl-test-signed-setup'/);
 });
 
 test('配了 SIGNING_MODE 却签不上时，摘要那步直接失败', () => {
@@ -66,7 +78,7 @@ test('两轮签名都要读本次运行的 artifact（不允许本地签名顶�
     '缺 actions: read 权限，SignPath 那步读不到 artifact');
 });
 
-test('artifact configuration 的根是 <pe-file>，和裸 exe 上传一致', () => {
+test('artifact configuration 在 ZIP 根下限定单个匹配的 EXE', () => {
   const dir = path.join(root, '.github/signpath');
   for (const [file, pattern] of [
     ['whale-launcher.xml', /<pe-file path="WhaleLauncher\.exe"[\s\S]*?<authenticode-sign \/>/],
@@ -77,7 +89,8 @@ test('artifact configuration 的根是 <pe-file>，和裸 exe 上传一致', () 
     const xml = fs.readFileSync(full, 'utf8');
     assert.match(xml, /xmlns="http:\/\/signpath\.io\/artifact-configuration\/v1"/, `${file} 命名空间不对`);
     assert.match(xml, pattern, `${file} 里 pe-file 路径没对上`);
-    assert.doesNotMatch(xml, /<zip-file/, `${file} 是裸 exe，不能写 zip-file`);
+    assert.match(xml, /<\/parameters>\s*<zip-file>\s*<pe-file[\s\S]*<\/pe-file>\s*<\/zip-file>\s*<\/artifact-configuration>/,
+      `${file} 必须在 <zip-file> 下配置 EXE`);
   }
 });
 
