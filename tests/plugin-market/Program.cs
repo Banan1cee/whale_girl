@@ -30,6 +30,11 @@ try
         throw new Exception("预期拒绝无效插件");
     }
 
+    Check(PluginMarket.DocumentUrl("context-notes", tutorial: false) ==
+        "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/plugins/context-notes/README.md");
+    Check(PluginMarket.DocumentUrl("context-notes", tutorial: true).EndsWith("/context-notes/GUIDE.md"));
+    Reject(() => PluginMarket.DocumentUrl("../context-notes", tutorial: false));
+
     var releaseInfo = info with { AppEpoch = 2, MinAppVersion = "1.0.0", MaxAppVersion = "1.0.9" };
     Check(!PluginMarket.Compatible(releaseInfo, "4.1.6.1", 1));
     Check(PluginMarket.Compatible(releaseInfo, "1.0.0", 2));
