@@ -131,6 +131,14 @@ private static async Task CheckEffectiveConfigurationAsync(string workspace, str
     var paths=new[]{active,legacy,settings,persona};
     var before=Array.ConvertAll(paths,File.ReadAllText);
     check(ConfigurationPath.Resolve(root)==active,"effective-path resolves data/config.json before legacy");
+    using (var sup = new RuntimeSupervisor(root))
+    {
+        var offlineSettings = await sup.ReadSettingsSnapshotAsync(online: false);
+        check(offlineSettings.Config.Ok && offlineSettings.Settings.Ok &&
+            offlineSettings.Config.Prop("config").GetProperty("persona").GetProperty("name").GetString() == "effective-config" &&
+            offlineSettings.Settings.Str("model") == "fixture-effective-model",
+            "设置首次打开从同一份本地快照得到普通配置和模型配置");
+    }
     var local=new LocalConfiguration(root);
     var read=await local.ReadAsync("/api/config");
     var config=read.Prop("config");
@@ -338,9 +346,13 @@ try {
          sup.StopAll();
          Check(!external.HasExited && (await sup.ProbeAsync()).NodeReady, "停止启动器管理的服务不影响后台内核");
 
+         var liveSettings = await sup.ReadSettingsSnapshotAsync(online: true);
+         Check(sup.SettingsServiceObserved && liveSettings.Config.Ok && liveSettings.Settings.Ok &&
+             liveSettings.Settings.Str("model") == "fixture-model", "可信外部内核提供完整的在线设置");
          var wrongService = Path.Combine(root, "wrong-service");
          File.WriteAllText(wrongService, "1");
          Check(!(await sup.ProbeAsync()).NodeUp, "不会把占用端口的其他服务显示成鲸鲸内核");
+         Check(!sup.SettingsServiceObserved, "状态探测失去可信的外部内核后恢复本地设置");
          var externalReadCount=File.ReadAllText(Path.Combine(root,"data","external-config.json"));
          Check(!(await sup.ReadConfigurationAsync("/api/config")).Ok
              &&File.ReadAllText(Path.Combine(root,"data","external-config.json"))==externalReadCount,

@@ -78,6 +78,9 @@ namespace WhaleLauncher
         // 启动检查完成前及强制态禁止所有业务启动入口，不能只靠主窗口按钮拦截。
         public bool UpdateBlocked { get; set; }
         private LocalConfiguration _localConfiguration;
+        private int _observedExternalSettingsPort;
+        internal bool SettingsServiceObserved => NodeRunning ||
+            (_observedExternalSettingsPort != 0 && _observedExternalSettingsPort == Port);
         private readonly System.Threading.SemaphoreSlim _configurationWrites = new(1, 1);
         internal int PersonaRevision { get; private set; }
         internal void NotifyPersonaChanged() => PersonaRevision++;
@@ -96,6 +99,39 @@ namespace WhaleLauncher
             var url = await ConfigurationServiceUrlAsync();
             return url != null ? await Api.Get(url, path)
                 : await (_localConfiguration ??= new LocalConfiguration(BaseDir)).ReadAsync(path, forceRefresh);
+        }
+
+        internal async Task<(ApiResult Config, ApiResult Settings)> ReadSettingsSnapshotAsync(bool online)
+        {
+            const string configPath = "/api/config";
+            const string settingsPath = "/api/settings";
+            if (online)
+            {
+                // 状态轮询只提示何时值得刷新。实际在线请求仍确认内核身份。
+                var url = await ConfigurationServiceUrlAsync();
+                if (url == null)
+                {
+                    var unavailable = new ApiResult { Error = "内核未就绪" };
+                    return (unavailable, unavailable);
+                }
+
+                var config = Api.Get(url, configPath, timeoutSeconds: 2);
+                var settings = Api.Get(url, settingsPath, timeoutSeconds: 2);
+                await Task.WhenAll(config, settings);
+                return (await config, await settings);
+            }
+
+            var snapshot = await (_localConfiguration ??= new LocalConfiguration(BaseDir)).ReadSnapshotAsync();
+            if (!snapshot.Ok) return (snapshot, snapshot);
+
+            ApiResult Read(string path)
+            {
+                var value = snapshot.Prop(path);
+                return value.ValueKind == JsonValueKind.Object
+                    ? new ApiResult { Ok = true, StatusCode = 200, Root = value }
+                    : new ApiResult { Error = "本地设置不完整" };
+            }
+            return (Read(configPath), Read(settingsPath));
         }
 
         internal async Task<ApiResult> PreviewPersonaPresetAsync(string id)
@@ -638,6 +674,7 @@ namespace WhaleLauncher
                 s.NodeUp = true;
                 s.ExternalNode = true;
             }
+            _observedExternalSettingsPort = s.ExternalNode ? s.Port : 0;
 
             if (s.NodeUp)
             {
