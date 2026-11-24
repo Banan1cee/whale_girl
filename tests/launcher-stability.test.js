@@ -234,3 +234,19 @@ test('配置写入、 HTTP、联系人和数字输入都走统一入口', () => 
   }
   assert.doesNotMatch(read('Views/PersonaPage.xaml.cs'), /int age = int\.TryParse/, '非法年龄不能再静默变成默认值');
 });
+
+
+test('设置首次回填绕开内核探测，并在页面真正加载后才开始', () => {
+  const page = read('Views/SettingsPage.xaml.cs');
+  const start = page.indexOf('private async Task LoadConfigAsync()');
+  assert.ok(start >= 0);
+  const load = page.slice(start, page.indexOf('private static JsonElement GetPath', start));
+  const local = load.indexOf('ReadSettingsSnapshotAsync(online: false)');
+  const online = load.indexOf('ReadSettingsSnapshotAsync(online: true)');
+  assert.ok(local >= 0 && online > local, '先回填本地，再刷新在线设置');
+  const applied = load.indexOf('ApplySettingsSnapshot(local');
+  assert.ok(applied > local && applied < online, '本地值须先提交给页面');
+  assert.ok(load.indexOf('!_pageLifetime.IsCurrent(generation)') >= 0
+    && load.indexOf('!_pageLifetime.IsCurrent(generation)') < local, '避免 Loaded 之前启动读取');
+  assert.ok(load.includes('_loadingConfigGeneration == generation'), '离开重进时应允许新一轮读取');
+});
