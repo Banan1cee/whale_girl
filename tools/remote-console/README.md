@@ -3,7 +3,7 @@
 ## 使用教程
 
 1. 安装鲸鲸时保留「安装手机远程控制」。打开鲸鲸，再打开同目录的「手机远程控制」文件夹。
-2. 电脑双击「1 - 下载或安装 Tailscale」。安卓手机可从商店或官网下载。两台设备打开 Tailscale，登录同一个专用网络。[安卓官方下载](https://tailscale.com/download/android) · [官方 APK](https://dl.tailscale.com/stable/#android)
+2. 电脑双击「1 - 下载或安装 Tailscale」。手机按系统下载 Tailscale，然后两台设备登录同一个专用网络。[iPhone / iPad App Store](https://apps.apple.com/us/app/tailscale/id1470499037?ls=1) · [安卓官方下载](https://tailscale.com/download/android) · [安卓官方 APK](https://dl.tailscale.com/stable/#android)
 3. 双击「2 - 一键打开控制台」，记下配对 Key，保持命令窗口开启。
 4. 双击「3 - 一键复制手机访问地址」。按提示完成 Windows 权限确认和首次 HTTPS 授权，看到「地址已复制」后把网址发给自己的手机。
 5. 手机用浏览器打开网址，首次输入配对 Key。以后用同一浏览器打开同一个网址。
