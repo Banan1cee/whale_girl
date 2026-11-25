@@ -160,6 +160,8 @@ whale-girl/                        # 与仓库一致，运行数据不入库
 
 ## 代码签名
 
+4.2.0 预览版的 Windows 启动器和安装包已通过 SignPath 测试签名及安装验证。正式发行签名尚未启用。[查看 GitHub Actions 验证结果](https://github.com/Banan1cee/whale_girl/actions/runs/45573742923)
+
 当前发行包**尚未签名**，Windows 可能提示「未知发布者」；安装前请核对 Release 里的 `SHA256SUMS.txt`。签名策略见 [`CODE_SIGNING_POLICY.md`](CODE_SIGNING_POLICY.md)，隐私政策见 [`PRIVACY.md`](PRIVACY.md)。
 
 ## 致谢
