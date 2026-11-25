@@ -477,6 +477,11 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
         kernelReady: Boolean(status),
         bridgeRunning: gateway?.enabled === true || gateway?.bridge?.online === true,
         bridgeOnline: gateway?.bridge?.online === true,
+        // 笔记本 / 「关屏锁定」策略下远程关屏会变成锁屏，前端据此禁用按钮并给出原因。
+        isLaptop: state.isLaptop === true,
+        displayOffBlocked: state.displayOffBlocked === true,
+        displayOffBlockedReason: cleanText(state.displayOffBlockedReason, 300),
+        displayControl: state.displayControl === true,
       },
     };
   }
@@ -484,7 +489,7 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
   async function hostCommand(req) {
     const { action, value, confirm } = await parseBody(req, 8192);
     const modes = new Set(['off', 'system', 'display']);
-    if (!['keep-awake', 'wake-display', 'display-off', 'remote-process-launch', 'auto-start'].includes(action)) {
+    if (!['keep-awake', 'wake-display', 'display-off', 'display-control', 'remote-process-launch', 'auto-start'].includes(action)) {
       throw fail(400, '未知的主机操作。');
     }
     // 除点亮/关闭屏幕外都会改变电源或开机行为，必须由前端二次确认后再提交。
@@ -500,7 +505,8 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
     } else {
       if (typeof value !== 'boolean') throw fail(400, '开关状态无效。');
       forwarded = ['host-config', action === 'remote-process-launch'
-        ? { remoteProcessLaunch: value } : { autoStart: value }];
+        ? { remoteProcessLaunch: value }
+        : action === 'auto-start' ? { autoStart: value } : { displayControl: value }];
     }
     let result;
     // 启动器原始异常（连接失败、超时）对手机用户没有意义，统一换成能指导操作的话术。

@@ -233,6 +233,13 @@ namespace WhaleLauncher.Views
                 HostKeepAwake.SelectedIndex = ModeIndex(h.KeepAwake);
                 ChkRemoteProcess.IsChecked = h.RemoteProcessLaunch;
                 ChkAutoStart.IsChecked = h.AutoStart;
+                ChkDisplayControl.IsChecked = h.DisplayControl;
+                // 笔记本上不提供远程开关屏幕，开关本身也不显示；台式机上打开开关才出现关屏按钮。
+                // 桌面端不提供「点亮屏幕」：人在电脑前，动鼠标/键盘更直接，按钮只会让人误以为是坏的。
+                ChkDisplayControl.Visibility = h.IsLaptop ? Visibility.Collapsed : Visibility.Visible;
+                BtnDisplayOff.Visibility = !h.IsLaptop && h.DisplayControl ? Visibility.Visible : Visibility.Collapsed;
+                BtnDisplayOff.IsEnabled = !h.DisplayOffBlocked;
+                BtnDisplayOff.ToolTip = h.DisplayOffBlocked ? h.DisplayOffBlockedReason : "关闭显示器（不锁屏）";
             }
             finally
             {
@@ -285,14 +292,35 @@ namespace WhaleLauncher.Views
             SyncHost(_host.ReadStatus());
         }
 
-        // 锁屏时也允许点：只是广播「显示器请醒来」，不会解锁，所以话术不承诺解锁。
-        private void OnWakeDisplay(object sender, RoutedEventArgs e) => _host.RequestDisplayWake();
+        private void OnDisplayControlChanged(object sender, RoutedEventArgs e)
+        {
+            if (_hostSyncing) return;
+            var error = _host.TrySetDisplayControl(ChkDisplayControl.IsChecked == true);
+            if (error != null) AppDialog.Show(Window.GetWindow(this), error, "主机");
+            SyncHost(_host.ReadStatus());
+        }
 
         // 关屏和锁屏是两件事：这里只关显示器，会话保持登录；是否会被强制锁屏取决于系统策略。
+        // 桌面端不提供「点亮屏幕」——人在电脑前动鼠标/键盘更直接，按钮反而像坏的。
         private void OnDisplayOff(object sender, RoutedEventArgs e)
         {
             var result = _host.RequestDisplayOff();
             if (result != null) AppDialog.Show(Window.GetWindow(this), result, "主机");
+        }
+
+        // 教程还没发布，先用官网首页锚点；官网上线教程后只改这一处。
+        private const string HostHelpUrl = "https://bot.zyyc.cc/#phone-control";
+
+        private void OnHostHelp(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(HostHelpUrl) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                AppDialog.Show(Window.GetWindow(this), "打开教程失败：" + ex.Message, "主机");
+            }
         }
 
         // ── 动作 ────────────────────────────────────────────────

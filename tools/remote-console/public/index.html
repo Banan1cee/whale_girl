@@ -42,7 +42,7 @@
         <button id="refresh" class="button secondary" type="button">刷新状态</button>
       </div>
       <section class="card page-card host-card" data-page="status" aria-labelledby="host-title">
-        <h2 id="host-title">主机</h2>
+        <h2 id="host-title">主机 <a class="host-help" href="https://bot.zyyc.cc/#phone-control" target="_blank" rel="noopener noreferrer" aria-label="查看手机远程控制教程" title="查看手机远程控制教程">?</a></h2>
         <p id="host-locked" class="notice error" hidden>已锁屏：朋友圈、表情包、引用回复等依赖截图的功能会失效。请用 UU/ToDesk 等远控解锁后再操作。</p>
         <p id="host-offline" class="notice error" hidden></p>
         <div id="host-panel" hidden>
@@ -70,8 +70,10 @@
             </label>
             <label><input id="host-remote-launch" type="checkbox"> 允许手机启动内核</label>
             <label><input id="host-auto-start" type="checkbox"> 开机自启</label>
+            <label id="host-display-control-label"><input id="host-display-control" type="checkbox"> 允许远程开关屏幕</label>
           </div>
           <p id="host-hint" class="host-hint" hidden>启动器正以管理员权限运行：内核的启动与重启请在电脑上操作，或先允许手机启动内核。</p>
+          <p id="host-display-hint" class="host-hint" hidden></p>
         </div>
       </section>
 
