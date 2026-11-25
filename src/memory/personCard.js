@@ -357,8 +357,9 @@ function addTrait(card, entry, { chatId, now = Date.now() } = {}) {
   if (!body) return null;
   const confidence = clampNum(entry.confidence, 0, 1, 0.65);
   if (confidence < LIMITS.traitMinConfidence) return null;
-  const evidence = (Array.isArray(entry.evidence) ? entry.evidence : [entry.source])
-    .map((x) => text(x, 120)).filter(Boolean);
+  // 同一条证据写两遍只算一次，否则一条消息就能凑够性格门槛
+  const evidence = [...new Set((Array.isArray(entry.evidence) ? entry.evidence : [entry.source])
+    .map((x) => text(x, 120)).filter(Boolean))];
   const explicit = Boolean(entry.explicit);
   if (!explicit && evidence.length < LIMITS.traitMinEvidence) return null;
 

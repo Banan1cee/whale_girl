@@ -200,7 +200,8 @@ function parseEpisode(raw) {
       operation,
       text: body,
       confidence: clamp01(f.confidence, 0.6),
-      evidence: (Array.isArray(f.evidence) ? f.evidence : []).map((x) => clampText(x, 120)).filter(Boolean).slice(0, 8),
+      // 模型偶尔把单条证据写成字符串；当成没证据会绕过本人证据核对
+      evidence: (Array.isArray(f.evidence) ? f.evidence : (f.evidence ? [f.evidence] : [])).map((x) => clampText(x, 120)).filter(Boolean).slice(0, 8),
       supersedesIds: (Array.isArray(f.supersedesIds) ? f.supersedesIds : []).map((x) => clampText(x, 48)).filter(Boolean).slice(0, 8),
       kind: ['preference', 'taboo', 'fact', 'recent'].includes(String(f.kind || '')) ? String(f.kind) : 'fact',
     };
@@ -209,7 +210,7 @@ function parseEpisode(raw) {
     if (!t) return null;
     const body = clampText(typeof t === 'string' ? t : t.text, 40);
     if (!body) return null;
-    const evidence = (Array.isArray(t.evidence) ? t.evidence : []).map((x) => String(x)).slice(0, 8);
+    const evidence = (Array.isArray(t.evidence) ? t.evidence : (t.evidence ? [t.evidence] : [])).map((x) => String(x)).slice(0, 8);
     return { uid: String(t.uid || ''), text: body, confidence: clamp01(t.confidence, 0.65), evidence };
   }).filter(Boolean);
   const events = (Array.isArray(obj.events) ? obj.events : []).slice(0, 8).map((e) => {
@@ -355,10 +356,10 @@ async function extractEpisode({ messages, llm, speakers = [], existingFacts = {}
     ]));
     parsed.facts = parsed.facts.map((fact) => {
       const evidence = userMessageIds.get(fact.uid) || new Set();
-      const cited = fact.evidence.length;
-      fact.evidence = fact.evidence.filter((id) => evidence.has(id));
-      // 引了证据却没有一条是本人说的：多半是把助手的猜测或别人的话安到了本人头上
-      if (cited && !fact.evidence.length) return null;
+      fact.evidence = [...new Set(fact.evidence.filter((id) => evidence.has(id)))];
+      // 模型写的事实必须有本人说过的话撑着：证据全是别人的（含机器人的猜测）会安错人；
+      // 没给证据的放行时，一条凭空的 set 能按 subject+key 顶掉已核验的旧事实
+      if (!fact.evidence.length) return null;
       const known = knownFactIds.get(fact.uid) || new Map();
       fact.supersedesIds = fact.supersedesIds.filter((id) => known.get(id) === fact.subject);
       if (fact.operation === 'set' && fact.kind !== 'recent'
@@ -369,10 +370,10 @@ async function extractEpisode({ messages, llm, speakers = [], existingFacts = {}
       if (fact.operation === 'replace' && fact.supersedesIds.length === 0 && !fact.key) return null;
       return fact;
     }).filter(Boolean);
-    // 性格要由本人的话撑起来：助手自己的说话方式曾被模型当证据写成用户性格
+    // 性格要由本人的话撑起来：助手自己的说话方式曾被模型当证据写成用户性格；同一条证据写两遍只算一次
     parsed.traits = parsed.traits.map(fix).filter(Boolean).filter((trait) => {
       const own = userMessageIds.get(trait.uid) || new Set();
-      trait.evidence = trait.evidence.filter((id) => own.has(id));
+      trait.evidence = [...new Set(trait.evidence.filter((id) => own.has(id)))];
       return trait.evidence.length >= LIMITS.traitMinEvidence;
     });
     parsed.events = parsed.events.map(fix).filter(Boolean);
