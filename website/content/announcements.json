@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "manifest_version": 2,
+  "updated_at": "2026-11-25T09:00:00Z",
+  "kill": false,
+  "config": { "popups_enabled": true, "max_popups_per_launch": 3, "popup_delay_ms": 1200 },
+  "announcements": [{
+    "id": "2026-11-25-announcement-launch",
+    "title": "公告功能已上线",
+    "body": "从 4.2.0 起，版本提示、官网域名变更和临时维护都会通过公告通知。\n点顶栏铃铛可以回看历史公告。",
+    "level": "info",
+    "action": "none",
+    "published_at": "2026-11-25T09:00:00Z",
+    "min_version": "4.2.0",
+    "priority": 10
+  }]
+}
