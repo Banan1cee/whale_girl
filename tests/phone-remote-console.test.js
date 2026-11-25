@@ -365,3 +365,105 @@ test('配对、数据白名单、指定操作和内核离线', async t => {
     }
   });
 });
+
+test('主机状态卡与主机操作', async t => {
+  const token = randomBytes(24).toString('hex');
+  const upstream = http.createServer((req, res) => {
+    const payload = req.url === '/api/status'
+      ? { ok: true, name: '鲸鲸', version: '4.1.8.2', uptimeSec: 60,
+        gateways: [{ platform: 'wechat', bridge: { online: true, uia: true } }] }
+      : { ok: false };
+    res.writeHead(req.url === '/api/status' ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(payload));
+  });
+  await start(upstream);
+  t.after(() => upstream.listening && stop(upstream));
+  const hostState = { locked: true, inputDesktop: 'Default', logonUI: false, foreground: 'explorer',
+    idleSeconds: 125, sessionId: 1, keepAwake: 'system', remoteProcessLaunch: false, autoStart: false,
+    processLaunchAllowed: true, hostname: 'fixture-pc', uptimeSeconds: 3600 };
+  const commands = [];
+  let launcherDown = false;
+  const consoleServer = createConsole({
+    token, whalePort: upstream.address().port,
+    controlLauncher: async (action, payload) => {
+      if (launcherDown) throw new Error('无法连接电脑上的鲸鲸启动器，请确认它已打开。');
+      commands.push([action, payload]);
+      if (action === 'host-state') return { ok: true, data: { ...hostState } };
+      if (action === 'host-keep-awake') { hostState.keepAwake = payload.mode; return { ok: true, data: { mode: payload.mode } }; }
+      if (action === 'host-wake-display') return { ok: true, message: '已点亮屏幕。' };
+      if (action === 'host-config') {
+        if (typeof payload.remoteProcessLaunch === 'boolean') hostState.remoteProcessLaunch = payload.remoteProcessLaunch;
+        if (typeof payload.autoStart === 'boolean') hostState.autoStart = payload.autoStart;
+        return { ok: true, data: { remoteProcessLaunch: hostState.remoteProcessLaunch, autoStart: hostState.autoStart } };
+      }
+      return { ok: false, error: '未知操作。' };
+    },
+  });
+  const consoleUrl = await start(consoleServer);
+  t.after(() => stop(consoleServer));
+
+  const auth = { Authorization: 'Bearer ' + token };
+  const get = (url, headers = auth) => fetch(consoleUrl + url, { headers });
+  const post = (url, data, headers = auth) => fetch(consoleUrl + url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(data),
+  });
+
+  await t.test('主机状态需要配对，且把启动器数据与内核状态合并返回', async () => {
+    assert.equal((await get('/console/host', {})).status, 401);
+    const response = await get('/console/host');
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.data.locked, true);
+    assert.equal(body.data.keepAwake, 'system');
+    assert.equal(body.data.hostname, 'fixture-pc');
+    assert.equal(body.data.kernelRunning, true);
+    assert.equal(body.data.bridgeOnline, true);
+    // host-* 只在带参的主机端点使用，不能从只传一个 action 的 /console/control 混进来。
+    assert.equal((await post('/console/control', { action: 'host-state' })).status, 400);
+  });
+
+  await t.test('主机操作拒绝未知动作、缺少确认和非布尔开关值', async () => {
+    assert.equal((await post('/console/host-command', { action: 'shutdown' })).status, 400);
+    const missing = await post('/console/host-command', { action: 'keep-awake', value: 'system' });
+    assert.equal(missing.status, 400);
+    assert.equal((await missing.json()).error, '这个操作需要二次确认。');
+    assert.equal((await post('/console/host-command', { action: 'keep-awake', value: 'always', confirm: true })).status, 400);
+    assert.equal((await post('/console/host-command', { action: 'remote-process-launch', value: 'yes', confirm: true })).status, 400);
+    assert.equal((await post('/console/host-command', { action: 'auto-start', value: 1, confirm: true })).status, 400);
+    assert.equal((await post('/console/host-command', { action: 'keep-awake', value: 'system' }, {})).status, 401);
+  });
+
+  await t.test('保活、点亮屏幕和两个开关映射到启动器动作', async () => {
+    let response = await post('/console/host-command', { action: 'keep-awake', value: 'display', confirm: true });
+    assert.equal(response.status, 200);
+    assert.ok(commands.some(([action, payload]) => action === 'host-keep-awake' && payload.mode === 'display'));
+    response = await post('/console/host-command', { action: 'wake-display' });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).message, '已点亮屏幕。');
+    response = await post('/console/host-command', { action: 'remote-process-launch', value: true, confirm: true });
+    assert.equal(response.status, 200);
+    assert.ok(commands.some(([action, payload]) => action === 'host-config' && payload.remoteProcessLaunch === true));
+    response = await post('/console/host-command', { action: 'auto-start', value: true, confirm: true });
+    assert.equal(response.status, 200);
+    assert.ok(commands.some(([action, payload]) => action === 'host-config' && payload.autoStart === true));
+    const hostAfter = (await (await get('/console/host')).json()).data;
+    assert.equal(hostAfter.keepAwake, 'display');
+    assert.equal(hostAfter.remoteProcessLaunch, true);
+    assert.equal(hostAfter.autoStart, true);
+  });
+
+  await t.test('启动器不可用时主机状态与命令都返回 503', async () => {
+    launcherDown = true;
+    try {
+      const response = await get('/console/host');
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).error, '启动器未运行，主机状态不可用。');
+      assert.equal((await post('/console/host-command', { action: 'wake-display' })).status, 503);
+    } finally {
+      launcherDown = false;
+    }
+  });
+});

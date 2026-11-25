@@ -23,6 +23,7 @@ namespace WhaleLauncher.Views
     public partial class StatusPage : UserControl, IRefreshable
     {
         private readonly RuntimeSupervisor _sup;
+        private readonly HostPower _host;
 
         private DateTime _lastCare = DateTime.MinValue;
         private RuntimeSupervisor.CareState _care;
@@ -30,12 +31,15 @@ namespace WhaleLauncher.Views
         private bool _recentBusy;
         private string _recentJson = "";
         private Snapshot _status = new Snapshot();
+        // 刷新会按真实值回写控件；控件事件再触发保存就会互相打架，用它隔开。
+        private bool _hostSyncing;
 
-        public StatusPage(RuntimeSupervisor sup)
+        public StatusPage(RuntimeSupervisor sup, HostPower host)
         {
             InitializeComponent();
             SmoothScroll.Attach(Recent);
             _sup = sup;
+            _host = host;
             _recentTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _recentTimer.Tick += async (_, __) => await PollRecentAsync();
             Loaded += async (_, __) => { _recentTimer.Start(); await PollRecentAsync(); };
@@ -48,6 +52,8 @@ namespace WhaleLauncher.Views
             var s = await _sup.ProbeAsync();
             _status = s;
             Apply(s);
+            // 状态页本来就每 2 秒刷一次，主机状态跟着这条节奏走，不再另开定时器。
+            SyncHost(_host.ReadStatus());
 
             if ((DateTime.Now - _lastCare).TotalSeconds >= 30)
             {
@@ -209,6 +215,78 @@ namespace WhaleLauncher.Views
             if (t.TotalMinutes >= 1) return $"{t.Minutes} 分";
             return $"{t.Seconds} 秒";
         }
+
+        // ── 主机：会话 / 保活 / 远程操作权限 ────────────────────
+        private void SyncHost(HostPower.HostStatus h)
+        {
+            _hostSyncing = true;
+            try
+            {
+                HostLine.Text = "会话 " + (h.Locked ? "已锁屏" : "已登录")
+                    + "   ·   输入桌面 " + (string.IsNullOrEmpty(h.InputDesktop) ? "—" : h.InputDesktop)
+                    + "   ·   空闲 " + (h.IdleSeconds < 0 ? "—" : Short(h.IdleSeconds));
+                HostLine.ToolTip = "用户 " + h.UserName + " · 主机 " + h.Hostname
+                    + " · 会话 " + h.SessionId + " · 启动器已运行 " + Short(h.UptimeSeconds);
+                HostConfigLine.Text = "保活 " + ModeLabel(h.KeepAwake)
+                    + "   ·   开机自启 " + (h.AutoStart ? "已开" : "已关")
+                    + "   ·   手机启动内核 " + (h.RemoteProcessLaunch ? "允许" : "不允许");
+                HostKeepAwake.SelectedIndex = ModeIndex(h.KeepAwake);
+                ChkRemoteProcess.IsChecked = h.RemoteProcessLaunch;
+                ChkAutoStart.IsChecked = h.AutoStart;
+            }
+            finally
+            {
+                _hostSyncing = false;
+            }
+        }
+
+        private static string ModeLabel(string mode) => mode switch
+        {
+            "system" => "防睡眠",
+            "display" => "防关屏",
+            _ => "关",
+        };
+
+        private static int ModeIndex(string mode) => mode switch
+        {
+            "system" => 1,
+            "display" => 2,
+            _ => 0,
+        };
+
+        private static string ModeValue(int index) => index switch
+        {
+            1 => "system",
+            2 => "display",
+            _ => "off",
+        };
+
+        private void OnHostKeepAwakeChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_hostSyncing) return;
+            var error = _host.TrySetKeepAwake(ModeValue(HostKeepAwake.SelectedIndex));
+            if (error != null) AppDialog.Show(Window.GetWindow(this), error, "主机");
+            SyncHost(_host.ReadStatus());
+        }
+
+        private void OnRemoteProcessChanged(object sender, RoutedEventArgs e)
+        {
+            if (_hostSyncing) return;
+            var error = _host.TrySetRemoteProcessLaunch(ChkRemoteProcess.IsChecked == true);
+            if (error != null) AppDialog.Show(Window.GetWindow(this), error, "主机");
+            SyncHost(_host.ReadStatus());
+        }
+
+        private void OnAutoStartChanged(object sender, RoutedEventArgs e)
+        {
+            if (_hostSyncing) return;
+            var error = _host.TrySetAutoStart(ChkAutoStart.IsChecked == true);
+            if (error != null) AppDialog.Show(Window.GetWindow(this), error, "主机");
+            SyncHost(_host.ReadStatus());
+        }
+
+        // 锁屏时也允许点：只是广播「显示器请醒来」，不会解锁，所以话术不承诺解锁。
+        private void OnWakeDisplay(object sender, RoutedEventArgs e) => _host.RequestDisplayWake();
 
         // ── 动作 ────────────────────────────────────────────────
         private async void OnRefresh(object sender, RoutedEventArgs e)

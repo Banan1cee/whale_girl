@@ -25,6 +25,9 @@ let token = '';
 let snapshot = null;
 let busy = false;
 let lastPresetList = '';
+// 主机卡片数据独立于 /console/status：启动器没开时状态页其余部分仍要能刷新。
+let host = null;
+let hostError = '';
 
 function storedToken(value) {
   for (const kind of ['localStorage', 'sessionStorage']) {
@@ -73,6 +76,53 @@ function elapsed(seconds) {
   return minutes ? minutes + ' 分 ' + (seconds % 60) + ' 秒' : seconds + ' 秒';
 }
 
+function hostStateLabel(data) {
+  if (data.locked) return '🔒 已锁屏';
+  if (data.logonUI) return '登录界面';
+  return '已登录';
+}
+
+function renderHost() {
+  const offline = byId('host-offline');
+  const panel = byId('host-panel');
+  offline.textContent = hostError;
+  offline.hidden = !hostError;
+  panel.hidden = !host;
+  if (!host) {
+    byId('host-locked').hidden = true;
+    return;
+  }
+  byId('host-state').textContent = hostStateLabel(host);
+  byId('host-desktop').textContent = host.inputDesktop || '—';
+  byId('host-idle').textContent = elapsed(host.idleSeconds);
+  byId('host-kernel').textContent = host.kernelRunning
+    ? (host.bridgeOnline ? '内核运行中 · 桥接在线' : '内核运行中 · 桥接离线') : '内核已停止';
+  // 锁屏提示只在真的锁屏时出现；玩家可以忽略，但截图类功能确实会失效。
+  byId('host-locked').hidden = !host.locked;
+  const keepAwakeLabel = { off: '关（允许睡眠）', system: '防睡眠', display: '防关屏' };
+  byId('host-keep-awake-state').textContent = keepAwakeLabel[host.keepAwake] || keepAwakeLabel.off;
+  byId('host-auto-start-state').textContent = host.autoStart ? '开' : '关';
+  byId('host-remote-launch-state').textContent = host.remoteProcessLaunch ? '开' : '关';
+  byId('host-keep-awake').value = ['off', 'system', 'display'].includes(host.keepAwake) ? host.keepAwake : 'off';
+  byId('host-remote-launch').checked = host.remoteProcessLaunch === true;
+  byId('host-auto-start').checked = host.autoStart === true;
+  // 管理员模式下启动器默认拒绝启动内核；只有「允许手机启动内核」才放行，与后端判断保持一致。
+  byId('host-hint').hidden = !(host.processLaunchAllowed === false && host.remoteProcessLaunch !== true);
+}
+
+async function loadHost() {
+  try {
+    const result = await request(token, '/console/host');
+    host = result?.data || null;
+    hostError = host ? '' : '主机状态不可用。';
+  } catch (error) {
+    if (error.status === 401) throw error;
+    host = null;
+    hostError = error.message;
+  }
+  renderHost();
+}
+
 function render() {
   const paired = Boolean(token);
   login.hidden = paired;
@@ -92,6 +142,9 @@ function render() {
   for (const button of document.querySelectorAll('[data-action]')) button.disabled = busy;
   for (const control of byId('page-summary').querySelectorAll('button, select, input, textarea')) {
     control.disabled = busy || control.dataset.unavailable === 'true';
+  }
+  for (const control of document.querySelectorAll('#host-panel button, #host-panel select, #host-panel input')) {
+    control.disabled = busy || !host;
   }
   for (const button of nav.querySelectorAll('button')) button.disabled = busy;
   for (const control of editor.querySelectorAll('input, select, textarea, button')) control.disabled = busy || !editable;
@@ -145,6 +198,9 @@ function lock(message = '') {
   storedToken('');
   pairingKey.value = '';
   setSnapshot(null);
+  host = null;
+  hostError = '';
+  renderHost();
   editor.replaceChildren();
   diagnosticLines = [];
   stickerCategory = '';
@@ -208,7 +264,9 @@ async function run(action, clearNotice = true) {
 function refresh(manual) {
   return run(async () => {
     try {
-      setSnapshot(await request(token, '/console/status'));
+      // 主机卡片与运行概览同一节奏刷新；主机失败只影响卡片本身，不拖垮整套状态。
+      const [state] = await Promise.all([request(token, '/console/status'), loadHost()]);
+      setSnapshot(state);
       if (byId('feedback').dataset.connectionError === 'true') notice();
       byId('feedback').dataset.connectionError = '';
     } catch (error) {
@@ -1101,6 +1159,41 @@ for (const button of document.querySelectorAll('[data-action]')) {
   }));
 }
 
+async function hostCommand(body, fallbackMessage) {
+  try {
+    const result = await request(token, '/console/host-command', body);
+    await loadHost();
+    notice(result.message || fallbackMessage);
+  } catch (error) {
+    // 失败时按电脑端真实状态回填，避免开关停在「点了但没生效」的位置。
+    await loadHost().catch(() => {});
+    throw error;
+  }
+}
+
+byId('host-keep-awake').addEventListener('change', () => run(() => {
+  const mode = byId('host-keep-awake').value;
+  const label = { off: '已关闭保活。', system: '已开启防睡眠。', display: '已开启防关屏。' }[mode];
+  return hostCommand({ action: 'keep-awake', value: mode, confirm: true }, label);
+}));
+
+byId('host-wake-display').addEventListener('click', () => run(async () => {
+  const result = await request(token, '/console/host-command', { action: 'wake-display' });
+  notice(result.message || '已点亮屏幕。');
+  await loadHost();
+}));
+
+function bindHostToggle(id, action, question) {
+  const input = byId(id);
+  input.addEventListener('change', () => {
+    const enabled = input.checked;
+    if (!window.confirm(question)) { input.checked = !enabled; return; }
+    run(() => hostCommand({ action, value: enabled, confirm: true }, enabled ? '已开启。' : '已关闭。'));
+  });
+}
+bindHostToggle('host-remote-launch', 'remote-process-launch', '允许手机启动或重启电脑上的内核？');
+bindHostToggle('host-auto-start', 'auto-start', '更改鲸鲸的开机自启设置？');
+
 byId('pair-form').addEventListener('submit', event => {
   event.preventDefault();
   const key = pairingKey.value.trim();
@@ -1111,6 +1204,8 @@ byId('pair-form').addEventListener('submit', event => {
     storedToken(token);
     pairingKey.value = '';
     setSnapshot(result);
+    // 配对成功后立刻填主机卡片，不用等下一轮 20 秒刷新。
+    await loadHost().catch(() => {});
   });
 });
 
