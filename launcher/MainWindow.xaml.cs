@@ -103,7 +103,7 @@ namespace WhaleLauncher
                             Dispatcher.InvokeAsync(() => RunPhoneActionAsync(action, payload)).Task.Unwrap());
                     }
                 }
-                catch (Exception ex) { _sup.SayWarn("手机控制接口启动失败：" + ex.GetType().Name); }
+                catch (Exception ex) { _sup.SayWarn("手机控制接口启动失败：" + ex.GetType().Name + " · " + ex.Message); }
                 await SilentUpdateCheckAsync(allowBlocking: true);
                 await CheckNoticesAsync(showPopups: true);
                 await RefreshAsync();

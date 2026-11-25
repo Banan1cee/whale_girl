@@ -77,9 +77,8 @@ function elapsed(seconds) {
 }
 
 function hostStateLabel(data) {
-  if (data.locked) return '🔒 已锁屏';
-  if (data.logonUI) return '登录界面';
-  return '已登录';
+  // 只看 locked：LogonUI 进程在部分机器上解锁后仍常驻，不能拿它当锁屏判据。
+  return data.locked ? '🔒 已锁屏' : '已登录';
 }
 
 function renderHost() {

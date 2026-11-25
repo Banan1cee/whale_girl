@@ -111,15 +111,21 @@ namespace WhaleLauncher
         {
             var desktop = InputDesktopName(out var opened);
             var logonUi = LogonUiRunning();
+            var foreground = GetForegroundWindow();
             var registryAutoStart = ReadAutoStart();
             if (registryAutoStart.HasValue) _autoStart = registryAutoStart.Value;
             var launchAllowed = PhoneControl.AllowsProcessLaunch();
             return new HostStatus
             {
-                Locked = logonUi || !IsDefaultDesktop(desktop, opened),
+                // Win11 的锁屏是跑在 Default 桌面上的 LockApp CoreWindow（实测标题「Windows 默认锁屏界面」），
+                // 不再是 Winlogon 安全桌面，所以「输入桌面是 Default」不能说明没锁。三路判定：
+                //   1) 打不开输入桌面 / 不是 Default → 老式安全桌面锁屏或 UAC；
+                //   2) 前台窗口属于 LockApp / LogonUI → Win11 锁屏界面；
+                //   3) 其余按已登录。
+                Locked = !IsDefaultDesktop(desktop, opened) || LockScreenOwnsForeground(),
                 InputDesktop = desktop,
                 LogonUI = logonUi,
-                Foreground = GetForegroundWindow().ToInt64(),
+                Foreground = foreground.ToInt64(),
                 IdleSeconds = IdleSeconds(),
                 SessionId = CurrentSessionId(),
                 KeepAwake = _keepAwake,
@@ -188,6 +194,28 @@ namespace WhaleLauncher
             {
                 if (processes != null)
                     foreach (var process in processes) process.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// 前台窗口是否属于锁屏界面本身。Win11 用 LockApp 承载锁屏 CoreWindow；
+        /// 老式安全桌面锁屏/UAC 下前台句柄为 0，由「输入桌面」那一路判定，这里返回 false。
+        /// </summary>
+        private static bool LockScreenOwnsForeground()
+        {
+            var foreground = GetForegroundWindow();
+            if (foreground == IntPtr.Zero) return false;
+            try
+            {
+                GetWindowThreadProcessId(foreground, out var pid);
+                if (pid == 0) return false;
+                using var process = Process.GetProcessById((int)pid);
+                return process.ProcessName is "LockApp" or "LogonUI";
+            }
+            catch (Exception)
+            {
+                // 进程可能正好退出；按「不是锁屏」处理，避免一次竞态把已登录报成锁屏。
+                return false;
             }
         }
 
@@ -488,6 +516,9 @@ namespace WhaleLauncher
 
         [DllImport("user32.dll")]
         private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 
         [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
