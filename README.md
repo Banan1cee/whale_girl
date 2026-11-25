@@ -168,6 +168,8 @@ Only download installers from **GitHub Releases**: <https://github.com/Banan1cee
 
 ## Code signing policy
 
+The Windows launcher and installer for the 4.2.0 preview passed SignPath test signing and installation checks. Production signing is pending. [GitHub Actions results](https://github.com/Banan1cee/whale_girl/actions/runs/45573742923)
+
 Current release builds are **not signed yet**, so Windows may show "Unknown publisher". Verify `SHA256SUMS.txt` from the release before installing. The signing policy is in [`docs/CODE_SIGNING_POLICY.md`](docs/CODE_SIGNING_POLICY.md); the privacy policy is in [`docs/PRIVACY.md`](docs/PRIVACY.md).
 
 ## Articles
