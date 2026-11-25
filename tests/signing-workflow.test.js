@@ -41,6 +41,9 @@ test('启动器先签、后编译安装包', () => {
   assert.ok(signLauncher < compile, '签名必须在编译安装包之前');
   assert.ok(swapLauncher < compile, '签好的启动器要在编译前放回 launcher\\publish');
   assert.ok(compile < signSetup, '安装包要在编译之后再签');
+  const normalize = idx('node scripts/normalize-inno-version.js');
+  assert.ok(normalize > compile && normalize < idx('上传未签名安装包'), 'Inno 版本资源必须在上传签名前规范化');
+  assert.ok(fs.existsSync(path.join(root, 'scripts/normalize-inno-version.js')));
 });
 
 test('SignPath 上传/取件参数成对，且两轮签的都校验状态', () => {

@@ -405,7 +405,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Output '::error title=安装包编译失败::ISCC 退出码非 0，看上面的编译日志'; exit 1 }
           if ($env:SIGNING_MODE -eq 'signpath') {
             $setup = Get-Item -LiteralPath "artifacts/setup/whale-girl-$($env:version)-setup.exe"
-            $info = $setup.VersionInfo
+            node scripts/normalize-inno-version.js $setup.FullName $env:version
+            if ($LASTEXITCODE -ne 0) { throw '安装包的 PE 版本资源规范化失败。' }
+            $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($setup.FullName)
             if ($info.ProductName -cne 'WhaleGirl' -or $info.CompanyName -cne 'WhaleGirl' -or $info.ProductVersion -cne $env:version) {
               throw '安装包的 PE 产品名、公司名或版本号与 SignPath 配置不一致。'
             }
