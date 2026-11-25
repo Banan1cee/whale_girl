@@ -84,6 +84,8 @@
                     </ComboBox>
                     <Button x:Name="BtnWakeDisplay" Content="点亮屏幕" Style="{StaticResource Ghost}"
                             Margin="8,0,0,0" Click="OnWakeDisplay" />
+                    <Button x:Name="BtnDisplayOff" Content="关闭屏幕" Style="{StaticResource Ghost}"
+                            Margin="8,0,0,0" Click="OnDisplayOff" />
                     <CheckBox x:Name="ChkRemoteProcess" Content="允许手机启动内核" Margin="14,0,0,0"
                               VerticalAlignment="Center" Click="OnRemoteProcessChanged" />
                     <CheckBox x:Name="ChkAutoStart" Content="开机自启" Margin="14,0,0,0"

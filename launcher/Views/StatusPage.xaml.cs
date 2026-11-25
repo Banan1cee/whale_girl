@@ -288,6 +288,13 @@ namespace WhaleLauncher.Views
         // 锁屏时也允许点：只是广播「显示器请醒来」，不会解锁，所以话术不承诺解锁。
         private void OnWakeDisplay(object sender, RoutedEventArgs e) => _host.RequestDisplayWake();
 
+        // 关屏和锁屏是两件事：这里只关显示器，会话保持登录；是否会被强制锁屏取决于系统策略。
+        private void OnDisplayOff(object sender, RoutedEventArgs e)
+        {
+            var result = _host.RequestDisplayOff();
+            if (result != null) AppDialog.Show(Window.GetWindow(this), result, "主机");
+        }
+
         // ── 动作 ────────────────────────────────────────────────
         private async void OnRefresh(object sender, RoutedEventArgs e)
         {

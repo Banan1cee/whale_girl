@@ -86,9 +86,19 @@ function renderHost() {
   const panel = byId('host-panel');
   offline.textContent = hostError;
   offline.hidden = !hostError;
-  panel.hidden = !host;
+  // 卡片常驻：启动器没开时按钮也留在原地（render 里统一置灰），否则用户会以为
+  // 「功能没了」，也分不清是没刷新还是压根没打开启动器。
+  panel.hidden = false;
   if (!host) {
+    byId('host-state').textContent = '—';
+    byId('host-desktop').textContent = '—';
+    byId('host-idle').textContent = '—';
+    byId('host-kernel').textContent = '—';
+    byId('host-keep-awake-state').textContent = '—';
+    byId('host-auto-start-state').textContent = '—';
+    byId('host-remote-launch-state').textContent = '—';
     byId('host-locked').hidden = true;
+    byId('host-hint').hidden = true;
     return;
   }
   byId('host-state').textContent = hostStateLabel(host);
@@ -120,6 +130,17 @@ async function loadHost() {
     hostError = error.message;
   }
   renderHost();
+  // 启动器刚打开时不该让用户等下一轮 20 秒；失败状态下 5 秒补一次，恢复后自然停。
+  if (hostError) scheduleHostRetry();
+}
+
+let hostRetryTimer = 0;
+function scheduleHostRetry() {
+  if (hostRetryTimer) return;
+  hostRetryTimer = setTimeout(() => {
+    hostRetryTimer = 0;
+    if (token && hostError) loadHost().catch(() => {});
+  }, 5000);
 }
 
 function render() {
@@ -189,7 +210,8 @@ function render() {
 function setSnapshot(value) {
   snapshot = value;
   byId('updated').textContent = value
-    ? '更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) : '尚未同步';
+    ? '更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) + ' · 每 20 秒自动刷新'
+    : '尚未同步 · 每 20 秒自动重试';
 }
 
 function lock(message = '') {
@@ -1180,6 +1202,18 @@ byId('host-wake-display').addEventListener('click', () => run(async () => {
   const result = await request(token, '/console/host-command', { action: 'wake-display' });
   notice(result.message || '已点亮屏幕。');
   await loadHost();
+}));
+
+// 关屏不是锁屏：只让显示器熄掉，会话仍在已登录状态；是否会被系统强制锁屏取决于电脑设置。
+byId('host-display-off').addEventListener('click', () => run(async () => {
+  const result = await request(token, '/console/host-command', { action: 'display-off' });
+  notice(result.message || '已发送关屏指令。');
+  await loadHost();
+}));
+
+byId('host-retry').addEventListener('click', () => run(async () => {
+  await loadHost();
+  notice(hostError ? '还是连不上启动器：请在电脑上确认鲸鲸启动器窗口没有关掉。' : '已重新读取主机状态。', Boolean(hostError));
 }));
 
 function bindHostToggle(id, action, question) {

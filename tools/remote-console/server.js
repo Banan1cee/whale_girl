@@ -484,17 +484,19 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
   async function hostCommand(req) {
     const { action, value, confirm } = await parseBody(req, 8192);
     const modes = new Set(['off', 'system', 'display']);
-    if (!['keep-awake', 'wake-display', 'remote-process-launch', 'auto-start'].includes(action)) {
+    if (!['keep-awake', 'wake-display', 'display-off', 'remote-process-launch', 'auto-start'].includes(action)) {
       throw fail(400, '未知的主机操作。');
     }
-    // 除点亮屏幕外都会改变电源或开机行为，必须由前端二次确认后再提交。
-    if (action !== 'wake-display' && confirm !== true) throw fail(400, '这个操作需要二次确认。');
+    // 除点亮/关闭屏幕外都会改变电源或开机行为，必须由前端二次确认后再提交。
+    if (action !== 'wake-display' && action !== 'display-off' && confirm !== true) throw fail(400, '这个操作需要二次确认。');
     let forwarded;
     if (action === 'keep-awake') {
       if (!modes.has(value)) throw fail(400, '保活模式无效。');
       forwarded = ['host-keep-awake', { mode: value }];
     } else if (action === 'wake-display') {
       forwarded = ['host-wake-display', {}];
+    } else if (action === 'display-off') {
+      forwarded = ['host-display-off', {}];
     } else {
       if (typeof value !== 'boolean') throw fail(400, '开关状态无效。');
       forwarded = ['host-config', action === 'remote-process-launch'

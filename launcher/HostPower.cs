@@ -82,7 +82,7 @@ namespace WhaleLauncher
         }
 
         public static bool Handles(string action) => action is
-            "host-state" or "host-keep-awake" or "host-wake-display" or "host-config";
+            "host-state" or "host-keep-awake" or "host-wake-display" or "host-display-off" or "host-config";
 
         /// <summary>
         /// 用户是否授权「管理员模式下也允许手机启动内核」。进程动作守卫直接读这里；
@@ -99,6 +99,7 @@ namespace WhaleLauncher
                 case "host-state": return new { ok = true, data = StateData() };
                 case "host-keep-awake": return KeepAwakeAction(payload);
                 case "host-wake-display": return WakeDisplayAction();
+                case "host-display-off": return DisplayOffAction();
                 case "host-config": return ConfigureAction(payload);
                 default: return new { ok = false, error = "未知操作。" };
             }
@@ -330,6 +331,18 @@ namespace WhaleLauncher
         private static void BroadcastMonitorOn() =>
             PostMessage(new IntPtr(HwndBroadcast), WmSysCommand, new IntPtr(ScMonitorPower), new IntPtr(-1));
 
+        /// <summary>
+        /// 关显示器（不是锁屏）。只是广播系统命令，会话仍停留在已登录的 Default 桌面；
+        /// 屏幕是否再自动亮起取决于电源计划里「屏幕关闭」超时和用户是否有输入。
+        /// </summary>
+        private object DisplayOffAction()
+        {
+            var error = RequestDisplayOff();
+            return error == null
+                ? new { ok = true, message = "已发送关屏指令。若屏幕仍亮，请检查显示器/电源设置的关闭超时。" }
+                : new { ok = false, error };
+        }
+
         // ── 供状态页直接调用（返回 null 表示成功，否则是给用户看的中文话术）──
 
         internal string TrySetKeepAwake(string mode)
@@ -353,6 +366,18 @@ namespace WhaleLauncher
         }
 
         internal void RequestDisplayWake() => WakeDisplayAction();
+
+        /// <summary>
+        /// 关显示器（不锁屏）。返回 null 表示已发送指令，否则是给界面直接显示的中文原因。
+        /// 「防关屏」保活会一直申请 ES_DISPLAY_REQUIRED，此时关屏会被系统立刻恢复，
+        /// 与其让用户以为按钮坏了，不如直接说清楚要先切模式。
+        /// </summary>
+        internal string RequestDisplayOff()
+        {
+            if (_keepAwake == "display") return "当前是「防关屏」保活模式，屏幕不会关。请先切到「防睡眠」或「关」。";
+            PostMessage(new IntPtr(HwndBroadcast), WmSysCommand, new IntPtr(ScMonitorPower), new IntPtr(2));
+            return null;
+        }
 
         private object ConfigData() => new { remoteProcessLaunch = _remoteProcessLaunch, autoStart = _autoStart };
 
