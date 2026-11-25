@@ -16,6 +16,7 @@ const modules = [
   require('./bridge'),
   require('./stickers'),
   require('./reminders'),
+  require('./pat'),
   require('./diary'),
   require('./digest'),
   require('./budget'),
