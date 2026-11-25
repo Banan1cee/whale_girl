@@ -107,7 +107,7 @@ namespace WhaleLauncher
                 await Task.Delay(1500);   // 等主题、页面和顶栏铃铛都布局完
                 win.UpdateLayout();
 
-                win.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
+                _ = win.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
                 {
                     try
                     {
