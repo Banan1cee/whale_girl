@@ -915,7 +915,9 @@ class ReceiverMixin:
             pat_requested = data.get('pat') is True
             if pat_requested:
                 # 内核决定用微信「拍一拍」回应：先拍，再按需发正文。
-                self.send_pat(target, username)
+                # patId 是内核给的回执单号：拍完（无论成败）要用它回 /api/pat/ack，
+                # 内核据此落账每小时额度、并把结果记进「最近做过的事」（BUGS #128）。
+                self.send_pat(target, username, pat_id=str(data.get('patId') or ''))
             if data.get('action') != 'reply' or not data.get('reply'):
                 if pat_requested:
                     return

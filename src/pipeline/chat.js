@@ -55,6 +55,8 @@ const { JavaScriptPlugins, PluginRuntime } = require('../services/javascriptPlug
 const SEPARATE_REPLY_RE = /(?:^|[，。！？\s])(?:请|麻烦|能不能|可以|记得)?\s*你?\s*(?:要|给我)?\s*(?:分[条段开](?:来)?(?:发(?:送)?|回(?:复)?|说)|(?:一条一条|一句一句)地?[发回]|每(?:条|句|段)(?:话)?单独[发回]|分(?:成)?[两二三四五六七八九十\d]+[条段](?:气泡|发|回)?)(?:一下)?(?=$|[\s，。！？?!吧嘛哦啊,])/;
 // 私聊「拍拍我」：只有整句就是这个请求才直接回拍，避免误伤正常聊天。
 const PAT_COMMAND_RE = /^(?:快|来|给我|再)?\s*(?:拍一拍|拍拍|拍|戳一戳|戳戳)\s*我(?:一下|一下下|嘛|呗|吧|呀|啊)?[\s。！!？?~～]*$/u;
+// 拍一拍回执最多等多久：桥接的硬截止是 9 秒，30 秒还没回执就当「没拍到」把额度还回去。
+const PAT_ACK_WAIT_MS = 30000;
 
 /** 管理员能用的全部命令：魔咒验证成功后直接回这份清单，配「帮助」也用它 */
 function adminCommandList() {
@@ -371,6 +373,8 @@ class Bot {
 
   /** 回拍额度：同一会话冷却 + 每小时次数上限。 */
   patBudgetAllows(key, cfg, now = Date.now()) {
+    // 先处理「桥接一直没回执」的占位：额度还回去，别让一次失败把这一小时扣掉。
+    this.expirePatPending(now);
     if (cfg.cooldownSec <= 0 && cfg.maxPerHour <= 0) return true;
     const rec = this._patBudget && this._patBudget.get(key);
     if (!rec) return true;
@@ -383,14 +387,90 @@ class Bot {
     return true;
   }
 
-  /** 记一次回拍（用于冷却/每小时次数上限），顺手收一下 Map 大小。 */
-  notePatSent(key, now = Date.now()) {
+  /**
+   * 回拍前先占额度，返回回执单号。
+   *
+   * 以前这里直接 count+1 就完事：桥接其实可能根本没拍（会话没打开、当前界面
+   * 没有可右键的对方行、被群里规则跳过），额度却已经扣掉了。现在先占位，
+   * 等桥接 `/api/pat/ack` 回来再决定保留还是回滚（BUGS #128）。
+   */
+  reservePat(early, now = Date.now()) {
     if (!this._patBudget) this._patBudget = new Map();
+    if (!this._patPending) this._patPending = new Map();
+    const key = String((early && early.chatId) || '');
     const hour = Math.floor(now / 3600000);
     const prev = this._patBudget.get(key) || { last: 0, hour, count: 0 };
-    const count = prev.hour === hour ? Number(prev.count || 0) + 1 : 1;
-    this._patBudget.set(key, { last: now, hour, count });
-    while (this._patBudget.size > 500) this._patBudget.delete(this._patBudget.keys().next().value);
+    const sameHour = prev.hour === hour;
+    const prevLast = sameHour ? Number(prev.last || 0) : 0;
+    const prevCount = sameHour ? Number(prev.count || 0) : 0;
+    this._patBudget.set(key, { last: now, hour, count: prevCount + 1 });
+    this._patSeq = (Number(this._patSeq) || 0) + 1;
+    const patId = `pat-${now.toString(36)}-${this._patSeq}`;
+    let sessionKey = '';
+    try {
+      sessionKey = String(this.sessionKey(early) || '');
+    } catch { sessionKey = ''; }
+    this._patPending.set(patId, {
+      key, sessionKey, at: now, prevLast, prevCount,
+      name: String((early && early.senderName) || '').slice(0, 40),
+    });
+    while (this._patPending.size > 500) this._patPending.delete(this._patPending.keys().next().value);
+    return patId;
+  }
+
+  /** 桥接回执：拍到保留额度，没拍到把额度还回去；两种都记进动作账本。 */
+  settlePat(patId, ok, reason = '', now = Date.now()) {
+    if (!this._patPending || !patId) return false;
+    const pending = this._patPending.get(String(patId));
+    if (!pending) return false;
+    this._patPending.delete(String(patId));
+    if (!ok) {
+      const rec = this._patBudget && this._patBudget.get(pending.key);
+      if (rec) {
+        rec.count = Number(pending.prevCount || 0);
+        rec.last = Number(pending.prevLast || 0);
+      }
+    }
+    this.notePatEvent(pending, ok ? 'confirmed' : 'failed', reason, now);
+    return true;
+  }
+
+  /**
+   * 回执超时：桥接崩了 / 根本没跑到，额度回滚，并记一条「没回执」——
+   * 不能假装拍到了，下一轮模型也不能声称自己拍过。
+   */
+  expirePatPending(now = Date.now()) {
+    if (!this._patPending || !this._patPending.size) return 0;
+    let expired = 0;
+    for (const [patId, pending] of this._patPending) {
+      if (now - Number(pending.at || 0) < PAT_ACK_WAIT_MS) continue;
+      this._patPending.delete(patId);
+      const rec = this._patBudget && this._patBudget.get(pending.key);
+      if (rec) {
+        rec.count = Number(pending.prevCount || 0);
+        rec.last = Number(pending.prevLast || 0);
+      }
+      this.notePatEvent(pending, 'unconfirmed', '', now);
+      expired += 1;
+    }
+    return expired;
+  }
+
+  /** 把一次回拍结果记进动作账本（提示词里的【最近做过的事】）。 */
+  notePatEvent(pending, status, reason, now = Date.now()) {
+    const key = pending && pending.sessionKey;
+    if (!key) return;
+    const who = String((pending && pending.name) || '对方');
+    let detail = who;
+    if (status === 'failed') detail = `${who}（${String(reason || '原因未知').slice(0, 40)}）`;
+    else if (status === 'unconfirmed') detail = `${who}（没收到桥接回执）`;
+    try {
+      if (this.store && typeof this.store.appendEvent === 'function') {
+        this.store.appendEvent(key, { type: 'pat', detail, status, ts: now });
+      }
+    } catch (err) {
+      this.logger?.warn?.('[pat] 动作账本写入失败 ' + describeError(err));
+    }
   }
 
   buildTurns(msg, history, memoryBlock, tailBlock) {
@@ -1276,6 +1356,7 @@ class Bot {
       reason: options.error ? 'llm_error' : bubbles.length ? decision.reason : decision.pat && decision.action !== 'ignore' ? 'pat' : decision.action === 'ignore' ? decision.reason : 'empty_reply',
       mock: Boolean(decision.mock), ...(options.error ? { error: true } : {}),
       ...(decision.pat && decision.action !== 'ignore' ? { pat: true } : {}),
+      ...(decision.pat && decision.action !== 'ignore' && decision.patId ? { patId: decision.patId } : {}),
       ...(decision.stickerCategory ? { stickerCategory: decision.stickerCategory } : {}),
       ...(decision.separateText ? { separateText: true } : {}) });
     this._finalReplies.set(decision, result);
@@ -1886,6 +1967,8 @@ class Bot {
     if (patMark.pat && decision && decision.msg && decision.msg.chatType === 'private'
         && features.isOn(this.config, 'pat')) {
       decision.pat = true;
+      // 占额度并拿回执单号：拍没拍成要等桥接 /api/pat/ack 回来才落账（BUGS #128）。
+      if (!decision.patId) decision.patId = this.reservePat(decision.msg);
     }
     text = patMark.text;
     // 正文里的 emoji 剥出来，单独发一条
@@ -2161,7 +2244,7 @@ class Bot {
         && patEnabled
         && PAT_COMMAND_RE.test(early.text.trim())) {
       this.logger?.info('[pat] 私聊收到拍一拍请求，直接回拍');
-      return { action: 'pat', pat: true, reason: 'pat_command' };
+      return { action: 'pat', pat: true, patId: this.reservePat(early), reason: 'pat_command' };
     }
     // 别人拍她：回不回话、回不回拍由设置页（/pat）的概率决定；
     // 群聊只回话、不主动拍（微信只能按最近一条好友消息的头像拍，容易拍错人）。
@@ -2172,9 +2255,8 @@ class Bot {
       patPlan = this.planPatReply(early);
       if (!patPlan.text) {
         if (patPlan.back) {
-          this.notePatSent(patPlan.key);
           this.logger?.info('[pat] 按设置这次只回拍、不生成长文');
-          return { action: 'pat', pat: true, reason: 'pat_back_only' };
+          return { action: 'pat', pat: true, patId: this.reservePat(early), reason: 'pat_back_only' };
         }
         this.logger?.info('[pat] 按设置这次不回应拍一拍');
         return { action: 'ignore', reason: 'pat_skipped_by_chance' };
@@ -2194,16 +2276,15 @@ class Bot {
       try { this.store.checkpoint(decision.key); } catch { /* 忽略的消息也要留断点 */ }
       // 模型这一轮不接（静音/配额/没接住）时，只要有回拍额度，就把这一下拍回去。
       if (patPlan && patPlan.back) {
-        this.notePatSent(patPlan.key);
         this.logger?.info('[pat] 这一轮只回拍不接话');
-        return { action: 'pat', pat: true, reason: 'pat_back_only' };
+        return { action: 'pat', pat: true, patId: this.reservePat(early), reason: 'pat_back_only' };
       }
       return { action: 'ignore', reason: decision.reason };
     }
     if (patPlan && patPlan.back) {
       // 概率命中就回拍，不再依赖模型是否写了 [[pat]]；正文照常由模型生成（空了就只拍）。
-      this.notePatSent(patPlan.key);
       decision.pat = true;
+      if (!decision.patId) decision.patId = this.reservePat(early);
       this.logger?.info('[pat] 收到拍一拍：回话 + 回拍');
     } else if (patPlan) {
       this.logger?.info('[pat] 收到拍一拍：只回话（按设置不回拍）');
@@ -2329,7 +2410,7 @@ class Bot {
     const bubbles = [...result.bubbles];
     if (result.action === 'ignore') return { action: 'ignore', reason: result.reason };
     if (result.action === 'pat') {
-      return { action: 'pat', pat: true, bubbles: [], reason: result.reason || 'pat' };
+      return { action: 'pat', pat: true, ...(result.patId ? { patId: result.patId } : {}), bubbles: [], reason: result.reason || 'pat' };
     }
     // 群里骂人时要真 @ 到对方：优先用靶子，其次看正文开头有没有 @名字
     const finalText = result.text;
@@ -2344,6 +2425,7 @@ class Bot {
       reason: decision.reason,
       mock: decision.mock,
       ...(result.pat ? { pat: true } : {}),
+      ...(result.pat && result.patId ? { patId: result.patId } : {}),
       ...(decision.separateText ? { separateText: true } : {}),
       // 表情包分类由模型写在正文里的标记决定，这里带出去给网关排队
       ...(decision.stickerCategory ? { stickerCategory: decision.stickerCategory } : {}),

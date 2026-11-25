@@ -123,7 +123,8 @@ function patBot({ chatType = 'private', text = '测试好友 在微信里拍了�
     activateReply: () => true,
     finalizeReply: (decision, body) => {
       seen.pat = decision.pat;
-      return { action: 'reply', text: body, bubbles: [body], pat: decision.pat === true, reason: 'r' };
+      return { action: 'reply', text: body, bubbles: [body], pat: decision.pat === true, reason: 'r',
+        ...(decision.patId ? { patId: decision.patId } : {}) };
     },
     recordUsage() {},
     usageSince: () => ({}),
@@ -242,4 +243,66 @@ test('每小时上限：超过次数后只回话', async () => {
   const second = await Bot.prototype._handleOnce.call(bot, PAT_RAW, { localWechat: true });
   assert.strictEqual(second.action, 'reply');
   assert.notStrictEqual(second.pat, true);
+});
+
+// ---- BUGS #128：回拍额度先占位，等桥接回执再落账 ----
+
+test('回拍前占额度，并把回执单号带给桥接', async () => {
+  const { bot } = patBot({ patConfig: { replyChance: 1, backChance: 1, cooldownSec: 0 } });
+  const out = await Bot.prototype._handleOnce.call(bot, PAT_RAW, { localWechat: true });
+  assert.strictEqual(out.pat, true);
+  assert.match(String(out.patId || ''), /^pat-/, '桥接要靠这个单号回执');
+  assert.strictEqual(bot._patBudget.get('wxid_a').count, 1, '拍之前先占住额度');
+  assert.ok(bot._patPending.has(out.patId), '占位记录要留着等回执');
+});
+
+test('回执成功保留额度，回执失败把额度还回去', () => {
+  const bot = Object.create(Bot.prototype);
+  const events = [];
+  Object.assign(bot, {
+    config: { chat: {}, persona: { name: '鲸鲸' }, features: { pat: true }, pat: { cooldownSec: 0, maxPerHour: 2 } },
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    store: { appendEvent: (key, event) => events.push({ key, event }) },
+    _patBudget: new Map(),
+    _patPending: new Map(),
+    random: () => 0.1,
+  });
+  const early = { platform: 'wechat', chatType: 'private', chatId: 'wxid_a', senderName: '测试好友' };
+  const t0 = Date.now();
+
+  const okId = bot.reservePat(early, t0);
+  assert.strictEqual(bot.settlePat(okId, true, 'sent', t0 + 500), true);
+  assert.strictEqual(bot._patBudget.get('wxid_a').count, 1, '拍到了就留着这次额度');
+  assert.strictEqual(events[0].event.type, 'pat');
+  assert.strictEqual(events[0].event.status, 'confirmed');
+  assert.ok(bot._patPending.size === 0);
+
+  const failId = bot.reservePat(early, t0 + 1000);
+  assert.strictEqual(bot.settlePat(failId, false, 'no_friend_row', t0 + 1500), true);
+  assert.strictEqual(bot._patBudget.get('wxid_a').count, 1, '没拍到就把这次额度还回去');
+  const failed = events[1].event;
+  assert.strictEqual(failed.status, 'failed');
+  assert.ok(failed.detail.includes('no_friend_row'), '日志/账本要能看出失败原因');
+  assert.strictEqual(bot.patBudgetAllows('wxid_a', bot.patSettings(), t0 + 2000), true,
+    '失败的这一次不能把每小时上限吃掉（成功的那次仍占 1 次）');
+});
+
+test('回执超时：额度回滚，并记成「没收到回执」而不是拍到了', () => {
+  const bot = Object.create(Bot.prototype);
+  const events = [];
+  Object.assign(bot, {
+    config: { chat: {}, persona: { name: '鲸鲸' }, features: { pat: true }, pat: { cooldownSec: 0 } },
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    store: { appendEvent: (key, event) => events.push({ key, event }) },
+    _patBudget: new Map(),
+    _patPending: new Map(),
+  });
+  const t0 = Date.now();
+  const early = { platform: 'wechat', chatType: 'private', chatId: 'wxid_b', senderName: '测试好友' };
+  bot.reservePat(early, t0);
+  assert.strictEqual(bot.expirePatPending(t0 + 29000), 0, '还没到等待上限不能提前判死');
+  assert.strictEqual(bot.expirePatPending(t0 + 31000), 1);
+  assert.strictEqual(bot._patBudget.get('wxid_b').count, 0, '超时没回执同样要还额度');
+  assert.strictEqual(events[0].event.status, 'unconfirmed');
+  assert.ok(events[0].event.detail.includes('没收到桥接回执'));
 });
