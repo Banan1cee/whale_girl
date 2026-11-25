@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
 
@@ -307,25 +308,45 @@ namespace WhaleLauncher
 
         private object WakeDisplayAction()
         {
-            // 只广播「显示器请醒来」，锁屏时执行同样无害，所以这里不做守卫；
-            // 但话术只说「尝试点亮」，不承诺能解锁。
+            // SC_MONITORPOWER -1 在 Win8+ 只有前台程序发才生效（实测：关屏能关、点亮点不亮），
+            // 所以真正的唤醒手段是「合成一次 1 像素鼠标移动」+ ES_DISPLAY_REQUIRED，
+            // 两者都按输入/电源请求处理，不依赖前台身份。
             BroadcastMonitorOn();
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    // 临时挡住熄屏，给显示器一点反应时间。ES_* 是按线程记的，
-                    // 所以复位也留在同一根后台线程上，不碰界面线程正在用的保活模式。
+                    // 临时挡住熄屏，给显示器反应时间。ES_* 按线程记，复位也留在同一根线程上，
+                    // 不碰界面线程正在用的保活模式。
                     SetThreadExecutionState(EsContinuous | EsSystemRequired | EsDisplayRequired);
-                    await Task.Delay(2000).ConfigureAwait(false);
+                    for (var attempt = 0; attempt < 3; attempt++)
+                    {
+                        NudgeMouse();
+                        await Task.Delay(400).ConfigureAwait(false);
+                    }
+                    await Task.Delay(1500).ConfigureAwait(false);
                     SetThreadExecutionState(FlagsFor(_keepAwake));
                 }
                 catch (Exception)
                 {
-                    // 点亮失败不影响动作返回；下一次用户输入或保活设置会重新申请。
+                    // 唤醒失败不影响动作返回；下一次用户输入或保活设置会重新申请。
                 }
             });
-            return new { ok = true, message = "已尝试点亮屏幕。" };
+            return new { ok = true, message = "已尝试唤醒显示器。若屏幕仍黑，请检查显示器电源或直接在电脑上动一下鼠标。" };
+        }
+
+        /// <summary>
+        /// 合成 1 像素鼠标移动再移回。这是让 DPMS 熄屏醒来的可靠手段：系统把它当真实输入，
+        /// 在桌面分发之前就会点亮显示器；位移 1 像素不会把用户光标挪走。
+        /// </summary>
+        private static void NudgeMouse()
+        {
+            if (!GetCursorPos(out var origin)) return;
+            mouse_event(MouseEventMove, 1, 0, 0, UIntPtr.Zero);
+            Thread.Sleep(30);
+            mouse_event(MouseEventMove, -1, 0, 0, UIntPtr.Zero);
+            // 极端情况下缩放会让 1 像素往返留下偏移，兜底把光标放回原处。
+            SetCursorPos(origin.X, origin.Y);
         }
 
         private static void BroadcastMonitorOn() =>
@@ -544,6 +565,26 @@ namespace WhaleLauncher
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Point
+        {
+            public int X;
+            public int Y;
+        }
+
+        private const uint MouseEventMove = 0x0001;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetCursorPos(out Point point);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetCursorPos(int x, int y);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extraInfo);
 
         [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
