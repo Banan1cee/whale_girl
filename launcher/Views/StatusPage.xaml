@@ -90,6 +90,10 @@
                               VerticalAlignment="Center" Click="OnRemoteProcessChanged" />
                     <CheckBox x:Name="ChkAutoStart" Content="开机自启" Margin="14,0,0,0"
                               VerticalAlignment="Center" Click="OnAutoStartChanged" />
+                    <!-- 教程放在官网；页面没上线前用首页锚点，上线后只需改 HostHelpUrl 一处 -->
+                    <Button x:Name="BtnHostHelp" Content="?" Style="{StaticResource Ghost}"
+                            Width="26" Padding="0" FontSize="13" Margin="12,0,0,0"
+                            ToolTip="查看手机远程控制教程（在浏览器打开官网）" Click="OnHostHelp" />
                 </StackPanel>
                 <StackPanel VerticalAlignment="Center">
                     <TextBlock x:Name="HostLine" Text="会话  —" Style="{StaticResource Value}" FontSize="13"

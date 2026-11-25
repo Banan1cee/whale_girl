@@ -295,6 +295,21 @@ namespace WhaleLauncher.Views
             if (result != null) AppDialog.Show(Window.GetWindow(this), result, "主机");
         }
 
+        // 教程还没发布，先用官网首页锚点；官网上线教程后只改这一处。
+        private const string HostHelpUrl = "https://bot.zyyc.cc/#phone-control";
+
+        private void OnHostHelp(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(HostHelpUrl) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                AppDialog.Show(Window.GetWindow(this), "打开教程失败：" + ex.Message, "主机");
+            }
+        }
+
         // ── 动作 ────────────────────────────────────────────────
         private async void OnRefresh(object sender, RoutedEventArgs e)
         {
