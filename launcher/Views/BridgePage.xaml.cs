@@ -468,6 +468,20 @@ namespace WhaleLauncher.Views
                 CmbSend.SelectedIndex = momentsForeground || !enabled ? 1 : (fallback ? 0 : 2);
                 CmbSend.IsEnabled = !momentsForeground;
                 ForegroundLockHint.Visibility = momentsForeground ? Visibility.Visible : Visibility.Collapsed;
+                // 拍一拍：开关在 features.pat，概率与频率在 pat.*；配置里存 0~1，界面显示 0~100。
+                ChkPat.IsChecked = JsonRead.Bool(JsonRead.Prop(cfg, "features"), "pat");
+                var pat = JsonRead.Prop(cfg, "pat");
+                if (pat.ValueKind == JsonValueKind.Object)
+                {
+                    if (!TxtPatReply.IsKeyboardFocusWithin)
+                        TxtPatReply.Text = Math.Round(JsonRead.Double(pat, "replyChance", 1) * 100).ToString("0");
+                    if (!TxtPatBack.IsKeyboardFocusWithin)
+                        TxtPatBack.Text = Math.Round(JsonRead.Double(pat, "backChance", 1) * 100).ToString("0");
+                    if (!TxtPatCooldown.IsKeyboardFocusWithin)
+                        TxtPatCooldown.Text = JsonRead.Int(pat, "cooldownSec", 8).ToString();
+                    if (!TxtPatMaxHour.IsKeyboardFocusWithin)
+                        TxtPatMaxHour.Text = JsonRead.Int(pat, "maxPerHour", 0).ToString();
+                }
                 _configLoaded = true;
             }
             catch { /* 内核没起 */ }
@@ -495,6 +509,56 @@ namespace WhaleLauncher.Views
                     ["accountGuard"] = ChkGuard.IsChecked == true
                 }
             });
+        }
+
+        // ── 拍一拍（原「设置 → 微信 · 拍一拍」，归位到本页）────────────
+        private async void OnTogglePat(object sender, RoutedEventArgs e)
+        {
+            if (_loading) return;
+            await PatchAsync(new Dictionary<string, object>
+            {
+                ["features"] = new Dictionary<string, object>
+                {
+                    ["pat"] = ChkPat.IsChecked == true
+                }
+            });
+        }
+
+        private async void OnSavePat(object sender, RoutedEventArgs e)
+        {
+            if (_loading) return;
+            if (!TxtPatReply.TryRead(out var reply))
+            {
+                PatHint.Text = TxtPatReply.ErrorText;
+                return;
+            }
+            if (!TxtPatBack.TryRead(out var back))
+            {
+                PatHint.Text = TxtPatBack.ErrorText;
+                return;
+            }
+            if (!TxtPatCooldown.TryRead(out var cooldown))
+            {
+                PatHint.Text = TxtPatCooldown.ErrorText;
+                return;
+            }
+            if (!TxtPatMaxHour.TryRead(out var maxHour))
+            {
+                PatHint.Text = TxtPatMaxHour.ErrorText;
+                return;
+            }
+            await PatchAsync(new Dictionary<string, object>
+            {
+                ["pat"] = new Dictionary<string, object>
+                {
+                    ["replyChance"] = Math.Round(reply / 100.0, 4),
+                    ["backChance"] = Math.Round(back / 100.0, 4),
+                    ["cooldownSec"] = cooldown,
+                    ["maxPerHour"] = maxHour
+                }
+            });
+            PatHint.Text = "已保存：被拍后回话 " + reply + "%，回拍 " + back + "%，间隔 " + cooldown
+                + " 秒，每小时 " + (maxHour == 0 ? "不限" : maxHour + " 次") + "。";
         }
 
         private async void OnSendModeChanged(object sender, SelectionChangedEventArgs e)
