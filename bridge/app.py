@@ -261,6 +261,8 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
         self.UIA_CACHE = {'u': None}
         self.BG_STATS = {'tried': 0, 'ok': 0, 'last': '', 'lastAt': 0.0, 'disabled': False, 'treeFails': 0, 'cooldownUntil': 0.0}
         self.sticker_draft_quarantine = {}
+        self.PAT_LAST = {}
+        self.PAT_SENT = {}
         self.sticker_headers = {'x-bot-token': self.token, 'x-whale-bridge': '1'}
         self.sticker_base = self.bot_url.rsplit('/webhook', 1)[0]
         if not G.wait_for_server(self.bot_url, timeout=30):

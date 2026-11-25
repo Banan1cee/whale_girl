@@ -62,4 +62,13 @@ function stripStickerMarks(input) {
   return { text, category };
 }
 
-module.exports = { stripSilenceMark, stripStickerMarks };
+/** 拍一拍标记 [[pat]]：程序执行一次微信拍一拍，正文不显示这个标记。 */
+function stripPatMark(input) {
+  let pat = false;
+  const text = scanMarks(input, { open: '[[', close: ']]', name: 'pat', preserveUnclosedProse: true, visit(body) {
+    if (!pat && !String(body || '').trim()) pat = true;
+  } });
+  return { text, pat };
+}
+
+module.exports = { stripSilenceMark, stripStickerMarks, stripPatMark };

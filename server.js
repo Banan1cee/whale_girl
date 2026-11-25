@@ -152,6 +152,7 @@ function printBanner(runtime, url) {
     `  回复发送：   ${replyChannelLabel(config)}`,
     `  接入微信：   POST ${url}/webhook/wechat   （见 docs/接入微信.md）`,
     `  接入抖音：   POST ${url}/webhook/douyin   （见 docs/接入抖音.md）`,
+    `  拍一拍：     配置项 pat.replyChance / pat.backChance / pat.cooldownSec / pat.maxPerHour`,
     '  ────────────────────────────────────────────',
     '  按 Ctrl+C 停止',
     '',
