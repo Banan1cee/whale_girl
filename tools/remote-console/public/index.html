@@ -41,6 +41,40 @@
         <div><h1>运行概览</h1><p id="updated">等待同步</p></div>
         <button id="refresh" class="button secondary" type="button">刷新状态</button>
       </div>
+      <section class="card page-card host-card" data-page="status" aria-labelledby="host-title">
+        <h2 id="host-title">主机</h2>
+        <p id="host-locked" class="notice error" hidden>已锁屏：朋友圈、表情包、引用回复等依赖截图的功能会失效。请用 UU/ToDesk 等远控解锁后再操作。</p>
+        <p id="host-offline" class="notice error" hidden></p>
+        <div id="host-panel" hidden>
+          <div class="host-rows">
+            <p><span>登录状态</span><strong id="host-state">—</strong></p>
+            <p><span>输入桌面</span><strong id="host-desktop">—</strong></p>
+            <p><span>空闲时长</span><strong id="host-idle">—</strong></p>
+            <p><span>内核与桥接</span><strong id="host-kernel">—</strong></p>
+            <p><span>保活模式</span><strong id="host-keep-awake-state">—</strong></p>
+            <p><span>开机自启</span><strong id="host-auto-start-state">—</strong></p>
+            <p><span>允许手机启动内核</span><strong id="host-remote-launch-state">—</strong></p>
+          </div>
+          <div class="actions">
+            <button id="host-wake-display" class="button secondary" type="button">点亮屏幕</button>
+            <button id="host-display-off" class="button secondary" type="button">关闭屏幕</button>
+            <button id="host-retry" class="button secondary" type="button">重新读取</button>
+          </div>
+          <div class="feature-section host-settings">
+            <label>保活模式
+              <select id="host-keep-awake">
+                <option value="off">关（允许睡眠）</option>
+                <option value="system">防睡眠</option>
+                <option value="display">防关屏</option>
+              </select>
+            </label>
+            <label><input id="host-remote-launch" type="checkbox"> 允许手机启动内核</label>
+            <label><input id="host-auto-start" type="checkbox"> 开机自启</label>
+          </div>
+          <p id="host-hint" class="host-hint" hidden>启动器正以管理员权限运行：内核的启动与重启请在电脑上操作，或先允许手机启动内核。</p>
+        </div>
+      </section>
+
       <section class="summary" aria-label="运行状态" data-page="status">
         <div class="summary-main">
           <span id="kernel" class="indicator">等待连接</span>

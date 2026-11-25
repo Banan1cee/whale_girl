@@ -7,6 +7,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -71,8 +72,36 @@
             </StackPanel>
         </Border>
 
-        <!-- 最近动态 -->
+        <!-- 主机：手机远程操作这台电脑前，先看清它锁没锁、会不会睡着 -->
         <Border Grid.Row="3" Style="{StaticResource Card}" Padding="14,10" Margin="0,12,0,0">
+            <DockPanel LastChildFill="True">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ComboBox x:Name="HostKeepAwake" Width="92" VerticalAlignment="Center"
+                              ToolTip="保活模式" SelectionChanged="OnHostKeepAwakeChanged">
+                        <ComboBoxItem Content="关" />
+                        <ComboBoxItem Content="防睡眠" />
+                        <ComboBoxItem Content="防关屏" />
+                    </ComboBox>
+                    <Button x:Name="BtnWakeDisplay" Content="点亮屏幕" Style="{StaticResource Ghost}"
+                            Margin="8,0,0,0" Click="OnWakeDisplay" />
+                    <Button x:Name="BtnDisplayOff" Content="关闭屏幕" Style="{StaticResource Ghost}"
+                            Margin="8,0,0,0" Click="OnDisplayOff" />
+                    <CheckBox x:Name="ChkRemoteProcess" Content="允许手机启动内核" Margin="14,0,0,0"
+                              VerticalAlignment="Center" Click="OnRemoteProcessChanged" />
+                    <CheckBox x:Name="ChkAutoStart" Content="开机自启" Margin="14,0,0,0"
+                              VerticalAlignment="Center" Click="OnAutoStartChanged" />
+                </StackPanel>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="HostLine" Text="会话  —" Style="{StaticResource Value}" FontSize="13"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="HostConfigLine" Text="—" Style="{StaticResource Small}" Margin="0,5,0,0"
+                               TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- 最近动态 -->
+        <Border Grid.Row="4" Style="{StaticResource Card}" Padding="14,10" Margin="0,12,0,0">
             <DockPanel>
                 <DockPanel DockPanel.Dock="Top" LastChildFill="False" Margin="0,0,0,8">
                     <TextBlock DockPanel.Dock="Left" Text="最近动态" Style="{StaticResource H2}" />

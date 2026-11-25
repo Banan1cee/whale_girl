@@ -10,7 +10,9 @@ const parent = path.resolve(__dirname, '..');
 const appRoot = path.basename(parent) === 'tools' && existsSync(path.join(parent, '..', 'launcher', 'WhaleLauncher.csproj'))
   ? path.dirname(parent) : parent;
 
-const actions = new Set(['start', 'stop', 'restart', 'restart-bridge', 'restart-wechat', 'diagnostics']);
+// host-* 是手机端「主机」卡片用的本机状态与电源动作；不登记就会被 launcherControl 拦成「未知操作」。
+const actions = new Set(['start', 'stop', 'restart', 'restart-bridge', 'restart-wechat', 'diagnostics',
+  'host-state', 'host-keep-awake', 'host-wake-display', 'host-display-off', 'host-config']);
 const configurationActions = new Set(['configuration-read', 'configuration-save']);
 const featureActions = new Set(['voice-read', 'voice-toggle', 'voice-save', 'voice-check-key', 'voice-catalog',
   'voice-test', 'voice-test-status', 'voice-install-driver', 'sticker-open', 'sticker-open-collected', 'moments-open-pictures',

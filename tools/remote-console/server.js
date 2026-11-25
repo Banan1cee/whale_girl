@@ -446,6 +446,71 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
     return result;
   }
 
+  // 锁屏、空闲、保活这些只有启动器问得到；内核状态只做叠加，内核没开时主机卡片仍要能用。
+  async function hostReport() {
+    const [launcher, status] = await Promise.all([
+      controlLauncher('host-state', {}).catch(() => null),
+      whale('/api/status').catch(() => null),
+    ]);
+    if (!launcher?.ok || !launcher.data) throw fail(503, '启动器未运行，主机状态不可用。');
+    const state = launcher.data;
+    const gateway = status?.gateways?.find(item => item.platform === 'wechat');
+    return {
+      ok: true,
+      data: {
+        locked: state.locked === true,
+        inputDesktop: cleanText(state.inputDesktop, 120),
+        logonUI: state.logonUI === true,
+        // 启动器给的是前台窗口句柄（数字）；旧版若给标题字符串也照原样截断，不丢数据。
+        foreground: typeof state.foreground === 'number' && Number.isFinite(state.foreground)
+          ? state.foreground : cleanText(state.foreground, 240),
+        idleSeconds: count(state.idleSeconds),
+        sessionId: Number.isInteger(state.sessionId) ? state.sessionId : null,
+        keepAwake: ['off', 'system', 'display'].includes(state.keepAwake) ? state.keepAwake : 'off',
+        remoteProcessLaunch: state.remoteProcessLaunch === true,
+        autoStart: state.autoStart === true,
+        processLaunchAllowed: state.processLaunchAllowed === true,
+        hostname: cleanText(state.hostname, 120),
+        uptimeSeconds: count(state.uptimeSeconds),
+        kernelRunning: Boolean(status),
+        // 内核能回 /api/status 就说明已就绪；没回就保持 false，不阻塞主机卡片。
+        kernelReady: Boolean(status),
+        bridgeRunning: gateway?.enabled === true || gateway?.bridge?.online === true,
+        bridgeOnline: gateway?.bridge?.online === true,
+      },
+    };
+  }
+
+  async function hostCommand(req) {
+    const { action, value, confirm } = await parseBody(req, 8192);
+    const modes = new Set(['off', 'system', 'display']);
+    if (!['keep-awake', 'wake-display', 'display-off', 'remote-process-launch', 'auto-start'].includes(action)) {
+      throw fail(400, '未知的主机操作。');
+    }
+    // 除点亮/关闭屏幕外都会改变电源或开机行为，必须由前端二次确认后再提交。
+    if (action !== 'wake-display' && action !== 'display-off' && confirm !== true) throw fail(400, '这个操作需要二次确认。');
+    let forwarded;
+    if (action === 'keep-awake') {
+      if (!modes.has(value)) throw fail(400, '保活模式无效。');
+      forwarded = ['host-keep-awake', { mode: value }];
+    } else if (action === 'wake-display') {
+      forwarded = ['host-wake-display', {}];
+    } else if (action === 'display-off') {
+      forwarded = ['host-display-off', {}];
+    } else {
+      if (typeof value !== 'boolean') throw fail(400, '开关状态无效。');
+      forwarded = ['host-config', action === 'remote-process-launch'
+        ? { remoteProcessLaunch: value } : { autoStart: value }];
+    }
+    let result;
+    // 启动器原始异常（连接失败、超时）对手机用户没有意义，统一换成能指导操作的话术。
+    try { result = await controlLauncher(...forwarded); }
+    catch { throw fail(503, '启动器未运行，主机状态不可用。'); }
+    if (!result || typeof result !== 'object') throw fail(502, '启动器没有返回结果。');
+    if (result.ok !== true) throw fail(409, cleanText(result.error, 200) || '电脑端无法完成这项主机操作。');
+    return result;
+  }
+
   async function pageReport(page) {
     switch (page) {
       case 'stickers': return stickerReport();
@@ -753,6 +818,9 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
     const isControl = req.method === 'POST' && url === '/console/control';
     const isPage = req.method === 'POST' && url === '/console/page';
     const isPageCommand = req.method === 'POST' && url === '/console/page-command';
+    // 主机端点同样属于配对 Key 之后的能力，必须先登记再进鉴权白名单，否则会先落到 404。
+    const isHost = req.method === 'GET' && url === '/console/host';
+    const isHostCommand = req.method === 'POST' && url === '/console/host-command';
     const isStickerImage = req.method === 'POST' && url === '/console/sticker-image';
     const isStickerUpload = req.method === 'POST' && url === '/console/sticker-upload';
     const isIdentity = ['GET', 'POST'].includes(req.method) && url === '/console/identity';
@@ -761,7 +829,8 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
     const isPersona = req.method === 'POST' && url === '/console/persona';
     const isSetting = req.method === 'POST' && url === '/console/setting';
     if (!(isDashboard || isEditor || isDiagnosis || isControl || isPage || isPageCommand || isIdentity ||
-        isModelSettings || isPairingCheck || isPersona || isSetting || isStickerImage || isStickerUpload)) {
+        isModelSettings || isPairingCheck || isPersona || isSetting || isStickerImage || isStickerUpload ||
+        isHost || isHostCommand)) {
       req.resume();
       return json(res, 404, { error: '页面不存在。' });
     }
@@ -778,13 +847,17 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
       if (isEditor) return json(res, 200, await editor());
       if (isPage) return json(res, 200, await pageReport((await parseBody(req)).page));
       if (isPageCommand) return json(res, 200, await pageCommand(req));
+      if (isHost) return json(res, 200, await hostReport());
+      if (isHostCommand) return json(res, 200, await hostCommand(req));
       if (isStickerUpload) return json(res, 200, await uploadSticker(req));
       if (isStickerImage) return await stickerImage(req, res);
       if (isIdentity) return json(res, 200, await identity(req));
       if (isModelSettings) return json(res, 200, await modelSettings(req));
       if (isDiagnosis || isControl) {
         const action = isDiagnosis ? 'diagnostics' : (await parseBody(req)).action;
-        if (!actions.has(action) || (isControl && action === 'diagnostics'))
+        // host-* 也在 actions 白名单里（启动器通道统一校验），但它们是主机卡片专用的
+        // 带参动作，不能从只传一个 action 的 /console/control 进来。
+        if (!actions.has(action) || (isControl && (action === 'diagnostics' || action.startsWith('host-'))))
           return json(res, 400, { error: '未知操作。' });
         let result;
         try { result = await controlLauncher(action); }
