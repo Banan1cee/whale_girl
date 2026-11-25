@@ -33,6 +33,9 @@ namespace WhaleLauncher
             public string Hostname = "";
             public long UptimeSeconds;
             public string UserName = "";
+            public bool IsLaptop;
+            public bool DisplayOffBlocked;
+            public string DisplayOffBlockedReason = "";
         }
 
         // data/host-remote.json 是手机端设置的落盘位置；开机自启另有注册表这个真源。
@@ -138,7 +141,67 @@ namespace WhaleLauncher
                 Hostname = Environment.MachineName,
                 UptimeSeconds = Math.Max(0, (Environment.TickCount64 - _startedTick) / 1000),
                 UserName = Environment.UserName,
+                IsLaptop = HasSystemBattery(),
+                DisplayOffBlocked = DisplayOffBlockedReason(out var displayOffReason),
+                DisplayOffBlockedReason = displayOffReason,
             };
+        }
+
+        /// <summary>
+        /// 关屏在两种情况下会把会话锁上，远程关屏就失去意义：
+        /// 1) 笔记本（有系统电池）：关屏在多数机型上等同进入现代待机，唤醒时按系统策略要求重新登录；
+        /// 2) 电源设置「控制台锁定显示关闭超时」(CONSOLELOCK) &gt; 0：Windows 会在关屏后主动锁定。
+        /// 台式机 + 该设置为 0 时才允许远程关屏。
+        /// </summary>
+        private static bool DisplayOffBlockedReason(out string reason)
+        {
+            if (HasSystemBattery())
+            {
+                reason = "笔记本上远程关屏通常等同进入待机，唤醒要重新登录（会看起来像锁屏），已禁用；请用合盖或电源键关屏。";
+                return true;
+            }
+            var consoleLock = ConsoleLockSeconds();
+            if (consoleLock > 0)
+            {
+                reason = "系统电源设置「控制台锁定显示关闭超时」= " + consoleLock + " 秒，关屏后会主动锁屏；请先在电源设置里把它设为 0。";
+                return true;
+            }
+            reason = "";
+            return false;
+        }
+
+        private static bool HasSystemBattery()
+        {
+            var status = new SystemPowerStatus { BatteryFlag = 255 };
+            if (!GetSystemPowerStatus(ref status)) return false;
+            // 128 = 无系统电池；255 = 读取失败/未知，按台式机处理，避免误禁用。
+            return status.BatteryFlag != 128 && status.BatteryFlag != 255;
+        }
+
+        private static uint ConsoleLockSeconds()
+        {
+            Guid schemeGuid = Guid.Empty;
+            IntPtr scheme = IntPtr.Zero;
+            IntPtr active = IntPtr.Zero;
+            try
+            {
+                if (PowerGetActiveScheme(IntPtr.Zero, out active) != 0 || active == IntPtr.Zero) return 0;
+                schemeGuid = Marshal.PtrToStructure<Guid>(active);
+                var sub = new Guid("fea3413e-7e05-4911-9a71-700331f1c294");
+                var setting = new Guid("0e796bdb-100d-47d6-a2d5-f7d2daa51f51");
+                return PowerReadACValueIndex(IntPtr.Zero, ref schemeGuid, ref sub, ref setting, out var value) == 0
+                    ? value
+                    : 0;
+            }
+            catch (Exception)
+            {
+                // 读不到就按「不会锁屏」放行，宁可少拦也不要因为一次 API 失败把功能锁死。
+                return 0;
+            }
+            finally
+            {
+                if (active != IntPtr.Zero) LocalFree(active);
+            }
         }
 
         private static bool IsDefaultDesktop(string name, bool opened) =>
@@ -264,6 +327,9 @@ namespace WhaleLauncher
                 processLaunchAllowed = status.ProcessLaunchAllowed,
                 hostname = status.Hostname,
                 uptimeSeconds = status.UptimeSeconds,
+                isLaptop = status.IsLaptop,
+                displayOffBlocked = status.DisplayOffBlocked,
+                displayOffBlockedReason = status.DisplayOffBlockedReason,
             };
         }
 
@@ -395,6 +461,7 @@ namespace WhaleLauncher
         /// </summary>
         internal string RequestDisplayOff()
         {
+            if (DisplayOffBlockedReason(out var blocked)) return blocked;
             if (_keepAwake == "display") return "当前是「防关屏」保活模式，屏幕不会关。请先切到「防睡眠」或「关」。";
             PostMessage(new IntPtr(HwndBroadcast), WmSysCommand, new IntPtr(ScMonitorPower), new IntPtr(2));
             return null;
@@ -548,6 +615,31 @@ namespace WhaleLauncher
             public uint cbSize;
             public uint dwTime;
         }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SystemPowerStatus
+        {
+            public byte ACLineStatus;
+            public byte BatteryFlag;
+            public byte BatteryLifePercent;
+            public byte SystemStatusFlag;
+            public uint BatteryLifeTime;
+            public uint BatteryFullLifeTime;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetSystemPowerStatus(ref SystemPowerStatus status);
+
+        [DllImport("powrprof.dll")]
+        private static extern uint PowerGetActiveScheme(IntPtr userRootPowerKey, out IntPtr activePolicyGuid);
+
+        [DllImport("powrprof.dll")]
+        private static extern uint PowerReadACValueIndex(IntPtr rootPowerKey, ref Guid schemeGuid,
+            ref Guid subGroupGuid, ref Guid powerSettingGuid, out uint valueIndex);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LocalFree(IntPtr handle);
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern IntPtr OpenInputDesktop(uint flags, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint access);

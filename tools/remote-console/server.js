@@ -477,6 +477,10 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
         kernelReady: Boolean(status),
         bridgeRunning: gateway?.enabled === true || gateway?.bridge?.online === true,
         bridgeOnline: gateway?.bridge?.online === true,
+        // 笔记本 / 「关屏锁定」策略下远程关屏会变成锁屏，前端据此禁用按钮并给出原因。
+        isLaptop: state.isLaptop === true,
+        displayOffBlocked: state.displayOffBlocked === true,
+        displayOffBlockedReason: cleanText(state.displayOffBlockedReason, 300),
       },
     };
   }

@@ -380,7 +380,8 @@ test('主机状态卡与主机操作', async t => {
   t.after(() => upstream.listening && stop(upstream));
   const hostState = { locked: true, inputDesktop: 'Default', logonUI: false, foreground: 'explorer',
     idleSeconds: 125, sessionId: 1, keepAwake: 'system', remoteProcessLaunch: false, autoStart: false,
-    processLaunchAllowed: true, hostname: 'fixture-pc', uptimeSeconds: 3600 };
+    processLaunchAllowed: true, hostname: 'fixture-pc', uptimeSeconds: 3600,
+    isLaptop: false, displayOffBlocked: false, displayOffBlockedReason: '' };
   const commands = [];
   let launcherDown = false;
   const consoleServer = createConsole({
@@ -391,7 +392,12 @@ test('主机状态卡与主机操作', async t => {
       if (action === 'host-state') return { ok: true, data: { ...hostState } };
       if (action === 'host-keep-awake') { hostState.keepAwake = payload.mode; return { ok: true, data: { mode: payload.mode } }; }
       if (action === 'host-wake-display') return { ok: true, message: '已点亮屏幕。' };
-      if (action === 'host-display-off') return { ok: true, message: '已发送关屏指令。' };
+      if (action === 'host-display-off') {
+        // 笔记本/关屏锁定策略下启动器会拒绝，控制台要把话术原样透传成 409。
+        return hostState.displayOffBlocked
+          ? { ok: false, error: hostState.displayOffBlockedReason }
+          : { ok: true, message: '已发送关屏指令。' };
+      }
       if (action === 'host-config') {
         if (typeof payload.remoteProcessLaunch === 'boolean') hostState.remoteProcessLaunch = payload.remoteProcessLaunch;
         if (typeof payload.autoStart === 'boolean') hostState.autoStart = payload.autoStart;
@@ -422,8 +428,30 @@ test('主机状态卡与主机操作', async t => {
     assert.equal(body.data.hostname, 'fixture-pc');
     assert.equal(body.data.kernelRunning, true);
     assert.equal(body.data.bridgeOnline, true);
+    assert.equal(body.data.isLaptop, false);
+    assert.equal(body.data.displayOffBlocked, false);
     // host-* 只在带参的主机端点使用，不能从只传一个 action 的 /console/control 混进来。
     assert.equal((await post('/console/control', { action: 'host-state' })).status, 400);
+  });
+
+  await t.test('笔记本上远程关屏被拒绝并给出原因', async () => {
+    const reason = '笔记本上远程关屏通常等同进入待机，唤醒要重新登录（会看起来像锁屏），已禁用。';
+    hostState.isLaptop = true;
+    hostState.displayOffBlocked = true;
+    hostState.displayOffBlockedReason = reason;
+    try {
+      const state = await (await get('/console/host')).json();
+      assert.equal(state.data.isLaptop, true);
+      assert.equal(state.data.displayOffBlocked, true);
+      assert.equal(state.data.displayOffBlockedReason, reason);
+      const response = await post('/console/host-command', { action: 'display-off' });
+      assert.equal(response.status, 409);
+      assert.equal((await response.json()).error, reason);
+    } finally {
+      hostState.isLaptop = false;
+      hostState.displayOffBlocked = false;
+      hostState.displayOffBlockedReason = '';
+    }
   });
 
   await t.test('主机操作拒绝未知动作、缺少确认和非布尔开关值', async () => {

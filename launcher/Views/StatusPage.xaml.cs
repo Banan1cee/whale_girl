@@ -233,6 +233,13 @@ namespace WhaleLauncher.Views
                 HostKeepAwake.SelectedIndex = ModeIndex(h.KeepAwake);
                 ChkRemoteProcess.IsChecked = h.RemoteProcessLaunch;
                 ChkAutoStart.IsChecked = h.AutoStart;
+                // 笔记本上不提供远程开关屏幕：关屏多数机型等同进入待机，唤醒要重新登录，
+                // 摆着按钮只会误导；台式机才显示（「关屏锁定」策略下仍显示但禁用）。
+                var displayVisibility = h.IsLaptop ? Visibility.Collapsed : Visibility.Visible;
+                BtnWakeDisplay.Visibility = displayVisibility;
+                BtnDisplayOff.Visibility = displayVisibility;
+                BtnDisplayOff.IsEnabled = !h.DisplayOffBlocked;
+                BtnDisplayOff.ToolTip = h.DisplayOffBlocked ? h.DisplayOffBlockedReason : "关闭显示器（不锁屏）";
             }
             finally
             {
