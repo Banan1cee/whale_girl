@@ -38,7 +38,7 @@ const addressing = require('../core/addressing');
 const sessionState = require('../core/sessionState');
 const { ReplyQuota, recentReplyCount } = require('../core/replyQuota');
 const replyDecision = require('../core/replyDecision');
-const { stripSilenceMark, stripStickerMarks } = require('../core/replyMarks');
+const { stripSilenceMark, stripStickerMarks, stripPatMark } = require('../core/replyMarks');
 const context = require('../core/context');
 const { isEcho } = require('../core/echo');
 const { extractMentionNames } = require('../core/mentions');
@@ -53,6 +53,8 @@ const budgetPricing = require('../services/budget');
 const { MessagePlugins } = require('../services/messagePlugins');
 const { JavaScriptPlugins, PluginRuntime } = require('../services/javascriptPlugins');
 const SEPARATE_REPLY_RE = /(?:^|[，。！？\s])(?:请|麻烦|能不能|可以|记得)?\s*你?\s*(?:要|给我)?\s*(?:分[条段开](?:来)?(?:发(?:送)?|回(?:复)?|说)|(?:一条一条|一句一句)地?[发回]|每(?:条|句|段)(?:话)?单独[发回]|分(?:成)?[两二三四五六七八九十\d]+[条段](?:气泡|发|回)?)(?:一下)?(?=$|[\s，。！？?!吧嘛哦啊,])/;
+// 私聊「拍拍我」：只有整句就是这个请求才直接回拍，避免误伤正常聊天。
+const PAT_COMMAND_RE = /^(?:快|来|给我|再)?\s*(?:拍一拍|拍拍|拍|戳一戳|戳戳)\s*我(?:一下|一下下|嘛|呗|吧|呀|啊)?[\s。！!？?~～]*$/u;
 
 /** 管理员能用的全部命令：魔咒验证成功后直接回这份清单，配「帮助」也用它 */
 function adminCommandList() {
@@ -315,6 +317,7 @@ class Bot {
 
   normalize(msg) {
     const at = msg.atMe === true || msg.atMe === 1 || msg.atMe === '1' || msg.atMe === 'true';
+    const pat = Boolean(msg.pat === true || msg.pat === 1 || msg.pat === '1' || msg.pat === 'true');
     return {
       platform: String(msg.platform || 'web').slice(0, 20),
       chatId: String(msg.chatId ?? 'default').slice(0, 120),
@@ -322,7 +325,8 @@ class Bot {
       senderId: String(msg.senderId ?? 'anonymous').slice(0, 100),
       senderName: String(msg.senderName ?? '群友').slice(0, 60),
       text: String(msg.text ?? '').slice(0, 2000),
-      atMe: at,
+      atMe: at || pat,
+      pat,
       msgId: msg.msgId ? String(msg.msgId).slice(0, 120) : '',
       chatTitle: msg.chatTitle ? String(msg.chatTitle).slice(0, 60) : '',
       replyToBot: msg.replyToBot === true,
@@ -333,6 +337,60 @@ class Bot {
       selfNames: (Array.isArray(msg.selfNames) ? msg.selfNames : Array.isArray(msg.self_names) ? msg.self_names : [])
         .map((x) => String(x || '').trim()).filter(Boolean).slice(0, 20),
     };
+  }
+
+  /**
+   * 拍一拍的设置（设置页 /pat）：回话概率、回拍概率、间隔与每小时次数上限。
+   * 非法值按默认值处理；设置接口已经校验过一遍，这里兜底防手改 config。
+   */
+  patSettings() {
+    const raw = (this.config && this.config.pat) || {};
+    const clamp = (value, fallback, min, max) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+    };
+    return {
+      replyChance: clamp(raw.replyChance, 1, 0, 1),
+      backChance: clamp(raw.backChance, 1, 0, 1),
+      cooldownSec: clamp(raw.cooldownSec, 8, 0, 3600),
+      maxPerHour: clamp(raw.maxPerHour, 0, 0, 200),
+    };
+  }
+
+  /** 这一次被拍：摇一次「回不回话 / 回不回拍」，回拍还要过冷却和每小时次数上限。 */
+  planPatReply(early) {
+    const cfg = this.patSettings();
+    const roll = () => (typeof this.random === 'function' ? this.random() : Math.random());
+    const key = String((early && early.chatId) || '');
+    const text = roll() < cfg.replyChance;
+    const isPrivate = Boolean(early) && early.chatType === 'private';
+    const back = isPrivate && cfg.backChance > 0
+      && this.patBudgetAllows(key, cfg) && roll() < cfg.backChance;
+    return { text, back, key, cfg };
+  }
+
+  /** 回拍额度：同一会话冷却 + 每小时次数上限。 */
+  patBudgetAllows(key, cfg, now = Date.now()) {
+    if (cfg.cooldownSec <= 0 && cfg.maxPerHour <= 0) return true;
+    const rec = this._patBudget && this._patBudget.get(key);
+    if (!rec) return true;
+    const last = Number(rec.last || 0);
+    if (cfg.cooldownSec > 0 && now - last < cfg.cooldownSec * 1000) return false;
+    if (cfg.maxPerHour > 0) {
+      const hour = Math.floor(now / 3600000);
+      if (rec.hour === hour && Number(rec.count || 0) >= cfg.maxPerHour) return false;
+    }
+    return true;
+  }
+
+  /** 记一次回拍（用于冷却/每小时次数上限），顺手收一下 Map 大小。 */
+  notePatSent(key, now = Date.now()) {
+    if (!this._patBudget) this._patBudget = new Map();
+    const hour = Math.floor(now / 3600000);
+    const prev = this._patBudget.get(key) || { last: 0, hour, count: 0 };
+    const count = prev.hour === hour ? Number(prev.count || 0) + 1 : 1;
+    this._patBudget.set(key, { last: now, hour, count });
+    while (this._patBudget.size > 500) this._patBudget.delete(this._patBudget.keys().next().value);
   }
 
   buildTurns(msg, history, memoryBlock, tailBlock) {
@@ -460,6 +518,9 @@ class Bot {
     const key = this.sessionKey(msg);
     const now = this.now();
     const nowMs = now.getTime();
+    if (msg.pat && !features.isOn(this.config, 'pat')) {
+      return { action: 'ignore', reason: 'pat_disabled', key, msg, atMe: true };
+    }
     // 群消息常带 "wxid_xxx:\n正文" 前缀，先去掉再识别 @/名字，否则别名不在行首会漏判。
     // 以前这里用 \s*（零空白也吞）："https://example.com" 被剥成 "//example.com"、
     // "Note: xxx" 也被截断，残缺文本进了提示词/搜索/记忆。wxid 前缀后面本来就有换行/空格，
@@ -1210,10 +1271,11 @@ class Bot {
       this._replyQuota.commit(turn?.lease, decision.key);
       turn?.detach();
     } else this.releaseReply(decision);
-    const result = Object.freeze({ action: bubbles.length ? 'reply' : 'ignore',
+    const result = Object.freeze({ action: bubbles.length ? 'reply' : (decision.pat && decision.action !== 'ignore' ? 'pat' : 'ignore'),
       text: bubbles.length ? String(decision.finalText || '') : '', bubbles: Object.freeze([...bubbles]),
-      reason: options.error ? 'llm_error' : bubbles.length ? decision.reason : decision.action === 'ignore' ? decision.reason : 'empty_reply',
+      reason: options.error ? 'llm_error' : bubbles.length ? decision.reason : decision.pat && decision.action !== 'ignore' ? 'pat' : decision.action === 'ignore' ? decision.reason : 'empty_reply',
       mock: Boolean(decision.mock), ...(options.error ? { error: true } : {}),
+      ...(decision.pat && decision.action !== 'ignore' ? { pat: true } : {}),
       ...(decision.stickerCategory ? { stickerCategory: decision.stickerCategory } : {}),
       ...(decision.separateText ? { separateText: true } : {}) });
     this._finalReplies.set(decision, result);
@@ -1819,6 +1881,13 @@ class Bot {
     const stickerMark = stripStickerMarks(text);
     if (stickerMark.category && decision) decision.stickerCategory = stickerMark.category;
     text = stickerMark.text;
+    // 拍一拍标记 [[pat]]：只在私聊执行，群里拍不准人；标记一律从正文剥掉。
+    const patMark = stripPatMark(text);
+    if (patMark.pat && decision && decision.msg && decision.msg.chatType === 'private'
+        && features.isOn(this.config, 'pat')) {
+      decision.pat = true;
+    }
+    text = patMark.text;
     // 正文里的 emoji 剥出来，单独发一条
     const emojiRe = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{FE0F}]/gu;
     const foundEmoji = (text.match(emojiRe) || []).join('');
@@ -2084,6 +2153,33 @@ class Bot {
 
   /** handle 的实际处理体，由 handle() 按会话串行调用（不同会话仍然并发） */
   async _handleOnce(rawMsg, { signal, localWechat } = {}) {
+    // 私聊「拍拍我」是明确动作，不需要过模型：直接让桥接拍一下。
+    // 群聊不主动拍：微信只能按「最近一条好友消息的头像」拍，群里容易拍错人。
+    const early = this.normalize(rawMsg);
+    const patEnabled = features.isOn(this.config, 'pat');
+    if (localWechat && early.platform === 'wechat' && early.chatType === 'private'
+        && patEnabled
+        && PAT_COMMAND_RE.test(early.text.trim())) {
+      this.logger?.info('[pat] 私聊收到拍一拍请求，直接回拍');
+      return { action: 'pat', pat: true, reason: 'pat_command' };
+    }
+    // 别人拍她：回不回话、回不回拍由设置页（/pat）的概率决定；
+    // 群聊只回话、不主动拍（微信只能按最近一条好友消息的头像拍，容易拍错人）。
+    const patReceived = localWechat && early.platform === 'wechat'
+      && early.pat === true && patEnabled;
+    let patPlan = null;
+    if (patReceived) {
+      patPlan = this.planPatReply(early);
+      if (!patPlan.text) {
+        if (patPlan.back) {
+          this.notePatSent(patPlan.key);
+          this.logger?.info('[pat] 按设置这次只回拍、不生成长文');
+          return { action: 'pat', pat: true, reason: 'pat_back_only' };
+        }
+        this.logger?.info('[pat] 按设置这次不回应拍一拍');
+        return { action: 'ignore', reason: 'pat_skipped_by_chance' };
+      }
+    }
     let decision;
     try {
     try {
@@ -2096,7 +2192,21 @@ class Bot {
     if (decision.action === 'ignore') {
       this.logger?.info('[pipeline] result=skip reason=' + String(decision.reason || 'unspecified') + ' search=not_reached delivery=not_reached');
       try { this.store.checkpoint(decision.key); } catch { /* 忽略的消息也要留断点 */ }
+      // 模型这一轮不接（静音/配额/没接住）时，只要有回拍额度，就把这一下拍回去。
+      if (patPlan && patPlan.back) {
+        this.notePatSent(patPlan.key);
+        this.logger?.info('[pat] 这一轮只回拍不接话');
+        return { action: 'pat', pat: true, reason: 'pat_back_only' };
+      }
       return { action: 'ignore', reason: decision.reason };
+    }
+    if (patPlan && patPlan.back) {
+      // 概率命中就回拍，不再依赖模型是否写了 [[pat]]；正文照常由模型生成（空了就只拍）。
+      this.notePatSent(patPlan.key);
+      decision.pat = true;
+      this.logger?.info('[pat] 收到拍一拍：回话 + 回拍');
+    } else if (patPlan) {
+      this.logger?.info('[pat] 收到拍一拍：只回话（按设置不回拍）');
     }
     if (!this.activateReply(decision)) return { action: 'ignore', reason: decision.reason };
     if (decision.action === 'command') {
@@ -2218,6 +2328,9 @@ class Bot {
     const result = this.finalizeReply(decision, text);
     const bubbles = [...result.bubbles];
     if (result.action === 'ignore') return { action: 'ignore', reason: result.reason };
+    if (result.action === 'pat') {
+      return { action: 'pat', pat: true, bubbles: [], reason: result.reason || 'pat' };
+    }
     // 群里骂人时要真 @ 到对方：优先用靶子，其次看正文开头有没有 @名字
     const finalText = result.text;
     const atMatch = finalText.match(/^@\s*([^\s，,：:！!？?。]+)/);
@@ -2230,6 +2343,7 @@ class Bot {
       mention: decision.msg && decision.msg.chatType === 'group' ? mention : '',
       reason: decision.reason,
       mock: decision.mock,
+      ...(result.pat ? { pat: true } : {}),
       ...(decision.separateText ? { separateText: true } : {}),
       // 表情包分类由模型写在正文里的标记决定，这里带出去给网关排队
       ...(decision.stickerCategory ? { stickerCategory: decision.stickerCategory } : {}),
@@ -2383,4 +2497,4 @@ class Bot {
   }
 }
 
-module.exports = { Bot, isContextLengthError, momentsIntent };
+module.exports = { Bot, isContextLengthError, momentsIntent, PAT_COMMAND_RE };

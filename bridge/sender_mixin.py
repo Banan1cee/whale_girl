@@ -458,6 +458,463 @@ class SenderMixin:
         G.log_throttled('send-policy-unavailable', '发言范围：内核未确认允许发送，已暂停', ttl=60)
         return False
 
+    # ---------- 拍一拍：定位对方消息行 + 右键菜单 ----------
+
+    @staticmethod
+    def _pat_message_list(u):
+        """当前会话的消息列表控件。
+
+        wechatauto 的 ``_message_list`` 优先；它的递归深度上限在 4.1.8 的
+        层级里刚好够，但换版本可能差一层，所以再兜底按类名找一次。
+        """
+        try:
+            lst = u._message_list()
+        except Exception:
+            lst = None
+        if lst is not None:
+            return lst
+        win = getattr(u, '_win', None)
+        if win is None:
+            return None
+
+        def walk(c, depth=0):
+            if depth > 25:
+                return None
+            try:
+                kids = c.GetChildren()
+            except Exception:
+                return None
+            for ch in kids:
+                try:
+                    if (ch.ClassName or '') == 'mmui::RecyclerListView':
+                        return ch
+                except Exception:
+                    continue
+                hit = walk(ch, depth + 1)
+                if hit is not None:
+                    return hit
+            return None
+
+        return walk(win)
+
+    def _pat_friend_row(self, u):
+        """找一条「对方」消息行（供右键头像）。
+
+        wechatauto 的 ``_find_friend_row`` 用「接近白色 = 背景」算内容重心，
+        暗色主题下整个背景都被当成内容，重心恒在中间，永远判不出对方行——
+        本机微信是暗色主题，所以这里改成「消息区出现最多的颜色 = 背景」，
+        再看每一行左半/右半的内容量：对方消息靠左，自己的靠右。
+        """
+        lst = self._pat_message_list(u)
+        if lst is None:
+            return None
+        try:
+            import numpy as np
+            from PIL import ImageGrab as IG
+        except Exception as exc:
+            G.log_warn('拍一拍失败：像素统计依赖不可用', repr(exc))
+            return None
+        try:
+            lr = lst.BoundingRectangle
+            img = IG.grab(bbox=(lr.left, lr.top, lr.right, lr.bottom)).convert('RGB')
+            arr = np.array(img)
+        except Exception as exc:
+            G.log_warn('拍一拍失败：消息区截不到图', repr(exc))
+            return None
+        try:
+            quant = (arr // 8).reshape(-1, 3)
+            values, counts = np.unique(quant, axis=0, return_counts=True)
+            background = values[int(counts.argmax())] * 8 + 4
+            mask = (np.abs(arr.astype(int) - background.astype(int)).max(axis=2) > 24)
+        except Exception:
+            return None
+        best = None
+        try:
+            children = lst.GetChildren()
+        except Exception:
+            return None
+        for ch in children:
+            try:
+                cls = ch.ClassName or ''
+                if not cls.startswith('mmui::Chat'):
+                    continue
+                # 系统提示行没有头像；ChatItemView 是分组容器
+                if cls in ('mmui::ChatItemView', 'mmui::ChatSystemInfoItemView'):
+                    continue
+                r = ch.BoundingRectangle
+                top = max(r.top, lr.top) - lr.top
+                bottom = min(r.bottom, lr.bottom) - lr.top
+                if bottom - top < 40:
+                    continue
+                cols = mask[top:bottom].sum(axis=0)
+                width = int(cols.shape[0])
+                if width <= 0:
+                    continue
+                left = int(cols[:width // 2].sum())
+                right = int(cols[width // 2:].sum())
+                if left < 1500 or left <= right * 1.25:
+                    continue
+                rank = (2 if cls == 'mmui::ChatTextItemView' else 1, left - right)
+                if best is None or rank > best[0]:
+                    best = (rank, (r.left, r.top, r.right, r.bottom))
+            except Exception:
+                continue
+        return best[1] if best is not None else None
+
+    @staticmethod
+    def _pat_popup_set(hwnd):
+        """微信进程当前可见的弹出窗句柄集合（菜单是独立的顶层窗）。"""
+        try:
+            import win32gui
+            import win32process
+        except Exception:
+            return set()
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        except Exception:
+            return set()
+        found = set()
+
+        def cb(h, _):
+            try:
+                _, wpid = win32process.GetWindowThreadProcessId(h)
+                if wpid == pid and h != hwnd and win32gui.IsWindowVisible(h):
+                    found.add(h)
+            except Exception:
+                pass
+            return True
+
+        try:
+            win32gui.EnumWindows(cb, None)
+        except Exception:
+            return set()
+        return found
+
+    @classmethod
+    def _pat_menu_rects(cls, hwnd, before):
+        """右键之后新出现的菜单窗矩形（按大小过滤，排除提示气泡等）。"""
+        try:
+            import win32gui
+        except Exception:
+            return []
+        rects = []
+        for h in cls._pat_popup_set(hwnd) - set(before):
+            try:
+                left, top, right, bottom = win32gui.GetWindowRect(h)
+                width, height = right - left, bottom - top
+                if 40 <= width <= 600 and 30 <= height <= 800:
+                    rects.append((left, top, right, bottom))
+            except Exception:
+                continue
+        return rects
+
+    @staticmethod
+    def _pat_click_menu_item(rect, u, who):
+        """在菜单矩形里 OCR 找「拍一拍」并点它（2 倍/3 倍各试一次）。"""
+        try:
+            from PIL import Image, ImageGrab as IG
+            from wechatauto.guia import ScreenOCR
+        except Exception as exc:
+            G.log_warn('拍一拍失败：OCR 依赖不可用', repr(exc))
+            return False
+        seen = []
+        for scale in (2, 3):
+            try:
+                img = IG.grab(bbox=rect).convert('RGB')
+                big = img.resize((img.width * scale, img.height * scale), Image.LANCZOS)
+                items = ScreenOCR.recognize(big)
+            except Exception as exc:
+                G.log_warn('拍一拍菜单 OCR 异常（x%d）：' % scale, repr(exc))
+                continue
+            for text, x, y, width, height in items:
+                clean = (text or '').replace(' ', '')
+                if clean:
+                    seen.append(clean)
+                if '拍一拍' in clean:
+                    sx = rect[0] + (x + width / 2.0) / float(scale)
+                    sy = rect[1] + (y + height / 2.0) / float(scale)
+                    u._click_at(int(sx), int(sy))
+                    G.log('[pat] menu item clicked %s' % G.safe_name(who))
+                    return True
+        G.log('拍一拍菜单没认出「拍一拍」：%s' % (' / '.join(seen[:8]) or '（OCR 为空）'))
+        return False
+
+    def _pat_ensure_foreground(self):
+        """把微信拉到前台，成功才允许右键。
+
+        桥接的 ``window_activation.activate`` 只调 SetForegroundWindow，
+        刚点过启动器/浏览器时会被前台锁拒绝；这时右键会点到别的窗口上，
+        所以这里用 AttachThreadInput + 临时取消前台锁超时，结束后恢复全局值。
+        """
+        try:
+            import ctypes
+            import win32api
+            import win32con
+            import win32gui
+            hwnd = int(self.ACCOUNT.get('hwnd') or 0) or self.find_weixin_hwnd()
+            if not hwnd:
+                return False
+            user32 = ctypes.windll.user32
+            if user32.GetForegroundWindow() == hwnd:
+                return True
+            prev_lock = ctypes.c_uint32(0)
+            got_lock = user32.SystemParametersInfoW(0x2000, 0, ctypes.byref(prev_lock), 0)
+            user32.SystemParametersInfoW(0x2001, 0, ctypes.c_void_p(0), 0)
+            try:
+                for _ in range(6):
+                    if user32.GetForegroundWindow() == hwnd:
+                        break
+                    fg = user32.GetForegroundWindow()
+                    tid_fg = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+                    tid_t = user32.GetWindowThreadProcessId(hwnd, None)
+                    if tid_fg:
+                        user32.AttachThreadInput(tid_fg, tid_t, True)
+                    try:
+                        if win32gui.IsIconic(hwnd):
+                            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                        user32.SetWindowPos(hwnd, ctypes.c_void_p(-1), 0, 0, 0, 0,
+                                            0x2 | 0x1 | 0x40)  # TOPMOST, 不改大小, SHOW
+                        user32.SetForegroundWindow(hwnd)
+                        user32.SetActiveWindow(hwnd)
+                        user32.BringWindowToTop(hwnd)
+                    finally:
+                        if tid_fg:
+                            user32.AttachThreadInput(tid_fg, tid_t, False)
+                    if user32.GetForegroundWindow() != hwnd:
+                        # 用户正在操作别的窗口时，AttachThreadInput 也会被前台锁挡；
+                        # 按一下 ALT 再抢一次（实测这一下就能过）。
+                        try:
+                            win32api.keybd_event(win32con.VK_MENU, 0, 0, 0)
+                            win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
+                        except Exception:
+                            pass
+                        try:
+                            user32.SetForegroundWindow(hwnd)
+                        except Exception:
+                            pass
+                    G.time.sleep(0.35)
+                if user32.GetForegroundWindow() != hwnd:
+                    try:
+                        user32.SwitchToThisWindow(hwnd, True)
+                    except Exception:
+                        pass
+                    G.time.sleep(0.2)
+            finally:
+                if got_lock:
+                    user32.SystemParametersInfoW(0x2001, 0, ctypes.c_void_p(prev_lock.value), 0)
+            return user32.GetForegroundWindow() == hwnd
+        except Exception as exc:
+            G.log_warn('拍一拍抢前台异常：', repr(exc))
+            return False
+
+    def _pat_scroll_for_friend_row(self, u, rhythm):
+        """当前视口只有自己的消息时，往上翻两屏再找对方消息行。"""
+        lst = self._pat_message_list(u)
+        for _ in range(2):
+            if lst is None:
+                return None
+            try:
+                lst.WheelUp(ratioX=0.5, ratioY=0.5, wheelTimes=3)
+            except Exception:
+                return None
+            rhythm.nap(0.6)
+            row = self._pat_friend_row(u)
+            if row is not None:
+                return row
+        return None
+
+    def _uia_poke(self, u, who):
+        """右键对方头像 → 找到菜单窗 → OCR 点「拍一拍」。
+
+        为什么不用 wechatauto 的 ``u.poke``：它把整屏丢给 Windows OCR，
+        暗色主题下「拍一拍」三个字经常认不出来；而且在 4.1.8 上它依赖的
+        ``_find_friend_row`` 找不到暗色主题里的对方消息行。
+        这里：自己判断对方行（按背景色 + 左右内容量），右键后按「新出现的
+        顶层小窗」锁定菜单矩形，只 OCR 菜单本身，2 倍/3 倍各试一次。
+        """
+        try:
+            from wechatauto import rhythm
+            import uiautomation as auto
+        except Exception as exc:
+            G.log_warn('拍一拍失败：UIA/节奏依赖不可用', repr(exc))
+            return False
+        if not self._pat_ensure_foreground():
+            G.log('拍一拍失败：微信没能抢到前台，这次不右键（避免点到别的窗口）')
+            return False
+        try:
+            if not u.ensure_window():
+                G.log('拍一拍失败：微信窗口不可用')
+                return False
+        except Exception as exc:
+            G.log_warn('拍一拍失败：ensure_window 异常', repr(exc))
+            return False
+        scrolled = False
+        try:
+            row = self._pat_friend_row(u)
+            if row is None:
+                row = self._pat_scroll_for_friend_row(u, rhythm)
+                scrolled = row is not None
+            if row is None:
+                # wechatauto 自己的判定也试一次（亮色主题下它更准）
+                try:
+                    ctl = u._find_friend_row()
+                    if ctl is not None:
+                        rr = ctl.BoundingRectangle
+                        row = (rr.left, rr.top, rr.right, rr.bottom)
+                except Exception:
+                    row = None
+            if row is None:
+                G.log('拍一拍失败：当前会话里没有可右键的对方消息')
+                return False
+            left, top, right, bottom = row
+            try:
+                hwnd = int(u._win.NativeWindowHandle or 0)
+            except Exception:
+                hwnd = 0
+            # 头像在消息行左上，实测微信 4.x：行内偏移 x≈+56、y≈+40
+            # （不能按行中心：带引用/多行的行很高，中心会点到气泡或空白）。
+            ax = int(left + 56)
+            ay = int(min(bottom - 15, top + 40))
+            for attempt in range(2):
+                try:
+                    before = self._pat_popup_set(hwnd) if hwnd else set()
+                    u._set_cursor(ax, ay)
+                    rhythm.nap(0.2)
+                    u._right_click()
+                    rhythm.nap(0.9)
+                    rects = self._pat_menu_rects(hwnd, before) if hwnd else []
+                    if not rects:
+                        G.log('拍一拍：右键后没看到菜单窗（第 %d 次）' % (attempt + 1))
+                    for rect in rects:
+                        if self._pat_click_menu_item(rect, u, who):
+                            rhythm.nap(0.5)
+                            return True
+                except Exception as exc:
+                    G.log_warn('拍一拍菜单处理异常（第 %d 次）：' % (attempt + 1), repr(exc))
+                try:
+                    auto.SendKeys('{ESC}')
+                except Exception:
+                    pass
+                rhythm.nap(0.4)
+            return False
+        finally:
+            if scrolled:
+                try:
+                    u.scroll_message_list_to_bottom(max_rounds=8)
+                except Exception:
+                    pass
+
+    def _pat_drop_topmost(self):
+        """撤销 _pat_ensure_foreground 加的置顶，别让微信一直挂在最前面。"""
+        try:
+            import ctypes
+            hwnd = int(self.ACCOUNT.get('hwnd') or 0) or self.find_weixin_hwnd()
+            if not hwnd:
+                return
+            ctypes.windll.user32.SetWindowPos(
+                hwnd, ctypes.c_void_p(-2), 0, 0, 0, 0, 0x2 | 0x1)  # HWND_NOTOPMOST
+        except Exception:
+            pass
+
+    def send_pat(self, chat_display_name, chat_username=''):
+        """在微信里对当前会话的对方发起「拍一拍」（右键头像 → 拍一拍菜单）。
+
+        拍一拍不是消息：它不经过输入框和发送按钮，走 wechatauto 的
+        「右键对方消息头像 + OCR 找拍一拍菜单」。失败只记日志，不补发文字，
+        避免把「没拍到」伪装成「拍到了」。
+        """
+        import time as _time
+        target = str(chat_display_name or '').strip()
+        key = str(chat_username or target or '').strip()
+        if not key or not target:
+            return False
+        if not self._pat_feature_on():
+            G.log('拍一拍功能已关闭，跳过发送：', G.safe_name(target))
+            return False
+        pat_last = getattr(self, 'PAT_LAST', None)
+        if pat_last is None:
+            pat_last = self.PAT_LAST = {}
+        now = _time.monotonic()
+        last = float(pat_last.get(key) or 0.0)
+        cooldown = 8.0
+        cfg = getattr(G, 'CURRENT_CONFIG', None) or {}
+        if isinstance(cfg, dict):
+            try:
+                cooldown = float((cfg.get('pat') or {}).get('cooldownSec', 8) or 0)
+            except Exception:
+                cooldown = 8.0
+        cooldown = max(0.0, min(3600.0, cooldown))
+        if cooldown > 0 and now - last < cooldown:
+            G.log('拍一拍冷却中（%.0f 秒），跳过：%s' % (cooldown, G.safe_name(target)))
+            return False
+        if chat_username and self.chat_paused(chat_username):
+            G.log('跳过已失效的会话（拍一拍）：', G.safe_name(target))
+            return False
+        if chat_username and self.is_self_chat(chat_username):
+            G.log('拍一拍跳过：文件传输助手不支持拍一拍')
+            return False
+        if str(chat_username or '').lower().endswith('@chatroom'):
+            # 群聊里右键只能拍到「当前可见的一条好友消息」的头像，无法保证是目标人；
+            # 宁可不拍，也不要在群里拍错人。
+            G.log('拍一拍跳过：群聊不主动拍（避免拍到别人）')
+            return False
+        resolved = self.ui_chat_name(chat_username, target)
+        if not resolved:
+            G.log('拍一拍跳过：会话名不可用：', G.safe_id(chat_username or target))
+            return False
+        if not self.account_send_allowed('拍一拍'):
+            return False
+        with self.send_lock:
+            if (not self.account_send_allowed('拍一拍复核')
+                    or not self.send_policy_allows(chat_username, resolved)):
+                return False
+            try:
+                with self.gui_lock:
+                    if self.gui is None:
+                        G.log('初始化微信窗口驱动…（拍一拍会抢一下焦点，约 5~10 秒）')
+                        self.gui = self.new_window_driver()
+                    gui = self.gui
+                self.bind_gui_window(gui)
+                u = gui._get_uia()
+                if u is None:
+                    G.log('拍一拍失败：UIA 不可用')
+                    return False
+                keys = self.aliases_for(chat_username, resolved) or [resolved]
+                cur = ''
+                try:
+                    cur = u.current_chat() or ''
+                except Exception:
+                    cur = ''
+                if cur not in keys:
+                    if not u.open_chat(keys):
+                        G.log('拍一拍失败：打不开会话', G.safe_name(resolved))
+                        return False
+                    cur = u.current_chat() or ''
+                self._require_chat_identity(u, resolved, keys, '拍一拍')
+                # 拍一拍靠右键头像 + 菜单 OCR，必须让微信真的在前台；
+                # 抢前台由 _uia_poke 自己做（前台锁下更可靠），抢不到就不右键。
+                try:
+                    ok = bool(self.with_window_on_top(lambda: self._uia_poke(u, resolved),
+                                                      require_foreground=False))
+                finally:
+                    self._pat_drop_topmost()
+                if ok:
+                    pat_last[key] = _time.monotonic()
+                    sent_at = getattr(self, 'PAT_SENT', None)
+                    if sent_at is None:
+                        sent_at = self.PAT_SENT = {}
+                    sent_at[key] = _time.time()
+                    G.log('[delivery] stage=pat result=sent target=%s' % G.safe_name(resolved))
+                else:
+                    G.log('[delivery] stage=pat result=failed reason=no_friend_row_or_menu target=%s'
+                          % G.safe_name(resolved))
+                return ok
+            except G.ChatIdentityError as exc:
+                G.log_error('拍一拍会话核对没通过：%s' % exc)
+            except Exception as exc:
+                G.log_warn('拍一拍异常：', repr(exc))
+        return False
+
     def send_text(self, text, chat_display_name, chat_username='', force=False):
         from send_attempt import logical_operation, prepared_adapter, bind_runtime_identity
         pending = getattr(self, '_text_send_inflight', None)
