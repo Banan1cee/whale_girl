@@ -37,6 +37,16 @@ namespace WhaleLauncher
                 _ = PreviewRenderer.RunAsync(e.Args[1], scale, nav);
                 return;
             }
+            // 开发用：单独渲染一张公告弹窗截图，确认文案和排版。
+            if (e.Args.Length >= 2 && e.Args[0] == "--render-notice")
+            {
+                ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                var scale = 1.0;
+                if (e.Args.Length >= 3) double.TryParse(e.Args[2], out scale);
+                if (scale <= 0) scale = 1;
+                _ = PreviewRenderer.RunNoticeAsync(e.Args[1], scale);
+                return;
+            }
             // 自更新后重启会带 --replace <pid>：等旧实例真的退出，再去抢单实例锁
             WaitForReplacedInstance();
             CleanupOldExes();
