@@ -118,18 +118,23 @@ function renderHost() {
   byId('host-auto-start').checked = host.autoStart === true;
   // 管理员模式下启动器默认拒绝启动内核；只有「允许手机启动内核」才放行，与后端判断保持一致。
   byId('host-hint').hidden = !(host.processLaunchAllowed === false && host.remoteProcessLaunch !== true);
-  // 笔记本上不提供远程开关屏幕（关屏通常等同进入待机），按钮直接隐藏并说明原因。
-  const laptop = host.isLaptop === true;
-  byId('host-wake-display').hidden = laptop;
-  byId('host-display-off').hidden = laptop;
-  byId('host-display-off').title = laptop ? '笔记本不支持远程关屏'
-    : (host.displayOffBlocked ? (host.displayOffBlockedReason || '这台电脑不支持远程关屏。') : '关闭显示器（不锁屏）');
+  // 远程开关屏幕：笔记本没有这个能力（开关也不显示）；台式机打开开关后，桌面和手机才出现亮屏/关屏按钮。
+  const desktop = host.isLaptop !== true;
+  const displayControl = host.displayControl === true;
+  const showDisplay = desktop && displayControl;
+  byId('host-display-control').checked = displayControl;
+  byId('host-display-control-label').hidden = !desktop;
+  byId('host-wake-display').hidden = !showDisplay;
+  byId('host-display-off').hidden = !showDisplay;
+  byId('host-display-off').title = host.displayOffBlocked
+    ? (host.displayOffBlockedReason || '这台电脑不支持远程关屏。') : '关闭显示器（不锁屏）';
+  const displayNote = !desktop
+    ? '笔记本上不提供远程开关屏幕：关屏通常等同进入待机，唤醒要重新登录。'
+    : !displayControl ? '勾选「允许远程开关屏幕」后，电脑和手机才会出现亮屏/关屏按钮。'
+      : host.displayOffBlocked ? (host.displayOffBlockedReason || '') : '';
   const displayHint = byId('host-display-hint');
-  const displayNote = laptop ? '笔记本上不提供远程开关屏幕：关屏通常等同进入待机，唤醒要重新登录。'
-    : (host.displayOffBlocked ? (host.displayOffBlockedReason || '') : '');
   displayHint.textContent = displayNote;
   displayHint.hidden = !displayNote;
-  byId('host-display-off').disabled = busy || !host || laptop || host.displayOffBlocked === true;
 }
 
 async function loadHost() {
@@ -179,8 +184,11 @@ function render() {
   for (const control of document.querySelectorAll('#host-panel button, #host-panel select, #host-panel input')) {
     control.disabled = busy || !host;
   }
-  // 关屏按钮额外受电脑类型/策略限制：笔记本不显示，台式机开了「关屏锁定」策略时禁用。
-  byId('host-display-off').disabled = busy || !host || host.isLaptop === true || host.displayOffBlocked === true;
+  // 亮屏/关屏按钮只在「台式机 + 开关打开」时可用；不开关屏锁定策略的台式机才允许点关屏。
+  const hostDisplay = Boolean(host) && host.isLaptop !== true && host.displayControl === true;
+  byId('host-wake-display').disabled = busy || !hostDisplay;
+  byId('host-display-off').disabled = busy || !hostDisplay || host.displayOffBlocked === true;
+  byId('host-display-control').disabled = busy || !host || host.isLaptop === true;
   for (const button of nav.querySelectorAll('button')) button.disabled = busy;
   for (const control of editor.querySelectorAll('input, select, textarea, button')) control.disabled = busy || !editable;
   if (!paired) return;
@@ -1241,6 +1249,7 @@ function bindHostToggle(id, action, question) {
 }
 bindHostToggle('host-remote-launch', 'remote-process-launch', '允许手机启动或重启电脑上的内核？');
 bindHostToggle('host-auto-start', 'auto-start', '更改鲸鲸的开机自启设置？');
+bindHostToggle('host-display-control', 'display-control', '允许从手机远程点亮或关闭电脑屏幕？');
 
 byId('pair-form').addEventListener('submit', event => {
   event.preventDefault();

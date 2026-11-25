@@ -233,9 +233,10 @@ namespace WhaleLauncher.Views
                 HostKeepAwake.SelectedIndex = ModeIndex(h.KeepAwake);
                 ChkRemoteProcess.IsChecked = h.RemoteProcessLaunch;
                 ChkAutoStart.IsChecked = h.AutoStart;
-                // 笔记本上不提供远程开关屏幕：关屏多数机型等同进入待机，唤醒要重新登录，
-                // 摆着按钮只会误导；台式机才显示（「关屏锁定」策略下仍显示但禁用）。
-                var displayVisibility = h.IsLaptop ? Visibility.Collapsed : Visibility.Visible;
+                ChkDisplayControl.IsChecked = h.DisplayControl;
+                // 笔记本上不提供远程开关屏幕，开关本身也不显示；台式机上打开开关才出现亮屏/关屏按钮。
+                ChkDisplayControl.Visibility = h.IsLaptop ? Visibility.Collapsed : Visibility.Visible;
+                var displayVisibility = !h.IsLaptop && h.DisplayControl ? Visibility.Visible : Visibility.Collapsed;
                 BtnWakeDisplay.Visibility = displayVisibility;
                 BtnDisplayOff.Visibility = displayVisibility;
                 BtnDisplayOff.IsEnabled = !h.DisplayOffBlocked;
@@ -288,6 +289,14 @@ namespace WhaleLauncher.Views
         {
             if (_hostSyncing) return;
             var error = _host.TrySetAutoStart(ChkAutoStart.IsChecked == true);
+            if (error != null) AppDialog.Show(Window.GetWindow(this), error, "主机");
+            SyncHost(_host.ReadStatus());
+        }
+
+        private void OnDisplayControlChanged(object sender, RoutedEventArgs e)
+        {
+            if (_hostSyncing) return;
+            var error = _host.TrySetDisplayControl(ChkDisplayControl.IsChecked == true);
             if (error != null) AppDialog.Show(Window.GetWindow(this), error, "主机");
             SyncHost(_host.ReadStatus());
         }

@@ -36,6 +36,7 @@ namespace WhaleLauncher
             public bool IsLaptop;
             public bool DisplayOffBlocked;
             public string DisplayOffBlockedReason = "";
+            public bool DisplayControl;
         }
 
         // data/host-remote.json 是手机端设置的落盘位置；开机自启另有注册表这个真源。
@@ -71,6 +72,8 @@ namespace WhaleLauncher
         private string _keepAwake = "off";
         private bool _remoteProcessLaunch;
         private bool _autoStart;
+        // 远程开关屏幕是带物理影响的动作，默认关；开启后桌面/手机才出现亮屏与关屏按钮。
+        private bool _displayControl;
         private bool _disposed;
 
         public HostPower(string baseDir)
@@ -144,8 +147,15 @@ namespace WhaleLauncher
                 IsLaptop = HasSystemBattery(),
                 DisplayOffBlocked = DisplayOffBlockedReason(out var displayOffReason),
                 DisplayOffBlockedReason = displayOffReason,
+                DisplayControl = _displayControl,
             };
         }
+
+        /// <summary>
+        /// 远程开关屏幕是否可用：需要用户在电脑端（或手机端）显式打开「允许远程开关屏幕」，
+        /// 且不是笔记本。默认关闭——关屏是带物理影响的动作，不该默认暴露到手机上。
+        /// </summary>
+        internal bool CanControlDisplay => !HasSystemBattery() && _displayControl;
 
         /// <summary>
         /// 关屏在两种情况下会把会话锁上，远程关屏就失去意义：
@@ -324,6 +334,7 @@ namespace WhaleLauncher
                 keepAwake = status.KeepAwake,
                 remoteProcessLaunch = status.RemoteProcessLaunch,
                 autoStart = status.AutoStart,
+                displayControl = status.DisplayControl,
                 processLaunchAllowed = status.ProcessLaunchAllowed,
                 hostname = status.Hostname,
                 uptimeSeconds = status.UptimeSeconds,
@@ -349,10 +360,12 @@ namespace WhaleLauncher
         {
             bool? remote = null;
             bool? autoStart = null;
+            bool? displayControl = null;
             if (payload.ValueKind == JsonValueKind.Object)
             {
                 if (!TryOptionalBoolean(payload, "remoteProcessLaunch", out remote) ||
-                    !TryOptionalBoolean(payload, "autoStart", out autoStart))
+                    !TryOptionalBoolean(payload, "autoStart", out autoStart) ||
+                    !TryOptionalBoolean(payload, "displayControl", out displayControl))
                     return new { ok = false, error = "主机设置无效。" };
             }
             else if (payload.ValueKind != JsonValueKind.Undefined)
@@ -367,13 +380,16 @@ namespace WhaleLauncher
                 _autoStart = enabled;
             }
             if (remote is bool remoteLaunch) _remoteProcessLaunch = remoteLaunch;
-            if (remote == null && autoStart == null) return new { ok = true, data = ConfigData() };
+            if (displayControl is bool allowDisplay) _displayControl = allowDisplay;
+            if (remote == null && autoStart == null && displayControl == null) return new { ok = true, data = ConfigData() };
             if (!SaveConfig()) return new { ok = false, error = "保存主机设置失败，请检查安装目录权限。" };
             return new { ok = true, data = ConfigData() };
         }
 
         private object WakeDisplayAction()
         {
+            var blocked = DisplayControlBlocked();
+            if (blocked != null) return new { ok = false, error = blocked };
             // SC_MONITORPOWER -1 在 Win8+ 只有前台程序发才生效（实测：关屏能关、点亮点不亮），
             // 所以真正的唤醒手段是「合成一次 1 像素鼠标移动」+ ES_DISPLAY_REQUIRED，
             // 两者都按输入/电源请求处理，不依赖前台身份。
@@ -452,7 +468,27 @@ namespace WhaleLauncher
             return SaveConfig() ? null : "保存主机设置失败，请检查安装目录权限。";
         }
 
+        internal string TrySetDisplayControl(bool enabled)
+        {
+            _displayControl = enabled;
+            return SaveConfig() ? null : "保存主机设置失败，请检查安装目录权限。";
+        }
+
         internal void RequestDisplayWake() => WakeDisplayAction();
+
+        /// <summary>
+        /// 远程开关屏幕的前置检查。返回 null 表示可用，否则是给用户看的中文原因。
+        /// 顺序按「用户最可能踩到的原因」排：笔记本 &gt; 功能没开 &gt; 关屏锁定策略 &gt; 防关屏保活。
+        /// </summary>
+        private string DisplayControlBlocked()
+        {
+            if (HasSystemBattery())
+                return "笔记本上不提供远程开关屏幕：关屏通常等同进入待机，唤醒要重新登录。";
+            if (!_displayControl)
+                return "远程开关屏幕未开启：请先在「主机」里勾选「允许远程开关屏幕」。";
+            if (DisplayOffBlockedReason(out var blocked)) return blocked;
+            return null;
+        }
 
         /// <summary>
         /// 关显示器（不锁屏）。返回 null 表示已发送指令，否则是给界面直接显示的中文原因。
@@ -461,13 +497,19 @@ namespace WhaleLauncher
         /// </summary>
         internal string RequestDisplayOff()
         {
-            if (DisplayOffBlockedReason(out var blocked)) return blocked;
+            var blocked = DisplayControlBlocked();
+            if (blocked != null) return blocked;
             if (_keepAwake == "display") return "当前是「防关屏」保活模式，屏幕不会关。请先切到「防睡眠」或「关」。";
             PostMessage(new IntPtr(HwndBroadcast), WmSysCommand, new IntPtr(ScMonitorPower), new IntPtr(2));
             return null;
         }
 
-        private object ConfigData() => new { remoteProcessLaunch = _remoteProcessLaunch, autoStart = _autoStart };
+        private object ConfigData() => new
+        {
+            remoteProcessLaunch = _remoteProcessLaunch,
+            autoStart = _autoStart,
+            displayControl = _displayControl,
+        };
 
         // ── 保活 ────────────────────────────────────────────────
 
@@ -487,6 +529,7 @@ namespace WhaleLauncher
             public string KeepAwake { get; set; } = "off";
             public bool RemoteProcessLaunch { get; set; }
             public bool AutoStart { get; set; }
+            public bool DisplayControl { get; set; }
         }
 
         private void LoadConfig()
@@ -494,6 +537,7 @@ namespace WhaleLauncher
             var config = ReadConfigFile();
             _keepAwake = NormalizeMode(config.KeepAwake);
             _remoteProcessLaunch = config.RemoteProcessLaunch;
+            _displayControl = config.DisplayControl;
             // 注册表才是「开机自启现在到底开没开」的真源：用户可能在任务管理器里关过。
             _autoStart = ReadAutoStart() ?? config.AutoStart;
         }
@@ -514,6 +558,9 @@ namespace WhaleLauncher
                     config.RemoteProcessLaunch = remote.GetBoolean();
                 if (root.TryGetProperty("autoStart", out var auto) && auto.ValueKind is JsonValueKind.True or JsonValueKind.False)
                     config.AutoStart = auto.GetBoolean();
+                if (root.TryGetProperty("displayControl", out var display) &&
+                    display.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    config.DisplayControl = display.GetBoolean();
                 return config;
             }
             catch (Exception)
@@ -534,6 +581,7 @@ namespace WhaleLauncher
                     KeepAwake = _keepAwake,
                     RemoteProcessLaunch = _remoteProcessLaunch,
                     AutoStart = _autoStart,
+                    DisplayControl = _displayControl,
                 };
                 // 临时文件 + 移动覆盖：中途断电也不会留下一份读不出来的半截配置。
                 File.WriteAllText(temp, JsonSerializer.Serialize(config, ConfigJson));

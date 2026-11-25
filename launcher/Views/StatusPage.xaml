@@ -104,8 +104,11 @@
                             Margin="0,0,8,0" Click="OnDisplayOff" />
                     <CheckBox x:Name="ChkRemoteProcess" Content="允许手机启动内核" Margin="0,0,14,0"
                               VerticalAlignment="Center" Click="OnRemoteProcessChanged" />
-                    <CheckBox x:Name="ChkAutoStart" Content="开机自启"
+                    <CheckBox x:Name="ChkAutoStart" Content="开机自启" Margin="0,0,14,0"
                               VerticalAlignment="Center" Click="OnAutoStartChanged" />
+                    <!-- 远程开关屏幕默认关：勾上之后桌面/手机才出现亮屏与关屏按钮 -->
+                    <CheckBox x:Name="ChkDisplayControl" Content="允许远程开关屏幕"
+                              VerticalAlignment="Center" Click="OnDisplayControlChanged" />
                 </WrapPanel>
             </StackPanel>
         </Border>
