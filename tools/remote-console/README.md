@@ -21,3 +21,16 @@
 ## 测试
 
 在源代码根目录运行 `node tests/phone-remote-console.test.js`。测试使用本机模拟服务，覆盖配对、开关、离线设置和表情包预览。
+
+## 排障：手机浏览器打不开控制台地址
+
+浏览器提示「无法访问此页面 / DNS_PROBE_FINISHED_NXDOMAIN」时，**不是电脑关机**，是手机的 DNS 没走 Tailscale。按顺序检查：
+
+1. 手机 Tailscale 已登录**同一个账号**，并且开关是 Connected；电脑端 `tailscale status` 里手机不应显示 offline。
+2. 手机 Tailscale 设置里打开「Use Tailscale DNS / 使用 Tailscale DNS」。
+3. 安卓「设置 → 网络和互联网 → 私人 DNS」选「关闭」或「自动」；浏览器的「安全 DNS / DoH」（小米浏览器、Chrome 的「使用安全 DNS」）会绕过 MagicDNS，需要关掉。
+4. 安卓会为省电杀掉 Tailscale 后台：设置 → 应用 → Tailscale → 电池 → 无限制；Tailscale 里可再开 Always-on VPN。
+5. 控制台只能通过 `https://<主机名>.ts.net` 访问；用 tailnet IP 会因证书域名不匹配而 TLS 失败，不要用 IP。
+6. 想确认控制台本身有没有问题，先在电脑浏览器打开 `http://127.0.0.1:8790` 输入配对 Key，能进就是手机侧网络问题。
+
+上面的链路都正常还打不开时，在电脑上跑 `tailscale serve status` 确认 Serve 还在，必要时重新执行「2 - 一键打开控制台」和「3 - 一键复制手机访问地址」。
