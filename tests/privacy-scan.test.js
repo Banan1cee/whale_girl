@@ -101,6 +101,17 @@ test('官方 Api 3 目录不误报，其他仓库和相似文件名仍检查', (
   }
 });
 
+test('插件包下载前缀不误报，别的仓库或别的目录仍检查', () => {
+  const official = 'https://raw.github' + 'usercontent.com/Banan1cee/whale-girl-plugins/main/plugins/steam-review/steam-review.zip';
+  for (const encoding of ['utf8', 'utf16le']) {
+    // 启动器重编后这条前缀后面会紧跟别的 UTF-16 字符串，不能被当成泄露
+    assert.deepEqual(scanBinaryBuffer(Buffer.from(official + '\u0d01下一', encoding)), []);
+  }
+  for (const other of [official.replace('Banan1cee', 'someone'), official.replace('/main/', '/secret/')]) {
+    assert.ok(rulesOf(scanBinaryBuffer(Buffer.from(other, 'utf8'))).includes('源码托管链接（二进制）'));
+  }
+});
+
 test('scan() 会跳过 data/runtime/artifacts，但会扫 launcher/publish 的成品', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'privacy-scan-'));
   try {
