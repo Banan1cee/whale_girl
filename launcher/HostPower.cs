@@ -474,8 +474,6 @@ namespace WhaleLauncher
             return SaveConfig() ? null : "保存主机设置失败，请检查安装目录权限。";
         }
 
-        internal void RequestDisplayWake() => WakeDisplayAction();
-
         /// <summary>
         /// 远程开关屏幕的前置检查。返回 null 表示可用，否则是给用户看的中文原因。
         /// 顺序按「用户最可能踩到的原因」排：笔记本 &gt; 功能没开 &gt; 关屏锁定策略 &gt; 防关屏保活。
