@@ -436,7 +436,14 @@ return 0;
 } finally {
  var allowed=Path.GetFullPath(Path.Combine(workspace,".tools","temp"))+Path.DirectorySeparatorChar;
  if(!Path.GetFullPath(root).StartsWith(allowed,StringComparison.OrdinalIgnoreCase))throw new Exception("invalid cleanup target");
- Directory.Delete(root,true);
+ // Windows 上刚结束的子进程（例如模拟桥接用的 node.exe）可能还占着文件句柄，
+ // 立刻递归删除会抛 UnauthorizedAccessException，把前面已经跑过的用例误判成失败
+ // （CI 上实际出现过）。清理只是收尾，重试几次；仍失败就放弃，不影响测试结论。
+ for(var attempt=0;;attempt++){
+  try{ Directory.Delete(root,true); break; }
+  catch(Exception) when(attempt<6){ System.Threading.Thread.Sleep(250*(attempt+1)); }
+  catch(Exception){ break; }
+ }
 }
 }
 }
