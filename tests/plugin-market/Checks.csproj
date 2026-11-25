@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../launcher/PluginMarket.cs" Link="PluginMarket.cs" />
+    <Compile Include="../../launcher/RemoteText.cs" Link="RemoteText.cs" />
     <Compile Include="../../launcher/PluginTrust.cs" Link="PluginTrust.cs" />
     <Compile Include="../../launcher/PersonaPackage.cs" Link="PersonaPackage.cs" />
   </ItemGroup>
