@@ -262,6 +262,88 @@ test('episode 抽取不能用本人事实 ID 撤回第三方事实', async () =>
   assert.deepEqual(out.facts, []);
 });
 
+// 现场：模型把机器人自己「先猜卡点」「不装懂」的话当证据，写成了用户的性格。
+test('episode 抽取：性格标签只认本人消息作证据，不足两条就丢', async () => {
+  const extractor = require('../src/memory/extractor');
+  const llm = {
+    isMock: false,
+    async complete() {
+      return JSON.stringify({ summary: '聊论文', traits: [
+        { uid: 'u1', text: '爱用反问回避正面回答', confidence: 0.75, evidence: ['m1', 'm3'] },
+        { uid: 'u1', text: '喜欢先猜对方卡在哪', confidence: 0.8, evidence: ['m2', 'm4'] },
+        { uid: 'u1', text: '说话很直接', confidence: 0.7, evidence: ['m1', 'm2'] },
+        { uid: 'u1', text: '爱接别人的梗', confidence: 0.7, evidence: ['m5', 'm6'] },
+        { uid: 'u1', text: '做事拖延', confidence: 0.7 },
+      ] });
+    },
+  };
+  const out = await extractor.extractEpisode({
+    messages: [
+      { id: 'm1', role: 'user', uid: 'u1', name: '小海', text: '你猜猜啊' },
+      { id: 'm2', role: 'assistant', text: '猜可以，卡的多半是结论' },
+      { id: 'm3', role: 'user', uid: 'u1', name: '小海', text: '感觉你看不懂呢' },
+      { id: 'm4', role: 'assistant', text: '真看不懂我也会直说，不装懂' },
+      { id: 'm5', role: 'user', uid: 'u2', name: '阿杰', text: '哈哈哈' },
+      { id: 'm6', role: 'user', uid: 'u2', name: '阿杰', text: '绝了' },
+    ],
+    speakers: [{ uid: 'u1', name: '小海' }, { uid: 'u2', name: '阿杰' }],
+    llm,
+  });
+  assert.deepEqual(out.traits.map((t) => t.text), ['爱用反问回避正面回答']);
+  assert.deepEqual(out.traits[0].evidence, ['m1', 'm3']);
+});
+
+test('episode 抽取：事实的证据全是别人说的就丢，没给证据的照旧保留', async () => {
+  const extractor = require('../src/memory/extractor');
+  const llm = {
+    isMock: false,
+    async complete() {
+      return JSON.stringify({ summary: '聊论文', facts: [
+        { uid: 'u1', text: '论文卡在结论部分', confidence: 0.8, evidence: ['m2'] },
+        { uid: 'u1', text: '正在写论文', confidence: 0.9, evidence: ['m1'] },
+        { uid: 'u1', text: '觉得写论文很累', confidence: 0.8 },
+      ] });
+    },
+  };
+  const out = await extractor.extractEpisode({
+    messages: [
+      { id: 'm1', role: 'user', uid: 'u1', name: '小海', text: '写论文好累' },
+      { id: 'm2', role: 'assistant', text: '卡的多半是结论吧' },
+    ],
+    speakers: [{ uid: 'u1', name: '小海' }],
+    llm,
+  });
+  assert.deepEqual(out.facts.map((f) => f.text), ['正在写论文', '觉得写论文很累']);
+});
+
+test('episode 落卡：模型没给证据的性格标签不拿整段用户消息顶替', async () => {
+  const { store, dir } = tempStore();
+  const key = 'wechat:u:a';
+  try {
+    const t0 = Date.now() - 60000;
+    store.appendMessage(key, { role: 'user', name: '小海', uid: 'u1', text: '写论文好累', ts: t0 });
+    store.appendMessage(key, { role: 'assistant', name: '鲸鲸', text: '卡在哪了', ts: t0 + 1000 });
+    store.appendMessage(key, { role: 'user', name: '小海', uid: 'u1', text: '你猜猜啊', ts: t0 + 2000 });
+    store.appendMessage(key, { role: 'assistant', name: '鲸鲸', text: '多半是结论', ts: t0 + 3000 });
+    const llm = {
+      isMock: false,
+      async complete() {
+        return JSON.stringify({ summary: '聊论文', traits: [
+          { uid: 'u1', text: '喜欢先猜对方卡在哪', confidence: 0.8 },
+          { uid: 'u1', text: '爱用反问回避正面回答', confidence: 0.75, evidence: ['msg_1', 'msg_3'] },
+        ] });
+      },
+    };
+    await store.closeEpisode(key, { llm, now: Date.now() });
+    const chat = store.chatStore.chats.get(key);
+    const card = store.chatStore.getCard(chat, 'u1');
+    assert.deepEqual(personCard.activeTraits(card).map((t) => t.text), ['爱用反问回避正面回答']);
+  } finally {
+    store.close();
+    cleanup(dir);
+  }
+});
+
 test('episode 落卡：模型替换会关闭旧偏好，并保留当前否定状态', async () => {
   const { store, dir } = tempStore();
   try {

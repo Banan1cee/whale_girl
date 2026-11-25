@@ -355,7 +355,10 @@ async function extractEpisode({ messages, llm, speakers = [], existingFacts = {}
     ]));
     parsed.facts = parsed.facts.map((fact) => {
       const evidence = userMessageIds.get(fact.uid) || new Set();
+      const cited = fact.evidence.length;
       fact.evidence = fact.evidence.filter((id) => evidence.has(id));
+      // 引了证据却没有一条是本人说的：多半是把助手的猜测或别人的话安到了本人头上
+      if (cited && !fact.evidence.length) return null;
       const known = knownFactIds.get(fact.uid) || new Map();
       fact.supersedesIds = fact.supersedesIds.filter((id) => known.get(id) === fact.subject);
       if (fact.operation === 'set' && fact.kind !== 'recent'
@@ -366,7 +369,12 @@ async function extractEpisode({ messages, llm, speakers = [], existingFacts = {}
       if (fact.operation === 'replace' && fact.supersedesIds.length === 0 && !fact.key) return null;
       return fact;
     }).filter(Boolean);
-    parsed.traits = parsed.traits.map(fix).filter(Boolean);
+    // 性格要由本人的话撑起来：助手自己的说话方式曾被模型当证据写成用户性格
+    parsed.traits = parsed.traits.map(fix).filter(Boolean).filter((trait) => {
+      const own = userMessageIds.get(trait.uid) || new Set();
+      trait.evidence = trait.evidence.filter((id) => own.has(id));
+      return trait.evidence.length >= LIMITS.traitMinEvidence;
+    });
     parsed.events = parsed.events.map(fix).filter(Boolean);
     parsed.threads = parsed.threads.map(fix).filter(Boolean);
     // 关系边：a/b 必须都是本段发言人。任一端不认识就整条丢——不猜、也不落到最后一个说话人。
