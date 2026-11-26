@@ -208,10 +208,23 @@ class Gateway {
     const wantsPat = localWechat && result.pat === true;
     if (wantsPat || result.action === 'reply') {
       const reason = sendDenial(this.bot.config, { id: msg.chatId, names: [msg.chatTitle], isGroup: msg.chatType === 'group', platform: this.platform });
-      if (reason) return { ok: true, action: 'ignore', reason };
+      if (reason) {
+        // 这项会话根本不允许发：已经占掉的回拍额度要当场还回去，别等 30 秒超时。
+        if (wantsPat && result.patId && typeof this.bot.settlePat === 'function') {
+          try { this.bot.settlePat(result.patId, false, 'send_denied'); } catch { /* 落账失败不影响忽略 */ }
+        }
+        return { ok: true, action: 'ignore', reason };
+      }
+    }
+    // 回执单号：桥接拍完要用它回 /api/pat/ack，内核据此落账/回滚额度、记动作账本。
+    // 内核已经占过额度（reservePat），这里只负责把单号带给桥接；旧调用方没有单号时
+    // 照旧执行拍一拍，只是内核收不到回执（额度按超时回滚，不会当成拍到了）。
+    const patId = wantsPat && result.patId ? String(result.patId) : '';
+    if (wantsPat && !patId) {
+      this.logger?.warn?.('[pat] 回拍缺少回执单号，桥接照常执行但内核收不到结果');
     }
     if (wantsPat && (result.action !== 'reply' || !result.reply)) {
-      return { ok: true, action: 'pat', pat: true };
+      return { ok: true, action: 'pat', pat: true, ...(patId ? { patId } : {}) };
     }
     if (result.action !== 'reply' || !result.reply) {
       return { ok: true, action: 'ignore', reason: result.reason || 'ignored' };
@@ -268,7 +281,7 @@ class Gateway {
       action: 'reply',
       reply: result.reply,
       bubbles: result.bubbles || [result.reply],
-      ...(wantsPat ? { pat: true } : {}),
+      ...(wantsPat ? { pat: true, ...(patId ? { patId } : {}) } : {}),
       ...(sticker ? { sticker } : {}),
       ...(localWechat && result.separateText ? { separateText: true } : {}),
       // 群里要真的 @ 某人时，桥接据此调 at_member

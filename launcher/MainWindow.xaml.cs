@@ -37,6 +37,7 @@ namespace WhaleLauncher
         private bool _memoryNoticeChecked;
         private PhoneControl _phoneControl;
         private readonly PhoneFeatures _phoneFeatures;
+        private readonly HostPower _hostPower;
 
         // 官网和赞助入口固定在侧栏底部；链接写死，不依赖内核或网络配置，断网时浏览器自行提示。
         private const string OfficialSite = "https://bot.zyyc.cc/";
@@ -64,6 +65,8 @@ namespace WhaleLauncher
             _sup.UpdateBlocked = true;
             _pluginMarket = new PluginMarket(dir);
             _phoneFeatures = new PhoneFeatures(_sup, _pluginMarket);
+            // 构造时只读持久化配置并套用保活；主机设置本身由状态页和手机端改。
+            _hostPower = new HostPower(dir);
 
             // 正式版不该显示成 v4.0-alpha：那会让用户以为自己装的是测试版，
             // 而且强制更新拿这个版本号做比较，后缀只会添乱。
@@ -100,7 +103,7 @@ namespace WhaleLauncher
                             Dispatcher.InvokeAsync(() => RunPhoneActionAsync(action, payload)).Task.Unwrap());
                     }
                 }
-                catch (Exception ex) { _sup.SayWarn("手机控制接口启动失败：" + ex.GetType().Name); }
+                catch (Exception ex) { _sup.SayWarn("手机控制接口启动失败：" + ex.GetType().Name + " · " + ex.Message); }
                 await SilentUpdateCheckAsync(allowBlocking: true);
                 await CheckNoticesAsync(showPopups: true);
                 await RefreshAsync();
@@ -111,15 +114,19 @@ namespace WhaleLauncher
                 Appearance.Changed -= OnAppearanceChanged;
                 _timer.Stop();
                 _phoneControl?.Dispose();
+                _hostPower.Dispose();
                 _sup.Dispose();
             };
         }
 
         private async Task<object> RunPhoneActionAsync(string action, JsonElement payload)
         {
+            // 主机电源 / 会话状态不碰内核和微信，必须在进程动作守卫之前分发：
+            // 否则管理员模式下手机连「电脑锁没锁」都问不了。
+            if (HostPower.Handles(action)) return await _hostPower.RunAsync(action, payload);
             if ((action is "start" or "restart" or "restart-bridge" or "restart-wechat" or "voice-install-driver") &&
-                !PhoneControl.AllowsProcessLaunch())
-                return new { ok = false, error = "启动器正以管理员权限运行，请在电脑上启动或重启程序。" };
+                !PhoneControl.AllowsProcessLaunch() && !_hostPower.RemoteProcessLaunch)
+                return new { ok = false, error = "启动器正以管理员权限运行。请在电脑上启动，或先在『主机』里打开『允许手机启动内核』。" };
             if (PhoneFeatures.Handles(action)) return await _phoneFeatures.RunAsync(action, payload);
             if (action == "configuration-read" || action == "configuration-save")
             {
@@ -799,7 +806,7 @@ namespace WhaleLauncher
         {
             switch (key)
             {
-                case "状态": return new StatusPage(_sup);
+                case "状态": return new StatusPage(_sup, _hostPower);
                 case "人设": return new PersonaPage(_sup);
                 case "表情包": return new StickerPage(_sup);
                 case "语音发送": return new VoiceSendPage(_sup);

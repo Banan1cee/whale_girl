@@ -2,6 +2,14 @@
 """Bridge runtime mixin: SenderMixin."""
 import engine as G
 
+# 拍一拍的硬预算（BUGS #127）。拍不到就放弃，绝不能把可能卡住的原生界面调用
+# 塞进全局发送锁：拍一拍曾经在「当前会话里没有可右键的对方消息行」时，
+# 把 send_lock 永久占住，导致所有会话都不再回话。
+PAT_PROBE_BUDGET = 3.5     # 秒：只读探测（找消息列表 / 翻屏找对方行）的总时限
+PAT_LOCK_WAIT = 2.0        # 秒：等发送锁的上限；等不到就不拍，不排进发送队列
+PAT_TOTAL_BUDGET = 9.0     # 秒：整次拍一拍（探测 + 右键点菜单）的硬截止
+PAT_FAIL_BACKOFF = 20.0    # 秒：失败后同一会话的退避，避免连续触发重活
+
 
 class SenderMixin:
 
@@ -522,7 +530,10 @@ class SenderMixin:
             G.log_warn('拍一拍失败：消息区截不到图', repr(exc))
             return None
         try:
-            quant = (arr // 8).reshape(-1, 3)
+            # 背景色取「出现最多的颜色」。整屏消息区上百万像素，np.unique(axis=0)
+            # 要排序，实测在 4K 窗口上能到数秒；隔行隔列采样估计背景色即可，
+            # 拿到背景后仍然按全分辨率做列投影，判行精度不受影响。
+            quant = (arr[::2, ::2] // 8).reshape(-1, 3)
             values, counts = np.unique(quant, axis=0, return_counts=True)
             background = values[int(counts.argmax())] * 8 + 4
             mask = (np.abs(arr.astype(int) - background.astype(int)).max(axis=2) > 24)
@@ -707,30 +718,143 @@ class SenderMixin:
             G.log_warn('拍一拍抢前台异常：', repr(exc))
             return False
 
-    def _pat_scroll_for_friend_row(self, u, rhythm):
-        """当前视口只有自己的消息时，往上翻两屏再找对方消息行。"""
-        lst = self._pat_message_list(u)
-        for _ in range(2):
-            if lst is None:
-                return None
-            try:
-                lst.WheelUp(ratioX=0.5, ratioY=0.5, wheelTimes=3)
-            except Exception:
-                return None
-            rhythm.nap(0.6)
-            row = self._pat_friend_row(u)
-            if row is not None:
-                return row
-        return None
+    def _pat_scroll_for_friend_row(self, u, rhythm=None):
+        """当前视口只有自己的消息时，往上翻一屏再找对方消息行。
 
-    def _uia_poke(self, u, who):
+        只翻一屏：翻得越多，越容易把微信界面留在历史里，而且每翻一次都要
+        重新截屏统计。拍不到就不拍，比反复翻屏更重要（BUGS #127）。
+        """
+        lst = self._pat_message_list(u)
+        if lst is None:
+            return None
+        try:
+            lst.WheelUp(ratioX=0.5, ratioY=0.5, wheelTimes=3)
+        except Exception:
+            return None
+        if rhythm is not None:
+            rhythm.nap(0.6)
+        else:
+            G.time.sleep(0.6)
+        return self._pat_friend_row(u)
+
+    @staticmethod
+    def _pat_expired(deadline):
+        """拍一拍是否已经超过硬截止时间。"""
+        import time as _time
+        return deadline is not None and _time.monotonic() >= deadline
+
+    def _pat_note_skip(self, key, target, reason, backoff=True):
+        """记一次「这次不拍」；确实失败了才退避，忙碌类跳过不记罚。"""
+        import time as _time
+        if backoff:
+            fails = getattr(self, 'PAT_FAIL', None)
+            if fails is None:
+                fails = self.PAT_FAIL = {}
+            fails[key] = _time.monotonic()
+        G.log('拍一拍跳过（原因=%s）：%s' % (reason or 'unknown', G.safe_name(target)))
+        G.log('[delivery] stage=pat result=skipped reason=%s target=%s'
+              % (reason or 'unknown', G.safe_name(target)))
+
+    def _pat_probe_row(self, resolved, keys, deadline):
+        """只读探测：当前会话里有没有可右键的对方消息行。
+
+        这里只读控件树 / 截屏 / 最多翻一屏，**不碰键盘鼠标、不右键**，所以放在
+        后台线程里限时跑（见 ``_pat_probe_bounded``）：上游原生界面调用没有超时，
+        卡住也只丢掉这一条拍一拍，拖不住消息 worker，更不会占着 send_lock。
+        """
+        try:
+            from wechatauto import rhythm
+        except Exception:
+            rhythm = None
+        gui = getattr(self, 'gui', None)
+        if gui is None:
+            # 建驱动真机要 5~10 秒，放到探测里做，不占发送锁。
+            try:
+                got = self.gui_lock.acquire(timeout=1.0)
+            except Exception:
+                got = False
+            if not got:
+                return None, None, 'gui_busy'
+            try:
+                if getattr(self, 'gui', None) is None:
+                    G.log('初始化微信窗口驱动…（拍一拍探测，不占发送队列）')
+                    self.gui = self.new_window_driver()
+                gui = self.gui
+            finally:
+                self.gui_lock.release()
+        self.bind_gui_window(gui)
+        u = gui._get_uia()
+        if u is None:
+            return None, None, 'uia_unavailable'
+        try:
+            cur = u.current_chat() or ''
+        except Exception:
+            cur = ''
+        if cur not in keys:
+            # 切会话会改动微信界面：发送正在进行时不做，免得两边抢同一个窗口。
+            if self.send_lock.locked():
+                return None, None, 'send_busy'
+            if not u.open_chat(keys[0]):
+                return None, None, 'chat_not_opened'
+            try:
+                cur = u.current_chat() or ''
+            except Exception:
+                cur = ''
+            if cur not in keys:
+                return None, None, 'chat_mismatch'
+        if not u.ensure_window():
+            return None, None, 'window_unavailable'
+        row = self._pat_friend_row(u)
+        scrolled = False
+        if row is None and not self._pat_expired(deadline):
+            row = self._pat_scroll_for_friend_row(u, rhythm)
+            scrolled = row is not None
+        if row is None:
+            return None, None, 'no_friend_row'
+        return u, (row, scrolled), ''
+
+    def _pat_probe_bounded(self, resolved, keys, deadline):
+        """在守护线程里跑探测，超时就放弃这一条。
+
+        为什么必须用线程：``uiautomation`` 的跨进程调用、``ImageGrab`` 都可能
+        卡在微信侧不返回，纯靠循环里检查 deadline 是拦不住的。探测只读、无副作用，
+        超时后即使线程还卡着也不会影响后续消息和发送。
+        """
+        import threading
+        import time as _time
+        th = getattr(self, '_pat_probe_thread', None)
+        if th is not None and th.is_alive():
+            return None, None, 'pat_busy'
+        box = {}
+
+        def work():
+            try:
+                box['u'], box['probe'], box['reason'] = self._pat_probe_row(resolved, keys, deadline)
+            except BaseException as exc:                      # noqa: BLE001
+                box['error'] = exc
+
+        th = threading.Thread(target=work, daemon=True, name='whale-pat-probe')
+        self._pat_probe_thread = th
+        th.start()
+        th.join(max(0.2, min(PAT_PROBE_BUDGET, deadline - _time.monotonic())))
+        if th.is_alive():
+            return None, None, 'probe_timeout'
+        if 'error' in box:
+            G.log_warn('拍一拍探测异常：', repr(box['error']))
+            return None, None, 'probe_error'
+        return box.get('u'), box.get('probe'), box.get('reason') or ''
+
+    def _pat_click_row(self, u, row, who, deadline, scrolled=False):
         """右键对方头像 → 找到菜单窗 → OCR 点「拍一拍」。
 
         为什么不用 wechatauto 的 ``u.poke``：它把整屏丢给 Windows OCR，
-        暗色主题下「拍一拍」三个字经常认不出来；而且在 4.1.8 上它依赖的
+        暗色主题下「拍一拍」三个字经常认不出来；而且它依赖的
         ``_find_friend_row`` 找不到暗色主题里的对方消息行。
-        这里：自己判断对方行（按背景色 + 左右内容量），右键后按「新出现的
-        顶层小窗」锁定菜单矩形，只 OCR 菜单本身，2 倍/3 倍各试一次。
+        这里：对方行已经由探测给出（按背景色 + 左右内容量判断），右键后按
+        「新出现的顶层小窗」锁定菜单矩形，只 OCR 菜单本身，2 倍/3 倍各试一次。
+
+        调用方必须已经拿到 ``send_lock`` 并核对过会话；这里每一步都看 deadline，
+        超时就放弃，不会把发送锁一直占下去（BUGS #127）。
         """
         try:
             from wechatauto import rhythm
@@ -738,33 +862,19 @@ class SenderMixin:
         except Exception as exc:
             G.log_warn('拍一拍失败：UIA/节奏依赖不可用', repr(exc))
             return False
-        if not self._pat_ensure_foreground():
-            G.log('拍一拍失败：微信没能抢到前台，这次不右键（避免点到别的窗口）')
-            return False
         try:
-            if not u.ensure_window():
-                G.log('拍一拍失败：微信窗口不可用')
+            if self._pat_expired(deadline):
+                G.log('拍一拍超时（右键前），放弃本次')
                 return False
-        except Exception as exc:
-            G.log_warn('拍一拍失败：ensure_window 异常', repr(exc))
-            return False
-        scrolled = False
-        try:
-            row = self._pat_friend_row(u)
-            if row is None:
-                row = self._pat_scroll_for_friend_row(u, rhythm)
-                scrolled = row is not None
-            if row is None:
-                # wechatauto 自己的判定也试一次（亮色主题下它更准）
-                try:
-                    ctl = u._find_friend_row()
-                    if ctl is not None:
-                        rr = ctl.BoundingRectangle
-                        row = (rr.left, rr.top, rr.right, rr.bottom)
-                except Exception:
-                    row = None
-            if row is None:
-                G.log('拍一拍失败：当前会话里没有可右键的对方消息')
+            if not self._pat_ensure_foreground():
+                G.log('拍一拍失败：微信没能抢到前台，这次不右键（避免点到别的窗口）')
+                return False
+            try:
+                if not u.ensure_window():
+                    G.log('拍一拍失败：微信窗口不可用')
+                    return False
+            except Exception as exc:
+                G.log_warn('拍一拍失败：ensure_window 异常', repr(exc))
                 return False
             left, top, right, bottom = row
             try:
@@ -776,6 +886,9 @@ class SenderMixin:
             ax = int(left + 56)
             ay = int(min(bottom - 15, top + 40))
             for attempt in range(2):
+                if self._pat_expired(deadline):
+                    G.log('拍一拍超时（第 %d 次右键前），放弃本次' % (attempt + 1))
+                    return False
                 try:
                     before = self._pat_popup_set(hwnd) if hwnd else set()
                     u._set_cursor(ax, ay)
@@ -800,7 +913,7 @@ class SenderMixin:
         finally:
             if scrolled:
                 try:
-                    u.scroll_message_list_to_bottom(max_rounds=8)
+                    u.scroll_message_list_to_bottom(max_rounds=3)
                 except Exception:
                     pass
 
@@ -816,21 +929,60 @@ class SenderMixin:
         except Exception:
             pass
 
-    def send_pat(self, chat_display_name, chat_username=''):
-        """在微信里对当前会话的对方发起「拍一拍」（右键头像 → 拍一拍菜单）。
+    def send_pat(self, chat_display_name, chat_username='', pat_id=''):
+        """在微信里对当前会话的对方发起「拍一拍」，并把结果回执给内核。
 
         拍一拍不是消息：它不经过输入框和发送按钮，走 wechatauto 的
         「右键对方消息头像 + OCR 找拍一拍菜单」。失败只记日志，不补发文字，
         避免把「没拍到」伪装成「拍到了」。
+
+        两条硬约束（BUGS #127）：拍不到就跳过，绝不让它拖住别的消息。
+          1. 找行这种只读探测放在守护线程里、带硬截止；上游原生界面调用
+             一旦卡住，只丢这一条拍一拍，不占消息 worker；
+          2. 右键点菜单这种必须串行的动作才进 ``send_lock``，等锁有上限、
+             进锁后每一步都看截止时间，不会再让全局发送锁被永久占住。
+
+        无论拍没拍到，只要内核给了回执单号（``patId``）就回一条
+        ``POST /api/pat/ack``：内核据此落账每小时额度、并把结果记进动作账本，
+        下一轮她才知道自己到底拍没拍到（BUGS #128）。
         """
+        ok = False
+        reason = 'unknown'
+        try:
+            ok, reason = self._send_pat_impl(chat_display_name, chat_username)
+        except Exception as exc:
+            reason = 'exception'
+            G.log_warn('拍一拍异常（不影响正文回复）：', repr(exc))
+        if pat_id:
+            self.notify_pat_result(chat_username or chat_display_name, pat_id, ok, reason)
+        return bool(ok)
+
+    def notify_pat_result(self, chat_username, pat_id, ok, reason):
+        """把拍一拍结果回执给内核（best-effort：回执失败只记日志，不影响回复）。"""
+        try:
+            base = self.bot_url.rsplit('/webhook', 1)[0]
+            headers = {'x-whale-bridge': '1'}
+            if self.token:
+                headers['x-bot-token'] = self.token
+            G.LOCAL_HTTP.post(base + '/api/pat/ack', headers=headers,
+                              json={'chatId': str(chat_username or ''),
+                                    'patId': str(pat_id or ''),
+                                    'ok': bool(ok),
+                                    'reason': str(reason or '')[:60]},
+                              timeout=3)
+        except Exception as exc:
+            G.log_warn('拍一拍回执没送到内核（不影响回复）：', repr(exc))
+
+    def _send_pat_impl(self, chat_display_name, chat_username=''):
+        """拍一拍的实际执行体；返回 (是否拍到, 原因码)。"""
         import time as _time
         target = str(chat_display_name or '').strip()
         key = str(chat_username or target or '').strip()
         if not key or not target:
-            return False
+            return False, 'no_target'
         if not self._pat_feature_on():
             G.log('拍一拍功能已关闭，跳过发送：', G.safe_name(target))
-            return False
+            return False, 'feature_off'
         pat_last = getattr(self, 'PAT_LAST', None)
         if pat_last is None:
             pat_last = self.PAT_LAST = {}
@@ -846,74 +998,92 @@ class SenderMixin:
         cooldown = max(0.0, min(3600.0, cooldown))
         if cooldown > 0 and now - last < cooldown:
             G.log('拍一拍冷却中（%.0f 秒），跳过：%s' % (cooldown, G.safe_name(target)))
-            return False
+            return False, 'cooldown'
+        # 失败退避：拍不到时（当前会话没有可右键的对方行等）不要每条消息都把
+        # 截屏/翻屏/OCR 这套重活重来一遍。
+        pat_fail = getattr(self, 'PAT_FAIL', None)
+        if isinstance(pat_fail, dict):
+            fail_at = float(pat_fail.get(key) or 0.0)
+            if PAT_FAIL_BACKOFF > 0 and now - fail_at < PAT_FAIL_BACKOFF:
+                G.log_throttled('pat-fail-backoff:' + key,
+                                '拍一拍上次没拍成，%.0f 秒内不再重试：%s'
+                                % (PAT_FAIL_BACKOFF, G.safe_name(target)), ttl=30)
+                return False, 'fail_backoff'
         if chat_username and self.chat_paused(chat_username):
             G.log('跳过已失效的会话（拍一拍）：', G.safe_name(target))
-            return False
+            return False, 'chat_paused'
         if chat_username and self.is_self_chat(chat_username):
             G.log('拍一拍跳过：文件传输助手不支持拍一拍')
-            return False
+            return False, 'self_chat'
         if str(chat_username or '').lower().endswith('@chatroom'):
             # 群聊里右键只能拍到「当前可见的一条好友消息」的头像，无法保证是目标人；
             # 宁可不拍，也不要在群里拍错人。
             G.log('拍一拍跳过：群聊不主动拍（避免拍到别人）')
-            return False
+            return False, 'group_skip'
         resolved = self.ui_chat_name(chat_username, target)
         if not resolved:
             G.log('拍一拍跳过：会话名不可用：', G.safe_id(chat_username or target))
-            return False
+            return False, 'name_unresolved'
         if not self.account_send_allowed('拍一拍'):
-            return False
-        with self.send_lock:
+            return False, 'account_denied'
+        keys = [str(k).strip() for k in (self.aliases_for(chat_username, resolved) or [resolved])
+                if str(k or '').strip()]
+        if not keys:
+            keys = [str(resolved)]
+        deadline = now + PAT_TOTAL_BUDGET
+        # 第一段：只读探测，带硬截止，跑在守护线程里 —— 没有对方消息行、或上游
+        # 原生调用卡住，都只丢掉这一条拍一拍，不动 send_lock、不挡别的消息。
+        u, probe, reason = self._pat_probe_bounded(resolved, keys, deadline)
+        if not probe:
+            reason = reason or 'no_friend_row'
+            self._pat_note_skip(key, resolved, reason,
+                                backoff=reason not in ('send_busy', 'pat_busy', 'gui_busy'))
+            return False, reason
+        row, scrolled = probe
+        # 第二段：右键 + 点菜单必须和其它发送串行，但这只该是几十毫秒的动作。
+        # 等锁有上限，进锁后每一步都看截止时间；等不到就放弃，不排进发送队列。
+        if not self.send_lock.acquire(timeout=PAT_LOCK_WAIT):
+            self._pat_note_skip(key, resolved, 'send_busy', backoff=False)
+            return False, 'send_busy'
+        ok = False
+        fail_reason = 'click_failed'
+        try:
             if (not self.account_send_allowed('拍一拍复核')
                     or not self.send_policy_allows(chat_username, resolved)):
-                return False
+                self._pat_note_skip(key, resolved, 'policy_denied', backoff=False)
+                return False, 'policy_denied'
+            self._require_chat_identity(u, resolved, keys, '拍一拍')
+            # 拍一拍靠右键头像 + 菜单 OCR，必须让微信真的在前台；
+            # 抢前台由 _pat_click_row 自己做（前台锁下更可靠），抢不到就不右键。
             try:
-                with self.gui_lock:
-                    if self.gui is None:
-                        G.log('初始化微信窗口驱动…（拍一拍会抢一下焦点，约 5~10 秒）')
-                        self.gui = self.new_window_driver()
-                    gui = self.gui
-                self.bind_gui_window(gui)
-                u = gui._get_uia()
-                if u is None:
-                    G.log('拍一拍失败：UIA 不可用')
-                    return False
-                keys = self.aliases_for(chat_username, resolved) or [resolved]
-                cur = ''
-                try:
-                    cur = u.current_chat() or ''
-                except Exception:
-                    cur = ''
-                if cur not in keys:
-                    if not u.open_chat(keys):
-                        G.log('拍一拍失败：打不开会话', G.safe_name(resolved))
-                        return False
-                    cur = u.current_chat() or ''
-                self._require_chat_identity(u, resolved, keys, '拍一拍')
-                # 拍一拍靠右键头像 + 菜单 OCR，必须让微信真的在前台；
-                # 抢前台由 _uia_poke 自己做（前台锁下更可靠），抢不到就不右键。
-                try:
-                    ok = bool(self.with_window_on_top(lambda: self._uia_poke(u, resolved),
-                                                      require_foreground=False))
-                finally:
-                    self._pat_drop_topmost()
-                if ok:
-                    pat_last[key] = _time.monotonic()
-                    sent_at = getattr(self, 'PAT_SENT', None)
-                    if sent_at is None:
-                        sent_at = self.PAT_SENT = {}
-                    sent_at[key] = _time.time()
-                    G.log('[delivery] stage=pat result=sent target=%s' % G.safe_name(resolved))
-                else:
-                    G.log('[delivery] stage=pat result=failed reason=no_friend_row_or_menu target=%s'
-                          % G.safe_name(resolved))
-                return ok
-            except G.ChatIdentityError as exc:
-                G.log_error('拍一拍会话核对没通过：%s' % exc)
-            except Exception as exc:
-                G.log_warn('拍一拍异常：', repr(exc))
-        return False
+                ok = bool(self.with_window_on_top(
+                    lambda: self._pat_click_row(u, row, resolved, deadline, scrolled),
+                    require_foreground=False))
+            finally:
+                self._pat_drop_topmost()
+        except G.ChatIdentityError as exc:
+            G.log_error('拍一拍会话核对没通过：%s' % exc)
+            ok = False
+            fail_reason = 'identity_mismatch'
+        except Exception as exc:
+            G.log_warn('拍一拍异常：', repr(exc))
+            ok = False
+            fail_reason = 'exception'
+        finally:
+            self.send_lock.release()
+        if ok:
+            pat_last[key] = _time.monotonic()
+            fails = getattr(self, 'PAT_FAIL', None)
+            if isinstance(fails, dict):
+                fails.pop(key, None)
+            sent_at = getattr(self, 'PAT_SENT', None)
+            if sent_at is None:
+                sent_at = self.PAT_SENT = {}
+            sent_at[key] = _time.time()
+            G.log('[delivery] stage=pat result=sent target=%s' % G.safe_name(resolved))
+            return True, 'sent'
+        self._pat_note_skip(key, resolved, fail_reason)
+        return False, fail_reason
 
     def send_text(self, text, chat_display_name, chat_username='', force=False):
         from send_attempt import logical_operation, prepared_adapter, bind_runtime_identity

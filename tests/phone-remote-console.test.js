@@ -365,3 +365,158 @@ test('配对、数据白名单、指定操作和内核离线', async t => {
     }
   });
 });
+
+test('主机状态卡与主机操作', async t => {
+  const token = randomBytes(24).toString('hex');
+  const upstream = http.createServer((req, res) => {
+    const payload = req.url === '/api/status'
+      ? { ok: true, name: '鲸鲸', version: '4.1.8.2', uptimeSec: 60,
+        gateways: [{ platform: 'wechat', bridge: { online: true, uia: true } }] }
+      : { ok: false };
+    res.writeHead(req.url === '/api/status' ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(payload));
+  });
+  await start(upstream);
+  t.after(() => upstream.listening && stop(upstream));
+  const hostState = { locked: true, inputDesktop: 'Default', logonUI: false, foreground: 'explorer',
+    idleSeconds: 125, sessionId: 1, keepAwake: 'system', remoteProcessLaunch: false, autoStart: false,
+    processLaunchAllowed: true, hostname: 'fixture-pc', uptimeSeconds: 3600,
+    isLaptop: false, displayOffBlocked: false, displayOffBlockedReason: '', displayControl: false };
+  const commands = [];
+  let launcherDown = false;
+  const consoleServer = createConsole({
+    token, whalePort: upstream.address().port,
+    controlLauncher: async (action, payload) => {
+      if (launcherDown) throw new Error('无法连接电脑上的鲸鲸启动器，请确认它已打开。');
+      commands.push([action, payload]);
+      if (action === 'host-state') return { ok: true, data: { ...hostState } };
+      if (action === 'host-keep-awake') { hostState.keepAwake = payload.mode; return { ok: true, data: { mode: payload.mode } }; }
+      if (action === 'host-wake-display') return { ok: true, message: '已点亮屏幕。' };
+      if (action === 'host-display-off') {
+        // 笔记本 / 没开「允许远程开关屏幕」/ 关屏锁定策略下启动器会拒绝，控制台要把话术原样透传成 409。
+        if (hostState.displayOffBlocked) return { ok: false, error: hostState.displayOffBlockedReason };
+        if (!hostState.displayControl) return { ok: false, error: '远程开关屏幕未开启：请先在「主机」里勾选「允许远程开关屏幕」。' };
+        return { ok: true, message: '已发送关屏指令。' };
+      }
+      if (action === 'host-config') {
+        if (typeof payload.remoteProcessLaunch === 'boolean') hostState.remoteProcessLaunch = payload.remoteProcessLaunch;
+        if (typeof payload.autoStart === 'boolean') hostState.autoStart = payload.autoStart;
+        if (typeof payload.displayControl === 'boolean') hostState.displayControl = payload.displayControl;
+        return { ok: true, data: { remoteProcessLaunch: hostState.remoteProcessLaunch, autoStart: hostState.autoStart, displayControl: hostState.displayControl } };
+      }
+      return { ok: false, error: '未知操作。' };
+    },
+  });
+  const consoleUrl = await start(consoleServer);
+  t.after(() => stop(consoleServer));
+
+  const auth = { Authorization: 'Bearer ' + token };
+  const get = (url, headers = auth) => fetch(consoleUrl + url, { headers });
+  const post = (url, data, headers = auth) => fetch(consoleUrl + url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(data),
+  });
+
+  await t.test('主机状态需要配对，且把启动器数据与内核状态合并返回', async () => {
+    assert.equal((await get('/console/host', {})).status, 401);
+    const response = await get('/console/host');
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.data.locked, true);
+    assert.equal(body.data.keepAwake, 'system');
+    assert.equal(body.data.hostname, 'fixture-pc');
+    assert.equal(body.data.kernelRunning, true);
+    assert.equal(body.data.bridgeOnline, true);
+    assert.equal(body.data.isLaptop, false);
+    assert.equal(body.data.displayOffBlocked, false);
+    assert.equal(body.data.displayControl, false);
+    // host-* 只在带参的主机端点使用，不能从只传一个 action 的 /console/control 混进来。
+    assert.equal((await post('/console/control', { action: 'host-state' })).status, 400);
+  });
+
+  await t.test('没开「允许远程开关屏幕」时关屏被拒绝', async () => {
+    const response = await post('/console/host-command', { action: 'display-off' });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error,
+      '远程开关屏幕未开启：请先在「主机」里勾选「允许远程开关屏幕」。');
+    // 开关本身可以通过 host-config 打开，打开后关屏才放行。
+    const enabled = await post('/console/host-command', { action: 'display-control', value: true, confirm: true });
+    assert.equal(enabled.status, 200);
+    assert.ok(commands.some(([action, payload]) => action === 'host-config' && payload.displayControl === true));
+    assert.equal((await post('/console/host-command', { action: 'display-off' })).status, 200);
+    hostState.displayControl = false;
+  });
+
+  await t.test('笔记本上远程关屏被拒绝并给出原因', async () => {
+    const reason = '笔记本上远程关屏通常等同进入待机，唤醒要重新登录（会看起来像锁屏），已禁用。';
+    hostState.isLaptop = true;
+    hostState.displayOffBlocked = true;
+    hostState.displayOffBlockedReason = reason;
+    try {
+      const state = await (await get('/console/host')).json();
+      assert.equal(state.data.isLaptop, true);
+      assert.equal(state.data.displayOffBlocked, true);
+      assert.equal(state.data.displayOffBlockedReason, reason);
+      const response = await post('/console/host-command', { action: 'display-off' });
+      assert.equal(response.status, 409);
+      assert.equal((await response.json()).error, reason);
+    } finally {
+      hostState.isLaptop = false;
+      hostState.displayOffBlocked = false;
+      hostState.displayOffBlockedReason = '';
+      hostState.displayControl = false;
+    }
+  });
+
+  await t.test('主机操作拒绝未知动作、缺少确认和非布尔开关值', async () => {
+    assert.equal((await post('/console/host-command', { action: 'shutdown' })).status, 400);
+    const missing = await post('/console/host-command', { action: 'keep-awake', value: 'system' });
+    assert.equal(missing.status, 400);
+    assert.equal((await missing.json()).error, '这个操作需要二次确认。');
+    assert.equal((await post('/console/host-command', { action: 'keep-awake', value: 'always', confirm: true })).status, 400);
+    assert.equal((await post('/console/host-command', { action: 'remote-process-launch', value: 'yes', confirm: true })).status, 400);
+    assert.equal((await post('/console/host-command', { action: 'auto-start', value: 1, confirm: true })).status, 400);
+    assert.equal((await post('/console/host-command', { action: 'keep-awake', value: 'system' }, {})).status, 401);
+  });
+
+  await t.test('保活、点亮/关闭屏幕和两个开关映射到启动器动作', async () => {
+    let response = await post('/console/host-command', { action: 'keep-awake', value: 'display', confirm: true });
+    assert.equal(response.status, 200);
+    assert.ok(commands.some(([action, payload]) => action === 'host-keep-awake' && payload.mode === 'display'));
+    // 远程开关屏幕是独立开关，没打开时启动器会拒绝亮屏/关屏。
+    response = await post('/console/host-command', { action: 'display-control', value: true, confirm: true });
+    assert.equal(response.status, 200);
+    response = await post('/console/host-command', { action: 'wake-display' });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).message, '已点亮屏幕。');
+    // 关屏不需要二次确认，但必须真的转发到启动器。
+    response = await post('/console/host-command', { action: 'display-off' });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).message, '已发送关屏指令。');
+    assert.ok(commands.some(([action]) => action === 'host-display-off'));
+    response = await post('/console/host-command', { action: 'remote-process-launch', value: true, confirm: true });
+    assert.equal(response.status, 200);
+    assert.ok(commands.some(([action, payload]) => action === 'host-config' && payload.remoteProcessLaunch === true));
+    response = await post('/console/host-command', { action: 'auto-start', value: true, confirm: true });
+    assert.equal(response.status, 200);
+    assert.ok(commands.some(([action, payload]) => action === 'host-config' && payload.autoStart === true));
+    const hostAfter = (await (await get('/console/host')).json()).data;
+    assert.equal(hostAfter.keepAwake, 'display');
+    assert.equal(hostAfter.remoteProcessLaunch, true);
+    assert.equal(hostAfter.autoStart, true);
+  });
+
+  await t.test('启动器不可用时主机状态与命令都返回 503', async () => {
+    launcherDown = true;
+    try {
+      const response = await get('/console/host');
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).error, '启动器未运行，主机状态不可用。');
+      assert.equal((await post('/console/host-command', { action: 'wake-display' })).status, 503);
+    } finally {
+      launcherDown = false;
+    }
+  });
+});

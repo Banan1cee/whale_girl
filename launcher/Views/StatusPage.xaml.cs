@@ -23,6 +23,7 @@ namespace WhaleLauncher.Views
     public partial class StatusPage : UserControl, IRefreshable
     {
         private readonly RuntimeSupervisor _sup;
+        private readonly HostPower _host;
 
         private DateTime _lastCare = DateTime.MinValue;
         private RuntimeSupervisor.CareState _care;
@@ -30,12 +31,15 @@ namespace WhaleLauncher.Views
         private bool _recentBusy;
         private string _recentJson = "";
         private Snapshot _status = new Snapshot();
+        // 刷新会按真实值回写控件；控件事件再触发保存就会互相打架，用它隔开。
+        private bool _hostSyncing;
 
-        public StatusPage(RuntimeSupervisor sup)
+        public StatusPage(RuntimeSupervisor sup, HostPower host)
         {
             InitializeComponent();
             SmoothScroll.Attach(Recent);
             _sup = sup;
+            _host = host;
             _recentTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _recentTimer.Tick += async (_, __) => await PollRecentAsync();
             Loaded += async (_, __) => { _recentTimer.Start(); await PollRecentAsync(); };
@@ -48,6 +52,8 @@ namespace WhaleLauncher.Views
             var s = await _sup.ProbeAsync();
             _status = s;
             Apply(s);
+            // 状态页本来就每 2 秒刷一次，主机状态跟着这条节奏走，不再另开定时器。
+            SyncHost(_host.ReadStatus());
 
             if ((DateTime.Now - _lastCare).TotalSeconds >= 30)
             {
@@ -208,6 +214,113 @@ namespace WhaleLauncher.Views
             if (t.TotalHours >= 1) return $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}";
             if (t.TotalMinutes >= 1) return $"{t.Minutes} 分";
             return $"{t.Seconds} 秒";
+        }
+
+        // ── 主机：会话 / 保活 / 远程操作权限 ────────────────────
+        private void SyncHost(HostPower.HostStatus h)
+        {
+            _hostSyncing = true;
+            try
+            {
+                HostLine.Text = "会话 " + (h.Locked ? "已锁屏" : "已登录")
+                    + "   ·   输入桌面 " + (string.IsNullOrEmpty(h.InputDesktop) ? "—" : h.InputDesktop)
+                    + "   ·   空闲 " + (h.IdleSeconds < 0 ? "—" : Short(h.IdleSeconds));
+                HostLine.ToolTip = "用户 " + h.UserName + " · 主机 " + h.Hostname
+                    + " · 会话 " + h.SessionId + " · 启动器已运行 " + Short(h.UptimeSeconds);
+                HostConfigLine.Text = "保活 " + ModeLabel(h.KeepAwake)
+                    + "   ·   开机自启 " + (h.AutoStart ? "已开" : "已关")
+                    + "   ·   手机启动内核 " + (h.RemoteProcessLaunch ? "允许" : "不允许");
+                HostKeepAwake.SelectedIndex = ModeIndex(h.KeepAwake);
+                ChkRemoteProcess.IsChecked = h.RemoteProcessLaunch;
+                ChkAutoStart.IsChecked = h.AutoStart;
+                ChkDisplayControl.IsChecked = h.DisplayControl;
+                // 笔记本上不提供远程开关屏幕，开关本身也不显示；台式机上打开开关才出现关屏按钮。
+                // 桌面端不提供「点亮屏幕」：人在电脑前，动鼠标/键盘更直接，按钮只会让人误以为是坏的。
+                ChkDisplayControl.Visibility = h.IsLaptop ? Visibility.Collapsed : Visibility.Visible;
+                BtnDisplayOff.Visibility = !h.IsLaptop && h.DisplayControl ? Visibility.Visible : Visibility.Collapsed;
+                BtnDisplayOff.IsEnabled = !h.DisplayOffBlocked;
+                BtnDisplayOff.ToolTip = h.DisplayOffBlocked ? h.DisplayOffBlockedReason : "关闭显示器（不锁屏）";
+            }
+            finally
+            {
+                _hostSyncing = false;
+            }
+        }
+
+        private static string ModeLabel(string mode) => mode switch
+        {
+            "system" => "防睡眠",
+            "display" => "防关屏",
+            _ => "关",
+        };
+
+        private static int ModeIndex(string mode) => mode switch
+        {
+            "system" => 1,
+            "display" => 2,
+            _ => 0,
+        };
+
+        private static string ModeValue(int index) => index switch
+        {
+            1 => "system",
+            2 => "display",
+            _ => "off",
+        };
+
+        private void OnHostKeepAwakeChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_hostSyncing) return;
+            var error = _host.TrySetKeepAwake(ModeValue(HostKeepAwake.SelectedIndex));
+            if (error != null) AppDialog.Show(Window.GetWindow(this), error, "主机");
+            SyncHost(_host.ReadStatus());
+        }
+
+        private void OnRemoteProcessChanged(object sender, RoutedEventArgs e)
+        {
+            if (_hostSyncing) return;
+            var error = _host.TrySetRemoteProcessLaunch(ChkRemoteProcess.IsChecked == true);
+            if (error != null) AppDialog.Show(Window.GetWindow(this), error, "主机");
+            SyncHost(_host.ReadStatus());
+        }
+
+        private void OnAutoStartChanged(object sender, RoutedEventArgs e)
+        {
+            if (_hostSyncing) return;
+            var error = _host.TrySetAutoStart(ChkAutoStart.IsChecked == true);
+            if (error != null) AppDialog.Show(Window.GetWindow(this), error, "主机");
+            SyncHost(_host.ReadStatus());
+        }
+
+        private void OnDisplayControlChanged(object sender, RoutedEventArgs e)
+        {
+            if (_hostSyncing) return;
+            var error = _host.TrySetDisplayControl(ChkDisplayControl.IsChecked == true);
+            if (error != null) AppDialog.Show(Window.GetWindow(this), error, "主机");
+            SyncHost(_host.ReadStatus());
+        }
+
+        // 关屏和锁屏是两件事：这里只关显示器，会话保持登录；是否会被强制锁屏取决于系统策略。
+        // 桌面端不提供「点亮屏幕」——人在电脑前动鼠标/键盘更直接，按钮反而像坏的。
+        private void OnDisplayOff(object sender, RoutedEventArgs e)
+        {
+            var result = _host.RequestDisplayOff();
+            if (result != null) AppDialog.Show(Window.GetWindow(this), result, "主机");
+        }
+
+        // 教程还没发布，先用官网首页锚点；官网上线教程后只改这一处。
+        private const string HostHelpUrl = "https://bot.zyyc.cc/#phone-control";
+
+        private void OnHostHelp(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(HostHelpUrl) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                AppDialog.Show(Window.GetWindow(this), "打开教程失败：" + ex.Message, "主机");
+            }
         }
 
         // ── 动作 ────────────────────────────────────────────────

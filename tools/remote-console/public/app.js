@@ -25,6 +25,9 @@ let token = '';
 let snapshot = null;
 let busy = false;
 let lastPresetList = '';
+// 主机卡片数据独立于 /console/status：启动器没开时状态页其余部分仍要能刷新。
+let host = null;
+let hostError = '';
 
 function storedToken(value) {
   for (const kind of ['localStorage', 'sessionStorage']) {
@@ -73,6 +76,91 @@ function elapsed(seconds) {
   return minutes ? minutes + ' 分 ' + (seconds % 60) + ' 秒' : seconds + ' 秒';
 }
 
+function hostStateLabel(data) {
+  // 只看 locked：LogonUI 进程在部分机器上解锁后仍常驻，不能拿它当锁屏判据。
+  return data.locked ? '🔒 已锁屏' : '已登录';
+}
+
+function renderHost() {
+  const offline = byId('host-offline');
+  const panel = byId('host-panel');
+  offline.textContent = hostError;
+  offline.hidden = !hostError;
+  // 卡片常驻：启动器没开时按钮也留在原地（render 里统一置灰），否则用户会以为
+  // 「功能没了」，也分不清是没刷新还是压根没打开启动器。
+  panel.hidden = false;
+  if (!host) {
+    byId('host-state').textContent = '—';
+    byId('host-desktop').textContent = '—';
+    byId('host-idle').textContent = '—';
+    byId('host-kernel').textContent = '—';
+    byId('host-keep-awake-state').textContent = '—';
+    byId('host-auto-start-state').textContent = '—';
+    byId('host-remote-launch-state').textContent = '—';
+    byId('host-locked').hidden = true;
+    byId('host-hint').hidden = true;
+    byId('host-display-hint').hidden = true;
+    return;
+  }
+  byId('host-state').textContent = hostStateLabel(host);
+  byId('host-desktop').textContent = host.inputDesktop || '—';
+  byId('host-idle').textContent = elapsed(host.idleSeconds);
+  byId('host-kernel').textContent = host.kernelRunning
+    ? (host.bridgeOnline ? '内核运行中 · 桥接在线' : '内核运行中 · 桥接离线') : '内核已停止';
+  // 锁屏提示只在真的锁屏时出现；玩家可以忽略，但截图类功能确实会失效。
+  byId('host-locked').hidden = !host.locked;
+  const keepAwakeLabel = { off: '关（允许睡眠）', system: '防睡眠', display: '防关屏' };
+  byId('host-keep-awake-state').textContent = keepAwakeLabel[host.keepAwake] || keepAwakeLabel.off;
+  byId('host-auto-start-state').textContent = host.autoStart ? '开' : '关';
+  byId('host-remote-launch-state').textContent = host.remoteProcessLaunch ? '开' : '关';
+  byId('host-keep-awake').value = ['off', 'system', 'display'].includes(host.keepAwake) ? host.keepAwake : 'off';
+  byId('host-remote-launch').checked = host.remoteProcessLaunch === true;
+  byId('host-auto-start').checked = host.autoStart === true;
+  // 管理员模式下启动器默认拒绝启动内核；只有「允许手机启动内核」才放行，与后端判断保持一致。
+  byId('host-hint').hidden = !(host.processLaunchAllowed === false && host.remoteProcessLaunch !== true);
+  // 远程开关屏幕：笔记本没有这个能力（开关也不显示）；台式机打开开关后，桌面和手机才出现亮屏/关屏按钮。
+  const desktop = host.isLaptop !== true;
+  const displayControl = host.displayControl === true;
+  const showDisplay = desktop && displayControl;
+  byId('host-display-control').checked = displayControl;
+  byId('host-display-control-label').hidden = !desktop;
+  byId('host-wake-display').hidden = !showDisplay;
+  byId('host-display-off').hidden = !showDisplay;
+  byId('host-display-off').title = host.displayOffBlocked
+    ? (host.displayOffBlockedReason || '这台电脑不支持远程关屏。') : '关闭显示器（不锁屏）';
+  const displayNote = !desktop
+    ? '笔记本上不提供远程开关屏幕：关屏通常等同进入待机，唤醒要重新登录。'
+    : !displayControl ? '勾选「允许远程开关屏幕」后，电脑和手机才会出现亮屏/关屏按钮。'
+      : host.displayOffBlocked ? (host.displayOffBlockedReason || '') : '';
+  const displayHint = byId('host-display-hint');
+  displayHint.textContent = displayNote;
+  displayHint.hidden = !displayNote;
+}
+
+async function loadHost() {
+  try {
+    const result = await request(token, '/console/host');
+    host = result?.data || null;
+    hostError = host ? '' : '主机状态不可用。';
+  } catch (error) {
+    if (error.status === 401) throw error;
+    host = null;
+    hostError = error.message;
+  }
+  renderHost();
+  // 启动器刚打开时不该让用户等下一轮 20 秒；失败状态下 5 秒补一次，恢复后自然停。
+  if (hostError) scheduleHostRetry();
+}
+
+let hostRetryTimer = 0;
+function scheduleHostRetry() {
+  if (hostRetryTimer) return;
+  hostRetryTimer = setTimeout(() => {
+    hostRetryTimer = 0;
+    if (token && hostError) loadHost().catch(() => {});
+  }, 5000);
+}
+
 function render() {
   const paired = Boolean(token);
   login.hidden = paired;
@@ -93,6 +181,14 @@ function render() {
   for (const control of byId('page-summary').querySelectorAll('button, select, input, textarea')) {
     control.disabled = busy || control.dataset.unavailable === 'true';
   }
+  for (const control of document.querySelectorAll('#host-panel button, #host-panel select, #host-panel input')) {
+    control.disabled = busy || !host;
+  }
+  // 亮屏/关屏按钮只在「台式机 + 开关打开」时可用；不开关屏锁定策略的台式机才允许点关屏。
+  const hostDisplay = Boolean(host) && host.isLaptop !== true && host.displayControl === true;
+  byId('host-wake-display').disabled = busy || !hostDisplay;
+  byId('host-display-off').disabled = busy || !hostDisplay || host.displayOffBlocked === true;
+  byId('host-display-control').disabled = busy || !host || host.isLaptop === true;
   for (const button of nav.querySelectorAll('button')) button.disabled = busy;
   for (const control of editor.querySelectorAll('input, select, textarea, button')) control.disabled = busy || !editable;
   if (!paired) return;
@@ -137,7 +233,8 @@ function render() {
 function setSnapshot(value) {
   snapshot = value;
   byId('updated').textContent = value
-    ? '更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) : '尚未同步';
+    ? '更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) + ' · 每 20 秒自动刷新'
+    : '尚未同步 · 每 20 秒自动重试';
 }
 
 function lock(message = '') {
@@ -145,6 +242,9 @@ function lock(message = '') {
   storedToken('');
   pairingKey.value = '';
   setSnapshot(null);
+  host = null;
+  hostError = '';
+  renderHost();
   editor.replaceChildren();
   diagnosticLines = [];
   stickerCategory = '';
@@ -208,7 +308,9 @@ async function run(action, clearNotice = true) {
 function refresh(manual) {
   return run(async () => {
     try {
-      setSnapshot(await request(token, '/console/status'));
+      // 主机卡片与运行概览同一节奏刷新；主机失败只影响卡片本身，不拖垮整套状态。
+      const [state] = await Promise.all([request(token, '/console/status'), loadHost()]);
+      setSnapshot(state);
       if (byId('feedback').dataset.connectionError === 'true') notice();
       byId('feedback').dataset.connectionError = '';
     } catch (error) {
@@ -1101,6 +1203,54 @@ for (const button of document.querySelectorAll('[data-action]')) {
   }));
 }
 
+async function hostCommand(body, fallbackMessage) {
+  try {
+    const result = await request(token, '/console/host-command', body);
+    await loadHost();
+    notice(result.message || fallbackMessage);
+  } catch (error) {
+    // 失败时按电脑端真实状态回填，避免开关停在「点了但没生效」的位置。
+    await loadHost().catch(() => {});
+    throw error;
+  }
+}
+
+byId('host-keep-awake').addEventListener('change', () => run(() => {
+  const mode = byId('host-keep-awake').value;
+  const label = { off: '已关闭保活。', system: '已开启防睡眠。', display: '已开启防关屏。' }[mode];
+  return hostCommand({ action: 'keep-awake', value: mode, confirm: true }, label);
+}));
+
+byId('host-wake-display').addEventListener('click', () => run(async () => {
+  const result = await request(token, '/console/host-command', { action: 'wake-display' });
+  notice(result.message || '已点亮屏幕。');
+  await loadHost();
+}));
+
+// 关屏不是锁屏：只让显示器熄掉，会话仍在已登录状态；是否会被系统强制锁屏取决于电脑设置。
+byId('host-display-off').addEventListener('click', () => run(async () => {
+  const result = await request(token, '/console/host-command', { action: 'display-off' });
+  notice(result.message || '已发送关屏指令。');
+  await loadHost();
+}));
+
+byId('host-retry').addEventListener('click', () => run(async () => {
+  await loadHost();
+  notice(hostError ? '还是连不上启动器：请在电脑上确认鲸鲸启动器窗口没有关掉。' : '已重新读取主机状态。', Boolean(hostError));
+}));
+
+function bindHostToggle(id, action, question) {
+  const input = byId(id);
+  input.addEventListener('change', () => {
+    const enabled = input.checked;
+    if (!window.confirm(question)) { input.checked = !enabled; return; }
+    run(() => hostCommand({ action, value: enabled, confirm: true }, enabled ? '已开启。' : '已关闭。'));
+  });
+}
+bindHostToggle('host-remote-launch', 'remote-process-launch', '允许手机启动或重启电脑上的内核？');
+bindHostToggle('host-auto-start', 'auto-start', '更改鲸鲸的开机自启设置？');
+bindHostToggle('host-display-control', 'display-control', '允许从手机远程点亮或关闭电脑屏幕？');
+
 byId('pair-form').addEventListener('submit', event => {
   event.preventDefault();
   const key = pairingKey.value.trim();
@@ -1111,6 +1261,8 @@ byId('pair-form').addEventListener('submit', event => {
     storedToken(token);
     pairingKey.value = '';
     setSnapshot(result);
+    // 配对成功后立刻填主机卡片，不用等下一轮 20 秒刷新。
+    await loadHost().catch(() => {});
   });
 });
 
