@@ -13,6 +13,14 @@ void Reject(Action action, string name)
     catch (InvalidDataException) { return; }
     throw new Exception("预期拒绝：" + name);
 }
+// 同一个拒绝要有具体理由：否则别的规则先拒了，compat 用例照样变绿。
+void RejectBecause(Action action, string reason, string name)
+{
+    try { action(); }
+    catch (InvalidDataException error) when (error.Message.Contains(reason, StringComparison.Ordinal)) { return; }
+    catch (InvalidDataException error) { throw new Exception($"{name}：拒绝理由不符（{error.Message}）"); }
+    throw new Exception("预期拒绝：" + name);
+}
 byte[] Pack(byte[] manifest, string filename, byte[] payload)
 {
     using var output = new MemoryStream();
@@ -215,6 +223,60 @@ try
         market.Uninstall(id);
         Check(!File.Exists(wasmPath) && !File.Exists(entryPath), "卸载清除对应入口");
     }
+
+    // compat：合法值/等级/运行时/hook 只认注册表 manifest.compat 这一份策略（与 Node 运行时同一份）。
+    byte[] WithCompat(string text, string literal) => Encoding.UTF8.GetBytes(text[..^1] + ",\"compat\":" + literal + "}");
+    const string manifestReason = "统一插件清单无效";
+    var wasmLevel3 = Encoding.UTF8.GetString(Restricted(3, chat)).TrimEnd();
+    var compatZip = Pack(WithCompat(wasmLevel3, "\"api3\""), "plugin.wasm", wasm);
+    var compatInfo = PluginMarket.ReadPackage(compatZip).Info;
+    Check(compatInfo.Compat == "api3" && compatInfo.Level == 3 && compatInfo.Provides.ContainsKey("chat.reply@1"),
+        "compat api3 在 3 级 wasm-restricted 上被解析并保留");
+    // 旧信封只认识 compat.hooks 里的 provider：tool.run@1 不在其中，装成功也会在第一次派发时失败。
+    RejectBecause(() => PluginMarket.ReadPackage(Pack(
+            WithCompat(Encoding.UTF8.GetString(Restricted(3)).TrimEnd(), "\"api3\""), "plugin.wasm", wasm)),
+        manifestReason, "没有 api3 旧 hook 的 provider 不能声明 compat");
+    Check(PluginMarket.ReadPackage(Pack(Restricted(3), "plugin.wasm", wasm)).Info.Compat == null,
+        "3 级声明 tool.run@1 但不声明 compat 仍然合法");
+    foreach (var (literal, name) in new[] {
+        ("\"api4\"", "拒绝未登记的 compat 值"), ("\"API3\"", "compat 值区分大小写"), ("\"\"", "拒绝空 compat 值"),
+        ("1", "拒绝数字 compat"), ("[\"api3\"]", "拒绝数组 compat"), ("null", "拒绝 null compat"),
+        ("true", "拒绝布尔 compat") })
+        RejectBecause(() => PluginMarket.ReadPackage(Pack(WithCompat(wasmLevel3, literal), "plugin.wasm", wasm)),
+            manifestReason, name);
+    foreach (var level in new[] { 1, 2 })
+        RejectBecause(() => PluginMarket.ReadPackage(Pack(
+                WithCompat(Encoding.UTF8.GetString(Restricted(level)).TrimEnd(), "\"api3\""), "plugin.wasm", wasm)),
+            manifestReason, $"{level} 级不能声明 compat");
+    RejectBecause(() => PluginMarket.ReadPackage(Pack(WithCompat(baseline.TrimEnd(), "\"api3\""), "plugin.js", script)),
+        manifestReason, "4 级 Node 插件不能声明 compat");
+    var themeManifest = Encoding.UTF8.GetBytes("""
+        {"format":"whale-plugin/1","level":0,"id":"unified-tool","name":"主题","author":"测试","version":"1.0.0",
+         "minAppVersion":"4.3.0","description":"测试","runtime":"theme-data","entry":"theme.json","provides":{},"calls":[]}
+        """);
+    var themeBytes = Encoding.UTF8.GetBytes("""{"schema":1,"id":"unified-tool","colors":{"accent":"#6FD6C0"}}""");
+    Check(PluginMarket.ReadPackage(Pack(themeManifest, "theme.json", themeBytes)).Info.IsTheme, "主题包基线");
+    RejectBecause(() => PluginMarket.ReadPackage(Pack(
+            WithCompat(Encoding.UTF8.GetString(themeManifest).TrimEnd(), "\"api3\""), "theme.json", themeBytes)),
+        manifestReason, "0 级主题不能声明 compat");
+
+    // 安装一致性：市场目录与包内清单的 compat 不同必须被 SameListing 拦下，否则市场描述的运行方式与包不符。
+    Check(PluginMarket.SameListing(compatInfo, PluginMarket.ReadPackage(compatZip).Info), "同源清单一致");
+    Check(!PluginMarket.SameListing(compatInfo with { Compat = null }, compatInfo), "市场清单缺 compat 时不一致");
+    Check(!PluginMarket.SameListing(compatInfo, compatInfo with { Compat = null }), "市场清单多 compat 时不一致");
+    Check(!PluginMarket.SameListing(compatInfo with { Compat = "api2" }, compatInfo), "compat 值不同时不一致");
+    Check(PluginMarket.SameListing(compatInfo with
+        { Download = "https://example/plugin.zip", Sha256 = new string('a', 64), DiscussionIssue = 3 }, compatInfo),
+        "下载与讨论元数据不参与一致性比较");
+    File.WriteAllBytes(zipPath, compatZip);
+    Check(market.InstallLocal(zipPath), "合法 compat 包可以安装");
+    using (var installedManifest = JsonDocument.Parse(
+        File.ReadAllBytes(Path.Combine(installed, "plugin.json"))))
+        Check(installedManifest.RootElement.GetProperty("compat").GetString() == "api3"
+            && Sha(File.ReadAllBytes(Path.Combine(installed, "plugin.json")))
+                == Sha(WithCompat(wasmLevel3, "\"api3\"")), "安装保留包内原始清单与 compat");
+    market.Uninstall(id);
+    Check(market.Installed().Length == 0, "compat 包卸载干净");
 
     foreach (var number in new[] { 1, 2, 3, 4 })
     {

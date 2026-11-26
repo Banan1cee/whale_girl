@@ -67,13 +67,9 @@
                         </WrapPanel>
                     </DockPanel>
                     <TextBlock x:Name="Status" Style="{StaticResource Small}" Margin="0,6,0,8" TextWrapping="Wrap" />
-                    <Grid x:Name="Cards">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                    </Grid>
+                    <!-- 列定义由 PluginCardLayout 按实际可用宽度动态生成：
+                         这里写死列会退化成固定三列，只给卡片留 Margin 又会让列宽溢出。 -->
+                    <Grid x:Name="Cards"></Grid>
                 </StackPanel>
             </ScrollViewer>
         </DockPanel>

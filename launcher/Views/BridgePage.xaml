@@ -42,7 +42,7 @@
             </Setter>
         </Style>
     </UserControl.Resources>
-    <Grid Margin="28,16,32,14">
+    <Grid Margin="28,20,32,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -73,7 +73,7 @@
                                    VerticalAlignment="Center" Margin="10,0,0,0" />
                     </StackPanel>
                     <Button x:Name="BtnAutoAccount" Grid.Column="1" Content="不固定（按最近活跃）"
-                            Style="{StaticResource Ghost}" Padding="10,3" FontSize="11"
+                            Style="{StaticResource Ghost}" Padding="10,3" FontSize="{DynamicResource FontSizeSmall}"
                             VerticalAlignment="Center" Click="OnUseAutoAccount"
                             ToolTip="清空 wechat.account，发送前按最近活跃的号自动认" />
                 </Grid>
@@ -100,10 +100,10 @@
 
                 <TextBlock Text="开关" Style="{StaticResource Label}" Margin="0,10,0,6" />
                 <WrapPanel>
-                    <CheckBox x:Name="ChkGuard" Content="双开守卫" Foreground="{DynamicResource Text}" FontSize="12"
+                    <CheckBox x:Name="ChkGuard" Content="双开守卫" Foreground="{DynamicResource Text}" FontSize="{DynamicResource FontSizeControl}"
                               VerticalAlignment="Center" Click="OnToggleGuard" Margin="0,0,22,0" />
                     <TextBlock Text="文字发送方式" Style="{StaticResource Label}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                    <ComboBox x:Name="CmbSend" Width="210" FontSize="12" VerticalAlignment="Center"
+                    <ComboBox x:Name="CmbSend" Width="210" FontSize="{DynamicResource FontSizeControl}" VerticalAlignment="Center"
                               SelectionChanged="OnSendModeChanged" />
                 </WrapPanel>
                 <TextBlock Text="发表情包、录制语音及发表朋友圈会切到微信前台并占用焦点。开启朋友圈发表后，微信消息统一前台发送。"
@@ -120,7 +120,7 @@
                              ToolTip="填 wxid；留空 = 按最近活跃" />
                     <TextBlock Text="编码" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="16,0,6,0"
                                ToolTip="后台通道打字用的编码：微信 4.1 及以前选 GBK，4.2+ 选 UTF-16；识别不出版本时手动选" />
-                    <ComboBox x:Name="CmbCharMode" Width="196" FontSize="12" VerticalAlignment="Center"
+                    <ComboBox x:Name="CmbCharMode" Width="196" FontSize="{DynamicResource FontSizeControl}" VerticalAlignment="Center"
                               SelectionChanged="OnCharModeChanged" />
                     <TextBlock Text="码元间隔" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="16,0,6,0" />
                     <ui:NumberField x:Name="TxtCharGap" Width="48" VerticalAlignment="Center" LostFocus="OnSaveSendSettings"
@@ -128,15 +128,15 @@
                     <TextBlock Text="ms" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="4,0,0,0" />
                 </WrapPanel>
                 <WrapPanel Margin="0,8,0,0">
-                    <CheckBox x:Name="ChkUnhide" Content="托盘时自动开窗" FontSize="12" Click="OnSaveSendOpt" />
-                    <CheckBox x:Name="ChkVerify" Content="发送后回读确认" FontSize="12" Margin="18,0,0,0" Click="OnSaveSendOpt" />
-                    <CheckBox x:Name="ChkStrip" Content="跳过 GBK 编不了的字符" FontSize="12" Margin="18,0,0,0" Click="OnSaveSendOpt" />
+                    <CheckBox x:Name="ChkUnhide" Content="托盘时自动开窗" FontSize="{DynamicResource FontSizeControl}" Click="OnSaveSendOpt" />
+                    <CheckBox x:Name="ChkVerify" Content="发送后回读确认" FontSize="{DynamicResource FontSizeControl}" Margin="18,0,0,0" Click="OnSaveSendOpt" />
+                    <CheckBox x:Name="ChkStrip" Content="跳过 GBK 编不了的字符" FontSize="{DynamicResource FontSizeControl}" Margin="18,0,0,0" Click="OnSaveSendOpt" />
                 </WrapPanel>
                 <TextBlock x:Name="CharModeHint" Style="{StaticResource Small}" Margin="0,6,0,0"
                            Text="中文发出去变乱码时改「编码」：微信 4.1 及以前选 GBK，4.2+ 选 UTF-16；「自动」靠版本号判断，认不出时不会自己换。" />
 
                 <TextBlock Text="权限与窗口" Style="{StaticResource Label}" Margin="0,10,0,6" />
-                <TextBlock x:Name="PermLine" Text="—" Style="{StaticResource Value}" FontSize="12"
+                <TextBlock x:Name="PermLine" Text="—" Style="{StaticResource Value}" FontSize="{DynamicResource FontSizeControl}"
                            TextTrimming="CharacterEllipsis" ToolTipService.ShowDuration="30000" />
         </StackPanel>
 
@@ -147,11 +147,11 @@
                     <DockPanel LastChildFill="False">
                         <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="桥接控制台" Style="{StaticResource H2}" VerticalAlignment="Center" Margin="0,0,14,0" />
-                            <CheckBox x:Name="ChkFollow" Content="跟随" Foreground="{DynamicResource Muted}" FontSize="11"
+                            <CheckBox x:Name="ChkFollow" Content="跟随" Foreground="{DynamicResource Muted}" FontSize="{DynamicResource FontSizeSmall}"
                                       IsChecked="True" VerticalAlignment="Center" Click="OnConsoleOption" />
-                            <CheckBox x:Name="ChkErrors" Content="仅错误" Foreground="{DynamicResource Muted}" FontSize="11"
+                            <CheckBox x:Name="ChkErrors" Content="仅错误" Foreground="{DynamicResource Muted}" FontSize="{DynamicResource FontSizeSmall}"
                                       VerticalAlignment="Center" Margin="12,0,0,0" Click="OnConsoleOption" />
-                            <TextBox x:Name="TxtSearch" Width="140" Margin="12,0,0,0" FontSize="11"
+                            <TextBox x:Name="TxtSearch" Width="140" Margin="12,0,0,0" FontSize="{DynamicResource FontSizeSmall}"
                                      Background="{DynamicResource FieldBg}" Foreground="{DynamicResource Text}" BorderBrush="{DynamicResource FieldBorder}"
                                      VerticalContentAlignment="Center" TextChanged="OnSearchChanged"
                                      ToolTip="搜关键字，回车不生效，边打边过滤" />

@@ -101,3 +101,15 @@ test('开发者入口链接官方材料并提供只读 ZIP 校验', () => {
   assert.match(links, /https:\/\/github\.com\/Banan1cee\/whale-girl-plugins/);
   assert.match(links, /\/pulls/);
 });
+
+test('3 级聊天确认从内嵌注册表派生，覆盖 pre_reply / prompt / before_send', () => {
+  const market = read('launcher/PluginMarket.cs');
+  assert.match(market, /private static readonly HashSet<string> ChatContentProviders = LoadChatContentProviders\(\)/);
+  assert.match(market, /dataAccess[\s\S]{0,160}current-message/);
+  assert.match(market, /RequiresChatAccess => IsUnified && Level == 3 && (?:PluginMarket\.)?DeclaresChatContent\(/);
+  assert.doesNotMatch(market, /RequiresChatAccess =>[^\n]*ContainsKey\("chat\.reply@1"\)/);
+  const page = read('launcher/Views/PluginMarketPage.xaml.cs');
+  for (const text of ['会读取当前会话消息', '系统提示词', '会话历史', '发送前改写回复', '参与是否回复的判断', '受限 Wasm']) {
+    assert.ok(page.includes(text), '3 级授权文案缺少：' + text);
+  }
+});

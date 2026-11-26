@@ -22,6 +22,13 @@ namespace WhaleLauncher
 
     internal sealed record PluginProvider(string Mode, string Scope, int? IntervalSeconds);
 
+    internal sealed record PluginDisplayAsset(string Path, string Sha256, int Bytes);
+    internal sealed record PluginDisplayImage(string Path, string Sha256, int Bytes, string Media);
+    internal sealed record PluginDisplayDonation(string Afdian);
+    internal sealed record PluginDisplayInfo(PluginDisplayAsset Readme, PluginDisplayImage[] Images,
+        PluginDisplayDonation Donation, string UpdatedAt);
+    internal sealed record PluginAssetResult(byte[] Bytes, string Error);
+
     internal sealed record PluginInfo(string Id, string Name, string Author, string Version, string MinAppVersion,
         string Description, string ResultLabel, int Api, string Download = null, string Sha256 = null, string Kind = "tool",
         string MaxAppVersion = null, int DiscussionIssue = 0, string HostAction = null,
@@ -30,13 +37,14 @@ namespace WhaleLauncher
         [property: System.Text.Json.Serialization.JsonPropertyName("appEpoch")] int AppEpoch = 0,
         [property: System.Text.Json.Serialization.JsonPropertyName("appCompatibility")] PluginAppRange[] AppCompatibility = null,
         Dictionary<string, PluginProvider> Provides = null, string[] Calls = null, JsonElement? SettingsSchema = null,
-        int Level = 0, string[] DataAccess = null)
+        int Level = 0, string[] DataAccess = null, PluginDisplayInfo Display = null,
+        [property: System.Text.Json.Serialization.JsonPropertyName("compat")] string Compat = null)
     {
         internal bool IsPersona => Api == 1 && Kind == "persona";
         internal bool IsUnified => Api == 5 && Kind == "plugin" && Level is >= 1 and <= 4;
         internal bool IsTheme => Api == 5 && Kind == "theme" && Level == 0;
         internal bool RequiresFullAccess => IsUnified && Level == 4;
-        internal bool RequiresChatAccess => IsUnified && Level == 3 && Provides?.ContainsKey("chat.reply@1") == true;
+        internal bool RequiresChatAccess => IsUnified && Level == 3 && PluginMarket.DeclaresChatContent(Provides?.Keys);
         internal int EffectiveAppEpoch => AppEpoch == 0 ? 1 : AppEpoch;
         internal PluginAppRange[] AppRanges => AppCompatibility
             ?? [new(EffectiveAppEpoch, MinAppVersion, MaxAppVersion)];
@@ -62,6 +70,8 @@ namespace WhaleLauncher
         // 避免用户以为包已经验过；SHA-256、下载域名白名单和包内清单一致性照常检查。
         internal static readonly bool MarketSignatureEnabled = false;
         private static readonly JsonElement Registry = LoadRegistry();
+        // 聊天内容类 provider：注册表里 dataAccess 含 current-message 的能力；名单不手抄。
+        private static readonly HashSet<string> ChatContentProviders = LoadChatContentProviders();
         private static readonly int PackageLimit = Limit("maxPackageBytes");
         private static readonly UTF8Encoding StrictUtf8 = new(false, true);
         private static readonly JsonSerializerOptions ReadOptions = new() { PropertyNameCaseInsensitive = true };
@@ -164,6 +174,22 @@ namespace WhaleLauncher
             return json.RootElement.Clone();
         }
 
+        /// <summary>从内嵌注册表派生聊天内容类 provider：声明了它们就要确认聊天访问。</summary>
+        private static HashSet<string> LoadChatContentProviders()
+        {
+            var set = new HashSet<string>(StringComparer.Ordinal);
+            if (!Registry.TryGetProperty("providers", out var providers) || providers.ValueKind != JsonValueKind.Object) return set;
+            foreach (var provider in providers.EnumerateObject())
+            {
+                if (!provider.Value.TryGetProperty("dataAccess", out var access) || access.ValueKind != JsonValueKind.Array) continue;
+                if (access.EnumerateArray().Any(item => item.ValueKind == JsonValueKind.String && item.GetString() == "current-message"))
+                    set.Add(provider.Name);
+            }
+            return set;
+        }
+
+        internal static bool DeclaresChatContent(IEnumerable<string> names) => names != null && ChatContentProviders.Overlaps(names);
+
         private static int Limit(string key) => Registry.GetProperty("limits").GetProperty(key).GetInt32();
         private static string ProtocolFile(string key) => Registry.GetProperty("files").GetProperty(key).GetString();
         private static JsonElement LevelPolicy(int level) => Registry.GetProperty("levels").GetProperty(level.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -192,7 +218,89 @@ namespace WhaleLauncher
             && info.Hooks == null && info.Permissions == null
             && info.Provides == null && info.Calls == null && info.SettingsSchema == null;
 
-        private static PluginInfo ParseUnified(JsonElement manifest)
+        /// <summary>爱发电个人页：只接受 https://afdian.com/a/&lt;id&gt;，返回规范化地址；其它一律 null。</summary>
+        internal static string AfdianPersonalPage(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri)) return null;
+            if (uri.Scheme != Uri.UriSchemeHttps || uri.Host != "afdian.com" || !uri.IsDefaultPort
+                || uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0) return null;
+            if (!Regex.IsMatch(uri.AbsolutePath, @"\A/a/[A-Za-z0-9_-]{1,64}/?\z")) return null;
+            return "https://afdian.com" + uri.AbsolutePath.TrimEnd('/');
+        }
+
+        private static readonly Regex Sha256Pattern = new(@"\A[0-9a-fA-F]{64}\z", RegexOptions.Compiled);
+
+        internal static bool ValidDisplayPath(string path, string extension)
+        {
+            if (string.IsNullOrWhiteSpace(path) || path.StartsWith("/", StringComparison.Ordinal)
+                || path.Contains('\\') || path.Contains("..", StringComparison.Ordinal)
+                || !path.StartsWith("plugins/", StringComparison.Ordinal)) return false;
+            var segments = path.Split('/');
+            if (segments.Any(segment => segment.Length == 0 || segment == ".")) return false;
+            return string.Equals(Path.GetExtension(path), extension, StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static bool ValidDisplayAsset(PluginDisplayAsset asset, int limit)
+        {
+            return asset != null && ValidDisplayPath(asset.Path, ".md") && asset.Bytes is > 0 and <= 64 * 1024
+                && asset.Bytes <= limit && Sha256Pattern.IsMatch(asset.Sha256 ?? "");
+        }
+
+        internal static bool ValidDisplayImage(PluginDisplayImage image, int limit)
+        {
+            if (image == null || image.Bytes is <= 0 || image.Bytes > limit
+                || !Sha256Pattern.IsMatch(image.Sha256 ?? "") || !ValidDisplayPath(image.Path, Path.GetExtension(image.Path) ?? ""))
+                return false;
+            var extension = Path.GetExtension(image.Path).ToLowerInvariant();
+            var media = extension switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                _ => null,
+            };
+            return media != null && string.Equals(image.Media, media, StringComparison.Ordinal);
+        }
+
+        internal static bool ValidDisplay(PluginDisplayInfo display)
+        {
+            if (display == null) return true;
+            if (display.Readme != null && !ValidDisplayAsset(display.Readme, 64 * 1024)) return false;
+            if (display.Images is { Length: > 8 }) return false;
+            if (display.Images != null)
+            {
+                var paths = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var image in display.Images)
+                {
+                    if (!ValidDisplayImage(image, 2 * 1024 * 1024)) return false;
+                    if (!paths.Add(image.Path)) return false;
+                }
+            }
+            if (display.Donation != null && AfdianPersonalPage(display.Donation.Afdian) == null) return false;
+            if (display.UpdatedAt != null
+                && !DateTime.TryParseExact(display.UpdatedAt, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out _)) return false;
+            return true;
+        }
+
+        /// <summary>目录展示校验：v5 条目只校验展示/包定位；包清单一律走 ReadPackage，安装仍是严格路径。</summary>
+        internal static bool ValidCatalog(PluginInfo info)
+        {
+            if (info == null) return false;
+            if (info.IsPersona) return Valid(info);
+            if (!info.IsUnified && !info.IsTheme) return false;
+            return Metadata(info)
+                && info.Level is >= 0 and <= 4
+                && !string.IsNullOrWhiteSpace(info.Download)
+                && Sha256Pattern.IsMatch(info.Sha256 ?? "")
+                && (info.IsTheme
+                    ? info.Provides.Count == 0 && info.Calls.Length == 0
+                    : info.Provides.Count > 0)
+                && ValidDisplay(info.Display);
+        }
+
+        internal static PluginInfo ParseUnified(JsonElement manifest)
         {
             var failure = new InvalidDataException("统一插件清单无效，或声明了未开放的能力、作用域或调用");
             var manifestPolicy = Registry.GetProperty("manifest");
@@ -274,7 +382,7 @@ namespace WhaleLauncher
             var dataAccess = new List<string>();
             if (manifest.TryGetProperty("dataAccess", out var dataList))
             {
-                if (dataList.ValueKind != JsonValueKind.Array || !provides.ContainsKey("chat.reply@1")
+                if (dataList.ValueKind != JsonValueKind.Array || !DeclaresChatContent(provides.Keys)
                     || !levelPolicy.TryGetProperty("dataAccess", out var allowedData)) throw failure;
                 foreach (var item in dataList.EnumerateArray())
                 {
@@ -283,12 +391,30 @@ namespace WhaleLauncher
                     dataAccess.Add(item.GetString());
                 }
             }
+            // compat 只改变 3 级 Wasm 的输入信封与 whale 导入别名，不改变能力授权、调用白名单或输出校验；
+            // 合法值/等级/运行时只认注册表 manifest.compat 这一份策略，不在启动器里另抄枚举。
+            // 旧信封只认识 compat.hooks 登记过的那几个 provider，声明了映射不到的 provider
+            // （如 tool.run@1）会安装成功、第一次派发才撞 invalid_wasm_compat，所以这里就拒绝。
+            // 未声明 compat 的旧包 Compat 保持 null，安装与授权语义不变。
+            string compat = null;
+            if (manifest.TryGetProperty("compat", out var compatValue))
+            {
+                var compatPolicy = manifestPolicy.GetProperty("compat");
+                var compatLevels = compatPolicy.GetProperty("levels").EnumerateArray().Any(item =>
+                    item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out var allowed) && allowed == level);
+                var compatHooks = compatPolicy.GetProperty("hooks");
+                if (compatValue.ValueKind != JsonValueKind.String
+                    || !Contains(compatPolicy.GetProperty("values"), compatValue.GetString())
+                    || !compatLevels || Text(manifest, "runtime") != Text(compatPolicy, "runtime")
+                    || !provides.Keys.All(name => compatHooks.TryGetProperty(name, out _))) throw failure;
+                compat = compatValue.GetString();
+            }
             var info = new PluginInfo(Text(manifest, "id"), Text(manifest, "name"), Text(manifest, "author"),
                 Text(manifest, "version"), Text(manifest, "minAppVersion"), Text(manifest, "description"), null, 5,
                 Kind: themePackage ? "theme" : "plugin", MaxAppVersion: Text(manifest, "maxAppVersion"), ExecutionTimeoutMs: timeout,
                 AppEpoch: appEpoch, AppCompatibility: ranges,
                 Provides: provides, Calls: calls.ToArray(), SettingsSchema: schema, Level: level,
-                DataAccess: dataAccess.ToArray());
+                DataAccess: dataAccess.ToArray(), Compat: compat);
             if (!Metadata(info)) throw failure;
             return info;
         }
@@ -764,13 +890,25 @@ namespace WhaleLauncher
             if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(listing.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("插件包校验失败");
             var info = ReadPackage(bytes).Info;
-            if (JsonSerializer.Serialize(info) != JsonSerializer.Serialize(listing with
-                {
-                    Download = info.Download, Sha256 = info.Sha256, DiscussionIssue = info.DiscussionIssue,
-                    Signature = info.Signature
-                }))
-                throw new InvalidDataException("插件清单与市场目录不一致");
+            if (!SameListing(listing, info)) throw new InvalidDataException("插件清单与市场目录不一致");
             Install(bytes, info);
+        }
+
+        /// <summary>
+        /// 安装一致性比较：Display 只是市场展示元数据，不进包清单，必须忽略；
+        /// 其余清单字段（含 compat——它决定 3 级 Wasm 的输入信封与导入别名）都必须一致，
+        /// 否则市场目录描述的运行方式与包内清单不是同一个插件。
+        /// </summary>
+        internal static bool SameListing(PluginInfo listing, PluginInfo info)
+        {
+            if (listing == null || info == null) return false;
+            var packaged = JsonSerializer.Serialize(info with { Display = null });
+            var catalog = JsonSerializer.Serialize(listing with
+            {
+                Download = info.Download, Sha256 = info.Sha256, DiscussionIssue = info.DiscussionIssue,
+                Signature = info.Signature, Display = null
+            });
+            return packaged == catalog;
         }
 
         internal bool InstallLocal(string file, Func<PluginInfo, PluginInfo, bool> confirm = null)

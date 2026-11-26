@@ -202,3 +202,79 @@ test('each app template produces a syntactically valid project and declares the 
     assert.deepEqual(report.routes, [{ capability, mode, scope: 'all', ...(mode === 'schedule' ? { intervalSeconds: 60 } : {}) }]);
   }
 });
+
+test('trial 的聊天确认按注册表派生：3 级新 provider 需要、4 级不需要、非法 dataAccess 被拒', t => {
+  const cwd = workspace(t);
+  ok(run(cwd, 'init', 'gate-demo', '--template', 'reply-wasm'));
+  const manifestPath = path.join(cwd, 'gate-demo', 'plugin.json');
+  const update = provides => {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    manifest.provides = provides;
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+  };
+  for (const [capability, mode] of [['chat.pre_reply@1', 'gate'], ['chat.prompt@1', 'enhance'], ['chat.before_send@1', 'enhance']]) {
+    update({ [capability]: { mode, scope: 'all' } });
+    const report = JSON.parse(ok(run(cwd, 'trial', 'gate-demo')));
+    assert.equal(report.level, 3);
+    assert.equal(report.chatConsentRequired, true, capability + ' 应当需要聊天确认');
+  }
+
+  ok(run(cwd, 'init', 'node-demo', '--template', 'reply-enhancer'));
+  const nodePath = path.join(cwd, 'node-demo', 'plugin.json');
+  const nodeManifest = JSON.parse(fs.readFileSync(nodePath, 'utf8'));
+  nodeManifest.provides = { 'chat.pre_reply@1': { mode: 'gate', scope: 'all' } };
+  fs.writeFileSync(nodePath, JSON.stringify(nodeManifest));
+  const nodeReport = JSON.parse(ok(run(cwd, 'trial', 'node-demo')));
+  assert.equal(nodeReport.level, 4);
+  assert.equal(nodeReport.chatConsentRequired, false, '4 级不需要聊天确认');
+
+  update({
+    'chat.pre_reply@1': { mode: 'gate', scope: 'all' },
+    'chat.reply@1': { mode: 'enhance', scope: 'all' },
+  });
+  const withData = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  withData.dataAccess = ['chat.history'];
+  fs.writeFileSync(manifestPath, JSON.stringify(withData));
+  ok(run(cwd, 'validate', 'gate-demo'));
+
+  withData.dataAccess = ['system-prompt'];
+  fs.writeFileSync(manifestPath, JSON.stringify(withData));
+  assert.notEqual(run(cwd, 'validate', 'gate-demo').status, 0, '不在白名单的 dataAccess 必须被拒');
+});
+
+test('trial 披露 4 级 dataAccess：model.prompt → 本轮系统提示词', t => {
+  const cwd = workspace(t);
+  ok(run(cwd, 'init', 'node-prompt', '--template', 'reply-enhancer'));
+  const file = path.join(cwd, 'node-prompt', 'plugin.json');
+  const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+  manifest.dataAccess = ['model.prompt'];
+  fs.writeFileSync(file, JSON.stringify(manifest));
+  const report = JSON.parse(ok(run(cwd, 'trial', 'node-prompt')));
+  assert.equal(report.level, 4);
+  assert.deepEqual(report.dataAccess, ['model.prompt']);
+  assert.deepEqual(report.dataAccessDisclosures, ['本轮系统提示词']);
+  assert.equal(report.executed, false);
+  assert.equal(report.installed, false);
+  assert.equal(report.authorizationGranted, false);
+});
+
+test('trial 披露 3 级 dataAccess：chat.history → 最近 12 条会话历史', t => {
+  const cwd = workspace(t);
+  ok(run(cwd, 'init', 'wasm-reply', '--template', 'reply-wasm'));
+  const file = path.join(cwd, 'wasm-reply', 'plugin.json');
+  const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+  manifest.dataAccess = ['chat.history'];
+  fs.writeFileSync(file, JSON.stringify(manifest));
+  const report = JSON.parse(ok(run(cwd, 'trial', 'wasm-reply')));
+  assert.equal(report.level, 3);
+  assert.deepEqual(report.dataAccess, ['chat.history']);
+  assert.deepEqual(report.dataAccessDisclosures, ['最近 12 条会话历史']);
+});
+
+test('trial 对未声明 dataAccess 的清单给空数组', t => {
+  const cwd = workspace(t);
+  ok(run(cwd, 'init', 'plain-node', '--template', 'reply-enhancer'));
+  const report = JSON.parse(ok(run(cwd, 'trial', 'plain-node')));
+  assert.deepEqual(report.dataAccess, []);
+  assert.deepEqual(report.dataAccessDisclosures, []);
+});

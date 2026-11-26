@@ -11,6 +11,12 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Threading;
+using System.Windows.Media;
+using System.Windows.Input;
+using System.Windows.Controls.Primitives;
+using System.Threading;
+using System.Text;
 
 namespace WhaleLauncher.Views
 {
@@ -25,6 +31,13 @@ namespace WhaleLauncher.Views
         private string _category = "";
         private bool _showInstalled;
         private bool _busy;
+        private PluginReadmeView _detailReadme;
+        private double _listScrollOffset;
+        private readonly List<Border> _cards = new();
+        private TextBlock _emptyCardMessage;
+        private double _cardGridWidth = double.NaN;
+        private double _cardHeight;
+        private int _cardColumns;
 
         internal PluginMarketPage(PluginMarket market, string version, RuntimeSupervisor sup)
         {
@@ -32,6 +45,10 @@ namespace WhaleLauncher.Views
             _sup = sup;
             _version = version;
             InitializeComponent();
+            // 可用宽度以 ScrollViewer 视口为准：滚动条出现/消失时视口已经扣掉滚动条，
+            // 再手动减一次 VerticalScrollBarWidth 会少算一列宽度或横向溢出。
+            MarketScroll.SizeChanged += (_, _) => ApplyCardGrid(MarketScroll.ViewportWidth);
+            MarketScroll.ScrollChanged += OnMarketScrollChanged;
             TryMigrateLegacyThemeAfterGate();
             Loaded += async (_, _) =>
             {
@@ -123,8 +140,12 @@ namespace WhaleLauncher.Views
                 + (pair.Value.IntervalSeconds is int seconds ? $" / {seconds} 秒" : "") + "）"))
             + "\n调用：" + (info.Calls.Length == 0 ? "无" : string.Join("、", info.Calls.Select(call =>
                 PluginMarket.HostCallEnabled(call) ? CallDisclosure(call) : call + "（宿主未开放，不会授权）")))
+            + (info.RequiresChatAccess ? "\n3 级聊天访问：读当前会话消息；按 dataAccess 可能读系统提示词或最近 12 条历史；可在发送前改写回复、或在生成前参与是否回复的判断（受限 Wasm，不能联网、读写文件或执行命令）" : "")
             + (info.RequiresChatAccess ? "\n额外聊天数据：" + (info.DataAccess is { Length: > 0 } access
-                ? string.Join("、", access.Select(ChatDataDisclosure)) : "无") : "");
+                ? string.Join("、", access.Select(ChatDataDisclosure)) : "无") : "")
+            // 4 级没有单独的聊天确认弹窗，但 dataAccess 仍要在授权披露里单列，不能只写进文档。
+            + (!info.RequiresChatAccess && info.DataAccess is { Length: > 0 } extra
+                ? "\n额外聊天数据（随完整系统权限确认）：" + string.Join("、", extra.Select(ChatDataDisclosure)) : "");
 
         private static string ChatDataDisclosure(string access) => access switch
         {
@@ -291,6 +312,11 @@ namespace WhaleLauncher.Views
             if (Cards == null) return;
             Cards.Children.Clear();
             Cards.RowDefinitions.Clear();
+            Cards.ColumnDefinitions.Clear();
+            _cards.Clear();
+            _emptyCardMessage = null;
+            _cardGridWidth = double.NaN;
+            _cardColumns = 0;
             Discover.Style = (Style)FindResource(_showInstalled ? "Ghost" : "Primary");
             Installed.Style = (Style)FindResource(_showInstalled ? "Primary" : "Ghost");
             foreach (var button in Categories.Children.OfType<Button>())
@@ -304,158 +330,243 @@ namespace WhaleLauncher.Views
                 var local = _market.Installed().ToDictionary(p => p.Id);
                 var query = Search.Text.Trim();
                 var entries = (_showInstalled ? local.Values.AsEnumerable() : _catalog.AsEnumerable()).Where(p => p.IsUnified || p.IsPersona || p.IsTheme);
-                var columns = Cards.ColumnDefinitions.Count;
                 foreach (var info in entries.Where(p => (_category.Length == 0 || (_category == "tool" ? (p.IsUnified && p.Provides?.ContainsKey("tool.run@1") == true) : _category == "message" ? (p.IsUnified && p.Provides?.Keys.Any(k => k.StartsWith("chat.", StringComparison.Ordinal)) == true) : p.Kind == _category))
                     && (p.Name + " " + p.Author + " " + p.Description).Contains(query, StringComparison.OrdinalIgnoreCase)))
                 {
-                    var index = Cards.Children.Count;
-                    var column = index % columns;
-                    var body = new StackPanel();
-                    var card = new Border { Style = (Style)FindResource("Card"), Child = body,
-                        Margin = new Thickness(0, 0, column == columns - 1 ? 0 : 12, 12), Padding = new Thickness(14) };
-                    var header = new DockPanel { LastChildFill = true };
-                    var author = new StackPanel();
-                    var documents = new Button
-                    {
-                        Content = "相关文档", Style = (Style)FindResource("Ghost"),
-                        VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0)
-                    };
-                    DockPanel.SetDock(documents, Dock.Right);
-                    documents.Click += (_, _) => ShowPluginDocuments(info, !_showInstalled ||
-                        _catalog.Any(entry => entry.Id == info.Id && entry.Version == info.Version &&
-                            entry.Api == info.Api && PluginMarket.SameAuthor(entry.Author, info.Author)));
-                    header.Children.Add(documents);
-                    author.Children.Add(new TextBlock { Text = PluginMarket.SafeText(info.Name, 80),
-                        FontSize = 17, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-                    author.Children.Add(Small(PluginMarket.SafeText(info.Author, 80) + "  ·  v" + info.Version));
-                    header.Children.Add(author);
-                    body.Children.Add(header);
-                    body.Children.Add(Small(PluginMarket.SafeText(info.Description, 600)));
-                    body.Children.Add(Small(info.CompatibilityLabel));
-                    // 市场签名暂时隐藏，卡片不再显示已签名 / 未签名目录的标注。
-                    body.Children.Add(Small(info.IsTheme ? "0 级 · 纯数据主题" : info.IsUnified ? PermissionLabel(info) : info.IsPersona ? "类型：人设预设" : "旧版插件（不可执行）"));
-                    var buttons = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
-                    body.Children.Add(buttons);
-                    local.TryGetValue(info.Id, out var current);
-                    if (_showInstalled)
-                    {
-                        var enabled = info.IsTheme ? ThemeActive(info) : _market.Enabled(info.Id);
-                        if (info.IsTheme)
-                        {
-                            // 主题没有执行体/权限，不需要授权记录；启用=应用外观，停用=恢复内置。
-                            AddButton(buttons, enabled ? "停用" : "启用", () =>
-                            {
-                                if (enabled)
-                                {
-                                    if (!Appearance.ClearThemePackage(out var clearError)) throw new InvalidOperationException(clearError);
-                                    return Task.FromResult("已停用主题，恢复内置外观。");
-                                }
-                                var theme = ReadTheme(info);
-                                if (!Appearance.SetThemePackage(theme, out var applyError, info.Id)) throw new InvalidOperationException(applyError);
-                                return Task.FromResult("已启用主题。外观设置页只提供预览，管理统一走插件卡片。");
-                            });
-                            if (!info.IsTheme) AddButton(buttons, "卸载", () =>
-                            {
-                                if (enabled)
-                                {
-                                    if (!Appearance.ClearThemePackage(out var clearError)) throw new InvalidOperationException(clearError);
-                                }
-                                _market.Uninstall(info.Id);
-                                return Task.FromResult("已卸载");
-                            }, false);
-                        }
-                        else if (info.IsUnified || info.IsPersona) AddButton(buttons, enabled ? "停用" : "启用", () =>
-                        {
-                            var fullAccessApproved = false;
-                            var chatAccessApproved = false;
-                            if (!enabled && info.RequiresFullAccess)
-                            {
-                                fullAccessApproved = AppDialog.Confirm(Window.GetWindow(this),
-                                    "此插件以当前 Windows 用户权限执行，不是沙箱。它可以访问网络、文件和系统命令。声明的调用仅约束宿主 SDK，不限制代码本身。停用权限不能撤销既有副作用。\n\n"
-                                    + CapabilityDetails(info), "授权 4 级插件", danger: true, okText: "确认完整系统权限并启用");
-                                if (!fullAccessApproved) return Task.FromResult("已取消启用");
-                            }
-                            if (!enabled && info.RequiresChatAccess)
-                            {
-                                chatAccessApproved = AppDialog.Confirm(Window.GetWindow(this),
-                                    "此插件会自动收到当前聊天消息和回复草稿，并按声明的模式参与回复处理。它在受限 Wasm 环境运行，不能直接联网、读写文件或执行系统命令。\n\n"
-                                    + CapabilityDetails(info), "授权 3 级插件", okText: "允许访问当前聊天并启用", critical: true);
-                                if (!chatAccessApproved) return Task.FromResult("已取消启用");
-                            }
-                            _market.SetEnabled(info.Id, !enabled, fullAccessApproved, chatAccessApproved);
-                            return Task.FromResult(enabled ? "已停用" : info.IsUnified
-                                ? "插件已授权；还需打开插件总开关并启动内核。"
-                                : "已启用，点击「设置」可预览和应用人设。");
-                        });
-                        if (!info.IsTheme) AddButton(buttons, "卸载", () =>
-                        {
-                            _market.Uninstall(info.Id);
-                            return Task.FromResult("已卸载");
-                        }, false);
-                        if (info.IsTheme)
-                        {
-                            // 主题由插件卡片统一管理，不提供独立设置/授权入口。
-                        }
-                        else
-                        {
-                            var settings = new Button { Content = "设置", Style = (Style)FindResource("Ghost"),
-                                IsEnabled = (info.IsUnified || (enabled && info.IsPersona)) && PluginMarket.Compatible(info, _version, UpdateManifestService.LocalEpoch(_sup.BaseDir)) };
-                            settings.Click += async (_, _) =>
-                            {
-                                if (info.IsUnified) ShowMessageSettings(info);
-                                else if (info.IsPersona) await ShowPersonaSettings(info);
-                            };
-                            buttons.Children.Add(settings);
-                        }
-                    }
-                    else if (!PluginMarket.Compatible(info, _version, UpdateManifestService.LocalEpoch(_sup.BaseDir)))
-                        body.Children.Add(Small("此版本与你的鲸鲸不兼容"));
-                    else if (current != null && !PluginMarket.SameAuthor(current.Author, info.Author))
-                        body.Children.Add(Small("作者与已安装版本不一致，请先卸载旧版本再安装"));
-                    else if (current == null || Version.Parse(info.Version) > Version.Parse(current.Version))
-                        AddButton(buttons, current == null ? "安装" : "更新", async () =>
-                        {
-                            await _market.InstallAsync(info);
-                            if (info.IsPersona) _sup.NotifyPersonaChanged();
-                            return "已安装 v" + info.Version + "，可在「已安装」管理。";
-                        });
-                    else body.Children.Add(Small("已安装"));
-                    var listing = _showInstalled ? _catalog.FirstOrDefault(p => p.Id == info.Id) : info;
-                    if (listing != null) AddMarketActivity(body, listing);
-                    if (column == 0) Cards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                    Grid.SetRow(card, index / columns);
-                    Grid.SetColumn(card, column);
+                    var card = BuildCard(info, local);
+                    _cards.Add(card);
                     Cards.Children.Add(card);
                 }
-                if (Cards.Children.Count == 0)
+                if (_cards.Count == 0)
                 {
-                    var empty = Small(_showInstalled ? "没有符合条件的已安装插件。" : "没有符合条件的市场插件。");
-                    Grid.SetColumnSpan(empty, columns);
-                    Cards.Children.Add(empty);
+                    _emptyCardMessage = Small(_showInstalled ? "没有符合条件的已安装插件。" : "没有符合条件的市场插件。");
+                    Cards.Children.Add(_emptyCardMessage);
                 }
+                ApplyCardGrid(MarketScroll.ViewportWidth > 0 ? MarketScroll.ViewportWidth : Cards.ActualWidth);
             }
             catch (Exception ex) { Status.Text = "读取插件失败：" + ex.Message; }
         }
 
-        private void AddMarketActivity(Panel card, PluginInfo listing)
+        /// <summary>四行卡片：标题、作者+版本、简介（≤20 个文本元素）、底行评论/收藏/安装。</summary>
+        private Border BuildCard(PluginInfo info, IReadOnlyDictionary<string, PluginInfo> local)
+        {
+            var card = new Border
+            {
+                Style = (Style)FindResource("Card"),
+                Padding = new Thickness(14),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+            };
+            WireCardDetail(card, info);
+
+            var body = new Grid();
+            for (var row = 0; row < 3; row++) body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            body.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var name = PluginMarket.SafeText(info.Name, 80);
+            var title = new TextBlock
+            {
+                Text = name,
+                FontSize = 17,
+                FontWeight = FontWeights.SemiBold,
+                TextWrapping = TextWrapping.NoWrap,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                ToolTip = name,
+            };
+            Grid.SetRow(title, 0);
+            body.Children.Add(title);
+
+            var author = Small(PluginMarket.SafeText(info.Author, 80) + "  ·  v" + info.Version);
+            author.TextWrapping = TextWrapping.NoWrap;
+            author.TextTrimming = TextTrimming.CharacterEllipsis;
+            author.Margin = new Thickness(0, 2, 0, 0);
+            // 兼容范围、等级和类型不占第五行，放进作者行的 Tooltip；完整能力披露在详情/授权弹窗。
+            author.ToolTip = info.CompatibilityLabel + "\n"
+                + (info.IsTheme ? "0 级 · 纯数据主题" : info.IsUnified ? PermissionLabel(info) : info.IsPersona ? "类型：人设预设" : "旧版插件（不可执行）");
+            Grid.SetRow(author, 1);
+            body.Children.Add(author);
+
+            var descriptionText = PluginMarket.SafeText(info.Description, 600);
+            var description = new TextBlock
+            {
+                Text = PluginCardLayout.Describe(descriptionText, PluginCardLayout.DescriptionLimit),
+                Style = (Style)FindResource("Small"),
+                TextWrapping = TextWrapping.NoWrap,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 4, 0, 0),
+                ToolTip = descriptionText,
+            };
+            Grid.SetRow(description, 2);
+            body.Children.Add(description);
+
+            var actions = new Grid { Margin = new Thickness(0, 8, 0, 0), VerticalAlignment = VerticalAlignment.Bottom };
+            actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var activity = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            AddCardActivity(activity, info);
+            Grid.SetColumn(activity, 0);
+            actions.Children.Add(activity);
+
+            var primary = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            AddCardPrimary(primary, info, local);
+            Grid.SetColumn(primary, 2);
+            actions.Children.Add(primary);
+
+            Grid.SetRow(actions, 4);
+            body.Children.Add(actions);
+            card.Child = body;
+            return card;
+        }
+
+        private void AddCardActivity(Panel panel, PluginInfo listing)
         {
             var issue = listing.DiscussionIssue;
-            var row = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
-            card.Children.Add(row);
             if (issue > 0)
             {
                 _feedback.TryGetValue(issue, out var stats);
-                AddButton(row, "评论 " + (stats?.Comments.ToString() ?? "—"), () => OpenFeedback(issue), false);
+                AddCardButton(panel, "评论 " + CompactCount(stats?.Comments), () => OpenFeedback(issue), false);
             }
 
             _favorites.TryGetValue(listing.Id, out var favorite);
             var favorited = favorite?.Favorited == true;
-            AddButton(row, (favorited ? "♥ 已收藏 " : "♡ 收藏 ") + (favorite?.Count.ToString("N0") ?? "—"), async () =>
+            AddCardButton(panel, (favorited ? "♥ 已收藏 " : "♡ 收藏 ") + CompactCount(favorite?.Count), async () =>
             {
                 var saved = await _market.SetFavoriteAsync(listing.Id, !favorited);
                 _favorites[listing.Id] = saved;
                 return saved.Favorited ? "已收藏" : "已取消收藏";
             }, false);
+        }
+
+        /// <summary>底行右侧只放安装状态；启用、设置、卸载等管理动作走详情，避免把四行撑乱。</summary>
+        private void AddCardPrimary(Panel panel, PluginInfo info, IReadOnlyDictionary<string, PluginInfo> local)
+        {
+            if (_showInstalled)
+            {
+                // 主题没有执行体/权限，卡片只显示当前是否生效；启用/停用仍在详情里完成。
+                panel.Children.Add(Small(info.IsTheme ? (ThemeActive(info) ? "已启用" : "已停用") : "已安装"));
+                return;
+            }
+            if (!PluginMarket.Compatible(info, _version, UpdateManifestService.LocalEpoch(_sup.BaseDir)))
+            {
+                var note = Small("此版本与你的鲸鲸不兼容");
+                note.ToolTip = info.CompatibilityLabel;
+                panel.Children.Add(note);
+                return;
+            }
+            local.TryGetValue(info.Id, out var current);
+            if (current != null && !PluginMarket.SameAuthor(current.Author, info.Author))
+            {
+                var note = Small("作者不一致，请先卸载");
+                note.ToolTip = "目录作者与已安装版本不一致，不能直接覆盖安装。";
+                panel.Children.Add(note);
+                return;
+            }
+            if (current == null)
+            {
+                AddCardButton(panel, "安装", async () =>
+                {
+                    await _market.InstallAsync(info);
+                    if (info.IsPersona) _sup.NotifyPersonaChanged();
+                    return "已安装 v" + info.Version + "，可在「已安装」管理。";
+                });
+            }
+            else if (Version.TryParse(info.Version, out var directory) && Version.TryParse(current.Version, out var installed)
+                && directory > installed)
+            {
+                AddCardButton(panel, "更新", async () =>
+                {
+                    await _market.InstallAsync(info);
+                    if (info.IsPersona) _sup.NotifyPersonaChanged();
+                    return "已安装 v" + info.Version + "，可在「已安装」管理。";
+                });
+            }
+            else panel.Children.Add(Small("已安装"));
+        }
+
+        private void AddCardButton(Panel panel, string title, Func<Task<string>> action, bool primary = true)
+        {
+            var button = new Button
+            {
+                Content = title,
+                Style = (Style)FindResource(primary ? "Primary" : "Ghost"),
+                FontSize = 11,
+                Padding = new Thickness(10, 5, 10, 5),
+                Margin = new Thickness(0, 0, 6, 0),
+            };
+            button.Click += async (_, _) => await WithStatus(action);
+            panel.Children.Add(button);
+        }
+
+        /// <summary>卡片里只留一位小数的万级数字，避免大数字把底行挤出卡片。</summary>
+        private static string CompactCount(long? count)
+        {
+            if (count is not long value) return "—";
+            if (value < 10000) return value.ToString("N0");
+            return (value / 10000.0).ToString("0.#") + "万";
+        }
+
+        private void OnMarketScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            // 滚动条出现/消失只改变视口宽度；高度变化不需要重排列。
+            if (Math.Abs(e.ViewportWidthChange) > 0.01 || Math.Abs(e.ExtentWidthChange) > 0.01)
+                ApplyCardGrid(e.ViewportWidth);
+        }
+
+        /// <summary>
+        /// 把纯计算结果套到真实 Grid：列宽合计严格等于可用宽，卡片固定在同一槽位，
+        /// 少量条目也不会把最后一张拉到整行。宽度未就绪时先不排版，等视口事件。
+        /// </summary>
+        private void ApplyCardGrid(double availableWidth)
+        {
+            if (!double.IsFinite(availableWidth) || availableWidth <= 0)
+                availableWidth = MarketScroll.ViewportWidth > 0 ? MarketScroll.ViewportWidth : Cards.ActualWidth;
+            var layout = PluginCardLayout.Compute(availableWidth);
+            if (layout.CardWidth <= 0) return;
+            var height = CardHeight();
+            if (Math.Abs(_cardGridWidth - availableWidth) < 0.5 && _cardColumns == layout.Columns
+                && Math.Abs(_cardHeight - height) < 0.5) return;
+            _cardGridWidth = availableWidth;
+            _cardColumns = layout.Columns;
+            _cardHeight = height;
+
+            // 明确给 Grid 宽度：否则固定列宽会让它在 ScrollViewer 里保留旧的期望宽度，
+            // 窗口缩小时 Grid 被按旧宽度安排，卡片区不再响应。
+            Cards.Width = availableWidth;
+            Cards.HorizontalAlignment = HorizontalAlignment.Left;
+            Cards.ColumnDefinitions.Clear();
+            foreach (var width in layout.ColumnWidths)
+                Cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(width) });
+
+            Cards.RowDefinitions.Clear();
+            var rows = PluginCardLayout.Rows(_cards.Count, layout.Columns);
+            for (var row = 0; row < rows; row++)
+                Cards.RowDefinitions.Add(new RowDefinition { Height = new GridLength(height + PluginCardLayout.Gap) });
+
+            for (var index = 0; index < _cards.Count; index++)
+            {
+                var card = _cards[index];
+                card.Width = layout.CardWidth;
+                card.Height = height;
+                card.Margin = new Thickness(0, 0, 0, PluginCardLayout.Gap);
+                Grid.SetColumn(card, index % layout.Columns);
+                Grid.SetRow(card, index / layout.Columns);
+            }
+            if (_emptyCardMessage != null) Grid.SetColumnSpan(_emptyCardMessage, layout.Columns);
+        }
+
+        private double CardHeight()
+        {
+            var small = TryFindResource("FontSizeSmall");
+            var size = small is double value && value > 0 ? value : 11.0;
+            return PluginCardLayout.CardHeight(size / 11.0);
         }
 
         private static Task<string> OpenFeedback(int issue)
@@ -520,8 +631,242 @@ namespace WhaleLauncher.Views
             };
         }
 
+        private void WireCardDetail(Border card, PluginInfo info)
+        {
+            card.Cursor = Cursors.Hand;
+            card.MouseLeftButtonUp += (_, args) =>
+            {
+                // 卡片里的按钮、文档入口、评论/收藏不能顺带打开详情。
+                if (FindButtonAncestor(args.OriginalSource as DependencyObject) != null) return;
+                ShowPluginDetail(info);
+            };
+        }
+
+        private static DependencyObject FindButtonAncestor(DependencyObject source)
+        {
+            while (source != null)
+            {
+                if (source is ButtonBase) return source;
+                if (source is Visual || source is System.Windows.Media.Media3D.Visual3D)
+                {
+                    try { source = VisualTreeHelper.GetParent(source); }
+                    catch (InvalidOperationException) { return null; }
+                }
+                else if (source is FrameworkContentElement content) source = content.Parent;
+                else return null;
+            }
+            return null;
+        }
+
+        private static void OpenHttpsLink(string url)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                || uri.Scheme != Uri.UriSchemeHttps || !uri.IsDefaultPort || uri.UserInfo.Length != 0)
+                throw new InvalidDataException("链接不是受支持的 HTTPS 地址");
+            Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+        }
+
+        /// <summary>页内二级详情：标题、版本、作者、更新时间、简介、动作行和 README；不新建窗口。</summary>
+        private async void ShowPluginDetail(PluginInfo info)
+        {
+            var installed = _market.Installed().FirstOrDefault(item => item.Id == info.Id);
+            var enabled = installed != null && (info.IsTheme ? ThemeActive(installed) : _market.Enabled(info.Id));
+            var currentVersion = installed == null ? "未安装" : "v" + installed.Version;
+            var versionLine = "目录版本：v" + info.Version + "　当前版本：" + currentVersion;
+            if (installed != null && Version.TryParse(info.Version, out var directory)
+                && Version.TryParse(installed.Version, out var current) && directory > current)
+                versionLine += "　可更新";
+
+            var body = new DockPanel { Margin = new Thickness(12) };
+            var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+            var content = new StackPanel();
+            scroll.Content = content;
+            body.Children.Add(scroll);
+
+            content.Children.Add(new TextBlock
+            {
+                Text = PluginMarket.SafeText(info.Name, 80), Style = (Style)FindResource("H1"),
+                TextWrapping = TextWrapping.Wrap,
+            });
+            content.Children.Add(Small(versionLine));
+            content.Children.Add(Small("作者：" + PluginMarket.SafeText(info.Author, 80)));
+            content.Children.Add(Small("上次更新：" + (string.IsNullOrWhiteSpace(info.Display?.UpdatedAt)
+                ? "暂未提供" : info.Display.UpdatedAt)));
+            content.Children.Add(Small(PluginMarket.SafeText(info.Description, 600)));
+
+            var actions = new WrapPanel { Margin = new Thickness(0, 10, 0, 4) };
+            content.Children.Add(actions);
+            // 卡片改成四行后不再放「相关文档」；入口跟着详情走，避免丢掉目录文档。
+            var inCatalog = !_showInstalled || _catalog.Any(entry => entry.Id == info.Id && entry.Version == info.Version
+                && entry.Api == info.Api && PluginMarket.SameAuthor(entry.Author, info.Author));
+            AddDetailActions(actions, info, installed, enabled, inCatalog);
+
+            var readmeHost = new StackPanel();
+            content.Children.Add(readmeHost);
+            ShowDetail(body);
+
+            if (info.Display?.Readme == null)
+            {
+                readmeHost.Children.Add(Small("暂无图文介绍"));
+                return;
+            }
+
+            _detailReadme = new PluginReadmeView();
+            readmeHost.Children.Add(_detailReadme);
+            var loading = Small("正在读取图文介绍…");
+            readmeHost.Children.Add(loading);
+            try
+            {
+                var asset = await PluginCatalog.FetchReadmeAsync(info);
+                if (!ReferenceEquals(DetailContent.Content, body)) return;
+                if (asset.Bytes == null)
+                {
+                    loading.Text = "暂无图文介绍";
+                    _detailReadme.Visibility = Visibility.Collapsed;
+                    return;
+                }
+                await _detailReadme.ShowAsync(new PluginReadmeContent
+                {
+                    Markdown = Encoding.UTF8.GetString(asset.Bytes),
+                    SourceLabel = "README.md（目录）",
+                    LoadImage = async (src, _) =>
+                    {
+                        var image = await PluginCatalog.FetchImageAsync(info, src);
+                        return image.Bytes == null
+                            ? PluginReadmeResource.Failure(image.Error ?? "图片加载失败")
+                            : new PluginReadmeResource(image.Bytes, null, null);
+                    },
+                    OpenLink = OpenHttpsLink,
+                });
+                loading.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception ex)
+            {
+                loading.Text = "暂无图文介绍";
+                if (_detailReadme != null) _detailReadme.Visibility = Visibility.Collapsed;
+                Status.Text = "图文介绍加载失败：" + PluginMarket.SafeText(ex.Message, 160);
+            }
+        }
+
+        private void AddDetailActions(Panel actions, PluginInfo info, PluginInfo installed, bool enabled, bool inCatalog)
+        {
+            var compatible = PluginMarket.Compatible(info, _version, UpdateManifestService.LocalEpoch(_sup.BaseDir));
+            var newer = installed != null && Version.TryParse(info.Version, out var directory)
+                && Version.TryParse(installed.Version, out var current) && directory > current;
+            if (installed == null || newer)
+            {
+                if (!compatible) actions.Children.Add(Small("此版本与你的鲸鲸不兼容"));
+                else if (installed != null && !PluginMarket.SameAuthor(installed.Author, info.Author))
+                    actions.Children.Add(Small("作者与已安装版本不一致，请先卸载旧版本再安装"));
+                else AddButton(actions, installed == null ? "安装" : "更新", async () =>
+                {
+                    await _market.InstallAsync(info);
+                    if (info.IsPersona) _sup.NotifyPersonaChanged();
+                    ShowPluginDetail(info);
+                    return "已安装 v" + info.Version;
+                });
+            }
+            else actions.Children.Add(Small("已安装目录版本"));
+
+            if (installed != null)
+            {
+                AddButton(actions, enabled ? "停用" : "启用",
+                    () => ToggleDetailPlugin(info, installed, enabled), false);
+                if (!info.IsTheme && (info.IsUnified || (enabled && info.IsPersona)) && compatible)
+                {
+                    var settings = new Button
+                    {
+                        Content = "设置", Style = (Style)FindResource("Ghost"),
+                        Margin = new Thickness(0, 0, 8, 0),
+                    };
+                    settings.Click += async (_, _) => await ShowSettings(installed);
+                    actions.Children.Add(settings);
+                }
+                AddButton(actions, "卸载", async () =>
+                {
+                    if (info.IsTheme && ThemeActive(installed) && !Appearance.ClearThemePackage(out var error))
+                        throw new InvalidOperationException(error);
+                    _market.Uninstall(installed.Id);
+                    OnBack(this, new RoutedEventArgs());
+                    return "已卸载";
+                }, false);
+            }
+
+            var afdian = PluginMarket.AfdianPersonalPage(info.Display?.Donation?.Afdian);
+            if (afdian != null)
+            {
+                var donation = new Button
+                {
+                    Content = "支持作者（爱发电）", Style = (Style)FindResource("Ghost"),
+                    Margin = new Thickness(0, 0, 8, 0),
+                    ToolTip = "作者自行提供的爱发电个人主页，未验证链接与作者身份的关系；点击后在系统浏览器打开，不在应用内付款。",
+                };
+                donation.Click += (_, _) =>
+                {
+                    try { OpenHttpsLink(afdian); }
+                    catch (Exception ex) { Status.Text = "打开链接失败：" + PluginMarket.SafeText(ex.Message, 160); }
+                };
+                actions.Children.Add(donation);
+            }
+
+            if (inCatalog)
+                AddButton(actions, "相关文档", () => { ShowPluginDocuments(info, inCatalog); return Task.FromResult(""); }, false);
+        }
+
+        /// <summary>详情里的设置入口：仍走原设置面板/人设预览，不新增权限或写入路径。</summary>
+        private async Task ShowSettings(PluginInfo info)
+        {
+            if (info.IsUnified) ShowMessageSettings(info);
+            else await ShowPersonaSettings(info);
+        }
+
+        private async Task<string> ToggleDetailPlugin(PluginInfo info, PluginInfo installed, bool enabled)
+        {
+            if (info.IsTheme)
+            {
+                if (enabled)
+                {
+                    if (!Appearance.ClearThemePackage(out var clearError)) throw new InvalidOperationException(clearError);
+                    return "已停用主题，恢复内置外观。";
+                }
+                var theme = ReadTheme(installed);
+                if (!Appearance.SetThemePackage(theme, out var applyError, installed.Id))
+                    throw new InvalidOperationException(applyError);
+                return "已启用主题。外观设置页只提供预览，管理统一走插件卡片。";
+            }
+
+            var full = false;
+            var chat = false;
+            if (!enabled && info.RequiresFullAccess)
+            {
+                full = AppDialog.Confirm(Window.GetWindow(this),
+                    "此插件以当前 Windows 用户权限执行，不是沙箱。它可以访问网络、文件和系统命令。声明的调用仅约束宿主 SDK，不限制代码本身。停用权限不能撤销既有副作用。\n\n"
+                    + CapabilityDetails(info), "授权 4 级插件", danger: true, okText: "确认完整系统权限并启用");
+                if (!full) return "已取消启用";
+            }
+            if (!enabled && info.RequiresChatAccess)
+            {
+                chat = AppDialog.Confirm(Window.GetWindow(this),
+                    "此插件在受限 Wasm 环境运行，会读取当前会话消息；按声明还可能读取本轮系统提示词或最近 12 条会话历史，并可能在发送前改写回复、或在生成前参与是否回复的判断。它不能直接联网、读写文件或执行系统命令。\n\n"
+                    + CapabilityDetails(info), "授权 3 级插件", okText: "允许访问当前聊天并启用", critical: true);
+                if (!chat) return "已取消启用";
+            }
+            _market.SetEnabled(info.Id, !enabled, full, chat);
+            return enabled ? "已停用" : "已启用。";
+        }
+
+        private void CloseDetailReadme()
+        {
+            _detailReadme?.Close();
+            _detailReadme = null;
+        }
+
         private void ShowDetail(object content)
         {
+            // 只有从列表进入详情时才记录列表位置；详情内切设置/文档不能覆盖原位置。
+            if (ListPanel.Visibility == Visibility.Visible) _listScrollOffset = MarketScroll.VerticalOffset;
+            CloseDetailReadme();
             SetDocumentsExpanded(false);
             DetailContent.Content = content;
             ListPanel.Visibility = Visibility.Collapsed;
@@ -530,10 +875,19 @@ namespace WhaleLauncher.Views
 
         private void OnBack(object sender, RoutedEventArgs e)
         {
+            CloseDetailReadme();
             DetailContent.Content = null;
             DetailPanel.Visibility = Visibility.Collapsed;
             ListPanel.Visibility = Visibility.Visible;
             Render();
+            var offset = _listScrollOffset;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                // 重建卡片后先让 ScrollViewer 量出新的可滚动高度，否则 ScrollToVerticalOffset
+                // 会被钳成 0，看起来就像没恢复。
+                MarketScroll.UpdateLayout();
+                MarketScroll.ScrollToVerticalOffset(offset);
+            }), DispatcherPriority.Loaded);
         }
 
         private void OnDownloadGuide(object sender, RoutedEventArgs e) => ShowGuide("PluginDownloadGuide");

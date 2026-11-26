@@ -13,8 +13,7 @@
 - 功能通信只有一个入口：`runtime.capabilities.invokeHost(能力名, 输入)`。HTTP 路由、桥接取件和插件 `host.call` 都走它，能力实现在 `src/services/features/*`；路由只保留传输层（回环校验、桥接 token、readBody、状态码、二进制流）。新增功能＝先在 `pluginProtocolRegistry.json` 登记能力，再写 handler，最后让路由/插件调用它；不要在路由里直接调服务层再另开一套 SDK。
 - 内核同进程里的内部装配（如日记把正文交给提醒发送队列、Bot 拼提示词时同步读日记）保留直连：它们要同步语义或只是回调装配，套异步能力层会改行为。这条边界写在这里，别被后来的“统一”顺手改坏。
 - 所有插件配置、手动运行、授权都在插件卡片的「设置」。插件不得自行加左侧入口；手动执行只允许 `tool.run@1`。
-- 远端 `Banan1cee/whale-girl-plugins` 目前没有 `index-v5.json`，新协议只能本地试装；不要在文档或 UI 里写成已可投稿/已上架。市场仓库同步 schema、校验与 CI 是独立任务。
-- 插件投稿 PR 只发到 `Banan1cee/whale-girl-plugins:main`；制作插件只授权独立插件目录。人设预设可直接分享本地 ZIP。
+- 插件投稿 PR 只发到 `Banan1cee/whale-girl-plugins:main`；制作插件只授权独立插件目录。人设预设可直接分享本地 ZIP。市场目录由市场 CI 生成，不要手改 `index*.json`。
 - 网关提交结果不是微信已送达；插件的 `queued`/`submitted` 同样不能当送达证据。
 
 ## 1. UI 改动的默认落点：**EXE，不是 WebUI**
@@ -136,4 +135,14 @@ Copy-Item launcher/publish/WhaleLauncher.exe .\WhaleLauncher.exe -Force
 2. 不修改 `vendor/wechatauto` 的源码；升级上游只做“替换目录 + 重算 `vendor/MANIFEST.sha256` + 更新版本断言/测试”，不手改文件；
 3. `runtime/` 不手改；需要补丁时改 `scripts/build-runtime.ps1` 或 `scripts/prepare-*.py`，重新生成运行时；
 4. 如果确实必须修改第三方源码，先在任务书/PR 说明原因，并把改动移出 vendor；否则 `tests/vendor-wechatauto.test.js`、构建期的 MANIFEST 校验或 CI 会失败。
+
+## 9. 删除与破坏性命令
+
+2026-11-25 夜里出过一次事故：清理临时目录时用 `cmd /c rd /s /q "<变量路径>"`，路径被错误展开成工作区根，非 Git 跟踪的内容（含未提交改动）全部丢失。此后按下面的规则来：
+
+- 优先用**单个、字面量、绝对路径**的 `Remove-Item -LiteralPath`，不要用通配符；删除前先 `Resolve-Path` 打印目标，再确认它不等于仓库根、不在仓库根的父级。
+- **禁止**把变量拼进 `cmd /c rd /s /q`、`del /s`、`rm -rf` 这类命令；也不要为了绕过权限失败而升级为更激进的删除方式。
+- 删除 Git 跟踪文件前先 `git status` / `git ls-files` 确认；未提交改动不在 Git 里，删了就是永久丢失。
+- 清理临时目录属于低优先级；拿不准就保留，并在交付说明里列出来让维护者处理。
+- 批量清理交给单独任务，写明「删什么、不删什么」，执行者只做清点与报告，由主代理决定是否落刀。
 

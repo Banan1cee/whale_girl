@@ -63,9 +63,18 @@ function create(runtime, { search = searchService.search } = {}) {
       items: runtime.plugins.installed().map(({ id, level, version }) => ({ id, level, version })),
     }),
 
+    // 预算只在这一次调用内有效：先按输入 clamp 出「想借多久」，再用 deadline 压住。
+    // 不能用 Math.max(下限, 剩余) 去兜 deadline——那会把不足 500ms 的剩余预算重新借回
+    // 来，调用方以为还能跑很久，实际早已超时。
     'search.query@1': async (input, _plugin, { signal, deadline }) => {
-      const timeoutMs = Math.max(500, Math.min(30000, Number(input.timeoutMs) || 10000,
-        Number.isFinite(deadline) ? deadline - Date.now() : 30000));
+      if (signal?.aborted) throw error('capability_aborted');
+      const budget = Math.max(500, Math.min(30000, Number(input.timeoutMs) || 10000));
+      const started = Date.now();
+      const bounded = Number.isFinite(deadline);
+      // 放行与真正发起检索之间还有窗口（排队、事件循环），过期就不再启动下层请求。
+      if (bounded && deadline - started <= 0) throw error('capability_timeout');
+      // 剩余不足 1ms 时保留小数：不能 ceil 成 1ms 再把时间借回来。
+      const timeoutMs = bounded ? Math.min(budget, deadline - started) : budget;
       const result = await search({
         text: input.query, force: true, llm: runtime.llm,
         config: { ...(runtime.config.websearch || {}), enabled: true, timeoutMs },

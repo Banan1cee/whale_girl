@@ -209,6 +209,21 @@ jobs:
         shell: pwsh
         run: node scripts/test-tasks.js --task launcher-page-section-checks --report artifacts/test-tasks/launcher-page-section-checks.json
 
+      - name: 插件卡片布局行为回归
+        if: always()
+        shell: pwsh
+        run: node scripts/test-tasks.js --task plugin-card-layout-checks --report artifacts/test-tasks/plugin-card-layout-checks.json
+
+      - name: 插件市场页面交互回归
+        if: always()
+        shell: pwsh
+        run: node scripts/test-tasks.js --task plugin-market-page-checks --report artifacts/test-tasks/plugin-market-page-checks.json
+
+      - name: 插件图文与 GIF 生命周期回归
+        if: always()
+        shell: pwsh
+        run: node scripts/test-tasks.js --task plugin-readme-checks --report artifacts/test-tasks/plugin-readme-checks.json
+
       - name: 打包朋友圈覆盖测试补丁（4.1.7）
         if: success() && startsWith(github.head_ref, 'fix/moments-')
         shell: pwsh

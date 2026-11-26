@@ -6,6 +6,15 @@ const path = require('node:path');
 const { compileFunction } = require('node:vm');
 const { inflateRawSync } = require('node:zlib');
 const registry = require('../src/services/pluginProtocolRegistry.json');
+// 聊天内容类 provider 从注册表派生（dataAccess 含 current-message），与启动器同一口径。
+// dataAccess 的中文披露：与启动器卡片同一套说法，trial 只做静态展示。
+const DATA_ACCESS_DISCLOSURES = {
+  'model.prompt': '本轮系统提示词',
+  'chat.history': '最近 12 条会话历史',
+};
+const CHAT_CONTENT_PROVIDERS = new Set(Object.entries(registry.providers)
+  .filter(([, rule]) => Array.isArray(rule.dataAccess) && rule.dataAccess.includes('current-message'))
+  .map(([name]) => name));
 const { files, limits } = registry;
 const { compileRestricted } = require('../src/services/unifiedWasm');
 const { parseStrict, validateManifest, annotationError } = require('../src/services/pluginProtocol');
@@ -417,7 +426,10 @@ function trial(manifest) {
     ok: true, id: manifest.id, simulated: true, executed: false, installed: false,
     authorizationGranted: false, level: manifest.level, permissionName: registry.levelNames[manifest.level],
     nodeAccessConfirmationRequired: manifest.level === 4,
-    chatConsentRequired: manifest.level === 3 && Object.hasOwn(manifest.provides, 'chat.reply@1'),
+    chatConsentRequired: manifest.level === 3 && Object.keys(manifest.provides).some(name => CHAT_CONTENT_PROVIDERS.has(name)),
+    dataAccess: Array.isArray(manifest.dataAccess) ? manifest.dataAccess.slice() : [],
+    dataAccessDisclosures: (Array.isArray(manifest.dataAccess) ? manifest.dataAccess : [])
+      .map(name => DATA_ACCESS_DISCLOSURES[name] ?? name),
     routes: Object.entries(manifest.provides).map(([capability, descriptor]) => ({ capability, ...descriptor })),
     calls: manifest.calls.map(capability => ({
       capability,

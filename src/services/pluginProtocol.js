@@ -6,6 +6,12 @@ const isObject = value => value !== null && typeof value === 'object' && !Array.
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const fail = message => Object.assign(new Error(message), { code: 'invalid_plugin_manifest' });
 
+// 需要聊天数据授权的 provider 由注册表派生：凡是声明了 dataAccess 的 chat.* 能力，
+// 3 级启用时都要走「聊天访问」确认；以后加新 provider 不用再改这里。
+const CHAT_DATA_PROVIDERS = Object.freeze(Object.keys(registry.providers).filter(name => name.startsWith('chat.')
+  && Array.isArray(registry.providers[name].dataAccess) && registry.providers[name].dataAccess.length > 0));
+const declaresChatData = provides => isObject(provides) && CHAT_DATA_PROVIDERS.some(name => own(provides, name));
+
 function parseStrict(raw) {
   let text;
   try { text = decoder.decode(raw); } catch { throw fail('manifest_not_utf8'); }
@@ -115,6 +121,13 @@ function validateManifestShape(manifest) {
   if (compareVersion(manifest.version, '0.0.0') === null || compareVersion(manifest.minAppVersion, '0.0.0') === null) throw fail('manifest_version_invalid');
   if (manifest.maxAppVersion !== undefined && compareVersion(manifest.maxAppVersion, manifest.minAppVersion) < 0) throw fail('manifest_app_range_invalid');
   if (manifest.appEpoch !== undefined && ![1, 2].includes(manifest.appEpoch)) throw fail('manifest_app_epoch_invalid');
+  // 兼容格式与适用等级由注册表统一管理，安装与运行不能各抄一份策略。
+  if (manifest.compat !== undefined) {
+    const compatibility = policy.compat;
+    if (!compatibility?.values?.includes(manifest.compat)
+      || !compatibility.levels?.includes(manifest.level)
+      || manifest.runtime !== compatibility.runtime) throw fail('manifest_compat_invalid');
+  }
   if (manifest.appCompatibility !== undefined) {
     if (!Array.isArray(manifest.appCompatibility) || manifest.appCompatibility.length < 1 || manifest.appCompatibility.length > 2) throw fail('manifest_app_compatibility_invalid');
     const epochs = new Set();
@@ -138,6 +151,12 @@ function validateManifestShape(manifest) {
       || !rule.modes.includes(descriptor.mode) || !rule.scopes.includes(descriptor.scope)) throw fail('manifest_provider_invalid');
     if (!validateProviderInterval(rule, descriptor)) throw fail('manifest_provider_interval_invalid');
   }
+  // compat 的旧 hook 表是注册表登记的唯一映射：声明了映射不到的 provider（如 tool.run@1）
+  // 会安装成功、第一次派发才撞 invalid_wasm_compat，所以在清单校验就拒绝。
+  if (manifest.compat !== undefined) {
+    const hooks = registry.manifest.compat?.hooks;
+    if (!isObject(hooks) || providerNames.some(name => !own(hooks, name))) throw fail('manifest_compat_invalid');
+  }
   if (manifest.level === 0 && manifest.settingsSchema !== undefined) throw fail('manifest_settings_schema_invalid');
   if (!Array.isArray(manifest.calls) || new Set(manifest.calls).size !== manifest.calls.length
     || manifest.calls.some(name => typeof name !== 'string' || !level.calls.includes(name))) throw fail('manifest_calls_invalid');
@@ -145,7 +164,7 @@ function validateManifestShape(manifest) {
   if (manifest.dataAccess !== undefined) {
     if (!Array.isArray(manifest.dataAccess) || new Set(manifest.dataAccess).size !== manifest.dataAccess.length
       || manifest.dataAccess.some(name => !allowedData.includes(name))
-      || !own(manifest.provides, 'chat.reply@1')) throw fail('manifest_data_access_invalid');
+      || !declaresChatData(manifest.provides)) throw fail('manifest_data_access_invalid');
   }
   if (manifest.settingsSchema !== undefined) validateSettingsSchema(manifest.settingsSchema);
   if (manifest.executionTimeoutMs !== undefined && (!Number.isInteger(manifest.executionTimeoutMs)
@@ -259,4 +278,4 @@ function validateManifest(raw, { appVersion, appEpoch = 1, entryBytes } = {}) {
   return manifest;
 }
 
-module.exports = { registry, parseStrict, validateManifest, validateProviderInterval, validateSettings, validateSettingsSchema, validateSchemaValue, compareVersion, annotationError };
+module.exports = { registry, parseStrict, validateManifest, validateProviderInterval, validateSettings, validateSettingsSchema, validateSchemaValue, compareVersion, annotationError, CHAT_DATA_PROVIDERS, declaresChatData };

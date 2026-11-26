@@ -1,7 +1,9 @@
 'use strict';
 
+const { AsyncLocalStorage } = require('node:async_hooks');
 const registry = require('./pluginProtocolRegistry.json');
 const { validate } = require('./capabilitySchema');
+const { reconcileDataAccessOutput } = require('./unifiedPluginRuntime');
 
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const failure = code => Object.assign(new Error(code), { code });
@@ -11,13 +13,24 @@ const failure = code => Object.assign(new Error(code), { code });
 const DEGRADABLE_SIDE_EFFECTS = new Set(['none', 'network-read']);
 
 class UnifiedCapabilityDispatcher {
-  constructor({ plugins, logger, maxPending = 128, maxPendingPerKey = 16 } = {}) {
+  constructor({ plugins, logger, maxPending = 128, maxPendingPerKey = 16,
+    maxHostConcurrent = 32, maxHostPending = 128, maxHostWaitMs = 30000 } = {}) {
     // 只做宿主能力分发时不需要插件运行时；缺 installed/invoke 的能力在用到时再报错。
     if (!plugins) throw failure('invalid_plugin_runtime');
     this.plugins = plugins;
     this.logger = logger;
     this.maxPending = maxPending;
     this.maxPendingPerKey = maxPendingPerKey;
+    if (!Number.isSafeInteger(maxHostConcurrent) || maxHostConcurrent < 1 || maxHostConcurrent > 256
+      || !Number.isSafeInteger(maxHostPending) || maxHostPending < 0 || maxHostPending > 4096
+      || !Number.isSafeInteger(maxHostWaitMs) || maxHostWaitMs < 1 || maxHostWaitMs > 2147483647) {
+      throw failure('invalid_dispatcher_limits');
+    }
+    this.maxHostConcurrent = maxHostConcurrent;
+    this.maxHostPending = maxHostPending;
+    this.maxHostWaitMs = maxHostWaitMs;
+    this.hostPools = new Map();
+    this.hostContext = new AsyncLocalStorage();
     this.contracts = new Map();
     this.chains = new Map();
     this.pending = new Map();
@@ -59,7 +72,7 @@ class UnifiedCapabilityDispatcher {
   }
 
   async invoke(name, input, {
-    scope = 'all', pluginId, signal, deadline, builtin, preflight, key = '',
+    scope = 'all', pluginId, signal, deadline, builtin, preflight, key = '', chatId = '',
   } = {}) {
     const contract = this.contracts.get(name);
     if (!contract) throw failure('unknown_capability');
@@ -103,7 +116,26 @@ class UnifiedCapabilityDispatcher {
         input = validate(contract.inputSchema, safe.input, 'invalid_capability_input');
       }
 
-      const run = (plugin, value) => this.plugins.invoke(plugin, name, value, { signal, deadline });
+      const run = (plugin, value) => this.plugins.invoke(plugin, name, value, {
+        signal, deadline, chatId,
+        // 运行时在保存 state 前调用：完整 provider output（含 state）校验通过才落库。
+        validateOutput: candidate => this.validateOutput(name, candidate),
+      });
+
+      // gate：按插件 id 顺序逐个询问，pass 继续，首个 skip/wake 生效。
+      // 门禁插件自身故障按 pass 处理，不能因为插件坏了把主人消息静默吞掉。
+      const gates = providers.filter(row => row.provides[name].mode === 'gate');
+      for (const plugin of gates) {
+        try {
+          const candidate = await run(plugin, structuredClone(input));
+          this.validateOutput(name, candidate);
+          if (candidate.action !== 'pass') return candidate;
+        } catch (error) {
+          this.logFailure(name, plugin, error);
+        }
+        if (signal?.aborted) throw failure('capability_aborted');
+      }
+
       for (const plugin of providers.filter(row => row.provides[name].mode === 'observe')) {
         try { await run(plugin, structuredClone(input)); }
         catch (error) { this.logFailure(name, plugin, error); }
@@ -124,10 +156,13 @@ class UnifiedCapabilityDispatcher {
 
       for (const plugin of providers.filter(row => row.provides[name].mode === 'enhance')) {
         try {
-          const prior = name === 'chat.search@1' ? { previous: structuredClone(output) } : { output: structuredClone(output) };
+          const base = output;
+          const prior = name === 'chat.search@1' ? { previous: structuredClone(base) } : { output: structuredClone(base) };
           const candidate = await run(plugin, { ...structuredClone(input), ...prior });
           this.validateOutput(name, candidate);
-          output = candidate;
+          // 未授权插件看不到上一层的 system/history，它返回的同名字段也不能覆盖：
+          // 保住前一层已授权的值，未授权增强者对这些字段等同于 no-op（不是清空）。
+          output = reconcileDataAccessOutput(name, plugin.dataAccess, base, candidate);
         } catch (error) {
           // enhance 是可选的增量步骤：只有宿主可见副作用的能力才必须把失败向上抛。
           // none（回复改写）与 network-read（联网补充资料）失败时退回上一个输出，
@@ -155,11 +190,119 @@ class UnifiedCapabilityDispatcher {
       throw failure('invalid_capability_contract');
     }
     this.hostContracts.set(name, { contract, handler });
+    this.hostPools.set(name, { active: 0, waiters: [] });
     return this;
   }
 
   hasHost(name) {
     return this.hostContracts.has(name);
+  }
+
+  acquireHostSlot(pool, { signal, deadline } = {}) {
+    if (signal?.aborted) return Promise.reject(failure('capability_aborted'));
+    if (Number.isFinite(deadline) && Date.now() >= deadline) return Promise.reject(failure('capability_timeout'));
+    if (pool.active < this.maxHostConcurrent) {
+      pool.active++;
+      return Promise.resolve(this.releaseHostSlot(pool));
+    }
+    if (pool.waiters.length >= this.maxHostPending) {
+      return Promise.reject(failure('host_capability_queue_limit'));
+    }
+
+    // 内部调用可能不带 deadline，也必须有有限的排队等待；不替 handler 承诺硬截止。
+    deadline = Math.min(Number.isFinite(deadline) ? deadline : Infinity, Date.now() + this.maxHostWaitMs);
+    return new Promise((resolve, reject) => {
+      const waiter = { resolve, reject, signal, deadline, timer: null, onAbort: null, settled: false };
+      const remove = error => {
+        if (waiter.settled) return;
+        waiter.settled = true;
+        const index = pool.waiters.indexOf(waiter);
+        if (index >= 0) pool.waiters.splice(index, 1);
+        if (waiter.timer) clearTimeout(waiter.timer);
+        signal?.removeEventListener('abort', waiter.onAbort);
+        reject(error);
+      };
+      waiter.onAbort = () => remove(failure('capability_aborted'));
+      // 先入队再启动到期检查：deadline 可能在两次检查之间已经越过，expire() 会在同一次
+      // 同步调用里通过 remove() 摘掉自己。顺序反过来时 indexOf 找不到尚未入队的 waiter，
+      // 已 reject 的等待者会留在队列里占住 maxHostPending，直到下一次释放才被清掉。
+      pool.waiters.push(waiter);
+      if (signal) signal.addEventListener('abort', waiter.onAbort, { once: true });
+      if (Number.isFinite(deadline)) {
+        const expire = () => {
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) remove(failure('capability_timeout'));
+          else waiter.timer = setTimeout(expire, Math.min(2147483647, remaining));
+        };
+        expire();
+      }
+      waiter.grant = () => {
+        if (waiter.settled) return false;
+        waiter.settled = true;
+        if (waiter.timer) clearTimeout(waiter.timer);
+        signal?.removeEventListener('abort', waiter.onAbort);
+        resolve(this.releaseHostSlot(pool));
+        return true;
+      };
+    });
+  }
+
+  releaseHostSlot(pool) {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      while (pool.waiters.length) {
+        const waiter = pool.waiters.shift();
+        if (waiter.settled || waiter.signal?.aborted
+          || Number.isFinite(waiter.deadline) && Date.now() >= waiter.deadline) {
+          if (!waiter.settled) {
+            waiter.settled = true;
+            if (waiter.timer) clearTimeout(waiter.timer);
+            waiter.signal?.removeEventListener('abort', waiter.onAbort);
+            waiter.reject(failure(waiter.signal?.aborted ? 'capability_aborted' : 'capability_timeout'));
+          }
+          continue;
+        }
+        waiter.grant();
+        return;
+      }
+      pool.active--;
+    };
+  }
+
+  /**
+   * 嵌套调用的上下文继承：deadline 取父/子较小值；signal 则合并「祖先源 signal ∪ 本次
+   * signal」。frame 记录的是源 signal（sources），不是父层的派生 signal：父调用 settle 时
+   * 会摘掉自己那对监听，若孙调用只借用父的派生 signal 就会随父断链，所以每个调用都为
+   * 自己订阅全部源 signal，由自己的 finally 释放。Node 18 没有 AbortSignal.any，这里手动
+   * 挂监听；不占用用户 signal 的 onabort 槽位。父调用已 settle 时不会出现在活动 frame 里，
+   * 延后的回调就是新的根调用，不再继承已结束调用的 signal/deadline。
+   */
+  inheritHostContext(parent, signal, deadline) {
+    const inheritedDeadline = Number.isFinite(parent?.deadline)
+      ? (Number.isFinite(deadline) ? Math.min(deadline, parent.deadline) : parent.deadline)
+      : deadline;
+    const sources = [];
+    for (const source of parent?.sources || []) {
+      if (source && !sources.includes(source)) sources.push(source);
+    }
+    if (signal && !sources.includes(signal)) sources.push(signal);
+    if (!sources.length) return { signal, deadline: inheritedDeadline, sources, release: null };
+    // 只有一个源时直接共用，免去派生和一对监听。
+    if (sources.length === 1) return { signal: sources[0], deadline: inheritedDeadline, sources, release: null };
+    const derived = new AbortController();
+    const cancel = () => derived.abort();
+    if (sources.some(source => source.aborted)) cancel();
+    else for (const source of sources) source.addEventListener('abort', cancel, { once: true });
+    return {
+      signal: derived.signal,
+      deadline: inheritedDeadline,
+      sources,
+      release: () => {
+        for (const source of sources) source.removeEventListener('abort', cancel);
+      },
+    };
   }
 
   /**
@@ -173,21 +316,56 @@ class UnifiedCapabilityDispatcher {
     const contract = registry.calls[name];
     if (!contract) throw failure('host_capability_unknown');
     if (contract.enabled === false) throw failure('host_capability_disabled');
-    if (signal?.aborted) throw failure('capability_aborted');
-    if (plugin) {
-      if (!this.plugins.isApproved(plugin)) throw failure('grant_revoked');
-      if (!Array.isArray(plugin.calls) || !plugin.calls.includes(name)) {
-        throw failure('host_capability_not_declared');
+    // 只取仍活着的祖先：settle 的 frame 即使还留在 AsyncLocalStorage 里也不算上下文。
+    const ancestors = (this.hostContext.getStore() || []).filter(frame => frame.active);
+    const inherited = this.inheritHostContext(ancestors[ancestors.length - 1], signal, deadline);
+    try {
+      if (inherited.signal?.aborted) throw failure('capability_aborted');
+      if (plugin) {
+        if (!this.plugins.isApproved(plugin)) throw failure('grant_revoked');
+        if (!Array.isArray(plugin.calls) || !plugin.calls.includes(name)) {
+          throw failure('host_capability_not_declared');
+        }
       }
+      validate(contract.inputSchema, input, 'invalid_host_capability_input');
+      const handler = this.hostContracts.get(name)?.handler;
+      if (!handler) throw failure('host_capability_unavailable');
+      if (Number.isFinite(inherited.deadline) && Date.now() >= inherited.deadline) {
+        throw failure('capability_timeout');
+      }
+      // 嵌套调用不能等待自己或已占满的下游池，否则容量阀会制造跨能力自等。
+      if (ancestors.some(frame => frame.name === name)) throw failure('host_capability_reentrant');
+      const pool = this.hostPools.get(name);
+      if (ancestors.length && pool.active >= this.maxHostConcurrent) {
+        throw failure('host_capability_queue_limit');
+      }
+      const release = await this.acquireHostSlot(pool, inherited);
+      const frame = { name, active: true, signal: inherited.signal, sources: inherited.sources,
+        deadline: inherited.deadline };
+      try {
+        if (inherited.signal?.aborted) throw failure('capability_aborted');
+        if (Number.isFinite(inherited.deadline) && Date.now() >= inherited.deadline) {
+          throw failure('capability_timeout');
+        }
+        if (plugin) {
+          if (!this.plugins.isApproved(plugin)) throw failure('grant_revoked');
+          if (!Array.isArray(plugin.calls) || !plugin.calls.includes(name)) throw failure('host_capability_not_declared');
+        }
+        const output = await this.hostContext.run([...ancestors, frame],
+          () => handler(input || {}, plugin, { signal: inherited.signal, deadline: inherited.deadline }));
+        // 保留现有调用结果语义；超时/取消不证明副作用未发生，且不在此重试。
+        if (inherited.signal?.aborted) throw failure('capability_aborted');
+        if (Number.isFinite(inherited.deadline) && Date.now() >= inherited.deadline) {
+          throw failure('capability_timeout');
+        }
+        return validate(contract.outputSchema, output, 'invalid_host_capability_output');
+      } finally {
+        frame.active = false;
+        release();
+      }
+    } finally {
+      inherited.release?.();
     }
-    validate(contract.inputSchema, input, 'invalid_host_capability_input');
-    const handler = this.hostContracts.get(name)?.handler;
-    if (!handler) throw failure('host_capability_unavailable');
-    if (Number.isFinite(deadline) && Date.now() >= deadline) throw failure('capability_timeout');
-    const output = await handler(input || {}, plugin, { signal, deadline });
-    if (signal?.aborted) throw failure('capability_aborted');
-    if (Number.isFinite(deadline) && Date.now() >= deadline) throw failure('capability_timeout');
-    return validate(contract.outputSchema, output, 'invalid_host_capability_output');
   }
 
   runTool(id, input, options = {}) {
@@ -219,8 +397,7 @@ class UnifiedCapabilityDispatcher {
         return this.invoke('task.tick@1', input, { pluginId: item.plugin.id, scope: 'all',
           deadline: now + item.plugin.executionTimeoutMs,
           preflight: () => ({ allowed: this.plugins.isApproved(item.plugin), input }),
-        });
-      });
+        });      });
       this.scheduled.set(name, item.signature);
     }
   }

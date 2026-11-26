@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -15,8 +16,12 @@ namespace WhaleLauncher
 {
     internal static class PluginCatalog
     {
-        private const string PersonaCatalogUrl = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-personas.json";
+        internal const string V5CatalogUrl = "https://raw.githubusercontent.com/Banan1cee/whale-girl-plugins/main/index-v5.json";
+        // 唯一裸 raw 链接：人设目录、README/图片都从同一根前缀派生，避免再写第二条裸链接。
+        private static readonly string MarketRoot = V5CatalogUrl[..(V5CatalogUrl.LastIndexOf('/') + 1)];
+        private static readonly string PersonaCatalogUrl = MarketRoot + "index-personas.json";
         private const int CatalogLimit = 256 * 1024;
+        private const int PackageLimit = 16 * 1024 * 1024;
         private static readonly HttpClient Http = CreateClient();
         private static readonly JsonSerializerOptions ReadOptions = new() { PropertyNameCaseInsensitive = true };
 
@@ -32,7 +37,162 @@ namespace WhaleLauncher
             return client;
         }
 
-        internal static Task<PluginInfo[]> CatalogAsync() => LoadCatalogAsync(PersonaCatalogUrl, 1, "persona");
+        internal static async Task<PluginInfo[]> CatalogAsync()
+        {
+            var personas = await LoadCatalogAsync(PersonaCatalogUrl, 1, "persona");
+            // v5 目录是增量：404/网络/格式问题都不能把整个人设市场判失败。
+            try
+            {
+                var v5 = await LoadV5Async();
+                return personas.Concat(v5).ToArray();
+            }
+            catch (Exception ex) when (ex is HttpRequestException or InvalidDataException
+                or OperationCanceledException or IOException or JsonException)
+            {
+                return personas;
+            }
+        }
+
+        private static async Task<PluginInfo[]> LoadV5Async()
+        {
+            var bytes = await DownloadAsync(V5CatalogUrl, CatalogLimit);
+            return ParseV5(bytes);
+        }
+
+        /// <summary>v5 目录条目 → PluginInfo。单条非法只丢该条，不拖垮整份目录。</summary>
+        internal static PluginInfo[] ParseV5(byte[] bytes)
+        {
+            using var json = JsonDocument.Parse(bytes);
+            if (json.RootElement.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("v5 市场目录格式无效");
+            var result = new List<PluginInfo>();
+            foreach (var item in json.RootElement.EnumerateArray())
+            {
+                try
+                {
+                    if (item.ValueKind != JsonValueKind.Object
+                        || !item.TryGetProperty("manifest", out var manifest) || manifest.ValueKind != JsonValueKind.Object
+                        || !item.TryGetProperty("package", out var package) || package.ValueKind != JsonValueKind.Object)
+                        continue;
+                    var info = PluginMarket.ParseUnified(manifest);
+                    var path = Text(package, "path");
+                    var download = Text(package, "download");
+                    var sha = Text(package, "sha256");
+                    if (!package.TryGetProperty("bytes", out var sizeValue) || sizeValue.ValueKind != JsonValueKind.Number
+                        || !sizeValue.TryGetInt64(out var size) || size <= 0 || size > PackageLimit) continue;
+                    if (path != $"packages/{info.Id}-{info.Version}.zip") continue;
+                    if (download != MarketRoot + path || !Regex.IsMatch(sha ?? "", @"\A[a-fA-F0-9]{64}\z")) continue;
+                    info = info with { Download = download, Sha256 = sha, Display = ParseDisplay(item) };
+                    if (PluginMarket.ValidCatalog(info)) result.Add(info);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or JsonException or FormatException)
+                {
+                }
+            }
+            return result.ToArray();
+        }
+
+        private static PluginDisplayInfo ParseDisplay(JsonElement entry)
+        {
+            if (!entry.TryGetProperty("display", out var display) || display.ValueKind != JsonValueKind.Object) return null;
+            PluginDisplayAsset readme = null;
+            if (display.TryGetProperty("readme", out var readmeValue) && readmeValue.ValueKind == JsonValueKind.Object)
+            {
+                var asset = new PluginDisplayAsset(Text(readmeValue, "path"), Text(readmeValue, "sha256"),
+                    Number(readmeValue, "bytes"));
+                if (PluginMarket.ValidDisplayAsset(asset, 64 * 1024)) readme = asset;
+            }
+            var images = new List<PluginDisplayImage>();
+            if (display.TryGetProperty("images", out var imageList) && imageList.ValueKind == JsonValueKind.Array)
+            {
+                var paths = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var value in imageList.EnumerateArray())
+                {
+                    if (images.Count >= 8 || value.ValueKind != JsonValueKind.Object) continue;
+                    var image = new PluginDisplayImage(Text(value, "path"), Text(value, "sha256"),
+                        Number(value, "bytes"), Text(value, "media"));
+                    if (!PluginMarket.ValidDisplayImage(image, 2 * 1024 * 1024) || !paths.Add(image.Path)) continue;
+                    images.Add(image);
+                }
+            }
+            PluginDisplayDonation donation = null;
+            if (display.TryGetProperty("donation", out var donationValue) && donationValue.ValueKind == JsonValueKind.Object)
+            {
+                var afdian = PluginMarket.AfdianPersonalPage(Text(donationValue, "afdian"));
+                if (afdian != null) donation = new PluginDisplayDonation(afdian);
+            }
+            string updated = null;
+            if (display.TryGetProperty("updatedAt", out var updatedValue) && updatedValue.ValueKind == JsonValueKind.String
+                && DateTimeOffset.TryParse(updatedValue.GetString(), CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind, out var stamp))
+                updated = stamp.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            if (readme == null && images.Count == 0 && donation == null && updated == null) return null;
+            var parsed = new PluginDisplayInfo(readme, images.Count > 0 ? images.ToArray() : null, donation, updated);
+            return PluginMarket.ValidDisplay(parsed) ? parsed : null;
+        }
+
+        internal static async Task<PluginAssetResult> FetchReadmeAsync(PluginInfo info)
+        {
+            var asset = info?.Display?.Readme;
+            if (asset == null) return new(null, "该插件没有展示用 README");
+            return await FetchAssetAsync(asset.Path, asset.Sha256, asset.Bytes, 64 * 1024);
+        }
+
+        internal static async Task<PluginAssetResult> FetchImageAsync(PluginInfo info, string source)
+        {
+            if (info?.Display?.Images is not { Length: > 0 } images) return new(null, "该插件没有展示图片");
+            var path = ResolveImagePath(info, source);
+            if (path == null) return new(null, "图片地址不在市场仓库或格式非法");
+            var image = images.FirstOrDefault(item => string.Equals(item.Path, path, StringComparison.Ordinal));
+            if (image == null) return new(null, "图片未在展示元数据中声明");
+            return await FetchAssetAsync(image.Path, image.Sha256, image.Bytes, 2 * 1024 * 1024);
+        }
+
+        private static string ResolveImagePath(PluginInfo info, string source)
+        {
+            if (string.IsNullOrWhiteSpace(source)) return null;
+            var value = source.Trim();
+            string path;
+            if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps)
+            {
+                if (!value.StartsWith(MarketRoot, StringComparison.Ordinal)) return null;
+                path = value[MarketRoot.Length..];
+            }
+            else
+            {
+                if (value.Contains('\\') || value.Contains("..", StringComparison.Ordinal)) return null;
+                var directory = info.Display?.Readme?.Path is { } readme
+                    ? readme[..(readme.LastIndexOf('/') + 1)] : $"plugins/{info.Id}/";
+                path = directory + value.TrimStart('/');
+            }
+            if (!path.StartsWith("plugins/", StringComparison.Ordinal) || path.Contains('\\')
+                || path.Contains("..", StringComparison.Ordinal)) return null;
+            return path;
+        }
+
+        private static async Task<PluginAssetResult> FetchAssetAsync(string path, string sha256, int bytes, int limit)
+        {
+            try
+            {
+                var raw = await DownloadAsync(MarketRoot + path, limit);
+                if (raw.Length != bytes) return new(null, "文件大小与目录声明不一致");
+                if (!Convert.ToHexString(SHA256.HashData(raw)).Equals(sha256, StringComparison.OrdinalIgnoreCase))
+                    return new(null, "文件校验失败");
+                return new(raw, null);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or InvalidDataException
+                or OperationCanceledException or IOException)
+            {
+                return new(null, "读取失败：" + ex.Message);
+            }
+        }
+
+        private static string Text(JsonElement value, string key) =>
+            value.TryGetProperty(key, out var item) && item.ValueKind == JsonValueKind.String ? item.GetString() : null;
+
+        private static int Number(JsonElement value, string key) =>
+            value.TryGetProperty(key, out var item) && item.ValueKind == JsonValueKind.Number
+                && item.TryGetInt32(out var number) ? number : 0;
 
         private static async Task<PluginInfo[]> LoadCatalogAsync(string url, int? expectedApi = null,
             string expectedKind = null)

@@ -1,0 +1,29 @@
+{
+  "format": "whale-plugin/1",
+  "level": 4,
+  "id": "prompt-enhance",
+  "name": "提示词补一句",
+  "author": "你的名字",
+  "version": "1.0.0",
+  "minAppVersion": "4.3.0",
+  "description": "在本轮系统提示词末尾追加一句风格要求，句子的内容可以在设置里改。",
+  "entry": "plugin.js",
+  "runtime": "node-full",
+  "provides": {
+    "chat.prompt@1": { "mode": "enhance", "scope": "all" }
+  },
+  "calls": [],
+  "dataAccess": ["model.prompt"],
+  "settingsSchema": {
+    "type": "object",
+    "properties": {
+      "suffix": {
+        "type": "string",
+        "maxLength": 200,
+        "title": "追加的要求",
+        "description": "留空则使用默认那句；不要写 Markdown"
+      }
+    },
+    "additionalProperties": false
+  }
+}

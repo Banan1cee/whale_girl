@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "theme-minimal",
+  "name": "极简主题",
+  "author": "你的名字",
+  "version": "1.0.0",
+  "colors": {
+    "accent": "#6FD6C0",
+    "background": "#07120F",
+    "surface": "#101B18",
+    "text": "#F2FAF7",
+    "muted": "#9FB3AD",
+    "border": "#243140",
+    "field": "#0C1714"
+  },
+  "font": { "family": "Microsoft YaHei UI", "scale": 1.0 },
+  "metrics": { "corner": 12, "spacing": 1.0 },
+  "dialog": { "surface": "#101B18", "border": "#243140", "corner": 12 }
+}

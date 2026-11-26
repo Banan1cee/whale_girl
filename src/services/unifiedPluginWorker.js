@@ -26,7 +26,7 @@ function initialize({ source, filename }) {
   send({ type: 'ready' });
 }
 
-async function invoke({ invocation, capability, input, settings }) {
+async function invoke({ invocation, capability, input, settings, state }) {
   invoked = true;
   const pending = new Map();
   const controller = new AbortController();
@@ -67,7 +67,8 @@ async function invoke({ invocation, capability, input, settings }) {
     if (!providers || typeof providers !== 'object' || !Object.hasOwn(providers, capability)
       || typeof providers[capability] !== 'function') throw Error('missing_provider');
     const handler = providers[capability];
-    const context = Object.freeze({ host: Object.freeze({ call }), signal: controller.signal, settings });
+    const context = Object.freeze({ host: Object.freeze({ call }), signal: controller.signal, settings,
+      state: state && typeof state === 'object' && !Array.isArray(state) ? state : {} });
     result = { ok: true, value: json(await handler(input, context)) };
   } catch {
     result = { ok: false };

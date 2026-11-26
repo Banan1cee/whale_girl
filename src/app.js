@@ -340,6 +340,115 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   });
   runtime.gateways = createGateways({ config, bot: runtime.bot, logger: child('gateway'),
     chat: runtime.chat });
+
+  // 新扩展点的生命周期通知（app.start@1 / app.stop@1）：
+  // 按授权快照签名跟踪，一次授权只通知一次；用户运行中启用/更新插件后，由 server.js
+  // 现有的 reconcile 回调补发，不新增第二个定时器。
+  // 签名 = id + 安装包摘要 + 授权代次 + 授权字节摘要：停用/更新/重签都会换代。
+  const flowStarts = new Map();   // 插件 id -> { signature, flow }；按 id 有界，新快照直接替换旧的
+  const MAX_FLOW_STARTS = 512;
+  let lifecycleStopping = false;
+
+  const signatureOf = flow => [
+    flow.id, flow.packageHash ?? flow.hash ?? '', flow.epoch ?? '', flow.authRevision ?? '',
+  ].join('\u0000');
+
+  const lifecyclePayload = flow => ({
+    at: Date.now(),
+    settings: flow && flow.settings && typeof flow.settings === 'object' && !Array.isArray(flow.settings)
+      ? flow.settings : {},
+  });
+
+  // 只认仍然有效的授权快照：撤权/停用/更新/重签都会让旧 flow 失效。
+  // 绝不拿旧快照“补执行”一次，否则等于让已撤回的插件再跑一遍。
+  const currentLifecycleFlow = (flow, name) => {
+    try {
+      const fresh = runtime.plugins.current(flow);
+      return fresh && fresh.provides && fresh.provides[name] ? fresh : null;
+    } catch { return null; }
+  };
+
+  const syncPluginStarts = () => {
+    if (lifecycleStopping) return;   // 停机已经进入 stop 语义：不再补发 start
+    let providers = [];
+    try { providers = runtime.capabilities.providers('app.start@1', 'all') || []; } catch { return; }
+    for (const flow of providers) {
+      try {
+        const signature = signatureOf(flow);
+        const known = flowStarts.get(flow.id);
+        if (known && known.signature === signature) continue;
+        // 先占位再调用：reconcile 每 500ms 触发一次，慢启动不能被重复通知。
+        flowStarts.set(flow.id, { signature, flow });
+        while (flowStarts.size > MAX_FLOW_STARTS) flowStarts.delete(flowStarts.keys().next().value);
+        const current = currentLifecycleFlow(flow, 'app.start@1');
+        if (!current) continue;   // 快照刚被撤权/更新：旧快照绝不晚执行
+        Promise.resolve(runtime.capabilities.invoke('app.start@1', lifecyclePayload(current), { pluginId: current.id }))
+          .catch(err => runtime.logger.warn('[app.start@1] 插件观察失败（不影响主流程）：' + describeError(err)));
+      } catch (err) {
+        runtime.logger.warn('[app.start@1] 生命周期装配失败（不影响主流程）：' + describeError(err));
+      }
+    }
+  };
+
+  // 正常停机：对仍然持有有效授权、且本进程确实通知过 start 的插件各发一次 stop，并 await。
+  // 撤权优先：撤权/卸载/更新后的旧快照一律不执行（包括 stop），所以撤权之后
+  // 不保证插件收到 app.stop@1——只保证不再运行它的旧代码。日志不打印 settings。
+  const stopPluginLifecycles = async () => {
+    if (lifecycleStopping) return;
+    lifecycleStopping = true;
+    const pending = [];
+    for (const { flow } of [...flowStarts.values()]) {
+      const current = currentLifecycleFlow(flow, 'app.stop@1');
+      if (!current) continue;
+      pending.push(Promise.resolve(runtime.capabilities.invoke('app.stop@1', lifecyclePayload(current), { pluginId: current.id }))
+        .catch(err => runtime.logger.warn('[app.stop@1] 插件观察失败（不影响停机）：' + describeError(err))));
+    }
+    flowStarts.clear();
+    await Promise.all(pending);
+  };
+
+  runtime.pluginLifecycle = Object.freeze({ sync: syncPluginStarts, stop: stopPluginLifecycles });
+
+  const observeDispatched = (message, result) => {
+    try {
+      if (!result || result.__pluginDispatched || !runtime.capabilities.hasProviders('chat.dispatched@1', 'all')) return;
+      const reply = result.action === 'reply';
+      const sent = reply && result.ok !== false && Boolean(result.outbound && result.outbound.ok !== false);
+      const payload = {
+        message: runtime.bot.providerMessage(message),
+        text: reply ? String(result.reply || '').slice(0, 16000) : '',
+        action: reply ? 'reply' : 'ignore',
+        sent,
+      };
+      if (!reply && result.reason) payload.reason = String(result.reason).slice(0, 80);
+      void runtime.capabilities.invoke('chat.dispatched@1', payload, { key: runtime.bot.sessionKey(message) })
+        .catch(err => runtime.logger.warn('[chat.dispatched] 观察者失败（不影响发送）：' + describeError(err)));
+    } catch (err) {
+      runtime.logger.warn('[chat.dispatched] 观察者装配失败（不影响发送）：' + describeError(err));
+    }
+  };
+  for (const gateway of runtime.gateways.values()) {
+    const originalHandle = gateway.handleInbound.bind(gateway);
+    gateway.handleInbound = async (...args) => {
+      const result = await originalHandle(...args);
+      try {
+        const message = runtime.bot.normalize(args[0]);
+        // bot.handle 已经对 ignore 发过 observe 时，网关结果不能重复观察。
+        if (result.action !== 'reply' && runtime.bot.consumeDispatchedIgnore?.(message)) return result;
+        observeDispatched(message, result);
+      } catch { /* 观察者不能影响网关结果 */ }
+      return result;
+    };
+  }
+  // 启动时就已授权的插件先通知一次；之后新启用的由 reconcile 回调补齐。
+  syncPluginStarts();
+  const stopPlugins = runtime.plugins.stop.bind(runtime.plugins);
+  runtime.plugins.stop = async (...args) => {
+    // 先 await 生命周期 stop（只发一次），再真正终止 worker，保证插件在停机前收到回调。
+    await stopPluginLifecycles();
+    return stopPlugins(...args);
+  };
+
   const pluginAllowed = item => runtime.plugins.isApprovedIdHash(item.pluginId, item.pluginHash);
   runtime.reminders.pluginAllowed = pluginAllowed;
   runtime.stickerService.pluginAllowed = pluginAllowed;

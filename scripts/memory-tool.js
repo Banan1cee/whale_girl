@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
 const backup = require('../src/memory/backup');
-const migrate = require('../src/memory/migrate');
+const migrate = require('../scripts/migrate/import-4.0');
 const { ChatStore } = require('../src/memory/chatStore');
 
 const root = path.resolve(__dirname, '..');

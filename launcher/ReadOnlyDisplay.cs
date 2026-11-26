@@ -59,7 +59,7 @@ namespace WhaleLauncher.Views
 
         public StatusCard()
         {
-            Padding = new Thickness(18, 16, 18, 16);
+            Padding = new Thickness(16, 13, 16, 13);
             SetResourceReference(StyleProperty, "Card");
 
             _dot = new Ellipse { Width = 9, Height = 9, VerticalAlignment = VerticalAlignment.Center };
@@ -78,16 +78,16 @@ namespace WhaleLauncher.Views
 
             _main = new TextBlock
             {
-                FontSize = 22,
+                FontSize = 20,
                 FontWeight = FontWeights.SemiBold,
-                Margin = new Thickness(0, 9, 0, 0),
+                Margin = new Thickness(0, 7, 0, 0),
                 Text = "未启动"
             };
             _main.SetResourceReference(TextBlock.ForegroundProperty, "Text");
 
             _sub = new TextBlock
             {
-                Margin = new Thickness(0, 5, 0, 0),
+                Margin = new Thickness(0, 4, 0, 0),
                 TextWrapping = TextWrapping.Wrap,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 Text = "—"

@@ -124,7 +124,11 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
   const pluginHost = ['::', '::1'].includes(listenHost) ? '[::1]' : '127.0.0.1';
   runtime.pluginApiUrl = `http://${pluginHost}:${actualPort}`;
   // 授权轮询同时更新定时项，避免停用或重签后沿用旧任务。
+  // 插件运行中启用/更新后的 app.start@1 也在这同一个 reconcile 回调里补发，不另开定时器。
   runtime.plugins.start(() => {
+    try { runtime.pluginLifecycle?.sync(); } catch (err) {
+      logger.warn('插件生命周期通知失败（不影响收发）：' + describeError(err));
+    }
     try { runtime.capabilities?.reconcileTasks(runtime.scheduler); } catch (err) {
       logger.warn('插件定时任务登记失败（不影响收发）：' + describeError(err));
     }

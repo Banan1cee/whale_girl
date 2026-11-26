@@ -162,6 +162,13 @@ class Bot {
       .define('chat.search@1', {
         builtin: input => this.searchForChat(input),
       })
+      .define('chat.pre_reply@1', { builtin: async () => ({ action: 'pass' }) })
+      .define('chat.received@1', { builtin: async () => ({}) })
+      .define('chat.prompt@1', { builtin: async input => ({ system: input.system }) })
+      .define('chat.before_send@1', { builtin: async input => ({ text: input.text }) })
+      .define('chat.dispatched@1', { builtin: async () => ({}) })
+      .define('app.start@1', { builtin: async () => ({}) })
+      .define('app.stop@1', { builtin: async () => ({}) })
       .define('tool.run@1', { builtin: async () => null })
       .define('task.tick@1', { builtin: async () => null });
   }
@@ -425,9 +432,146 @@ class Bot {
   }
 
   /**
+   * 回复前门禁：宿主基础闸（魔咒/禁言/白名单/去重/静音）之后、触发判定之后调用。
+   * 返回 pass/skip/wake；插件故障 fail-open（pass），cancellation 原样抛出。
+   */
+  async preReplyAction(msg, { signal, localWechat = false } = {}) {
+    if (!this.capabilities?.hasProviders?.('chat.pre_reply@1')) return 'pass';
+    try {
+      const input = this.withTurnContext({
+        message: this.providerMessage(msg),
+        localWechat: Boolean(localWechat),
+      }, this.sessionKey(msg));
+      const result = await this.capabilities.invoke('chat.pre_reply@1', input,
+        { key: this.sessionKey(msg), signal, chatId: String(msg?.chatId || '').slice(0, 120) });
+      return ['skip', 'wake'].includes(result?.action) ? result.action : 'pass';
+    } catch (err) {
+      // 宿主取消必须原样抛出；插件门禁自身故障不得把正常回复判死。
+      if (signal?.aborted) throw err;
+      this.logger?.warn('[pre_reply] 插件门禁失败，按 pass 继续：' + describeError(err));
+      return 'pass';
+    }
+  }
+
+  /** 消息通过宿主基础检查后、触发判定前 observe 一次；失败只记日志。 */
+  async observeReceived(msg, { localWechat = false } = {}) {
+    if (!this.capabilities?.hasProviders?.('chat.received@1')) return;
+    try {
+      await this.capabilities.invoke('chat.received@1', {
+        message: this.providerMessage(msg),
+        localWechat: Boolean(localWechat),
+      }, { key: this.sessionKey(msg), chatId: String(msg?.chatId || '').slice(0, 120) });
+    } catch (err) {
+      this.logger?.warn('[chat.received] 观察失败（不影响主流程）：' + describeError(err));
+    }
+  }
+
+  /** system 组装完成后、生成之前增强提示词；history 只在插件声明会话历史权限时提供。 */
+  async applyPromptHooks(decision, { signal } = {}) {
+    if (!this.capabilities?.hasProviders?.('chat.prompt@1') || !decision?.system) return decision;
+    const input = { system: String(decision.system).slice(0, 64000), message: this.providerMessage(decision.msg) };
+    try {
+      const providers = typeof this.capabilities.providers === 'function'
+        ? this.capabilities.providers('chat.prompt@1', 'all') : [];
+      const granted = new Set((providers || []).flatMap(plugin => plugin.dataAccess || []));
+      if (granted.has('conversation-history') || granted.has('chat.history')) {
+        try {
+          input.history = this.store.messages(decision.key, 12).map(row => ({
+            role: row.role === 'assistant' ? 'assistant' : 'user',
+            text: String(row.text || '').slice(0, 16000),
+          }));
+        } catch { input.history = []; }
+      }
+      const result = await this.capabilities.invoke('chat.prompt@1',
+        this.withTurnContext(input, decision.key), {
+          key: decision.key, signal, chatId: String(decision.msg?.chatId || '').slice(0, 120),
+        });
+      if (typeof result?.system === 'string') decision.system = result.system.slice(0, 64000);
+      return decision;
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      this.logger?.warn('[chat.prompt] 提示词增强失败，沿用原 system：' + describeError(err));
+      return decision;
+    }
+  }
+
+  /** finalize 之后、交给网关之前改写最终文本；enhance 失败退回原文本。 */
+  async applyBeforeSend(decision, text, { signal } = {}) {
+    if (!this.capabilities?.hasProviders?.('chat.before_send@1')) return text;
+    try {
+      const input = this.withTurnContext({
+        message: this.providerMessage(decision.msg),
+        text: String(text == null ? '' : text).slice(0, 16000),
+      }, decision.key);
+      const result = await this.capabilities.invoke('chat.before_send@1', input,
+        { key: decision.key, signal, chatId: String(decision.msg?.chatId || '').slice(0, 120) });
+      return typeof result?.text === 'string' ? result.text : text;
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      this.logger?.warn('[chat.before_send] 发送前改写失败，保留原文本：' + describeError(err));
+      return text;
+    }
+  }
+
+  /** 记录 bot 已 observe 的 ignore，避免网关再 observe 一次。 */
+  markDispatchedIgnore(msg = {}) {
+    if (!this._dispatchedIgnores) this._dispatchedIgnores = new Map();
+    const key = [msg.platform, msg.chatType, msg.chatId, msg.senderId, msg.msgId, String(msg.text || '').slice(0, 80)].join('|');
+    this._dispatchedIgnores.set(key, Date.now());
+    if (this._dispatchedIgnores.size > 128) {
+      const oldest = this._dispatchedIgnores.keys().next().value;
+      this._dispatchedIgnores.delete(oldest);
+    }
+  }
+
+  consumeDispatchedIgnore(msg = {}) {
+    if (!this._dispatchedIgnores) return false;
+    const key = [msg.platform, msg.chatType, msg.chatId, msg.senderId, msg.msgId, String(msg.text || '').slice(0, 80)].join('|');
+    const at = this._dispatchedIgnores.get(key);
+    if (!at) return false;
+    this._dispatchedIgnores.delete(key);
+    return Date.now() - at < 60000;
+  }
+
+  /** 发送/忽略后的观察者；失败只记日志，绝不影响本轮结果。 */
+  async observeDispatched(decision, { action, text = '', sent = false, reason = '' } = {}) {
+    if (!this.capabilities?.hasProviders?.('chat.dispatched@1')) return;
+    try {
+      const payload = {
+        message: this.providerMessage(decision?.msg),
+        text: String(text || '').slice(0, 16000),
+        action: String(action || 'ignore').slice(0, 40),
+        sent: Boolean(sent),
+      };
+      if (reason) payload.reason = String(reason).slice(0, 80);
+      await this.capabilities.invoke('chat.dispatched@1', payload, { key: decision?.key });
+    } catch (err) {
+      // 没有注入 logger 时也不能静默：schema 不匹配这类问题只在这里暴露一次。
+      (this.logger?.warn ?? console.warn).call(this.logger || console,
+        '[chat.dispatched] 观察者失败（不影响发送）：' + describeError(err));
+    }
+  }
+
+  /** 运行时生命周期观察：对每个已启用且已授权的提供者各调用一次；失败只记日志。 */
+  async observeAppLifecycle(name, { signal } = {}) {
+    if (!this.capabilities?.hasProviders?.(name, 'all')) return;
+    let providers = [];
+    try { providers = this.capabilities.providers(name, 'all') || []; } catch { return; }
+    await Promise.all(providers.map(plugin => {
+      const settings = plugin && plugin.settings && typeof plugin.settings === 'object' && !Array.isArray(plugin.settings)
+        ? plugin.settings : {};
+      return Promise.resolve(this.capabilities.invoke(name, { at: this.now().getTime(), settings }, { pluginId: plugin.id, signal }))
+        .catch(err => {
+          if (signal?.aborted) return;
+          this.logger?.warn('[' + name + '] 插件观察失败（不影响主流程）：' + describeError(err));
+        });
+    }));
+  }
+
+  /**
    * 判断并准备好这次回复（不调用模型）。返回 decision。
    */
-  async decide(rawMsg, { signal } = {}) {
+  async decide(rawMsg, { signal, localWechat = false } = {}) {
     if (signal?.aborted) return { action: 'ignore', reason: 'cancelled' };
     const turn = { signal, cancelled: false, lease: null };
     const abort = () => { turn.cancelled = true; this._replyQuota.release(turn.lease); };
@@ -435,8 +579,11 @@ class Bot {
     turn.detach = () => signal?.removeEventListener('abort', abort);
     let decision;
     try {
-      decision = await this._decide(rawMsg, turn);
+      decision = await this._decide(rawMsg, turn, { localWechat });
       this._replyTurns.set(decision, turn);
+      if (decision.action === 'reply') {
+        decision = await this.applyPromptHooks(decision, { signal });
+      }
       // 生成插件对「决定要回」的所有普通回复生效，包括固定话术：旧 chat.generate 钩子
       // 就是这样覆盖 canned 的，配额/授权回归依赖它（插件返回空时要能回滚 consent 等草稿）。
       if (decision.action === 'reply' && !decision.mock && this.capabilities.hasProviders('chat.generate@1')) {
@@ -571,7 +718,7 @@ class Bot {
     return mem;
   }
 
-  async _decide(rawMsg, turn) {
+  async _decide(rawMsg, turn, { localWechat = false } = {}) {
     const prepared = this.prepareIncoming(rawMsg);
     const { msg, key, now, nowMs, rawText, spell, isAdminSpell, clean, atMe, isGroup, mentionedNames, voiceRequested } = prepared;
     // 新版人设行为随消息一路带给提示词/管理闸；只按当前配置取一次，避免同轮内变来变去。
@@ -702,6 +849,11 @@ class Bot {
     // 回填的旧问题（recycled）在上面的 appendMessage 处整体跳过，不会重复抽事实。
     let state = session.state;
     const muted = sessionState.isMuted(state, nowMs);
+    // 基础检查通过后、触发判定前 observe 一次；失败不影响后续。
+    // 静音消息不 observe：静音属于宿主基础闸。但静音闸不能在这里提前 return，
+    // 它必须排在提醒、退场话术和管理员命令之后（见下方），否则「闭嘴」不会应声、
+    // 主人被静音时也发不出管理命令 —— 那是旧行为，2026-11 的回归就出在这里。
+    if (!muted) await this.observeReceived(msg, { localWechat });
 
     // 识别「唯一的主人」（配置里 master.names / master.wxids）
     // 规则只写在 src/core/master.js，启动器的提示词预览用的是同一个函数，不会出现
@@ -775,19 +927,23 @@ class Bot {
     const adminReply = (!isVerifiedOwner(this.config, msg) && msg.newPersonaBehavior) ? null : this.handleAdmin({ msg, clean, key, state, isMaster, nowMs });
     if (adminReply) return adminReply;
 
+    // 静音消息属于宿主基础闸：不触发、不进入插件门禁、不产生接话窗口副作用。
+    // 位置不能提前到提醒/退场话术/管理员命令之前：被静音时，「闭嘴」要先应一声再进静默，
+    // 主人仍要能发管理命令（旧顺序如此）；插件 gate 也不能靠 wake 绕过静音。
+    if (muted) return { action: 'ignore', reason: 'muted', key, msg, atMe };
+
     turn.state = state;
     const staged = replyDecision.draftReplyState(state);
     turn.before = staged.before;
     turn.draft = state = staged.draft;
-    const triggerResult = this.computeTrigger({ msg, atMe, clean, isGroup, state, nowMs, isMaster, muted });
+    let triggerResult = this.computeTrigger({ msg, atMe, clean, isGroup, state, nowMs, isMaster, muted });
+    // 门禁在触发判定之后问一次：skip 压制，wake 覆盖「本来不回复」的判定。
+    const gate = await this.preReplyAction(msg, { signal: turn.signal, localWechat });
+    if (gate === 'skip') return { action: 'ignore', reason: 'plugin_skip', key, msg, atMe };
+    if (gate === 'wake') triggerResult = { ...triggerResult, wake: true, reason: 'plugin_wake' };
     // 旧版「被骂自动唤醒反击」已删除：不 @、不回复她时，不再因为群里的脏话主动插话。
     if (!triggerResult.wake) {
       return { action: 'ignore', reason: triggerResult.reason, key, msg, atMe };
-    }
-    // 只有明确叫她、定向叫她或同一个人接着聊，才延长接话窗口。
-    // 不能让旁人的闲聊把窗口续下去。
-    if (muted) {
-      return { action: 'ignore', reason: 'muted', key, msg, atMe };
     }
     // 被静音丢掉的消息不能产生「等静音结束再插话」的副作用。
     if (isGroup && ['addressed', 'directed', 'engaged', 'insulted'].includes(triggerResult.reason)) {
@@ -931,21 +1087,6 @@ class Bot {
     return trigger.computeTrigger(this, args);
   }
 
-  pluginContext(decision, extra = {}) {
-    const msg = decision.msg || {};
-    let history = [];
-    try {
-      history = this.store.messages(decision.key, 12).map(m => ({ role: m.role, text: m.text, uid: m.uid,
-        targetId: m.replyToUserId, at: m.ts }));
-    } catch { /* 记忆不可读时沿用宿主只回当前消息的降级路径。 */ }
-    const last = history.filter(m => m.role === 'assistant').at(-1);
-    return { key: decision.key, now: this.now().getTime(),
-      message: { platform: msg.platform, chatId: msg.chatId, chatType: msg.chatType,
-        senderId: msg.senderId, text: msg.text, atMe: Boolean(msg.atMe), replyToBot: Boolean(msg.replyToBot),
-        mentionedNames: msg.mentionedNames || [] }, history, lastBot: last,
-      search: msg.searchResult, webText: msg.webText || '', ...extra };
-  }
-
   /** 管理魔咒必须由宿主先处理，不能让接管插件看到或改写口令。 */
   isAdminSpellMessage(msg = {}) {
     const spell = String(this.config.admin?.spell || '').trim();
@@ -962,17 +1103,64 @@ class Bot {
       senderName: String(msg.senderName || '').slice(0, 80),
       text: String(msg.cleanText || msg.text || '').slice(0, 16000),
       atMe: Boolean(msg.atMe),
+      replyToBot: Boolean(msg.replyToBot),
       msgId: String(msg.msgId || '').slice(0, 200),
       chatTitle: String(msg.chatTitle || '').slice(0, 160),
+      // 旧 Api3 的「在叫别人」判定依赖这个名字列表；宿主只给有界的名字，不给成员 id。
+      mentionedNames: (Array.isArray(msg.mentionedNames) ? msg.mentionedNames : [])
+        .slice(0, 4).map(name => String(name || '').slice(0, 40)).filter(Boolean),
     };
+  }
+
+  /**
+   * 插件能看到的「上一条自己的回复」。
+   *
+   * 旧 Api3 宿主直接把数据库里的 history 尾条交出去；现在只收口成旧插件判定真正
+   * 用到的三个字段（text/at/targetId），既不把整条记录（uid/seq/内部标记）泄给
+   * 插件，也不会因为字段形状不同让 followup-window 这类插件永远拿不到 lastBot。
+   * 读不到历史时返回 null：旧文档就是「没有 lastBot 就 pass」。
+   */
+  pluginLastBot(key) {
+    if (!key) return null;
+    let rows = [];
+    try { rows = this.store.messages(key, 12) || []; } catch { return null; }
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (!row || row.role !== 'assistant') continue;
+      const text = String(row.text || '');
+      if (!text) continue;
+      return {
+        text: text.slice(0, 4000),
+        at: Number(row.ts) || 0,
+        targetId: String(row.replyToUserId || '').slice(0, 120),
+      };
+    }
+    return null;
+  }
+
+  /**
+   * 四个带 state 的聊天能力共用：把宿主的「现在」和上一条自己的回复一起交给插件。
+   * 时间必须由宿主给，插件侧 Date.now() 既过不了假时钟测试，也和自己保存的
+   * lastBot.at 不在同一条时间线上（旧 Api3 就是这么传的）。
+   */
+  withTurnContext(input, key) {
+    return { ...input, now: this.now().getTime(), lastBot: this.pluginLastBot(key) };
   }
 
   async transformPluginReply(decision, text, { signal } = {}) {
     const providers = this.capabilities.providers('chat.reply@1', 'all');
     if (!providers.length) return text;
     const granted = new Set(providers.flatMap(plugin => plugin.dataAccess || []));
-    const { platform, chatType, chatId, senderName, text: messageText } = this.providerMessage(decision.msg);
-    const input = { message: { platform, chatType, chatId, senderName, text: messageText }, text: String(text || '').slice(0, 16000) };
+    const message = this.providerMessage(decision.msg);
+    const input = {
+      message: {
+        platform: message.platform, chatType: message.chatType, chatId: message.chatId,
+        senderId: message.senderId, senderName: message.senderName, text: message.text,
+        atMe: message.atMe, replyToBot: message.replyToBot, msgId: message.msgId,
+        mentionedNames: message.mentionedNames,
+      },
+      text: String(text || '').slice(0, 16000),
+    };
     if (granted.has('model.prompt')) input.system = String(decision.system || '').slice(0, 64000);
     if (granted.has('chat.history')) {
       try {
@@ -980,7 +1168,10 @@ class Bot {
           .map(row => ({ role: row.role === 'assistant' ? 'assistant' : 'user', text: String(row.text || '').slice(0, 16000) }));
       } catch { input.history = []; }
     }
-    const result = await this.capabilities.invoke('chat.reply@1', input, { key: decision.key, signal });
+    const result = await this.capabilities.invoke('chat.reply@1',
+      this.withTurnContext(input, decision.key), {
+        key: decision.key, signal, chatId: String(decision.msg?.chatId || '').slice(0, 120),
+      });
     return result.text;
   }
 
@@ -997,8 +1188,19 @@ class Bot {
    * 失败回退不在这里做，接管失败仍按 fail-closed 交给上层处理。
    */
   finishTakeoverReply(rawMsg, output = {}, { signal } = {}) {
-    if (signal?.aborted) return { cancelled: true, action: 'ignore', reason: 'cancelled' };
+    if (!this.capabilities?.hasProviders?.('chat.before_send@1')) {
+      return this._finishTakeoverReplyCore(rawMsg, output, { signal });
+    }
+    const msg = this.normalize(rawMsg);
+    const decision = { key: this.sessionKey(msg), msg };
     const text = String(output?.reply == null ? '' : output.reply).trim();
+    return this.applyBeforeSend(decision, text, { signal })
+      .then(clean => this._finishTakeoverReplyCore(rawMsg, { ...output, reply: clean }, { signal }));
+  }
+
+  _finishTakeoverReplyCore(rawMsg, output = {}, { signal } = {}) {
+    if (signal?.aborted) return { cancelled: true, action: 'ignore', reason: 'cancelled' };
+    let text = String(output?.reply == null ? '' : output.reply).trim();
     if (!text) return { action: 'ignore', reason: 'empty_reply' };
     const msg = this.normalize(rawMsg);
     const decision = { key: this.sessionKey(msg), msg, action: 'reply', reason: 'plugin' };
@@ -1280,6 +1482,8 @@ class Bot {
       return this.finishFailure(decision, err);
     }
     if (signal?.aborted) return { cancelled: true, text: '', bubbles: [] };
+    clean = await this.applyBeforeSend(decision, clean, { signal });
+    if (signal?.aborted) return { cancelled: true, text: '', bubbles: [] };
     const bubbles = this.finalize(decision, clean);
     // finalize 可能把正文清空（例如「米饭」在非吃饭话题里被整条丢弃），此时没有可发内容。
     if (!bubbles.length) return { text: '', bubbles, reason: decision.reason };
@@ -1429,7 +1633,7 @@ class Bot {
   async _handleOnce(rawMsg, { signal, localWechat } = {}) {
     let decision;
     try {
-      decision = await this.decide(rawMsg, { signal });
+      decision = await this.decide(rawMsg, { signal, localWechat });
     } catch (err) {
       // 断线导致的 abort 不是处理故障：decide 里的插件分发/搜索会以
       // capability_aborted 抛出，这里按取消收尾，不记错误日志、也不回任何东西。
@@ -1440,8 +1644,13 @@ class Bot {
     }
     if (decision.action === 'ignore') {
       this.logger?.info('[pipeline] result=skip reason=' + String(decision.reason || 'unspecified') + ' search=not_reached delivery=not_reached');
+      void this.observeDispatched(decision, { action: 'ignore', sent: false, reason: decision.reason });
+      this.markDispatchedIgnore(decision.msg);
       try { this.store.checkpoint(decision.key); } catch { /* 忽略的消息也要留断点 */ }
-      return { action: 'ignore', reason: decision.reason };
+      const result = { action: 'ignore', reason: decision.reason };
+      // app 层网关还会观察 sendDenial 等 ignore；这个标记只是给同进程测试/旧调用方看的防御。
+      Object.defineProperty(result, '__pluginDispatched', { value: true, enumerable: false });
+      return result;
     }
     if (signal?.aborted || !this.activateReply(decision)) {
       this.releaseReply(decision);
@@ -1456,8 +1665,9 @@ class Bot {
 
   async _handleReply(decision, { signal, localWechat }) {
     if (decision.action === 'command') {
-      const bubbles = this.finalize(decision, decision.text);
-      return { action: 'reply', reply: decision.text, bubbles, reason: 'command', commandType: decision.commandType };
+      const text = await this.applyBeforeSend(decision, decision.text, { signal });
+      const bubbles = this.finalize(decision, text);
+      return { action: 'reply', reply: text, bubbles, reason: 'command', commandType: decision.commandType };
     }
     // 私聊的直接请求由程序处理，避免模型漏写标记或误报已送达。
     const msg = decision.msg;
@@ -1467,8 +1677,9 @@ class Bot {
     if (stickerRequest) {
       const sticker = this.stickerFor({ msg, stickerCategory: stickerRequest[1] });
       const reply = sticker ? '给你挑了一张' : '这次没能排上表情包，可能没图或上一张还在发送';
-      const bubbles = this.finalize(decision, reply);
-      return { action: 'reply', reply, bubbles, reason: 'sticker_request', ...(sticker ? { sticker } : {}) };
+      const text = await this.applyBeforeSend(decision, reply, { signal });
+      const bubbles = this.finalize(decision, text);
+      return { action: 'reply', reply: text, bubbles, reason: 'sticker_request', ...(sticker ? { sticker } : {}) };
     }
     let text = '';
     // 本轮从哪个 usage 水位开始：复读重写 / 半窗 / 降级重试都会再调一次模型，

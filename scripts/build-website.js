@@ -44,7 +44,7 @@ function withoutComments(text) {
     if (start === -1) { fragments.push(text.slice(cursor)); break; }
     fragments.push(text.slice(cursor, start));
     // 保留边界，避免删除后将两侧碎片重新拼成 HTML 标记；输出仍须逐段转义。
-    fragments.push('n');
+    fragments.push('\n');
     const end = text.indexOf('-->', start + 4);
     if (end === -1) break;
     cursor = end + 3;
@@ -54,36 +54,36 @@ function withoutComments(text) {
 
 function notes(body) {
   // 不执行发行说明中的 HTML，也不将第三方 Markdown 链接变成可执行 URL。
-  const lines = withoutComments(String(body || '此版本未提供更新说明，请查看 GitHub 发行页。')).split(/r?n/);
+  const lines = withoutComments(String(body || '此版本未提供更新说明，请查看 GitHub 发行页。')).split(/\r?\n/);
   let code = false;
   let list = false;
   let headingIndex = 0;
   const headings = [];
   const result = [];
   for (const line of lines) {
-    if (/^s*```/.test(line)) {
+    if (/^\s*```/.test(line)) {
       if (list) { result.push('</ul>'); list = false; }
       result.push(code ? '</code></pre>' : '<pre><code>'); code = !code; continue;
     }
-    if (code) { result.push(e(line) + 'n'); continue; }
-    const bullet = /^s*(?:[-*+]s+|d+.s+)(.*)$/.exec(line);
+    if (code) { result.push(e(line) + '\n'); continue; }
+    const bullet = /^\s*(?:[-*+]\s+|\d+\.\s+)(.*)$/.exec(line);
     if (bullet) {
       if (!list) { result.push('<ul>'); list = true; }
       result.push(`<li>${e(bullet[1])}</li>`); continue;
     }
     if (list) { result.push('</ul>'); list = false; }
-    const heading = /^#{1,6}s+(.*)$/.exec(line);
+    const heading = /^#{1,6}\s+(.*)$/.exec(line);
     if (heading) {
       const id = `note-${headingIndex++}`;
       headings.push({ id, title: heading[1] });
       result.push(`<h2 id="${id}">${e(heading[1])}</h2>`);
     }
-    else if (/^>/.test(line)) result.push(`<blockquote>${e(line.replace(/^>s?/, ''))}</blockquote>`);
+    else if (/^>/.test(line)) result.push(`<blockquote>${e(line.replace(/^>\s?/, ''))}</blockquote>`);
     else if (line.trim()) result.push(`<p>${e(line)}</p>`);
   }
   if (list) result.push('</ul>');
   if (code) result.push('</code></pre>');
-  return { html: result.join('n'), headings };
+  return { html: result.join('\n'), headings };
 }
 
 function header(prefix, current) {
@@ -104,7 +104,7 @@ function layout(route, title, description, content, current) {
   const depth = route.split('/').filter(Boolean).length;
   const prefix = depth ? '../'.repeat(depth) : './';
   const page = route.startsWith('downloads/') && depth > 1 ? 'release' : route.startsWith('plugins/') && depth > 1 ? 'plugin' : depth > 1 ? 'transparency' : route.split('/')[0];
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#191c1a"><meta name="description" content="${e(description)}"><title>${e(title)} — 鲸鲸 Whale Girl</title><link rel="canonical" href="${ORIGIN}${route}"><link rel="icon" href="${prefix}images/launcher-icon.png" type="image/png"><script src="${prefix}theme.js"></script><link rel="stylesheet" href="${prefix}style.css"><link rel="stylesheet" href="${prefix}pages.css"><link rel="stylesheet" href="${prefix}polish.css"><script src="${prefix}site-motion.js" defer></script><script src="${prefix}site.js" defer></script></head><body class="content-page page-${page}" data-page="${page}">${ambient()}${header(prefix, current)}<main id="main" class="wrap page-main">${pageBrand(prefix, page)}${content}</main>${footer(prefix)}</body></html>n`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#191c1a"><meta name="description" content="${e(description)}"><title>${e(title)} — 鲸鲸 Whale Girl</title><link rel="canonical" href="${ORIGIN}${route}"><link rel="icon" href="${prefix}images/launcher-icon.png" type="image/png"><script src="${prefix}theme.js"></script><link rel="stylesheet" href="${prefix}style.css"><link rel="stylesheet" href="${prefix}pages.css"><link rel="stylesheet" href="${prefix}polish.css"><script src="${prefix}site-motion.js" defer></script><script src="${prefix}site.js" defer></script></head><body class="content-page page-${page}" data-page="${page}">${ambient()}${header(prefix, current)}<main id="main" class="wrap page-main">${pageBrand(prefix, page)}${content}</main>${footer(prefix)}</body></html>\n`;
 }
 
 function pageBrand() {
@@ -346,8 +346,8 @@ function buildSite({ root = path.resolve(__dirname, '..'), output, data, tips: s
   write('support/transparency/', '打赏公示', '查看鲸鲸团队已核对发布的各渠道打赏记录。', tipsPage(tips, support), 'support/');
   write('team/', '团队成员与致谢', '认识鲸鲸背后的三位开发者与贡献者。', teamPage(team), 'team/');
   const routes = ['', 'downloads/', 'plugins/', 'support/', 'support/transparency/', 'team/', ...releases.map(item => `downloads/${releaseSlug(item.tag_name)}/`), ...plugins.map(item => `plugins/${item.Id}/`)];
-  fs.writeFileSync(path.join(target, 'sitemap.xml'), `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${routes.map(route => `<url><loc>${e(ORIGIN + route)}</loc></url>`).join('')}</urlset>n`);
-  fs.writeFileSync(path.join(target, 'robots.txt'), `User-agent: *nAllow: /nSitemap: ${ORIGIN}sitemap.xmln`);
+  fs.writeFileSync(path.join(target, 'sitemap.xml'), `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${routes.map(route => `<url><loc>${e(ORIGIN + route)}</loc></url>`).join('')}</urlset>\n`);
+  fs.writeFileSync(path.join(target, 'robots.txt'), `User-agent: *\nAllow: /\nSitemap: ${ORIGIN}sitemap.xml\n`);
   return { releases: releases.length, plugins: plugins.length, pages: routes.length };
 }
 

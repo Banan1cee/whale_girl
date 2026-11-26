@@ -1,0 +1,16 @@
+{
+  "format": "whale-plugin/1",
+  "level": 4,
+  "id": "tool-node-demo",
+  "name": "演示工具",
+  "author": "你的名字",
+  "version": "1.0.0",
+  "minAppVersion": "4.3.0",
+  "description": "统计文本字数，或让模型把一段文字缩成一句话；后者会真的调用模型并计费。",
+  "entry": "plugin.js",
+  "runtime": "node-full",
+  "provides": {
+    "tool.run@1": { "mode": "tool", "scope": "manual" }
+  },
+  "calls": ["status.read@1", "model.complete@1"]
+}

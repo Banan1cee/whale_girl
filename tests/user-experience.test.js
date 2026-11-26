@@ -139,6 +139,8 @@ test('命令行记忆工具可运行，服务在线时拒绝直接覆盖磁盘�
  const root=fixture(t);fs.mkdirSync(path.join(root,'scripts'));fs.mkdirSync(path.join(root,'data'));
  fs.cpSync(path.join(__dirname,'../src'),path.join(root,'src'),{recursive:true});
  fs.copyFileSync(path.join(__dirname,'../scripts/memory-tool.js'),path.join(root,'scripts/memory-tool.js'));
+ // memory-tool 的 import 走 scripts/migrate/import-4.0（旧 src/memory/migrate 已重命名），夹具要复制真实依赖。
+ fs.cpSync(path.join(__dirname,'../scripts/migrate'),path.join(root,'scripts/migrate'),{recursive:true});
  fs.writeFileSync(path.join(root,'data/store.json'),JSON.stringify({sessions:{}}));
  const script=path.join(root,'scripts/memory-tool.js');
  const info=spawnSync(process.execPath,[script,'info'],{encoding:'utf8',windowsHide:true});if(info.error&&info.error.code==='EPERM')return t.skip(SKIP_REASON);assert.equal(info.status,0,info.stderr);

@@ -1,0 +1,16 @@
+{
+  "format": "whale-plugin/1",
+  "level": 4,
+  "id": "gate-quiet-hours",
+  "name": "安静时段",
+  "author": "你的名字",
+  "version": "1.0.0",
+  "minAppVersion": "4.3.0",
+  "description": "群聊在 23:00–08:00 没人叫她就保持安静，其它时间交回宿主判断。",
+  "entry": "plugin.js",
+  "runtime": "node-full",
+  "provides": {
+    "chat.pre_reply@1": { "mode": "gate", "scope": "all" }
+  },
+  "calls": []
+}

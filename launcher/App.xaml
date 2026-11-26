@@ -42,7 +42,7 @@
         <!-- 尺寸 token 的默认值。Appearance.ApplyChromeResources 在启动和切主题时重写这些键：
              主题包只改数值，不新增键；写成资源而不是样式里的字面量，已经建好的页面才会跟着变。 -->
         <sys:Double x:Key="FontSizeH1">30</sys:Double>
-        <sys:Double x:Key="FontSizeH2">13.5</sys:Double>
+        <sys:Double x:Key="FontSizeH2">15</sys:Double>
         <sys:Double x:Key="FontSizeLabel">12</sys:Double>
         <sys:Double x:Key="FontSizeSmall">11</sys:Double>
         <sys:Double x:Key="FontSizeValue">13.5</sys:Double>
@@ -118,11 +118,11 @@
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
-            <Setter Property="Margin" Value="0,2,0,0" />
+            <Setter Property="Margin" Value="0,1,0,0" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="b" Background="Transparent" CornerRadius="{DynamicResource RadiusNav}" Height="38">
+                        <Border x:Name="b" Background="Transparent" CornerRadius="{DynamicResource RadiusNav}" Height="36">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="3" />

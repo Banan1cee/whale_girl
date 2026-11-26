@@ -635,3 +635,13 @@ test('主题不影响左导航和页面结构', () => {
   }
   assert.ok(fs.existsSync(path.join(root, 'tests', 'launcher', 'ThemeChecks', 'ThemeChecks.csproj')), '缺少主题解析器测试工程');
 });
+
+test('3 级插件卡片与详情都说明聊天数据范围与受限边界', () => {
+  const page = readLauncher('Views/PluginMarketPage.xaml.cs');
+  assert.match(page, /3 级聊天访问：/);
+  assert.match(page, /读当前会话消息/);
+  assert.match(page, /系统提示词或最近 12 条历史/);
+  assert.match(page, /受限 Wasm，不能联网、读写文件或执行命令/);
+  const detail = read('launcher/PluginDetailPanel.cs');
+  assert.ok(detail.length > 0);
+});

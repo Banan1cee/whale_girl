@@ -1,0 +1,14 @@
+{
+  "format": "whale-plugin/1",
+  "level": 0,
+  "id": "theme-minimal",
+  "name": "极简主题",
+  "author": "你的名字",
+  "version": "1.0.0",
+  "minAppVersion": "4.3.0",
+  "description": "只改启动器颜色、字体与圆角，没有执行体、不申请权限",
+  "entry": "theme.json",
+  "runtime": "theme-data",
+  "provides": {},
+  "calls": []
+}

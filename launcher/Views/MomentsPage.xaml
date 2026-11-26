@@ -5,7 +5,7 @@
     <!-- 和其它设置页一样：整页一个滚动条，窗口变小时内容不被裁掉 -->
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                   FocusVisualStyle="{x:Null}">
-        <Grid Margin="28,24,32,20">
+        <Grid Margin="28,20,32,16">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -24,10 +24,10 @@
         <TextBlock x:Name="SectionIntro" Grid.Row="1" Style="{StaticResource Small}" Margin="0,8,0,14" TextWrapping="Wrap"
                    Text="读取使用当前桥接账号的本地缓存，未浏览过的动态可能不在缓存里；互动会短暂操作微信窗口，执行后请在微信中确认。" />
 
-        <Border x:Name="SectionPublish" Grid.Row="2" Style="{StaticResource Card}" Padding="18,14" Margin="0,0,0,12">
+        <Border x:Name="SectionPublish" Grid.Row="2" Style="{StaticResource Card}" Padding="16,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="自动发表朋友圈（OCR 实验）" Style="{StaticResource H2}" />
-                <TextBlock Text="发表会操作当前微信窗口。定时发表会参考近期微信群聊和私聊，包含与主人的聊天。"
+                <TextBlock Text="定时发表会参考近期微信群聊和私聊，包含与主人的聊天。"
                            Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,10" />
                 <WrapPanel>
                     <CheckBox x:Name="ChkPublishFeature" Content="启用朋友圈发表（强制前台）" Margin="0,0,16,0" />
@@ -41,6 +41,8 @@
                     <TextBox x:Name="TxtPublishInterval" Width="56" Text="6" Margin="6,0,16,0" />
                     <TextBlock Text="每天最多" Style="{StaticResource Label}" VerticalAlignment="Center" />
                     <TextBox x:Name="TxtPublishLimit" Width="56" Text="1" Margin="6,0,16,0" />
+                </WrapPanel>
+                <WrapPanel Margin="0,8,0,0">
                     <Button x:Name="BtnSavePublish" Content="保存自动发表设置" Style="{StaticResource Primary}" />
                     <Button x:Name="BtnTestPublish" Content="立即发表一条" Style="{StaticResource Ghost}" Margin="8,0,0,0" />
                     <Button x:Name="BtnRefreshPublish" Content="刷新状态" Style="{StaticResource Ghost}" Margin="8,0,0,0" />
@@ -65,7 +67,7 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <Border x:Name="SectionRead" Grid.Column="0" Style="{StaticResource Card}" Padding="18,16" Margin="0,0,6,0">
+            <Border x:Name="SectionRead" Grid.Column="0" Style="{StaticResource Card}" Padding="16,12" Margin="0,0,6,0">
                 <StackPanel>
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -113,7 +115,7 @@
                 </StackPanel>
             </Border>
 
-            <Border x:Name="SectionInteract" Grid.Column="1" Style="{StaticResource Card}" Padding="18,16" Margin="6,0,0,0">
+            <Border x:Name="SectionInteract" Grid.Column="1" Style="{StaticResource Card}" Padding="16,12" Margin="6,0,0,0">
                 <StackPanel>
                     <TextBlock Text="手动互动" Style="{StaticResource H2}" />
                     <TextBlock Text="用左侧的正文关键词定位目标；执行后不会自动重试"
@@ -123,7 +125,7 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="150" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
                             <TextBlock Text="发布者准确昵称" Style="{StaticResource Label}" Margin="0,0,0,6" />
@@ -153,7 +155,7 @@
         </Grid>
 
         <!-- 下半：读取结果 -->
-        <Border x:Name="SectionResult" Grid.Row="4" Style="{StaticResource Card}" Margin="0,12,0,0" Height="280">
+        <Border x:Name="SectionResult" Grid.Row="4" Style="{StaticResource Card}" Margin="0,12,0,0" MinHeight="200" MaxHeight="260">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />

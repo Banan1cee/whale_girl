@@ -39,7 +39,11 @@
       "entry": "plugin.wasm",
       "providers": [
         "tool.run@1",
-        "chat.reply@1"
+        "chat.reply@1",
+        "chat.pre_reply@1",
+        "chat.prompt@1",
+        "chat.before_send@1",
+        "chat.received@1"
       ],
       "calls": [],
       "dataAccess": [
@@ -57,7 +61,14 @@
         "chat.generate@1",
         "chat.handle@1",
         "chat.search@1",
-        "task.tick@1"
+        "task.tick@1",
+        "chat.pre_reply@1",
+        "chat.prompt@1",
+        "chat.before_send@1",
+        "chat.dispatched@1",
+        "app.start@1",
+        "app.stop@1",
+        "chat.received@1"
       ],
       "calls": [
         "status.read@1",
@@ -99,7 +110,11 @@
         "memory.recall@1",
         "memory.write@1"
       ],
-      "maxEntryBytes": 8388608
+      "maxEntryBytes": 8388608,
+      "dataAccess": [
+        "chat.history",
+        "model.prompt"
+      ]
     }
   },
   "manifest": {
@@ -135,14 +150,32 @@
       "calls",
       "dataAccess",
       "settingsSchema",
-      "executionTimeoutMs"
+      "executionTimeoutMs",
+      "compat"
     ],
     "idPattern": "^[a-z][a-z0-9-]{0,47}$",
     "entry": "plugin.js",
     "maxIdLength": 48,
     "maxNameLength": 80,
     "maxAuthorLength": 80,
-    "maxDescriptionLength": 600
+    "maxDescriptionLength": 600,
+    "compat": {
+      "values": [
+        "api3"
+      ],
+      "levels": [
+        3
+      ],
+      "runtime": "wasm-restricted",
+      "note": "只改变 3 级 Wasm 的输入信封与 whale 导入别名，不改变能力授权、调用白名单或输出校验。hooks 登记 api3 信封下每个 provider 对应的旧 hook 名；chat.received@1 对应的 chat.received 是旧宿主本来就派发过的同名 hook，不是新造名字；它的返回值按 observe 丢弃。",
+      "hooks": {
+        "chat.pre_reply@1": "chat.pre_reply",
+        "chat.prompt@1": "chat.prompt",
+        "chat.reply@1": "chat.reply",
+        "chat.before_send@1": "chat.before_send",
+        "chat.received@1": "chat.received"
+      }
+    }
   },
   "files": {
     "manifest": "plugin.json",
@@ -247,6 +280,98 @@
         "max": 86400
       },
       "sideEffect": "declared-host-calls-only"
+    },
+    "chat.pre_reply@1": {
+      "modes": [
+        "gate"
+      ],
+      "scopes": [
+        "all"
+      ],
+      "inputSchema": "chat.pre_reply.input@1",
+      "outputSchema": "chat.pre_reply.output@1",
+      "sideEffect": "none",
+      "dataAccess": [
+        "current-message"
+      ]
+    },
+    "chat.prompt@1": {
+      "modes": [
+        "enhance"
+      ],
+      "scopes": [
+        "all"
+      ],
+      "inputSchema": "chat.prompt.input@1",
+      "outputSchema": "chat.prompt.output@1",
+      "sideEffect": "none",
+      "dataAccess": [
+        "system-prompt",
+        "current-message",
+        "conversation-history"
+      ]
+    },
+    "chat.before_send@1": {
+      "modes": [
+        "enhance"
+      ],
+      "scopes": [
+        "all"
+      ],
+      "inputSchema": "chat.before_send.input@1",
+      "outputSchema": "chat.before_send.output@1",
+      "sideEffect": "none",
+      "dataAccess": [
+        "current-message",
+        "draft-reply"
+      ]
+    },
+    "chat.dispatched@1": {
+      "modes": [
+        "observe"
+      ],
+      "scopes": [
+        "all"
+      ],
+      "inputSchema": "chat.dispatched.input@1",
+      "outputSchema": "empty-object",
+      "sideEffect": "none"
+    },
+    "app.start@1": {
+      "modes": [
+        "observe"
+      ],
+      "scopes": [
+        "all"
+      ],
+      "inputSchema": "app.lifecycle.input@1",
+      "outputSchema": "empty-object",
+      "sideEffect": "none"
+    },
+    "app.stop@1": {
+      "modes": [
+        "observe"
+      ],
+      "scopes": [
+        "all"
+      ],
+      "inputSchema": "app.lifecycle.input@1",
+      "outputSchema": "empty-object",
+      "sideEffect": "none"
+    },
+    "chat.received@1": {
+      "modes": [
+        "observe"
+      ],
+      "scopes": [
+        "all"
+      ],
+      "inputSchema": "chat.received.input@1",
+      "outputSchema": "empty-object",
+      "sideEffect": "none",
+      "dataAccess": [
+        "current-message"
+      ]
     }
   },
   "calls": {
@@ -668,6 +793,24 @@
             "text": {
               "type": "string",
               "maxLength": 16000
+            },
+            "senderName": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "atMe": {
+              "type": "boolean"
+            },
+            "msgId": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "chatTitle": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "replyToBot": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -756,6 +899,33 @@
             "text": {
               "type": "string",
               "maxLength": 16000
+            },
+            "senderId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "atMe": {
+              "type": "boolean"
+            },
+            "replyToBot": {
+              "type": "boolean"
+            },
+            "msgId": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "chatTitle": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "mentionedNames": {
+              "type": "array",
+              "maxItems": 4,
+              "description": "本次消息里被提到的群成员名字（最多 4 个，只有名字不含 id）；旧接话插件的「在叫别人」判定依赖它。",
+              "items": {
+                "type": "string",
+                "maxLength": 40
+              }
             }
           },
           "required": [
@@ -801,6 +971,42 @@
         },
         "output": {
           "$ref": "chat.reply.output@1"
+        },
+        "state": {
+          "type": "object",
+          "description": "可选；插件与同一会话的跨调用状态，最多 8 KiB；输出完整替换，省略表示不修改。"
+        },
+        "now": {
+          "type": "number",
+          "minimum": 0,
+          "description": "宿主当前毫秒时间戳，与本插件 lastBot.at 同源（插件不能自己取 Date.now 判定窗口）。"
+        },
+        "lastBot": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "宿主内本会话最后一条助手回复的受控投影 {text,at,targetId}，没有时为 null；不接受整条数据库记录。",
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "at": {
+              "type": "number",
+              "minimum": 0
+            },
+            "targetId": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          "required": [
+            "text",
+            "at",
+            "targetId"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -815,6 +1021,10 @@
         "text": {
           "type": "string",
           "maxLength": 16000
+        },
+        "state": {
+          "type": "object",
+          "description": "可选；插件与同一会话的跨调用状态，最多 8 KiB；输出完整替换，省略表示不修改。"
         }
       },
       "required": [
@@ -868,6 +1078,18 @@
             "chatTitle": {
               "type": "string",
               "maxLength": 160
+            },
+            "replyToBot": {
+              "type": "boolean"
+            },
+            "mentionedNames": {
+              "type": "array",
+              "maxItems": 4,
+              "description": "本次消息里被提到的群成员名字（最多 4 个，只有名字不含 id）。",
+              "items": {
+                "type": "string",
+                "maxLength": 40
+              }
             }
           },
           "required": [
@@ -946,6 +1168,28 @@
             "text": {
               "type": "string",
               "maxLength": 16000
+            },
+            "senderId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderName": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "atMe": {
+              "type": "boolean"
+            },
+            "msgId": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "chatTitle": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "replyToBot": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -1227,6 +1471,615 @@
         "text"
       ],
       "additionalProperties": false
+    },
+    "chat.pre_reply.input@1": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "object",
+          "properties": {
+            "platform": {
+              "type": "string",
+              "maxLength": 24
+            },
+            "chatType": {
+              "type": "string",
+              "enum": [
+                "private",
+                "group"
+              ]
+            },
+            "chatId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderName": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16000
+            },
+            "atMe": {
+              "type": "boolean"
+            },
+            "msgId": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "chatTitle": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "replyToBot": {
+              "type": "boolean"
+            },
+            "mentionedNames": {
+              "type": "array",
+              "maxItems": 4,
+              "description": "本次消息里被提到的群成员名字（最多 4 个，只有名字不含 id）；旧接话插件的「在叫别人」判定依赖它。",
+              "items": {
+                "type": "string",
+                "maxLength": 40
+              }
+            }
+          },
+          "required": [
+            "platform",
+            "chatType",
+            "chatId",
+            "senderId",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "localWechat": {
+          "type": "boolean"
+        },
+        "state": {
+          "type": "object",
+          "description": "可选；插件与同一会话的跨调用状态，最多 8 KiB；输出完整替换，省略表示不修改。"
+        },
+        "now": {
+          "type": "number",
+          "minimum": 0,
+          "description": "宿主当前毫秒时间戳，与本插件 lastBot.at 同源（插件不能自己取 Date.now 判定窗口）。"
+        },
+        "lastBot": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "宿主内本会话最后一条助手回复的受控投影 {text,at,targetId}，没有时为 null；不接受整条数据库记录。",
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "at": {
+              "type": "number",
+              "minimum": 0
+            },
+            "targetId": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          "required": [
+            "text",
+            "at",
+            "targetId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "message",
+        "localWechat"
+      ],
+      "additionalProperties": false
+    },
+    "chat.pre_reply.output@1": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "skip",
+            "wake"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "state": {
+          "type": "object",
+          "description": "可选；插件与同一会话的跨调用状态，最多 8 KiB；输出完整替换，省略表示不修改。"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "chat.prompt.input@1": {
+      "type": "object",
+      "properties": {
+        "system": {
+          "type": "string",
+          "maxLength": 64000
+        },
+        "message": {
+          "type": "object",
+          "properties": {
+            "platform": {
+              "type": "string",
+              "maxLength": 24
+            },
+            "chatType": {
+              "type": "string",
+              "enum": [
+                "private",
+                "group"
+              ]
+            },
+            "chatId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderName": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16000
+            },
+            "atMe": {
+              "type": "boolean"
+            },
+            "msgId": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "chatTitle": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "replyToBot": {
+              "type": "boolean"
+            },
+            "mentionedNames": {
+              "type": "array",
+              "maxItems": 4,
+              "description": "本次消息里被提到的群成员名字（最多 4 个，只有名字不含 id）；旧接话插件的「在叫别人」判定依赖它。",
+              "items": {
+                "type": "string",
+                "maxLength": 40
+              }
+            }
+          },
+          "required": [
+            "platform",
+            "chatType",
+            "chatId",
+            "senderId",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "history": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "assistant"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 16000
+              }
+            },
+            "required": [
+              "role",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "state": {
+          "type": "object",
+          "description": "可选；插件与同一会话的跨调用状态，最多 8 KiB；输出完整替换，省略表示不修改。"
+        },
+        "now": {
+          "type": "number",
+          "minimum": 0,
+          "description": "宿主当前毫秒时间戳，与本插件 lastBot.at 同源（插件不能自己取 Date.now 判定窗口）。"
+        },
+        "lastBot": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "宿主内本会话最后一条助手回复的受控投影 {text,at,targetId}，没有时为 null；不接受整条数据库记录。",
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "at": {
+              "type": "number",
+              "minimum": 0
+            },
+            "targetId": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          "required": [
+            "text",
+            "at",
+            "targetId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "system",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "chat.prompt.output@1": {
+      "type": "object",
+      "properties": {
+        "system": {
+          "type": "string",
+          "maxLength": 64000
+        },
+        "state": {
+          "type": "object",
+          "description": "可选；插件与同一会话的跨调用状态，最多 8 KiB；输出完整替换，省略表示不修改。"
+        }
+      },
+      "required": [
+        "system"
+      ],
+      "additionalProperties": false
+    },
+    "chat.before_send.input@1": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "object",
+          "properties": {
+            "platform": {
+              "type": "string",
+              "maxLength": 24
+            },
+            "chatType": {
+              "type": "string",
+              "enum": [
+                "private",
+                "group"
+              ]
+            },
+            "chatId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderName": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16000
+            },
+            "atMe": {
+              "type": "boolean"
+            },
+            "msgId": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "chatTitle": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "replyToBot": {
+              "type": "boolean"
+            },
+            "mentionedNames": {
+              "type": "array",
+              "maxItems": 4,
+              "description": "本次消息里被提到的群成员名字（最多 4 个，只有名字不含 id）；旧接话插件的「在叫别人」判定依赖它。",
+              "items": {
+                "type": "string",
+                "maxLength": 40
+              }
+            }
+          },
+          "required": [
+            "platform",
+            "chatType",
+            "chatId",
+            "senderId",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 16000
+        },
+        "state": {
+          "type": "object",
+          "description": "可选；插件与同一会话的跨调用状态，最多 8 KiB；输出完整替换，省略表示不修改。"
+        },
+        "now": {
+          "type": "number",
+          "minimum": 0,
+          "description": "宿主当前毫秒时间戳，与本插件 lastBot.at 同源（插件不能自己取 Date.now 判定窗口）。"
+        },
+        "lastBot": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "宿主内本会话最后一条助手回复的受控投影 {text,at,targetId}，没有时为 null；不接受整条数据库记录。",
+          "properties": {
+            "text": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "at": {
+              "type": "number",
+              "minimum": 0
+            },
+            "targetId": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          "required": [
+            "text",
+            "at",
+            "targetId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "message",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "chat.before_send.output@1": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 16000
+        },
+        "state": {
+          "type": "object",
+          "description": "可选；插件与同一会话的跨调用状态，最多 8 KiB；输出完整替换，省略表示不修改。"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "chat.dispatched.input@1": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "object",
+          "properties": {
+            "platform": {
+              "type": "string",
+              "maxLength": 24
+            },
+            "chatType": {
+              "type": "string",
+              "enum": [
+                "private",
+                "group"
+              ]
+            },
+            "chatId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderName": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16000
+            },
+            "atMe": {
+              "type": "boolean"
+            },
+            "msgId": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "chatTitle": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "replyToBot": {
+              "type": "boolean"
+            },
+            "mentionedNames": {
+              "type": "array",
+              "maxItems": 4,
+              "description": "本次消息里被提到的群成员名字（最多 4 个，只有名字不含 id）；旧接话插件的「在叫别人」判定依赖它。",
+              "items": {
+                "type": "string",
+                "maxLength": 40
+              }
+            }
+          },
+          "required": [
+            "platform",
+            "chatType",
+            "chatId",
+            "senderId",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 16000
+        },
+        "action": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "sent": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "message",
+        "text",
+        "action",
+        "sent"
+      ],
+      "additionalProperties": false
+    },
+    "app.lifecycle.input@1": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "number",
+          "minimum": 0
+        },
+        "settings": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "at",
+        "settings"
+      ],
+      "additionalProperties": false
+    },
+    "chat.received.input@1": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "object",
+          "properties": {
+            "platform": {
+              "type": "string",
+              "maxLength": 24
+            },
+            "chatType": {
+              "type": "string",
+              "enum": [
+                "private",
+                "group"
+              ]
+            },
+            "chatId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderId": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "senderName": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 16000
+            },
+            "atMe": {
+              "type": "boolean"
+            },
+            "msgId": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "chatTitle": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "replyToBot": {
+              "type": "boolean"
+            },
+            "mentionedNames": {
+              "type": "array",
+              "maxItems": 4,
+              "description": "本次消息里被提到的群成员名字（最多 4 个，只有名字不含 id）；旧接话插件的「在叫别人」判定依赖它。",
+              "items": {
+                "type": "string",
+                "maxLength": 40
+              }
+            }
+          },
+          "required": [
+            "platform",
+            "chatType",
+            "chatId",
+            "senderId",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "localWechat": {
+          "type": "boolean"
+        },
+        "state": {
+          "type": "object",
+          "description": "可选；插件与同一会话的跨调用状态，最多 8 KiB；输出完整替换，省略表示不修改。"
+        }
+      },
+      "required": [
+        "message",
+        "localWechat"
+      ],
+      "additionalProperties": false
     }
   },
   "settingsSchema": {
@@ -1255,12 +2108,30 @@
       "title": 40,
       "description": 200,
       "forbiddenRanges": [
-        [0, 31],
-        [127, 127],
-        [1564, 1564],
-        [8206, 8207],
-        [8234, 8238],
-        [8294, 8297]
+        [
+          0,
+          31
+        ],
+        [
+          127,
+          127
+        ],
+        [
+          1564,
+          1564
+        ],
+        [
+          8206,
+          8207
+        ],
+        [
+          8234,
+          8238
+        ],
+        [
+          8294,
+          8297
+        ]
       ]
     }
   }

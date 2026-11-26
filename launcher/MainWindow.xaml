@@ -181,20 +181,20 @@
 
                     <!-- 关于：整个界面的左下角（版本 + 数据目录入口都在这附近，不再占设置一页） -->
                     <StackPanel DockPanel.Dock="Bottom" Margin="12,10,0,0">
-                        <Border Height="1" Background="{DynamicResource Line}" Margin="0,0,0,10" />
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <Border Height="1" Background="{DynamicResource Line}" Margin="0,0,0,8" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                             <Button x:Name="BtnWebsite" Content="官网" Style="{StaticResource Ghost}"
-                                    Padding="9,3" FontSize="11" Click="OnOpenWebsite"
+                                    Padding="8,2" FontSize="10.5" Click="OnOpenWebsite"
                                     ToolTip="在浏览器打开鲸鲸官网（下载、文档与更新说明）" />
                             <Button x:Name="BtnSponsor" Content="赞助" Style="{StaticResource Ghost}"
-                                    Margin="6,0,0,0" Padding="9,3" FontSize="11" Click="OnOpenSponsor"
+                                    Margin="6,0,0,0" Padding="8,2" FontSize="10.5" Click="OnOpenSponsor"
                                     ToolTip="在爱发电支持鲸鲸团队；纯自愿，不影响软件使用" />
                             <Button x:Name="BtnVersionHistory" Content="历史版本" Style="{StaticResource Ghost}"
-                                    Margin="6,0,0,0" Padding="9,3" FontSize="11" Click="OnOpenVersionHistory"
+                                    Margin="6,0,0,0" Padding="8,2" FontSize="10.5" Click="OnOpenVersionHistory"
                                     ToolTip="查看 GitHub 已公开的 Windows 安装包" />
                         </StackPanel>
                         <Button x:Name="BtnUpdate" Content="检查更新" Style="{StaticResource Ghost}"
-                                HorizontalAlignment="Left" Padding="9,3" FontSize="11" Margin="0,0,0,2"
+                                HorizontalAlignment="Left" Padding="8,2" FontSize="10.5" Margin="0"
                                 Click="OnCheckUpdate"
                                 ToolTip="从 GitHub Release 查有没有新版；只检查，不会自己改动" />
                     </StackPanel>

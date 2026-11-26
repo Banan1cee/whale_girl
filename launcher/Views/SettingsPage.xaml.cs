@@ -809,7 +809,7 @@ namespace WhaleLauncher.Views
             var border = new Border
             {
                 Style = (Style)FindResource("Card"),
-                Padding = new Thickness(16, 14, 16, 14),
+                Padding = new Thickness(16, 12, 16, 12),
                 Margin = new Thickness(0, 0, 0, 12)
             };
             var stack = new StackPanel();
