@@ -6,7 +6,7 @@
             <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
                 <Button x:Name="DocumentsToggle" DockPanel.Dock="Right" Content="文档（必看） ▾"
                         Style="{StaticResource Ghost}" Click="OnToggleDocuments" Margin="8,0,0,0"
-                        AutomationProperties.Name="文档（必看）" AutomationProperties.HelpText="展开文档列表" />
+                        AutomationProperties.Name="文档（必看）" AutomationProperties.HelpText="展开文档菜单" />
                 <Button DockPanel.Dock="Right" Content="从本地安装…" Style="{StaticResource Ghost}"
                         Click="OnLocal" Margin="8,0,0,0" />
                 <Button DockPanel.Dock="Right" Content="刷新" Style="{StaticResource Ghost}"
@@ -18,54 +18,32 @@
                 <StackPanel>
                     <TextBlock Text="发现人设预设；新协议功能插件与主题可从本地安装。"
                                Style="{StaticResource Small}" Margin="0,0,0,14" />
-                    <Border x:Name="DocumentsPanel" Style="{StaticResource Card}" Visibility="Collapsed"
-                            Padding="14" Margin="0,0,0,14">
-                        <UniformGrid Columns="3">
-                            <StackPanel Margin="0,0,12,0">
-                                <TextBlock Text="安装与使用" Style="{StaticResource H2}" Margin="0,0,0,4" />
-                                <Button Content="下载与安装指南" Style="{StaticResource Ghost}" Click="OnDownloadGuide" Margin="0,4,0,0" />
-                                <Button Content="免责声明" Style="{StaticResource Ghost}" Click="OnDisclaimer" Margin="0,4,0,0" />
-                            </StackPanel>
-                            <StackPanel Margin="0,0,12,0">
-                                <TextBlock Text="插件开发" Style="{StaticResource H2}" Margin="0,0,0,4" />
-                                <Button Content="插件作者入门" Style="{StaticResource Ghost}" Click="OnAuthorGuide" Margin="0,4,0,0" />
-                                <Button Content="插件协议（whale-plugin/1）" Style="{StaticResource Ghost}" Click="OnProtocolGuide" Margin="0,4,0,0" />
-                            </StackPanel>
-                            <StackPanel>
-                                <TextBlock Text="投稿与审核" Style="{StaticResource H2}" Margin="0,0,0,4" />
-                                <Button Content="插件市场规范" Style="{StaticResource Ghost}" Click="OnRulesGuide" Margin="0,4,0,0" />
-                                <Button Content="安全检测与溯源" Style="{StaticResource Ghost}" Click="OnSecurityGuide" Margin="0,4,0,0" />
-                            </StackPanel>
-                        </UniformGrid>
-                    </Border>
 
                     <CheckBox x:Name="PluginsEnabled" Content="启用统一协议插件"
                               Click="OnPluginsEnabled" Margin="0,0,0,8" />
                     <TextBlock Text="默认关闭。1–3 级使用受限 Wasm；4 级须确认完整系统权限。主题不受总开关影响。"
                                Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,0,0,12" />
-                    <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
-                        <StackPanel>
-                            <TextBlock Text="第三方插件免责声明" FontWeight="SemiBold" />
-                            <TextBlock Text="社区插件由各自作者提供。上架、校验或扫描不保证无病毒、无漏洞；使用可能造成隐私泄露、数据损坏、异常发言或账号风险。请核对来源与权限，备份后谨慎安装。完整说明见「文档（必看）」中的「免责声明」。"
-                                       Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" />
-                        </StackPanel>
-                    </Border>
 
-                    <DockPanel LastChildFill="False">
-                        <Button x:Name="Discover" Content="发现" Style="{StaticResource Primary}" Click="OnDiscover" MinWidth="80" />
-                        <Button x:Name="Installed" Content="已安装" Style="{StaticResource Ghost}" Click="OnInstalled" Margin="8,0,0,0" MinWidth="80" />
-                        <TextBox x:Name="Search" DockPanel.Dock="Right" Width="208" Margin="10,0,0,0"
-                                 AutomationProperties.Name="搜索插件" ToolTip="按插件名称、作者或简介搜索" TextChanged="OnSearch" />
-                    </DockPanel>
-                    <DockPanel LastChildFill="True" Margin="0,12,0,0">
-                        <TextBlock Text="分类" Style="{StaticResource Label}" VerticalAlignment="Center" Margin="0,0,10,4" />
-                        <WrapPanel x:Name="Categories">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="Discover" Content="发现" Style="{StaticResource Primary}" Click="OnDiscover" MinWidth="80" />
+                            <Button x:Name="Installed" Content="已安装" Style="{StaticResource Ghost}" Click="OnInstalled" Margin="8,0,0,0" MinWidth="80" />
+                            <TextBlock Text="分类" Style="{StaticResource Label}" VerticalAlignment="Center" Margin="16,0,10,0" />
+                        </StackPanel>
+                        <WrapPanel x:Name="Categories" Grid.Column="1" VerticalAlignment="Center">
                             <Button Content="全部" Tag="" Style="{StaticResource Primary}" Click="OnCategory" Padding="12,6" Margin="0,0,6,4" />
                             <Button Content="人格预设" Tag="persona" Style="{StaticResource Ghost}" Click="OnCategory" Padding="12,6" Margin="0,0,6,4" />
                             <Button Content="消息插件" Tag="message" Style="{StaticResource Ghost}" Click="OnCategory" Padding="12,6" Margin="0,0,6,4" />
                             <Button Content="功能工具" Tag="tool" Style="{StaticResource Ghost}" Click="OnCategory" Padding="12,6" Margin="0,0,6,4" />
                         </WrapPanel>
-                    </DockPanel>
+                        <TextBox x:Name="Search" Grid.Column="2" Width="208" Margin="10,0,0,0" VerticalAlignment="Center"
+                                 AutomationProperties.Name="搜索插件" ToolTip="按插件名称、作者或简介搜索" TextChanged="OnSearch" />
+                    </Grid>
                     <TextBlock x:Name="Status" Style="{StaticResource Small}" Margin="0,6,0,8" TextWrapping="Wrap" />
                     <!-- 列定义由 PluginCardLayout 按实际可用宽度动态生成：
                          这里写死列会退化成固定三列，只给卡片留 Margin 又会让列宽溢出。 -->
@@ -79,5 +57,38 @@
                     HorizontalAlignment="Left" Click="OnBack" Margin="0,0,0,10" />
             <ContentControl x:Name="DetailContent" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
         </DockPanel>
+
+        <!-- 文档从卡片改为按钮下拉菜单：文档越多越不该占用市场列表的纵向空间。 -->
+        <Popup x:Name="DocumentsMenu" PlacementTarget="{Binding ElementName=DocumentsToggle}"
+               Placement="Bottom" VerticalOffset="4" StaysOpen="False" AllowsTransparency="True"
+               PopupAnimation="Fade" Opened="OnDocumentsOpened" Closed="OnDocumentsClosed">
+            <Border Background="{StaticResource PopupBg}" BorderBrush="{StaticResource CardBorder}"
+                    BorderThickness="1" CornerRadius="{StaticResource RadiusCard}" Padding="8" MinWidth="236">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.45" Color="#000000" />
+                </Border.Effect>
+                <StackPanel ButtonBase.Click="OnDocumentChosen">
+                    <TextBlock Text="安装与使用" Style="{StaticResource Label}" Margin="8,6,8,4" />
+                    <Button Content="下载与安装指南" Style="{StaticResource Ghost}" HorizontalContentAlignment="Left"
+                            Click="OnDownloadGuide" Margin="0,2,0,0" />
+                    <Button Content="免责声明" Style="{StaticResource Ghost}" HorizontalContentAlignment="Left"
+                            Click="OnDisclaimer" Margin="0,2,0,0" />
+                    <Border Height="1" Background="{StaticResource Line}" Margin="8,8" />
+                    <TextBlock Text="插件开发" Style="{StaticResource Label}" Margin="8,0,8,4" />
+                    <Button Content="插件作者入门" Style="{StaticResource Ghost}" HorizontalContentAlignment="Left"
+                            Click="OnAuthorGuide" Margin="0,2,0,0" />
+                    <Button Content="插件协议（whale-plugin/1）" Style="{StaticResource Ghost}" HorizontalContentAlignment="Left"
+                            Click="OnProtocolGuide" Margin="0,2,0,0" />
+                    <Border Height="1" Background="{StaticResource Line}" Margin="8,8" />
+                    <TextBlock Text="投稿与审核" Style="{StaticResource Label}" Margin="8,0,8,4" />
+                    <Button Content="插件市场规范" Style="{StaticResource Ghost}" HorizontalContentAlignment="Left" Click="OnRulesGuide" Margin="0,2,0,0" />
+                    <Button Content="安全检测与溯源" Style="{StaticResource Ghost}" HorizontalContentAlignment="Left"
+                            Click="OnSecurityGuide" Margin="0,2,0,6" />
+                </StackPanel>
+            </Border>
+        </Popup>
+
+        <!-- 首次进入的免责声明门禁：覆盖整页，确认前页面不可交互。 -->
+        <Grid x:Name="GateHost" Panel.ZIndex="200" Visibility="Collapsed" />
     </Grid>
 </UserControl>

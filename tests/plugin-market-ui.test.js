@@ -102,6 +102,44 @@ test('开发者入口链接官方材料并提供只读 ZIP 校验', () => {
   assert.match(links, /\/pulls/);
 });
 
+test('市场首页不再有开发者分类与免责声明横幅，分类与已安装同排，文档收起为下拉菜单', () => {
+  const xaml = read('launcher/Views/PluginMarketPage.xaml');
+  const page = read('launcher/Views/PluginMarketPage.xaml.cs');
+  // 开发者入口已并入文档，市场里不再留独立分类。
+  assert.doesNotMatch(xaml, /x:Name="Developer"/);
+  assert.doesNotMatch(xaml, /Content="开发者"/);
+  // 免责声明横幅删除，但文档下拉里的免责声明条目仍在。
+  assert.doesNotMatch(xaml, /第三方插件免责声明/);
+  assert.match(xaml, /Content="免责声明"[\s\S]{0,120}?Click="OnDisclaimer"/);
+  // 分类与发现/已安装同排：标签和已安装按钮在左列，分类在右邻列。
+  assert.match(xaml, /<Button x:Name="Installed"[\s\S]{0,400}?<TextBlock Text="分类"/);
+  assert.match(xaml, /<WrapPanel x:Name="Categories" Grid\.Column="1"/);
+  // 文档由横向卡片改为按钮下拉菜单，不再撑高列表。
+  assert.match(xaml, /<Popup x:Name="DocumentsMenu"[\s\S]*?StaysOpen="False"/);
+  assert.doesNotMatch(xaml, /x:Name="DocumentsPanel"/);
+  assert.match(page, /DocumentsMenu\.IsOpen = expanded/);
+});
+
+test('首次进入插件页必须读完免责声明，确认状态按正文摘要落盘', () => {
+  const xaml = read('launcher/Views/PluginMarketPage.xaml');
+  const page = read('launcher/Views/PluginMarketPage.xaml.cs');
+  const gate = read('launcher/PluginDisclaimerGate.cs');
+  // 门禁是页内覆盖层：加载即锁页，读完并保存成功才解锁。
+  assert.match(xaml, /<Grid x:Name="GateHost"[^>]*Panel\.ZIndex="200"[^>]*Visibility="Collapsed"/);
+  assert.match(page, /ShowDisclaimerGate\(text, hash, token\)/);
+  assert.match(page, /BlockContent\(\);[\s\S]*?InitializePageAsync\(token\)/);
+  assert.match(page, /TryReadDisclaimerAck\(check, out var acknowledged, out var storedHash\)/);
+  assert.match(page, /plugins\.disclaimer\.acknowledged/);
+  assert.match(page, /plugins\.disclaimer\.documentHash/);
+  // 停留时长与滚到底都在门禁里判定，且没有关闭/Esc 逃逸路径。
+  assert.match(gate, /TimeSpan\.FromSeconds\(10\)/);
+  assert.match(gate, /_reachedBottom && _clock\.Elapsed >= RequiredReadTime/);
+  assert.match(gate, /Key\.Escape or Key\.Enter or Key\.Return/);
+  // 正文随启动器打包，缺失时退回占位文本而不是放行。
+  assert.match(read('launcher/WhaleLauncher.csproj'), /LogicalName="WhaleLauncher\.PluginDisclaimer\.md"/);
+  assert.ok(fs.existsSync(path.join(__dirname, '..', 'docs', '插件免责声明.md')));
+});
+
 test('3 级聊天确认从内嵌注册表派生，覆盖 pre_reply / prompt / before_send', () => {
   const market = read('launcher/PluginMarket.cs');
   assert.match(market, /private static readonly HashSet<string> ChatContentProviders = LoadChatContentProviders\(\)/);

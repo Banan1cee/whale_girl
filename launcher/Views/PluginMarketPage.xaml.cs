@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -13,6 +14,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Input;
 using System.Windows.Controls.Primitives;
 using System.Threading;
@@ -22,6 +24,10 @@ namespace WhaleLauncher.Views
 {
     public partial class PluginMarketPage : UserControl
     {
+        private const string DisclaimerResource = "WhaleLauncher.PluginDisclaimer.md";
+        private const string DisclaimerAckPath = "plugins.disclaimer.acknowledged";
+        private const string DisclaimerHashPath = "plugins.disclaimer.documentHash";
+
         private readonly PluginMarket _market;
         private readonly RuntimeSupervisor _sup;
         private readonly string _version;
@@ -38,6 +44,12 @@ namespace WhaleLauncher.Views
         private double _cardGridWidth = double.NaN;
         private double _cardHeight;
         private int _cardColumns;
+        private PluginDisclaimerGate _gate;
+        private readonly List<GateOverride> _gateOverrides = new();
+        private int _visitToken;
+        private bool _contentBlocked;
+
+        private sealed record GateOverride(FrameworkElement Element, bool Enabled, Effect Effect);
 
         internal PluginMarketPage(PluginMarket market, string version, RuntimeSupervisor sup)
         {
@@ -49,15 +61,218 @@ namespace WhaleLauncher.Views
             // 再手动减一次 VerticalScrollBarWidth 会少算一列宽度或横向溢出。
             MarketScroll.SizeChanged += (_, _) => ApplyCardGrid(MarketScroll.ViewportWidth);
             MarketScroll.ScrollChanged += OnMarketScrollChanged;
-            TryMigrateLegacyThemeAfterGate();
-            Loaded += async (_, _) =>
+            Loaded += OnPageLoaded;
+            Unloaded += OnPageUnloaded;
+        }
+
+        private void OnPageLoaded(object sender, RoutedEventArgs e)
+        {
+            // 缓存页重入也会走 Loaded：每次进入都重新读取确认状态，不靠内存记忆。
+            var token = ++_visitToken;
+            DisposeGate();
+            BlockContent();
+            _ = InitializePageAsync(token);
+        }
+
+        private void OnPageUnloaded(object sender, RoutedEventArgs e)
+        {
+            // 异步读写可能迟到：代次失效后不允许再解锁 / 重新装回门禁。
+            _visitToken++;
+            DisposeGate();
+            UnblockContent();
+        }
+
+        private async Task InitializePageAsync(int token)
+        {
+            await Task.WhenAll(LoadFeatureStateAsync(token), EnsureDisclaimerAsync(token));
+        }
+
+        private async Task LoadFeatureStateAsync(int token)
+        {
+            try
             {
                 var config = await _sup.ReadConfigurationAsync("/api/features");
+                if (token != _visitToken) return;
                 if (config.Ok && config.Prop("features").ValueKind == JsonValueKind.Array)
                     PluginsEnabled.IsChecked = config.Prop("features").EnumerateArray()
                         .Any(f => f.GetProperty("key").GetString() == "plugins" && f.GetProperty("value").ValueKind == JsonValueKind.True);
                 if (_catalog.Length == 0) await RefreshCatalog();
-            };
+            }
+            catch { /* 读取失败不阻塞免责声明门禁 */ }
+        }
+
+        private async Task EnsureDisclaimerAsync(int token)
+        {
+            var (text, hash) = LoadDisclaimer();
+            var readOk = false;
+            var acknowledgedRaw = false;
+            var storedHash = "";
+            try
+            {
+                var config = await _sup.ReadConfigurationAsync("/api/config");
+                if (token != _visitToken) return;
+                readOk = TryReadDisclaimerAck(config, out acknowledgedRaw, out storedHash);
+                if (!readOk) Status.Text = "读取免责声明确认状态失败，需要重新阅读。";
+            }
+            catch (Exception ex)
+            {
+                if (token != _visitToken) return;
+                Status.Text = "读取免责声明确认状态失败，需要重新阅读：" + ex.Message;
+            }
+            if (token != _visitToken) return;
+
+            var hashMatches = string.Equals(storedHash, hash, StringComparison.OrdinalIgnoreCase);
+            if (readOk && acknowledgedRaw && hashMatches)
+            {
+                UnblockContent();
+                TryMigrateLegacyThemeAfterGate();
+                return;
+            }
+            if (readOk && acknowledgedRaw && !hashMatches)
+            {
+                // 正文更新：旧确认自动失效；用同一配置通道把确认字段复位（失败也不放行）。
+                _ = ResetStaleAcknowledgementAsync(token);
+            }
+            ShowDisclaimerGate(text, hash, token);
+        }
+
+        /// <summary>严格读取：只有落盘/接口里的布尔 true 且是当前正文的摘要才算已读。</summary>
+        private static bool TryReadDisclaimerAck(ApiResult config, out bool acknowledged, out string hash)
+        {
+            acknowledged = false;
+            hash = "";
+            if (!config.Ok || config.Root.ValueKind != JsonValueKind.Object) return false;
+            if (!config.Root.TryGetProperty("config", out var root) || root.ValueKind != JsonValueKind.Object) return true;
+            if (!root.TryGetProperty("plugins", out var plugins) || plugins.ValueKind != JsonValueKind.Object) return true;
+            if (!plugins.TryGetProperty("disclaimer", out var disclaimer) || disclaimer.ValueKind != JsonValueKind.Object) return true;
+            acknowledged = disclaimer.TryGetProperty("acknowledged", out var flag) && flag.ValueKind == JsonValueKind.True;
+            if (disclaimer.TryGetProperty("documentHash", out var stored) && stored.ValueKind == JsonValueKind.String)
+                hash = stored.GetString() ?? "";
+            return true;
+        }
+
+        private async Task ResetStaleAcknowledgementAsync(int token)
+        {
+            try
+            {
+                var result = await _sup.PatchConfigurationAsync(new Dictionary<string, object>
+                {
+                    [DisclaimerAckPath] = false,
+                });
+                if (token != _visitToken) return;
+                if (!result.Ok) Status.Text = "免责声明已更新；旧确认状态重置失败，但仍需重新阅读。";
+            }
+            catch (Exception ex)
+            {
+                if (token == _visitToken) Status.Text = "免责声明已更新；旧确认状态重置失败，但仍需重新阅读：" + ex.Message;
+            }
+        }
+
+        private void ShowDisclaimerGate(string text, string hash, int token)
+        {
+            if (_gate != null) return;
+            var gate = new PluginDisclaimerGate(text, () => SaveAcknowledgementAsync(hash, token));
+            gate.Accepted += () => OnDisclaimerAccepted(gate, token);
+            _gate = gate;
+            GateHost.Children.Add(gate);
+            GateHost.Visibility = Visibility.Visible;
+        }
+
+        private async Task<(bool Ok, string Error)> SaveAcknowledgementAsync(string hash, int token)
+        {
+            if (token != _visitToken) return (false, "页面已离开，请重新进入后再确认。");
+            try
+            {
+                var result = await _sup.PatchConfigurationAsync(new Dictionary<string, object>
+                {
+                    [DisclaimerAckPath] = true,
+                    [DisclaimerHashPath] = hash,
+                });
+                if (token != _visitToken) return (false, "页面已离开，请重新进入后再确认。");
+                if (!result.Ok) return (false, Api.Message(result));
+                // 写盘接口不保证事务：写完再按接口/落盘实际值读回核对，确认严格 true 且摘要匹配才放行。
+                var check = await _sup.ReadConfigurationAsync("/api/config");
+                if (token != _visitToken) return (false, "页面已离开，请重新进入后再确认。");
+                if (!TryReadDisclaimerAck(check, out var acknowledged, out var storedHash))
+                    return (false, "保存后读取确认状态失败。");
+                if (!acknowledged || !string.Equals(storedHash, hash, StringComparison.OrdinalIgnoreCase))
+                    return (false, "配置未按预期保存，请重试。");
+                return (true, "");
+            }
+            catch (Exception ex)
+            {
+                return (false, ex.Message);
+            }
+        }
+
+        private void OnDisclaimerAccepted(PluginDisclaimerGate gate, int token)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.BeginInvoke(new Action(() => OnDisclaimerAccepted(gate, token)));
+                return;
+            }
+            if (token != _visitToken) return;
+            if (!ReferenceEquals(_gate, gate)) return;
+            DisposeGate();
+            UnblockContent();
+            TryMigrateLegacyThemeAfterGate();
+            Status.Text = "免责声明已确认。";
+        }
+
+        private void DisposeGate()
+        {
+            var gate = _gate;
+            _gate = null;
+            if (GateHost != null) GateHost.Children.Clear();
+            if (GateHost != null) GateHost.Visibility = Visibility.Collapsed;
+            gate?.Dispose();
+        }
+
+        private void BlockContent()
+        {
+            if (_contentBlocked) return;
+            // 文档菜单是独立弹层，不关掉会浮在门禁覆盖层上面。
+            SetDocumentsExpanded(false);
+            foreach (var element in new FrameworkElement[] { ListPanel, DetailPanel })
+            {
+                _gateOverrides.Add(new GateOverride(element, element.IsEnabled, element.Effect));
+                element.IsEnabled = false;
+                element.Effect = new BlurEffect { Radius = 8 };
+            }
+            _contentBlocked = true;
+        }
+
+        private void UnblockContent()
+        {
+            foreach (var item in _gateOverrides)
+            {
+                item.Element.IsEnabled = item.Enabled;
+                item.Element.Effect = item.Effect;
+            }
+            _gateOverrides.Clear();
+            _contentBlocked = false;
+        }
+
+        private static (string Text, string Hash) LoadDisclaimer()
+        {
+            byte[] raw;
+            using (var stream = typeof(PluginMarketPage).Assembly.GetManifestResourceStream(DisclaimerResource))
+            {
+                if (stream == null)
+                {
+                    const string fallback = "免责声明文档缺失，请修复启动器安装后再进入插件页。";
+                    return (fallback, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fallback))).ToLowerInvariant());
+                }
+                using var buffer = new MemoryStream();
+                stream.CopyTo(buffer);
+                raw = buffer.ToArray();
+            }
+            // 用规范换行后的正文做确定性摘要：跨平台构建不因 CRLF 变化而误判「正文更新」。
+            var text = Encoding.UTF8.GetString(raw).TrimStart('\uFEFF').Replace("\r\n", "\n").Replace('\r', '\n');
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+            var display = Regex.Replace(text, @"(?m)^#{1,6} |^```.*$|\*\*|`", "");
+            return (display, hash);
         }
 
         private LauncherTheme ReadTheme(PluginInfo info) => LauncherThemes.Parse(_market.ThemeBytes(info));
@@ -240,18 +455,42 @@ namespace WhaleLauncher.Views
             Render();
         }
 
+        private DateTime _documentsClosedAt = DateTime.MinValue;
+
         private void OnToggleDocuments(object sender, RoutedEventArgs e)
         {
-            var expanded = DocumentsPanel.Visibility != Visibility.Visible;
-            SetDocumentsExpanded(expanded);
-            if (expanded) MarketScroll.ScrollToTop();
+            // StaysOpen=False 的下拉菜单会先吃掉这次按下事件并自行关闭，随后 Click 才到达；
+            // 不认这个刚关闭的时间窗，点按钮收起会立刻又被重新打开。
+            if (!DocumentsMenu.IsOpen && DateTime.UtcNow - _documentsClosedAt < TimeSpan.FromMilliseconds(250)) return;
+            SetDocumentsExpanded(!DocumentsMenu.IsOpen);
         }
 
         private void SetDocumentsExpanded(bool expanded)
         {
-            DocumentsPanel.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+            DocumentsMenu.IsOpen = expanded;
+            UpdateDocumentsToggleLabel(expanded);
+        }
+
+        private void OnDocumentsOpened(object sender, EventArgs e)
+        {
+            // 右对齐到按钮右缘：按钮贴着窗口右边，菜单向左展开才不会出屏。
+            if (DocumentsMenu.Child is FrameworkElement content && content.ActualWidth > 0)
+                DocumentsMenu.HorizontalOffset = DocumentsToggle.ActualWidth - content.ActualWidth;
+            UpdateDocumentsToggleLabel(true);
+        }
+
+        private void OnDocumentsClosed(object sender, EventArgs e)
+        {
+            _documentsClosedAt = DateTime.UtcNow;
+            UpdateDocumentsToggleLabel(false);
+        }
+
+        private void OnDocumentChosen(object sender, RoutedEventArgs e) => SetDocumentsExpanded(false);
+
+        private void UpdateDocumentsToggleLabel(bool expanded)
+        {
             DocumentsToggle.Content = expanded ? "文档（必看） ▴" : "文档（必看） ▾";
-            AutomationProperties.SetHelpText(DocumentsToggle, expanded ? "收起文档列表" : "展开文档列表");
+            AutomationProperties.SetHelpText(DocumentsToggle, expanded ? "收起文档菜单" : "展开文档菜单");
         }
 
         private async void OnLocal(object sender, RoutedEventArgs e)
