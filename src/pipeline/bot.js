@@ -201,15 +201,26 @@ class Bot {
    * 设提醒：「十点半提醒我开会」→ 落库，并回一句确认。
    * 不在提醒范围内的普通消息原样返回 null，交给后面的正常流程。
    */
-  async tryReminder({ msg, clean, key, now, isGroup, atMe }) {
+  async tryReminder({ msg, clean, key, now, isGroup, atMe, signal }) {
     const service = this.reminders;
     if (!service) return null;
     // 设提醒 / 取消 / 列表走宿主能力，和路由、插件是同一个口子。
     // 单元夹具可能没有装配 capabilities，这时退回服务层（生产装配一定有）。
-    const feature = async (name, input) => (this.capabilities?.hasHost?.(name)
-      ? this.capabilities.invokeHost(name, input) : null);
-    const pendingFor = async chatId => (await feature('reminders.pendingFor@1', { chatId }))?.items
-      || service.pendingFor(chatId);
+    const feature = async (name, input, options) => (this.capabilities?.hasHost?.(name)
+      ? this.capabilities.invokeHost(name, input, options) : null);
+    // 读能力跟随本轮取消：宿主入口已按 signal 拒绝时不要再占用名额。
+    // 但「提醒列表 / 取消提醒」是闲聊里的顺手查询，池满或超时不能把整轮判定打挂，
+    // 所以任何宿主准入失败都退回本地服务层读同一份待发提醒。
+    const pendingFor = async chatId => {
+      try {
+        const out = await feature('reminders.pendingFor@1', { chatId }, { signal });
+        if (out && Array.isArray(out.items)) return out.items;
+      } catch { /* 下面退回服务层读取 */ }
+      return service.pendingFor(chatId);
+    };
+    // 写能力不接 signal：取消/落库中途被掐会留下半条状态。改为独立截止时间，
+    // 让「池满」最多等 5 秒就失败，而不是无限排在一个可能永远不释放的名额后面。
+    const writeOptions = () => ({ deadline: Date.now() + 5000 });
     const tz = time.resolveTimeZone(this.config);
     const text = String((clean && clean.text) || '').trim();
     if (!text || text.length > 120) return null;
@@ -223,7 +234,11 @@ class Bot {
       if (!pending.length) return { action: 'reply', key, msg, atMe, canned: '这个会话没有待发的提醒。', reason: 'reminder_cancel' };
       let cancelled = 0;
       for (const item of pending) {
-        const out = await feature('reminders.cancel@1', { id: item.id });
+        // 写能力自己有时限；它失败（超时/池满）只影响这一条，不能把整轮「取消提醒」判成异常。
+        // 计数会照实少加，下面那句「另有 N 条正在发送」就是给用户的诚实话术。
+        let out = null;
+        try { out = await feature('reminders.cancel@1', { id: item.id }, writeOptions()); }
+        catch { /* 退回本地取消，不把宿主准入失败冒到决策主路径 */ }
         if (out ? out.ok : service.cancel(item.id).ok) cancelled += 1;
       }
       const sending = pending.length - cancelled;
@@ -254,6 +269,18 @@ class Bot {
     if (!parsed) parsed = await this.reminderFromModel(text, now, tz);
     if (!parsed) return null;
 
+    // 本地登记与宿主能力写的是同一份服务层数据；宿主准入失败（池满 / 5 秒排队超时）
+    // 或执行异常时退回这里，提醒不能因为一次排队失败就丢掉。
+    const addLocally = () => service.add({
+      wxid: msg.chatId,
+      name: msg.chatTitle || msg.senderName || msg.chatId,
+      chatType: msg.chatType,
+      text: parsed.what,
+      at: parsed.at,
+      atName: msg.senderName || '',
+    });
+
+    let item = null;
     try {
       const created = await feature('reminders.create@1', {
         chatId: msg.chatId,
@@ -262,27 +289,26 @@ class Bot {
         text: parsed.what,
         at: parsed.at,
         atName: msg.senderName || '',
-      });
-      const item = created || service.add({
-        wxid: msg.chatId,
-        name: msg.chatTitle || msg.senderName || msg.chatId,
-        chatType: msg.chatType,
-        text: parsed.what,
-        at: parsed.at,
-        atName: msg.senderName || '',
-      });
-      this.logger && this.logger.info(`提醒已登记：id=${item.id} ${textMeta(item.text || parsed.what)} @ ${reminderCore.describeWhen(new Date(item.dueAt), now, tz)}`);
-      return {
-        action: 'reply',
-        key,
-        msg,
-        atMe,
-        canned: reminderCore.confirmText(parsed, { now, group: isGroup, who: msg.senderName || '', timeZone: tz }),
-        reason: 'reminder_set',
-      };
-    } catch (err) {
-      return { action: 'reply', key, msg, atMe, canned: '这个提醒没设上：' + ((err && err.message) || err), reason: 'reminder_error' };
+      }, writeOptions());
+      item = created || addLocally();
+    } catch {
+      // 宿主侧失败只降级、不中断：本地登记成功就照常回执。
+      try { item = addLocally(); } catch { item = null; }
     }
+
+    // 连本地都登不上才是真的失败。话术用固定中文原因，不把英文错误码拼给用户。
+    if (!item) {
+      return { action: 'reply', key, msg, atMe, canned: '这个提醒没设上，稍后再和我说一次。', reason: 'reminder_error' };
+    }
+    this.logger && this.logger.info(`提醒已登记：id=${item.id} ${textMeta(item.text || parsed.what)} @ ${reminderCore.describeWhen(new Date(item.dueAt), now, tz)}`);
+    return {
+      action: 'reply',
+      key,
+      msg,
+      atMe,
+      canned: reminderCore.confirmText(parsed, { now, group: isGroup, who: msg.senderName || '', timeZone: tz }),
+      reason: 'reminder_set',
+    };
   }
 
   /** 规则解析不出来时，让模型把时间和事情抽成 JSON（模型不可用就放弃，不瞎猜） */
@@ -888,7 +914,7 @@ class Bot {
     // 放在最前面：群里没 @ 她也要能设，且不能被后面的静默/忽略逻辑挡掉。
     // 回填的旧问题（recycled）不再登记一遍，否则只 @ 一下就多出一条重复提醒（M27）。
     if (hasText && !msg.recycled) {
-      const reminderReply = await this.tryReminder({ msg, clean, key, now, nowMs, isGroup, atMe });
+      const reminderReply = await this.tryReminder({ msg, clean, key, now, nowMs, isGroup, atMe, signal: turn.signal });
       if (reminderReply) return reminderReply;
     }
 

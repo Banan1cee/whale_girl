@@ -35,6 +35,7 @@ const { DigestService } = require('./services/digest');
 const locationProbe = require('./services/location');
 const { PluginHost } = require('./services/pluginHost');
 const { createFeatureCapabilities } = require('./services/features');
+const { createDurableStore } = require('./services/durableStore');
 const { createStreamingChat } = require('./services/streamingChat');
 const { sendDenial } = require('./core/wechatSendPolicy');
 
@@ -232,6 +233,29 @@ function createRuntime({ root = path.resolve(__dirname, '..'), env = process.env
   // 少登记一项就会让对应路由/插件在运行时报 host_capability_unknown，所以这里不做静默跳过。
   for (const [name, handler] of Object.entries(createFeatureCapabilities(runtime))) {
     runtime.capabilities.defineHost(name, handler);
+  }
+  // 持久任务：数据目录可用时落到 data/host-tasks.jsonl。装配是同步且廉价的；
+  // 重放放到下一轮事件循环，不阻塞 listen，失败只告警（任务记录仍在文件里）。
+  if (config.paths && config.paths.dataDir) {
+    try {
+      const durableStore = createDurableStore({
+        file: path.join(config.paths.dataDir, 'host-tasks.jsonl'),
+        logger: child('capabilities'),
+      });
+      runtime.capabilities.attachDurableStore(durableStore);
+      runtime.durableStore = durableStore;
+      setImmediate(() => {
+        Promise.resolve(runtime.capabilities.replayDurable())
+          .then((summary) => {
+            if (summary && (summary.replayed || summary.dropped || summary.kept)) {
+              logger.info(`持久任务重放：完成 ${summary.replayed} 条，放弃 ${summary.dropped} 条，保留 ${summary.kept} 条`);
+            }
+          })
+          .catch((err) => logger.warn('持久任务重放失败（不影响主流程）：' + describeError(err)));
+      }).unref?.();
+    } catch (err) {
+      logger.warn('持久任务存储装配失败（不影响主流程）：' + describeError(err));
+    }
   }
   runtime.pluginHost = new PluginHost(runtime);
   // 插件 Worker 只能经 host.call 回到宿主；宿主按 registry 校验声明、作用域和启用状态。

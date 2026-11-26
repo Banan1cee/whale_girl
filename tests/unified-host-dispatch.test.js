@@ -951,3 +951,456 @@ test('an expired waiter is not left behind to consume host queue capacity', asyn
   await flush();
   assert.deepEqual((await legal).value, STATUS_OUTPUT, '名额释放后合法调用应正常接手');
 });
+
+// —— 宿主准入统计（hostStats）：实时 gauge + 按能力累计的终态计数 ——
+
+test('host stats expose per-capability gauges and outcome counters', async () => {
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true },
+    maxHostConcurrent: 1, maxHostPending: 2 });
+  const gates = [];
+  dispatcher.defineHost('status.read@1', async () => {
+    const gate = deferred();
+    gates.push(gate);
+    await gate.promise;
+    return { ...STATUS_OUTPUT };
+  });
+  dispatcher.defineHost('contacts.search@1', async () => ({ friends: [], groups: [] }));
+
+  const zeros = { active: 0, waiting: 0, granted: 0, refused: 0, refusedByReason: {},
+    idempotentHit: 0, queueFull: 0, nestedRefused: 0, queueTimeout: 0, queueAborted: 0,
+    completed: 0, failed: 0 };
+  assert.deepEqual(dispatcher.hostStats(), {
+    'status.read@1': { ...zeros },
+    'contacts.search@1': { ...zeros },
+  });
+
+  assert.deepEqual(await dispatcher.invokeHost('contacts.search@1', {}), { friends: [], groups: [] });
+  assert.deepEqual(dispatcher.hostStats()['contacts.search@1'],
+    { ...zeros, granted: 1, completed: 1 });
+  assert.equal(dispatcher.hostStats()['status.read@1'].granted, 0, '统计必须按能力分开');
+
+  const running = capture(dispatcher.invokeHost('status.read@1', {}));
+  await flush();
+  let stats = dispatcher.hostStats()['status.read@1'];
+  assert.deepEqual([stats.active, stats.waiting, stats.granted, stats.completed],
+    [1, 0, 1, 0], '运行中的调用计入 active 与 granted');
+
+  const queued = capture(dispatcher.invokeHost('status.read@1', {}));
+  await flush();
+  stats = dispatcher.hostStats()['status.read@1'];
+  assert.deepEqual([stats.active, stats.waiting, stats.granted], [1, 1, 1],
+    '排队中的调用只增加 waiting，真正授予后才增加 granted');
+
+  gates[0].resolve();
+  await running;
+  await flush();
+  gates[1].resolve();
+  await queued;
+  await flush();
+  stats = dispatcher.hostStats()['status.read@1'];
+  assert.deepEqual([stats.active, stats.waiting, stats.granted, stats.completed, stats.failed],
+    [0, 0, 2, 2, 0]);
+
+  // failed 只统计拿到名额之后的失败；handler 抛错不改变准入计数。
+  const failing = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true } });
+  failing.defineHost('status.read@1', async () => { throw Object.assign(new Error('boom'), { code: 'boom' }); });
+  await assert.rejects(failing.invokeHost('status.read@1', {}), { code: 'boom' });
+  assert.deepEqual(failing.hostStats()['status.read@1'], { ...zeros, granted: 1, failed: 1 });
+});
+
+test('host stats count queue-full, queue-timeout and queue-aborted rejections', async () => {
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true },
+    maxHostConcurrent: 1, maxHostPending: 1 });
+  let release;
+  dispatcher.defineHost('status.read@1', async () => new Promise(resolve => {
+    release = () => resolve({ ...STATUS_OUTPUT });
+  }));
+
+  const first = dispatcher.invokeHost('status.read@1', {});
+  await flush();
+  const controller = new AbortController();
+  const abortedWaiter = capture(dispatcher.invokeHost('status.read@1', {}, { signal: controller.signal }));
+  await flush();
+  const overflow = capture(dispatcher.invokeHost('status.read@1', {}));
+  await flush();
+  assert.equal((await overflow).error?.code, 'host_capability_queue_limit');
+
+  controller.abort();
+  assert.equal((await abortedWaiter).error?.code, 'capability_aborted');
+  assert.equal((await dispatcher.invokeHost('status.read@1', {}, { deadline: Date.now() + 20 })
+    .then(() => null, error => error)).code, 'capability_timeout');
+
+  release();
+  await first;
+  await flush();
+  const stats = dispatcher.hostStats()['status.read@1'];
+  assert.deepEqual({
+    active: stats.active, waiting: stats.waiting, granted: stats.granted,
+    completed: stats.completed, failed: stats.failed, queueFull: stats.queueFull,
+    nestedRefused: stats.nestedRefused,
+    queueTimeout: stats.queueTimeout, queueAborted: stats.queueAborted,
+  }, { active: 0, waiting: 0, granted: 1, completed: 1, failed: 0,
+    queueFull: 1, nestedRefused: 0, queueTimeout: 1, queueAborted: 1 });
+
+  // 快照是副本：改返回值不能回写内部累计。
+  const snapshot = dispatcher.hostStats();
+  snapshot['status.read@1'].granted = 99;
+  snapshot['status.read@1'].queueAborted = 0;
+  const fresh = dispatcher.hostStats()['status.read@1'];
+  assert.equal(fresh.granted, 1);
+  assert.equal(fresh.queueAborted, 1);
+});
+
+test('a queue-full rejection logs only the capability and counts at debug level', async () => {
+  const debug = [];
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true },
+    logger: { debug: message => debug.push(message), warn() {} },
+    maxHostConcurrent: 1, maxHostPending: 0 });
+  let release;
+  dispatcher.defineHost('status.read@1', async () => new Promise(resolve => {
+    release = () => resolve({ ...STATUS_OUTPUT });
+  }));
+
+  const first = dispatcher.invokeHost('status.read@1', {});
+  await flush();
+  await assert.rejects(dispatcher.invokeHost('status.read@1', {}), { code: 'host_capability_queue_limit' });
+  assert.deepEqual(debug, ['[host-admission] queue_full capability=status.read@1 active=1 waiting=0'],
+    'debug 日志只能带能力名与计数，不能带输入或插件信息');
+  release();
+  await first;
+});
+
+test('a nested queue-full rejection logs only the capability and counts', async () => {
+  const debug = [];
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true },
+    logger: { debug: message => debug.push(message), warn() {} },
+    maxHostConcurrent: 1, maxHostPending: 4 });
+  let release;
+  dispatcher.defineHost('status.read@1', async () => new Promise(resolve => {
+    release = () => resolve({ ...STATUS_OUTPUT });
+  }));
+  let nested = null;
+  dispatcher.defineHost('contacts.search@1', async () => {
+    nested = await dispatcher.invokeHost('status.read@1', {}).then(() => null, error => error);
+    return { friends: [], groups: [] };
+  });
+
+  const blocking = dispatcher.invokeHost('status.read@1', {});
+  await flush();
+  assert.deepEqual(await dispatcher.invokeHost('contacts.search@1', {}), { friends: [], groups: [] });
+  assert.equal(nested?.code, 'host_capability_queue_limit');
+  assert.deepEqual(debug, ['[host-admission] queue_full capability=status.read@1 active=1 waiting=0 phase=nested'],
+    '嵌套快速拒绝必须带 phase=nested，和真队列满区分');
+  const stats = dispatcher.hostStats()['status.read@1'];
+  assert.equal(stats.nestedRefused, 1);
+  assert.equal(stats.queueFull, 0, '嵌套快速拒绝不能算进真队列满');
+  release();
+  await blocking;
+});
+
+// —— 写能力完成语义：副作用已发生时，事后取消/超时不能把成功改报失败 ——
+// 否则调用方按失败重试会重复写入、重复发送或重复计费。只读类保持原有事后判定。
+
+test('a completed local write is not rewritten as aborted', async () => {
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true } });
+  const gate = deferred();
+  dispatcher.defineHost('reminders.create@1', async () => {
+    await gate.promise;
+    return { created: true, id: 'r-1' };
+  });
+  const controller = new AbortController();
+  const call = capture(dispatcher.invokeHost('reminders.create@1', {}, { signal: controller.signal }));
+  await flush();
+  controller.abort();
+  gate.resolve();
+  const outcome = await call;
+  assert.deepEqual(outcome.value, { created: true, id: 'r-1' },
+    '副作用已经落地的写能力不能因为事后取消改报失败');
+  assert.equal(outcome.error, undefined);
+  assert.equal(dispatcher.hostStats()['reminders.create@1'].failed, 0);
+});
+
+test('a cancelled read-only capability is still reported aborted', async () => {
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true } });
+  const gate = deferred();
+  dispatcher.defineHost('status.read@1', async () => {
+    await gate.promise;
+    return { ...STATUS_OUTPUT };
+  });
+  const controller = new AbortController();
+  const call = capture(dispatcher.invokeHost('status.read@1', {}, { signal: controller.signal }));
+  await flush();
+  controller.abort();
+  gate.resolve();
+  assert.equal((await call).error?.code, 'capability_aborted',
+    '只读能力没有副作用，取消后的结果仍按取消处理');
+  assert.equal(dispatcher.hostStats()['status.read@1'].failed, 1);
+});
+
+test('an unknown side effect defaults to returning the completed result', async () => {
+  const contract = registry.calls['status.read@1'];
+  const original = contract.sideEffect;
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true } });
+  const gate = deferred();
+  dispatcher.defineHost('status.read@1', async () => {
+    await gate.promise;
+    return { ...STATUS_OUTPUT };
+  });
+
+  // 未知/新增的类别不能被误当只读：已拿到输出就按完成返回，避免“已写却报取消/超时”。
+  contract.sideEffect = 'future-external-write';
+  try {
+    const controller = new AbortController();
+    const call = capture(dispatcher.invokeHost('status.read@1', {}, { signal: controller.signal }));
+    await flush();
+    controller.abort();
+    gate.resolve();
+    const outcome = await call;
+    assert.deepEqual(outcome.value, { ...STATUS_OUTPUT });
+    assert.equal(outcome.error, undefined);
+    assert.equal(dispatcher.hostStats()['status.read@1'].completed, 1);
+  } finally {
+    contract.sideEffect = original;
+  }
+});
+
+// —— 全局额度、等待优先级、准入前拒绝统计、幂等与关闭 ——
+
+test('unsafe global host concurrency limits are refused', () => {
+  const plugins = { isApproved: () => true };
+  const invalid = limits => assert.throws(
+    () => new UnifiedCapabilityDispatcher({ plugins, ...limits }), { code: 'invalid_dispatcher_limits' });
+  for (const value of [0, -1, 1.5, '512', Number.NaN, Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY, 8193]) {
+    invalid({ maxHostTotalConcurrent: value });
+  }
+  assert.equal(new UnifiedCapabilityDispatcher({ plugins }).maxHostTotalConcurrent, 512);
+  assert.equal(new UnifiedCapabilityDispatcher({ plugins, maxHostTotalConcurrent: 1 }).maxHostTotalConcurrent, 1);
+  assert.equal(new UnifiedCapabilityDispatcher({ plugins, maxHostTotalConcurrent: 8192 }).maxHostTotalConcurrent, 8192);
+});
+
+test('global host concurrency rejects fast and reports globalRefused', async () => {
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true },
+    maxHostConcurrent: 2, maxHostTotalConcurrent: 1 });
+  const gate = deferred();
+  dispatcher.defineHost('status.read@1', async () => {
+    await gate.promise;
+    return { ...STATUS_OUTPUT };
+  });
+  dispatcher.defineHost('contacts.search@1', async () => ({ friends: [], groups: [] }));
+
+  const first = capture(dispatcher.invokeHost('status.read@1', {}));
+  await flush();
+  assert.equal(await stateOf(first), 'pending');
+  await assert.rejects(dispatcher.invokeHost('contacts.search@1', {}),
+    { code: 'host_capability_queue_limit' });
+  assert.equal(dispatcher.hostGlobalStats().globalRefused, 1);
+  assert.equal(dispatcher.hostStats()['contacts.search@1'].failed, 0,
+    '全局额度拒绝发生在准入前，不能记成 failed');
+
+  gate.resolve();
+  await first;
+  assert.deepEqual(await within(dispatcher.invokeHost('contacts.search@1', {}), 500,
+    '全局名额释放后其他能力应能执行'), { friends: [], groups: [] });
+});
+
+test('queued callers are granted by priority and stay FIFO within a priority', async () => {
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true },
+    maxHostConcurrent: 1, maxHostPending: 6 });
+  const order = [];
+  const gates = new Map();
+  dispatcher.defineHost('reminders.create@1', async input => {
+    order.push(input.tag);
+    const gate = deferred();
+    gates.set(input.tag, gate);
+    await gate.promise;
+    return { ok: true };
+  });
+
+  const calls = [capture(dispatcher.invokeHost('reminders.create@1', { tag: 'running' }))];
+  await flush();
+  calls.push(
+    capture(dispatcher.invokeHost('reminders.create@1', { tag: 'low' }, { priority: -50 })),
+    capture(dispatcher.invokeHost('reminders.create@1', { tag: 'mid' }, { priority: 0 })),
+    capture(dispatcher.invokeHost('reminders.create@1', { tag: 'high-a' }, { priority: 50 })),
+    capture(dispatcher.invokeHost('reminders.create@1', { tag: 'high-b' }, { priority: 50 })),
+    capture(dispatcher.invokeHost('reminders.create@1', { tag: 'mid-2' })),
+  );
+  await flush();
+  assert.deepEqual(order, ['running']);
+
+  for (const tag of ['running', 'high-a', 'high-b', 'mid', 'mid-2', 'low']) {
+    gates.get(tag).resolve();
+    await flush();
+  }
+  const values = await Promise.all(calls);
+  assert.deepEqual(order, ['running', 'high-a', 'high-b', 'mid', 'mid-2', 'low'],
+    '等待按优先级从高到低授予，同优先级保持 FIFO');
+  values.forEach(value => assert.deepEqual(value.value, { ok: true }));
+
+  await assert.rejects(dispatcher.invokeHost('reminders.create@1', {}, { priority: 101 }),
+    { code: 'invalid_dispatcher_limits' });
+});
+
+test('pre-admission refusals are counted by capability and reason', async () => {
+  const dispatcher = new UnifiedCapabilityDispatcher({
+    plugins: { isApproved: flow => flow.approved !== false },
+  });
+  dispatcher.defineHost('status.read@1', async () => ({ ...STATUS_OUTPUT }));
+  dispatcher.defineHost('reminders.create@1', async () => ({ ok: true }));
+  dispatcher.defineHost('contacts.search@1', async () => {
+    const nested = await dispatcher.invokeHost('contacts.search@1', {})
+      .then(() => null, error => error);
+    assert.equal(nested?.code, 'host_capability_reentrant');
+    return { friends: [], groups: [] };
+  });
+
+  await assert.rejects(dispatcher.invokeHost('api.read@1', {}), { code: 'host_capability_unknown' });
+  await assert.rejects(dispatcher.invokeHost('message.submit@1', {}), { code: 'host_capability_disabled' });
+  await assert.rejects(dispatcher.invokeHost('status.read@1', {},
+    { plugin: { id: 'p1', calls: ['status.read@1'], approved: false } }), { code: 'grant_revoked' });
+  await assert.rejects(dispatcher.invokeHost('status.read@1', {},
+    { plugin: { id: 'p2', calls: [] } }), { code: 'host_capability_not_declared' });
+  await assert.rejects(dispatcher.invokeHost('status.read@1', { extra: true }),
+    { code: 'invalid_host_capability_input' });
+  await assert.rejects(dispatcher.invokeHost('digest.status@1', {}), { code: 'host_capability_unavailable' });
+  await assert.rejects(dispatcher.invokeHost('reminders.create@1', {}, { deadline: Date.now() - 1 }),
+    { code: 'capability_timeout' });
+  await dispatcher.invokeHost('contacts.search@1', {});
+
+  const stats = dispatcher.hostStats();
+  assert.equal(stats['status.read@1'].refused, 3);
+  assert.deepEqual(stats['status.read@1'].refusedByReason,
+    { revoked: 1, not_declared: 1, invalid_input: 1 });
+  assert.deepEqual(stats['message.submit@1'].refusedByReason, { disabled: 1 });
+  assert.deepEqual(stats['digest.status@1'].refusedByReason, { unavailable: 1 });
+  assert.deepEqual(stats['reminders.create@1'].refusedByReason, { expired: 1 });
+  assert.deepEqual(stats['contacts.search@1'].refusedByReason, { reentrant: 1 });
+  assert.equal(stats['api.read@1'], undefined, '未登记的能力不建桶');
+
+  const global = dispatcher.hostGlobalStats();
+  assert.equal(global.refused, 8);
+  assert.deepEqual(global.refusedByReason, {
+    unknown: 1, disabled: 1, revoked: 1, not_declared: 1,
+    invalid_input: 1, unavailable: 1, expired: 1, reentrant: 1,
+  });
+});
+
+test('an idempotency key reuses a completed write result', async () => {
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true } });
+  let runs = 0;
+  dispatcher.defineHost('reminders.create@1', async () => {
+    runs++;
+    return { created: true, id: `r-${runs}` };
+  });
+
+  const first = await dispatcher.invokeHost('reminders.create@1', { text: 'x' },
+    { idempotencyKey: 'k1' });
+  const second = await dispatcher.invokeHost('reminders.create@1', { text: 'x' },
+    { idempotencyKey: 'k1' });
+  assert.deepEqual(second, first);
+  assert.equal(runs, 1, '同键重复请求不得再次执行 handler');
+
+  // 首个调用方改自己的返回值，不能污染已缓存的结果。
+  first.id = 'mutated';
+  const third = await dispatcher.invokeHost('reminders.create@1', {}, { idempotencyKey: 'k1' });
+  assert.deepEqual(third, { created: true, id: 'r-1' });
+
+  const stats = dispatcher.hostStats()['reminders.create@1'];
+  assert.equal(stats.idempotentHit, 2);
+  assert.equal(stats.completed, 1);
+  assert.equal(stats.granted, 1);
+
+  // 不同键仍按新调用执行。
+  assert.deepEqual(await dispatcher.invokeHost('reminders.create@1', {}, { idempotencyKey: 'k2' }),
+    { created: true, id: 'r-2' });
+  assert.equal(runs, 2);
+});
+
+test('duplicate in-flight write keys wait, while read-only keys are ignored', async () => {
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true } });
+  const gate = deferred();
+  let runs = 0;
+  dispatcher.defineHost('reminders.create@1', async () => {
+    runs++;
+    await gate.promise;
+    return { created: true, id: `r-${runs}` };
+  });
+
+  const first = capture(dispatcher.invokeHost('reminders.create@1', {}, { idempotencyKey: 'same' }));
+  await flush();
+  const duplicate = capture(dispatcher.invokeHost('reminders.create@1', {}, { idempotencyKey: 'same' }));
+  await flush();
+  assert.equal(runs, 1, '在途重复请求必须等待同一个结果，不能启动第二个 handler');
+  gate.resolve();
+  const [a, b] = await Promise.all([first, duplicate]);
+  assert.deepEqual(b.value, a.value);
+  assert.equal(runs, 1);
+  assert.equal(dispatcher.hostStats()['reminders.create@1'].idempotentHit, 1);
+
+  let reads = 0;
+  dispatcher.defineHost('status.read@1', async () => {
+    reads++;
+    return { ...STATUS_OUTPUT };
+  });
+  await dispatcher.invokeHost('status.read@1', {}, { idempotencyKey: 'same' });
+  await dispatcher.invokeHost('status.read@1', {}, { idempotencyKey: 'same' });
+  assert.equal(reads, 2, '只读能力不启用幂等复用');
+  assert.equal(dispatcher.hostStats()['status.read@1'].idempotentHit, 0);
+});
+
+test('close rejects new and queued callers while running handlers finish', async () => {
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true },
+    maxHostConcurrent: 1, maxHostPending: 1 });
+  const gate = deferred();
+  dispatcher.defineHost('status.read@1', async () => {
+    await gate.promise;
+    return { ...STATUS_OUTPUT };
+  });
+
+  const running = capture(dispatcher.invokeHost('status.read@1', {}));
+  await flush();
+  const queued = capture(dispatcher.invokeHost('status.read@1', {}));
+  await flush();
+
+  dispatcher.close();
+  assert.equal((await queued).error?.code, 'capability_shutdown');
+  await assert.rejects(dispatcher.invokeHost('status.read@1', {}), { code: 'capability_shutdown' });
+  assert.equal(dispatcher.hostStats()['status.read@1'].waiting, 0);
+
+  gate.resolve();
+  assert.deepEqual((await running).value, STATUS_OUTPUT, '关闭时运行中的 handler 允许正常结束');
+  dispatcher.close();
+});
+
+test('a completed external message is not rewritten as timed out', async () => {
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true } });
+  dispatcher.defineHost('moments.publish@1', async () => {
+    await new Promise(resolve => setTimeout(resolve, 60));
+    return { published: true, id: 'm-1' };
+  });
+  const outcome = await capture(dispatcher.invokeHost('moments.publish@1', {}, { deadline: Date.now() + 20 }));
+  assert.deepEqual(outcome.value, { published: true, id: 'm-1' },
+    '已发送的 external-message 不能因事后超时改报失败');
+  assert.equal(outcome.error, undefined);
+});
+
+test('late cancellation still counts the write capability as completed', async () => {
+  const dispatcher = new UnifiedCapabilityDispatcher({ plugins: { isApproved: () => true } });
+  const gate = deferred();
+  dispatcher.defineHost('digest.generate@1', async input => {
+    if (input?.wait) await gate.promise;
+    return { digest: 'ok' };
+  });
+  assert.deepEqual(await dispatcher.invokeHost('digest.generate@1', {}), { digest: 'ok' });
+
+  const controller = new AbortController();
+  const late = capture(dispatcher.invokeHost('digest.generate@1', { wait: true }, { signal: controller.signal }));
+  await flush();
+  controller.abort();
+  gate.resolve();
+  assert.deepEqual((await late).value, { digest: 'ok' });
+  const stats = dispatcher.hostStats()['digest.generate@1'];
+  assert.equal(stats.completed, 2, '正常返回的写能力都计入 completed');
+  assert.equal(stats.failed, 0, '事后取消不能把已完成的写能力计入 failed');
+});

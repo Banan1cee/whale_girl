@@ -179,6 +179,9 @@ const DEFAULT_CONFIG = {
     maxBubbles: 2, discussionMaxChars: 400, emojiChance: 0,
     // 连续消息收集：最后一条后安静多久再处理；群聊另有从首条开始的最大等待。
     messageSettleMs: 1500, groupMaxBatchWaitMs: 5000,
+    // 单轮对话预算（毫秒）：网关给每轮建一个 AbortController 并在这个时间后取消本轮。
+    // 0 = 不限（交给下游自己的超时），上限 600000，防止一轮把会话队列长期占住。
+    turnTimeoutMs: 120000,
   },
   // 联网：问天气/新闻这类实时问题时现搜。city 用来把「今天天气怎么样」补成「上海 天气」，
   // 搜到的结果准得多；留空就按对方原话搜（也能用，但经常搜到别的城市）。

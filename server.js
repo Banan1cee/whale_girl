@@ -158,6 +158,10 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
   const close = async () => {
     if (closed) return;
     closed = true;
+    // 先关宿主准入：排队中的能力调用立即收到 capability_shutdown；运行中的 handler 允许收尾。
+    try { runtime.capabilities?.close?.(); } catch (err) {
+      logger.warn('关闭宿主准入失败（继续清理）：' + describeError(err));
+    }
     await runtime.plugins.stop();
     // SSE / keep-alive 连接会让 server.close() 一直等，先强制断开空闲连接
     try { if (server.closeIdleConnections) server.closeIdleConnections(); } catch { /* ignore */ }
@@ -170,6 +174,8 @@ async function startServer({ root = projectRoot(), env = process.env, port, host
     releaseLock();
   };
   server.on('close', () => {
+    // 外部直接 server.close() 时也要让排队中的能力调用离队；close() 里已经关过，这里幂等。
+    try { runtime.capabilities?.close?.(); } catch { /* 关闭是尽力而为 */ }
     runtime.capabilities?.stopTasks(runtime.scheduler);
     void runtime.plugins.stop();
     runtime.scheduler?.stopAll();

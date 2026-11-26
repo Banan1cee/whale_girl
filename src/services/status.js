@@ -91,6 +91,11 @@ function statusPayload(runtime) {
     webhookPaths: [...gateways.keys()].map((p) => `/webhook/${p}`),
     // 统一调度的只读快照：下次什么时候跑、上轮有没有失败（不含业务正文）。
     scheduler: runtime.scheduler && typeof runtime.scheduler.list === 'function' ? runtime.scheduler.list() : [],
+    // 宿主能力准入的只读快照：按能力的 active/waiting 与累计计数，不含输入与正文。
+    // 没有分发器（裁剪装配、单测夹具）时给空对象，让 /api/status 的形状保持稳定。
+    hostDispatch: runtime.capabilities && typeof runtime.capabilities.hostStats === 'function'
+      ? (runtime.capabilities.hostStats() || {})
+      : {},
   };
 }
 

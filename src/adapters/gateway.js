@@ -108,6 +108,24 @@ function postJson(urlString, payload, headers = {}, timeoutMs = 10000) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 单轮对话的默认预算与硬上限。0 表示不限（交给调用方自己的超时），
+// 上限是给配置填错时的兜底：一轮占着会话队列太久，后面的消息会一直排队。
+const TURN_TIMEOUT_DEFAULT_MS = 120000;
+const TURN_TIMEOUT_MAX_MS = 600000;
+
+/**
+ * 解析本次轮次的预算：缺省 120000，0 = 不限，负数/非数字按缺省，
+ * 超过 600000 一律压回上限。
+ */
+function turnTimeoutMs(config) {
+  const raw = Number(config && config.chat && config.chat.turnTimeoutMs !== undefined
+    ? config.chat.turnTimeoutMs : TURN_TIMEOUT_DEFAULT_MS);
+  if (!Number.isFinite(raw)) return TURN_TIMEOUT_DEFAULT_MS;
+  if (raw === 0) return 0;
+  if (raw < 0) return TURN_TIMEOUT_DEFAULT_MS;
+  return Math.min(TURN_TIMEOUT_MAX_MS, Math.floor(raw));
+}
+
 class Gateway {
   constructor({ platform, options = {}, bot, logger, chat }) {
     this.platform = platform;
@@ -123,6 +141,8 @@ class Gateway {
     this.chat = chat;
     this.logger = logger;
     this.stats = { received: 0, replied: 0, sent: 0, failed: 0, lastMessageAt: 0, lastError: '' };
+    // 被单轮预算取消的次数：诊断页据此判断「是不是模型太慢」，只计数不含正文。
+    this.turnTimeouts = 0;
     // 本地桥接的存活信息：桥接每 20 秒来一次心跳，状态接口据此报告「桥接在线 / 离线」
     this.bridge = {
       lastSeen: 0, uia: null, rest: false, listener: null, ffmpeg: null,
@@ -200,11 +220,31 @@ class Gateway {
         `[${this.platform}] 收到 ${msg.chatType === 'group' ? '群' : '私聊'}消息 sender=${tagName(msg.senderName)} ${textMeta(msg.text)}`
       );
     const localWechat = local && this.platform === 'wechat';
+    // 每轮一个取消源：超时只是「叫停这一轮」，不会改动消息内容或回复结构；
+    // 下游（Bot.handle → decide → 能力调用）按同一个 signal 协作式退出。
+    // timeoutMs=0 表示不限，此时不建 timer，只把 signal 交下去（仍然可被外部取消）。
+    const timeoutMs = turnTimeoutMs(this.bot && this.bot.config);
+    const controller = new AbortController();
+    let timer = null;
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        this.turnTimeouts = (this.turnTimeouts || 0) + 1;
+        this.logger?.warn?.(`[${this.platform}] 单轮超出预算 ${timeoutMs}ms，取消本轮`);
+        controller.abort();
+      }, timeoutMs);
+    }
+    const turnCtx = { signal: controller.signal, deadline: timeoutMs > 0 ? Date.now() + timeoutMs : null };
     // 生产环境由 app 注入统一聊天入口；单独构造 Gateway（测试/嵌入式）时退回 Bot，
     // 不在这里复制插件调度逻辑，避免两条接管路径。
-    const result = this.chat && typeof this.chat.handle === 'function'
-      ? await this.chat.handle(msg, { localWechat })
-      : await this.bot.handle(msg, { localWechat });
+    let result;
+    try {
+      result = this.chat && typeof this.chat.handle === 'function'
+        ? await this.chat.handle(msg, { localWechat, signal: turnCtx.signal, deadline: turnCtx.deadline })
+        : await this.bot.handle(msg, { localWechat, signal: turnCtx.signal, deadline: turnCtx.deadline });
+    } finally {
+      // 正常完成 / 抛错 / 调用方断开都要清掉：泄漏的 timer 会一直攥着 AbortController。
+      if (timer) { clearTimeout(timer); timer = null; }
+    }
     this.logger?.debug?.(`[${this.platform}] event=gateway.result action=${result.action || '-'} reason=${result.reason || '-'} bubbles=${(result.bubbles || []).length}`);
     if (result.action !== 'reply' || !result.reply) {
       return { ok: true, action: 'ignore', reason: result.reason || 'ignored' };
