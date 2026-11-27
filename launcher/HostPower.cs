@@ -91,11 +91,8 @@ namespace WhaleLauncher
         public static bool Handles(string action) => action is
             "host-state" or "host-keep-awake" or "host-wake-display" or "host-display-off" or "host-config";
 
-        /// <summary>
-        /// 用户是否授权「管理员模式下也允许手机启动内核」。进程动作守卫直接读这里；
-        /// 它只是持久化设置，不改变 <see cref="PhoneControl.AllowsProcessLaunch"/> 的语义。
-        /// </summary>
-        public bool RemoteProcessLaunch => _remoteProcessLaunch;
+        // 持久化授权仅对普通权限启动器生效。
+        public bool ProcessLaunchAllowed => _remoteProcessLaunch && PhoneControl.IsStandardUser();
 
         public Task<object> RunAsync(string action, JsonElement payload) => Task.FromResult(Dispatch(action, payload));
 
@@ -122,7 +119,6 @@ namespace WhaleLauncher
             var foreground = GetForegroundWindow();
             var registryAutoStart = ReadAutoStart();
             if (registryAutoStart.HasValue) _autoStart = registryAutoStart.Value;
-            var launchAllowed = PhoneControl.AllowsProcessLaunch();
             return new HostStatus
             {
                 // Win11 的锁屏是跑在 Default 桌面上的 LockApp CoreWindow（实测标题「Windows 默认锁屏界面」），
@@ -139,8 +135,7 @@ namespace WhaleLauncher
                 KeepAwake = _keepAwake,
                 RemoteProcessLaunch = _remoteProcessLaunch,
                 AutoStart = _autoStart,
-                // 手机端据此决定能不能显示「启动」按钮：管理员模式 + 用户授权时也算允许。
-                ProcessLaunchAllowed = launchAllowed || _remoteProcessLaunch,
+                ProcessLaunchAllowed = ProcessLaunchAllowed,
                 Hostname = Environment.MachineName,
                 UptimeSeconds = Math.Max(0, (Environment.TickCount64 - _startedTick) / 1000),
                 UserName = Environment.UserName,
@@ -358,13 +353,13 @@ namespace WhaleLauncher
 
         private object ConfigureAction(JsonElement payload)
         {
-            bool? remote = null;
             bool? autoStart = null;
             bool? displayControl = null;
             if (payload.ValueKind == JsonValueKind.Object)
             {
-                if (!TryOptionalBoolean(payload, "remoteProcessLaunch", out remote) ||
-                    !TryOptionalBoolean(payload, "autoStart", out autoStart) ||
+                if (payload.TryGetProperty("remoteProcessLaunch", out _))
+                    return new { ok = false, error = "请在电脑端更改「允许手机启动内核」。" };
+                if (!TryOptionalBoolean(payload, "autoStart", out autoStart) ||
                     !TryOptionalBoolean(payload, "displayControl", out displayControl))
                     return new { ok = false, error = "主机设置无效。" };
             }
@@ -379,9 +374,8 @@ namespace WhaleLauncher
                 if (!WriteAutoStart(enabled)) return new { ok = false, error = "开机自启设置失败，请检查系统权限。" };
                 _autoStart = enabled;
             }
-            if (remote is bool remoteLaunch) _remoteProcessLaunch = remoteLaunch;
             if (displayControl is bool allowDisplay) _displayControl = allowDisplay;
-            if (remote == null && autoStart == null && displayControl == null) return new { ok = true, data = ConfigData() };
+            if (autoStart == null && displayControl == null) return new { ok = true, data = ConfigData() };
             if (!SaveConfig()) return new { ok = false, error = "保存主机设置失败，请检查安装目录权限。" };
             return new { ok = true, data = ConfigData() };
         }

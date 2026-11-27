@@ -2,10 +2,11 @@
 
 const http = require('node:http');
 const { spawn } = require('node:child_process');
-const { randomBytes, timingSafeEqual } = require('node:crypto');
+const { createHash, randomBytes, timingSafeEqual } = require('node:crypto');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const { actions, appRoot, launcherControl } = require('./launcher-control');
+const consoleInstance = createHash('sha256').update(path.resolve(__dirname).toUpperCase()).digest('hex');
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -489,7 +490,8 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
   async function hostCommand(req) {
     const { action, value, confirm } = await parseBody(req, 8192);
     const modes = new Set(['off', 'system', 'display']);
-    if (!['keep-awake', 'wake-display', 'display-off', 'display-control', 'remote-process-launch', 'auto-start'].includes(action)) {
+    if (action === 'remote-process-launch') throw fail(403, '请在电脑端更改「允许手机启动内核」。');
+    if (!['keep-awake', 'wake-display', 'display-off', 'display-control', 'auto-start'].includes(action)) {
       throw fail(400, '未知的主机操作。');
     }
     // 除点亮/关闭屏幕外都会改变电源或开机行为，必须由前端二次确认后再提交。
@@ -504,9 +506,7 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
       forwarded = ['host-display-off', {}];
     } else {
       if (typeof value !== 'boolean') throw fail(400, '开关状态无效。');
-      forwarded = ['host-config', action === 'remote-process-launch'
-        ? { remoteProcessLaunch: value }
-        : action === 'auto-start' ? { autoStart: value } : { displayControl: value }];
+      forwarded = ['host-config', action === 'auto-start' ? { autoStart: value } : { displayControl: value }];
     }
     let result;
     // 启动器原始异常（连接失败、超时）对手机用户没有意义，统一换成能指导操作的话术。
@@ -845,7 +845,7 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
       return json(res, 401, { error: '配对密钥无效。请复制电脑端当前显示的密钥。' });
     }
     if (isPairingCheck) {
-      res.writeHead(204);
+      res.writeHead(204, { 'X-Whale-Console-Instance': consoleInstance });
       return res.end();
     }
     (async () => {

@@ -161,7 +161,7 @@ test('下载脚本：官方地址与 SHA256 原样未动', () => {
 
 /**
  * 覆盖安装时 WhaleLauncher.exe 被占用：CloseApplications=yes 走 Restart Manager，
- * 但启动器是 requireAdministrator、安装器是 PrivilegesRequired=lowest，RM 停不掉
+ * 但旧版启动器默认提权、安装器是 PrivilegesRequired=lowest，RM 停不掉
  * 完整性级别更高的进程，用户就停在「DeleteFile failed; code 5 拒绝访问」上。
  * 所以安装器必须自己 taskkill（必要时提权），光靠 [Setup] 那三个开关不够。
  */
@@ -190,12 +190,15 @@ test('whale.iss：卸载前也先关掉鲸鲸，且静默卸载不弹框', () =>
   assert.ok(/if WizardSilent or/.test(un), '静默卸载会弹框，第三方卸载工具会卡住');
 });
 
-test('根因是权限不匹配：启动器提权 / 安装器不提权（改了要回头重想这块）', () => {
+test('启动器从桌面或安装向导打开时使用原用户权限，兼容旧版提权进程升级', () => {
   const manifest = read('launcher/app.manifest');
   assert.match(
     manifest,
-    /requestedExecutionLevel level="requireAdministrator"/,
-    '启动器不再提权运行，Restart Manager 也许就够了，重新评估这段 taskkill'
+    /requestedExecutionLevel level="asInvoker"/,
+    '普通启动不能要求提权，否则手机控制无法生效'
   );
+  const postInstall = iss.split(/\r?\n/).find(line => line.startsWith('Filename: "{app}\\{#AppExe}"; Description:'));
+  assert.match(postInstall, /runasoriginaluser/);
+  assert.doesNotMatch(postInstall, /Verb:/);
   assert.match(iss, /^PrivilegesRequired=lowest$/m, '安装器不再是非提权安装，意味着 UAC 取舍变了');
 });
