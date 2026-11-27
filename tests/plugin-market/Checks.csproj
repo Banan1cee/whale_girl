@@ -7,6 +7,7 @@
   <ItemGroup>
     <Compile Include="../../launcher/PluginMarket.cs" Link="PluginMarket.cs" />
     <Compile Include="../../launcher/PluginCatalog.cs" Link="PluginCatalog.cs" />
+    <Compile Include="../../launcher/RemoteText.cs" Link="RemoteText.cs" />
     <Compile Include="../../launcher/PluginTrust.cs" Link="PluginTrust.cs" />
     <EmbeddedResource Include="../../src/services/pluginProtocolRegistry.json" LogicalName="WhaleLauncher.PluginProtocolRegistry.json" />
     <Compile Include="../../launcher/PersonaPackage.cs" Link="PersonaPackage.cs" />

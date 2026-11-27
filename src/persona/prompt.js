@@ -571,6 +571,9 @@ function linkBlock(linkText) {
 
 /** 语音回复后缀（发送层会把正文转成语音） */
 const VOICE_SUFFIX = '用户希望下一条以语音形式回复。直接生成你此刻要说的自然内容，发送层会把正文转成语音；不要说无法发语音，也不要只承诺稍后发送。';
+// 拍一拍：让模型知道这是动作而不是消息；私聊里程序会自动回拍。
+const PAT_SUFFIX = '对方刚才在微信里拍了拍你（微信「拍一拍」，不是发消息）。用一句很短的话自然回应，别复述这条提示；程序会自动回拍一下，你不用写任何标记。';
+const PAT_GROUP_SUFFIX = '对方刚才在微信群里拍了拍你（微信「拍一拍」，不是发消息）。用一句很短的话自然回应，别复述这条提示。';
 
 /** 这条回复的字数上限：普通 100 字、认真讨论 400 字；配置只能往小调 */
 function maxCharsFor(config, msg = {}) {
@@ -698,6 +701,7 @@ function buildBlocks({ config, msg = {}, profile, notes = [], noteReminders = []
   if (webContext) dynamic.push(webContext);
   if (msg.linkText) dynamic.push(linkBlock(msg.linkText));
   if (msg.voiceRequested) dynamic.push(VOICE_SUFFIX);
+  if (msg.pat) dynamic.push(isGroup ? PAT_GROUP_SUFFIX : PAT_SUFFIX);
   if (actionBlock) dynamic.push(actionBlock);
 
   // 「谁是主人」跟发言者走：私聊已经固定进 system，群聊 / 自定义人设在这里补

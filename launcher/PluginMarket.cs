@@ -98,51 +98,10 @@ namespace WhaleLauncher
             && !Regex.IsMatch(id, @"\A(?:con|prn|aux|nul|com[1-9]|lpt[1-9])\z");
 
         /// <summary>展示前把换行、控制字符和双向文本标记压成空格，避免用清单字段伪造对话框。</summary>
-        internal static string SafeText(string value, int max = 600)
-        {
-            if (string.IsNullOrEmpty(value)) return "";
-            var text = new StringBuilder(value.Length);
-            var pendingSpace = false;
-            foreach (var ch in value)
-            {
-                if (char.IsControl(ch) || ch is '\u061C' or '\u200E' or '\u200F'
-                    || ch is >= '\u202A' and <= '\u202E' || ch is >= '\u2066' and <= '\u2069')
-                {
-                    pendingSpace = text.Length > 0;
-                    continue;
-                }
-                if (pendingSpace && (ch == ' ' || ch == '\t'))
-                {
-                    text.Append(' ');
-                    pendingSpace = false;
-                    continue;
-                }
-                if (pendingSpace)
-                {
-                    text.Append(' ');
-                    pendingSpace = false;
-                }
-                text.Append(ch);
-            }
-            var result = text.ToString().Trim();
-            return result.Length > max ? result[..max] : result;
-        }
+        internal static string SafeText(string value, int max = 600) => RemoteText.SafeText(value, max);
 
         /// <summary>工具结果保留换行，但仍清掉控制字符和双向文本标记。</summary>
-        internal static string SafeMultiline(string value, int max = 65536)
-        {
-            if (string.IsNullOrEmpty(value)) return "";
-            var text = new StringBuilder(value.Length);
-            foreach (var ch in value)
-            {
-                if (ch is '\n' or '\r' or '\t') { text.Append(ch); continue; }
-                if (char.IsControl(ch) || ch is '\u061C' or '\u200E' or '\u200F'
-                    || ch is >= '\u202A' and <= '\u202E' || ch is >= '\u2066' and <= '\u2069') continue;
-                text.Append(ch);
-            }
-            var result = text.ToString();
-            return result.Length > max ? result[..max] : result;
-        }
+        internal static string SafeMultiline(string value, int max = 65536) => RemoteText.SafeMultiline(value, max);
 
         internal static bool SameAuthor(string left, string right) =>
             string.Equals((left ?? "").Trim(), (right ?? "").Trim(), StringComparison.OrdinalIgnoreCase);

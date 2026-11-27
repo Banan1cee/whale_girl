@@ -1,6 +1,6 @@
 'use strict';
 
-function createFinalizer({ persona, LIMITS, isEcho, stripInternalTimestamps, stripSilenceMark, stripStickerMarks, textMeta, describeError }) {
+function createFinalizer({ persona, LIMITS, isEcho, stripInternalTimestamps, stripSilenceMark, stripStickerMarks, stripPatMark, isFeatureOn, textMeta, describeError }) {
   return {
   finalize(decision, text, { error = false, deferStore = false } = {}) {
     text = stripInternalTimestamps(text);
@@ -13,6 +13,16 @@ function createFinalizer({ persona, LIMITS, isEcho, stripInternalTimestamps, str
     const stickerMark = stripStickerMarks(text);
     if (stickerMark.category && decision) decision.stickerCategory = stickerMark.category;
     text = stickerMark.text;
+    // 拍一拍标记 [[pat]]：只在私聊执行，群里拍不准人；标记一律从正文剥掉。
+    const patMark = stripPatMark(text);
+    // 开关语义走 features.isOn：默认值、字符串 "false"、缺字段都由登记表统一裁决。
+    if (patMark.pat && decision && decision.msg && decision.msg.chatType === 'private'
+        && isFeatureOn(this.config, 'pat')) {
+      decision.pat = true;
+      // 占额度并拿回执单号：拍没拍成要等桥接 /api/pat/ack 回来才落账（BUGS #128）。
+      if (!decision.patId && typeof this.reservePat === 'function') decision.patId = this.reservePat(decision.msg);
+    }
+    text = patMark.text;
     // 正文里的 emoji 剥出来，单独发一条
     const emojiRe = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{FE0F}]/gu;
     const foundEmoji = (text.match(emojiRe) || []).join('');

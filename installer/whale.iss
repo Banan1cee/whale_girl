@@ -2,8 +2,7 @@
 ;
 ; 设计要点：
 ;   1. 装到 %LOCALAPPDATA%\Programs\鲸鲸，**安装过程零 UAC**；
-;   2. 启动器（WhaleLauncher.exe）带 requireAdministrator 清单：微信是管理员，
-;      桥接必须同级才能改 gate / 读进程；拖拽已用 ChangeWindowMessageFilterEx 放行；
+;   2. 启动器（WhaleLauncher.exe）默认以当前用户权限运行，和常规启动的微信同级；
 ;   3. runtime\wheelhouse 只是构建缓存，不进包（省 117MB）；
 ;   4. 安装目录仅保留运行所需文件，包括内核与离线记忆转换工具；
 ;   5. 运行环境全在包里：runtime\node.exe、runtime\python\（CPython 3.12 + 依赖）、
@@ -128,9 +127,7 @@ Name: "{group}\手机远程控制"; Filename: "{app}\手机远程控制"; Tasks:
 
 [Run]
 Filename: "{app}\VB-CABLE虚拟声卡\VBCABLE_Setup_x64.exe"; Description: "安装 VB-CABLE 虚拟声卡（安装包在「VB-CABLE虚拟声卡」文件夹里；VB-Audio Donationware）"; Verb: "runas"; Flags: shellexec postinstall skipifsilent unchecked; Check: FileExists(ExpandConstant('{app}\VB-CABLE虚拟声卡\VBCABLE_Setup_x64.exe'))
-; 启动器清单是 requireAdministrator：必须走 ShellExecuteEx 才会弹 UAC。
-; 用默认的 CreateProcess 直接拉会失败：code 740 = ERROR_ELEVATION_REQUIRED。
-Filename: "{app}\{#AppExe}"; Description: "启动{#AppName}"; Verb: "runas"; Flags: shellexec postinstall skipifsilent
+Filename: "{app}\{#AppExe}"; Description: "启动{#AppName}"; Flags: postinstall skipifsilent runasoriginaluser
 
 [UninstallDelete]
 ; 安装标记只在安装目录存在；卸载时清掉，避免残留目录被误认成安装态。
@@ -246,9 +243,8 @@ begin
 end;
 
 { ── 升级 / 卸载前关掉正在运行的鲸鲸 ──────────────────────────────
-  Setup 段的 CloseApplications=yes 走的是 Restart Manager，但两边权限对不上：
-  启动器是 requestedExecutionLevel=requireAdministrator（提权运行），安装器是
-  PrivilegesRequired=lowest（普通权限）。RM 停不掉完整性级别更高的进程，于是覆盖
+  Setup 段的 CloseApplications=yes 走的是 Restart Manager。旧版启动器默认提权，
+  手动以管理员启动也会提权，RM 停不掉完整性级别更高的进程，于是覆盖
   WhaleLauncher.exe 时停在「DeleteFile failed; code 5 拒绝访问」的重试框里，用户
   只能自己关掉鲸鲸再点 Try again。
 

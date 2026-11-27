@@ -29,6 +29,13 @@ const REGISTRY = [
     default: false, experimental: true,
   },
   {
+    key: 'pat',
+    path: 'features.pat',
+    label: '微信拍一拍',
+    desc: '别人在微信里拍你时，她用一句很短的话回应，私聊还可以拍回去；私聊说「拍拍我」时直接回拍一下。回话概率、回拍概率和回拍频率在 config.json 的 pat.* 调整（默认都回）。群聊不主动拍：微信只能按最近一条好友消息的头像拍，容易拍错人。关闭后不识别、不回应、不发送拍一拍。',
+    default: true,
+  },
+  {
     key: 'envContext',
     path: 'features.envContext',
     label: '环境信息注入（系统 / 时区 / 所在地）',

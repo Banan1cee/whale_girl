@@ -241,9 +241,22 @@ const DEFAULT_CONFIG = {
     ensureSend: false,
   },
   // 图片理解：默认智谱 GLM-4V-Flash（免费）
+  // 拍一拍的行为参数（设置页：http://127.0.0.1:<端口>/pat）
+  //   replyChance  被拍之后回一句文字的概率，0 = 只回拍不说话
+  //   backChance   被拍之后回拍的概率（只对私聊生效，群里拍不准人）
+  //   cooldownSec  同一会话两次回拍的最小间隔（秒），0 = 不限制
+  //   maxPerHour   每小时最多回拍几次，0 = 不限
+  pat: {
+    replyChance: 1,
+    backChance: 1,
+    cooldownSec: 8,
+    maxPerHour: 0,
+  },
   features: {
     plugins: false,
     stickers: false,
+    // 微信拍一拍：被拍时回应；私聊聊「拍拍我」时回拍。群聊不主动拍，避免拍错人。
+    pat: true,
     // 环境信息注入（系统 / 时区 / 所在地）：关掉 = system 里没有 <env> 块
     envContext: true,
     groupAddressGuard: true,

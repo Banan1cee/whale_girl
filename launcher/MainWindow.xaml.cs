@@ -37,6 +37,7 @@ namespace WhaleLauncher
         private bool _memoryNoticeChecked;
         private PhoneControl _phoneControl;
         private readonly PhoneFeatures _phoneFeatures;
+        private readonly HostPower _hostPower;
 
         // 官网和赞助入口固定在侧栏底部；链接写死，不依赖内核或网络配置，断网时浏览器自行提示。
         private const string OfficialSite = "https://bot.zyyc.cc/";
@@ -66,6 +67,8 @@ namespace WhaleLauncher
             _sup.UpdateBlocked = true;
             _pluginMarket = new PluginMarket(dir);
             _phoneFeatures = new PhoneFeatures(_sup, _pluginMarket);
+            // 构造时只读持久化配置并套用保活；主机设置本身由状态页和手机端改。
+            _hostPower = new HostPower(dir);
 
             // 正式版不该显示成 v4.0-alpha：那会让用户以为自己装的是测试版，
             // 而且强制更新拿这个版本号做比较，后缀只会添乱。
@@ -86,6 +89,7 @@ namespace WhaleLauncher
             {
                 await RefreshAsync();
                 await MaybePeriodicUpdateCheckAsync();
+                await MaybePeriodicNoticeCheckAsync();
             };
             _timer.Start();
 
@@ -94,15 +98,18 @@ namespace WhaleLauncher
                 Nav.SelectedIndex = 0;
                 try
                 {
-                    if (File.Exists(Path.Combine(dir, "手机远程控制", "server.js")) ||
-                        File.Exists(Path.Combine(dir, "tools", "remote-console", "server.js")))
+                    // 管理员实例可在桌面维护高权限微信，但不能接收普通用户控制台的命令。
+                    if (PhoneControl.IsStandardUser() &&
+                        (File.Exists(Path.Combine(dir, "手机远程控制", "server.js")) ||
+                         File.Exists(Path.Combine(dir, "tools", "remote-console", "server.js"))))
                     {
                         _phoneControl ??= new PhoneControl(dir, (action, payload) =>
                             Dispatcher.InvokeAsync(() => RunPhoneActionAsync(action, payload)).Task.Unwrap());
                     }
                 }
-                catch (Exception ex) { _sup.SayWarn("手机控制接口启动失败：" + ex.GetType().Name); }
+                catch (Exception ex) { _sup.SayWarn("手机控制接口启动失败：" + ex.GetType().Name + " · " + ex.Message); }
                 await SilentUpdateCheckAsync(allowBlocking: true);
+                await CheckNoticesAsync(showPopups: true);
                 await RefreshAsync();
             };
             Closing += OnClosingDuringUpdate;
@@ -111,15 +118,18 @@ namespace WhaleLauncher
                 Appearance.Changed -= OnAppearanceChanged;
                 _timer.Stop();
                 _phoneControl?.Dispose();
+                _hostPower.Dispose();
                 _sup.Dispose();
             };
         }
 
         private async Task<object> RunPhoneActionAsync(string action, JsonElement payload)
         {
-            if ((action is "start" or "restart" or "restart-bridge" or "restart-wechat" or "voice-install-driver") &&
-                !PhoneControl.AllowsProcessLaunch())
-                return new { ok = false, error = "启动器正以管理员权限运行，请在电脑上启动或重启程序。" };
+            // 主机电源 / 会话状态不碰内核和微信，必须在进程动作守卫之前分发：
+            // 否则管理员模式下手机连「电脑锁没锁」都问不了。
+            if (HostPower.Handles(action)) return await _hostPower.RunAsync(action, payload);
+            if ((action is "start" or "restart" or "restart-bridge" or "restart-wechat") && !_hostPower.ProcessLaunchAllowed)
+                return new { ok = false, error = "请在电脑端的「主机」里打开「允许手机启动内核」。" };
             if (PhoneFeatures.Handles(action)) return await _phoneFeatures.RunAsync(action, payload);
             if (action == "configuration-read" || action == "configuration-save")
             {
@@ -156,7 +166,7 @@ namespace WhaleLauncher
                     bridgeOnline = current.BrOnline,
                     wechatAccountVerified = current.BrAccountOk,
                     updateBlocked = _sup.UpdateBlocked,
-                    processLaunchAllowed = PhoneControl.AllowsProcessLaunch(),
+                    processLaunchAllowed = _hostPower.ProcessLaunchAllowed,
                     logs = _sup.History(120).Select(line => new
                     {
                         time = line.At.ToString("HH:mm:ss"),
@@ -222,6 +232,14 @@ namespace WhaleLauncher
 
         // 挂后台不关的用户也要能看到新版：每 6 小时静默查一次（只提示，不拦人）。
         private const int PeriodicCheckHours = 6;
+
+        // ── 公告（远端 JSON + 本地缓存；只提醒，不阻断）────────────
+        private AnnouncementFeedResult _notices;
+        private DateTime _lastNoticeCheck = DateTime.MinValue;
+        private bool _checkingNotices;
+
+        // 挂后台不关的用户也要能看到新公告：每 6 小时静默拉一次，只更新铃铛，不弹窗。
+        private const int NoticeCheckHours = 6;
 
         private void ShowToast(string text)
         {
@@ -423,6 +441,144 @@ namespace WhaleLauncher
                 + "\n\n请到 GitHub Releases 下载最新安装包。";
             AppDialog.Show(this, msg, "版本已停用", danger: true);
             Application.Current.Shutdown();
+        }
+
+        // ── 公告：启动弹窗 + 顶栏铃铛看历史 ──────────────────────
+
+        /// <summary>
+        /// 拉一次公告。showPopups=false 用于运行中的周期检查：只更新缓存和铃铛，不打断用户。
+        /// 公告永远不阻断启动：拿不到、解析失败、写状态失败都只是少一次提示。
+        /// </summary>
+        private async Task CheckNoticesAsync(bool showPopups)
+        {
+            if (_checkingNotices) return;
+            _checkingNotices = true;
+            _lastNoticeCheck = DateTime.Now;
+            try
+            {
+                _notices = await AnnouncementFeed.FetchAsync(_sup.BaseDir);
+                UpdateNoticeBadge();
+                if (_notices.FromLocal) _sup.Say("公告读自本机 announcements.json（仅本机可见）");
+                if (!showPopups || _updating) return;
+                // 强制更新 / 熔断优先：正在走更新流程时不插公告，下一次启动再说。
+                if (_lastManifest != null
+                    && (_lastManifest.Policy == UpdatePolicy.Force || _lastManifest.Policy == UpdatePolicy.Kill)) return;
+                await ShowAnnouncementPopupsAsync();
+            }
+            catch (Exception ex)
+            {
+                _sup.SayWarn("公告读取失败：" + ex.GetType().Name);
+            }
+            finally
+            {
+                _checkingNotices = false;
+            }
+        }
+
+        private async Task MaybePeriodicNoticeCheckAsync()
+        {
+            if ((DateTime.Now - _lastNoticeCheck).TotalHours < NoticeCheckHours) return;
+            await CheckNoticesAsync(showPopups: false);
+        }
+
+        /// <summary>一次启动最多弹 config 里的条数（本地钳到 0~20）；每条 id 一辈子只弹一次。</summary>
+        private async Task ShowAnnouncementPopupsAsync()
+        {
+            var feed = _notices;
+            if (feed == null || !feed.Config.PopupsEnabled) return;
+            var batch = feed.Unread.Take(Math.Min(feed.Config.MaxPopupsPerLaunch, feed.UnreadCount)).ToList();
+            if (batch.Count == 0) return;
+
+            // 先把更新检查和状态刷新走完再弹；延迟也允许运营端在远端 JSON 里调。
+            if (feed.Config.PopupDelayMs > 0) await Task.Delay(feed.Config.PopupDelayMs);
+            if (_updating) return;
+
+            for (var i = 0; i < batch.Count; i++)
+            {
+                var item = batch[i];
+                var more = i + 1 < batch.Count;
+                var keepGoing = ShowAnnouncementPopup(item, more);
+                feed.MarkRead(item.Id);
+                AnnouncementFeed.MarkRead(new[] { item.Id });
+                if (keepGoing) continue;
+
+                // 用户点了「跳过本批」：把这次没弹到的一起记已读，别下次启动继续烦人。
+                var skipped = batch.Skip(i + 1).Select(next => next.Id).ToList();
+                foreach (var id in skipped) feed.MarkRead(id);
+                if (skipped.Count > 0) AnnouncementFeed.MarkRead(skipped);
+                break;
+            }
+            UpdateNoticeBadge();
+        }
+
+        /// <summary>弹一条公告；返回 false 表示用户选择了「跳过本批」。</summary>
+        private bool ShowAnnouncementPopup(Announcement item, bool moreAfter)
+        {
+            var danger = item.Level == "critical";
+            var label = item.Action == "open_url" ? "打开链接"
+                : item.Action == "check_update" ? "检查更新" : null;
+
+            if (label == null)
+            {
+                AppDialog.Show(this, item.Body, item.Title, danger);
+                return true;
+            }
+
+            var open = AppDialog.Confirm(this, item.Body, item.Title, danger,
+                okText: label, cancelText: moreAfter ? "跳过本批" : "知道了");
+            if (!open) return !moreAfter;   // 还有下一条时取消 = 跳过本批；最后一条取消就是普通关闭
+            if (item.Action == "open_url") OpenNoticeUrl(item.Url);
+            else if (item.Action == "check_update") OnCheckUpdate(this, null);
+            return true;
+        }
+
+        private void OpenNoticeUrl(string url)
+        {
+            // 远端链接在解析阶段已经过白名单；这里再挡一层，避免以后有人拿字段拼 URL 绕过校验。
+            if (!AnnouncementFeed.IsAllowedUrl(url))
+            {
+                AppDialog.Show(this, "这条公告的链接不在允许的域名内，已拒绝打开。", "公告", danger: true);
+                return;
+            }
+            OpenExternal(url, "打开公告链接失败");
+        }
+
+        private void UpdateNoticeBadge()
+        {
+            var unread = _notices?.UnreadCount ?? 0;
+            if (unread <= 0)
+            {
+                NoticeDot.Visibility = Visibility.Collapsed;
+                BtnNotices.ToolTip = "公告";
+                return;
+            }
+            NoticeDotText.Text = unread > 9 ? "9+" : unread.ToString();
+            NoticeDot.Visibility = Visibility.Visible;
+            BtnNotices.ToolTip = "公告（" + unread + " 条未读）";
+        }
+
+        private void OnOpenNotices(object sender, RoutedEventArgs e)
+        {
+            var feed = _notices;
+            if (feed == null)
+            {
+                AppDialog.Show(this, "还没有读到公告，请稍后再试。", "公告");
+                return;
+            }
+
+            AppDialog.ShowContent("公告", new NoticeCenter(feed.All, feed.Read, OnNoticeAction), 640);
+            // 打开过就算已读：铃铛数字代表「还有几条没主动提醒过」。
+            var unread = feed.Unread.Select(item => item.Id).ToList();
+            foreach (var id in unread) feed.MarkRead(id);
+            if (unread.Count > 0) AnnouncementFeed.MarkRead(unread);
+            UpdateNoticeBadge();
+        }
+
+        private void OnNoticeAction(Announcement item)
+        {
+            if (item == null) return;
+            if (item.Action == "open_url") OpenNoticeUrl(item.Url);
+            else if (item.Action == "check_update") OnCheckUpdate(this, null);
         }
 
         /// <summary>
@@ -693,7 +849,7 @@ namespace WhaleLauncher
         {
             switch (key)
             {
-                case "状态": return new StatusPage(_sup);
+                case "状态": return new StatusPage(_sup, _hostPower);
                 case "人设": return new PersonaPage(_sup);
                 case "表情包": return new StickerPage(_sup);
                 case "语音发送": return new VoiceSendPage(_sup);

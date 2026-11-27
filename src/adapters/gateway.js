@@ -48,6 +48,8 @@ function normalizeInbound(payload, platform) {
   const mentions = firstDefined(body, ['mentioned_names', 'mentionedNames', 'mention_names', 'mentions']);
   const selfNames = firstDefined(body, ['self_names', 'selfNames', 'bot_names', 'botNames']);
   const noReply = toBool(firstDefined(body, ['no_reply', 'noReply']));
+  // 拍一拍事件：桥接把微信的系统提示转成一条带 pat 标记的入站消息。
+  const pat = toBool(firstDefined(body, ['pat', 'pat_event', 'patEvent']));
 
   return {
     platform,
@@ -65,6 +67,7 @@ function normalizeInbound(payload, platform) {
     msgId: String(firstDefined(body, ['msg_id', 'msgId', 'message_id', 'messageId', 'id']) ?? ''),
     chatTitle: String(firstDefined(body, ['chat_title', 'chatTitle', 'room_name', 'roomName', 'group_name', 'groupName', 'title']) ?? ''),
     noReply,
+    pat,
   };
 }
 
@@ -246,12 +249,32 @@ class Gateway {
       if (timer) { clearTimeout(timer); timer = null; }
     }
     this.logger?.debug?.(`[${this.platform}] event=gateway.result action=${result.action || '-'} reason=${result.reason || '-'} bubbles=${(result.bubbles || []).length}`);
+    // 拍一拍：只有本地微信桥接能执行 UIA 右键头像；外部 outboundUrl 网关不支持。
+    const wantsPat = localWechat && result.pat === true;
+    // 回执单号：桥接拍完要用它回 /api/pat/ack，内核据此落账/回滚额度、记动作账本。
+    // 内核已经占过额度（reservePat），这里只负责把单号带给桥接；旧调用方没有单号时
+    // 照旧执行拍一拍，只是内核收不到回执（额度按超时回滚，不会当成拍到了）。
+    const patId = wantsPat && result.patId ? String(result.patId) : '';
+    if (wantsPat && !patId) {
+      this.logger?.warn?.('[pat] 回拍缺少回执单号，桥接照常执行但内核收不到结果');
+    }
+    // 发言范围统一只问一次共享规则，传整条 msg（会话标题在重启后可能只存在 session.title）。
+    // 拍一拍也要过这一关：被拒时把已经占掉的回拍额度当场还回去，别等 30 秒超时。
+    if (wantsPat || result.action === 'reply') {
+      const reason = sendDenial(this.bot.config, msg);
+      if (reason) {
+        if (wantsPat && patId && typeof this.bot.settlePat === 'function') {
+          try { this.bot.settlePat(patId, false, 'send_denied'); } catch { /* 落账失败不影响忽略 */ }
+        }
+        return { ok: true, action: 'ignore', reason };
+      }
+    }
+    if (wantsPat && (result.action !== 'reply' || !result.reply)) {
+      return { ok: true, action: 'pat', pat: true, ...(patId ? { patId } : {}) };
+    }
     if (result.action !== 'reply' || !result.reply) {
       return { ok: true, action: 'ignore', reason: result.reason || 'ignored' };
     }
-    // 发送前再问一次共享规则（桥接排队期间名单可能已改）；事实形状与内核一致。
-    const reason = sendDenial(this.bot.config, msg);
-    if (reason) return { ok: true, action: 'ignore', reason };
     if (localWechat && result.reason === 'sticker_request' && result.sticker) {
       return { ok: true, action: 'reply', reply: result.reply, stickerOnly: true, sticker: result.sticker };
     }
@@ -300,6 +323,7 @@ class Gateway {
       action: 'reply',
       reply: result.reply,
       bubbles: result.bubbles || [result.reply],
+      ...(wantsPat ? { pat: true, ...(patId ? { patId } : {}) } : {}),
       ...(sticker ? { sticker } : {}),
       ...(localWechat && result.separateText ? { separateText: true } : {}),
       // 群里要真的 @ 某人时，桥接据此调 at_member

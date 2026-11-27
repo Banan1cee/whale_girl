@@ -110,7 +110,12 @@ const BINARY_RULES = [
     name: '源码托管链接（二进制）',
     re: /raw\.githubusercontent\.com\/[A-Za-z0-9._-]+\//gi,
     keep: (m, index, text) =>
-      !['raw.githubusercontent.com/banan1cee/whale_girl/', 'raw.githubusercontent.com/banan1cee/whale_gril/']
+      !['raw.githubusercontent.com/banan1cee/whale_girl/', 'raw.githubusercontent.com/banan1cee/whale_gril/',
+        'raw.githubusercontent.com/banan1cee/whale-girl-plugins/main/index.json',
+        'raw.githubusercontent.com/banan1cee/whale-girl-plugins/main/index-v2.json',
+        // 插件包下载地址：官方公开市场仓库，客户端内置的拼接前缀，不是本机路径。
+        // 新版启动器重编后这条前缀会和后面的字符串在 UTF-16 里相邻，不单独放行会误报成泄露。
+        'raw.githubusercontent.com/banan1cee/whale-girl-plugins/main/plugins/']
         .some(prefix => text.slice(index).toLowerCase().startsWith(prefix)) &&
       // .NET 字符串后的二进制长度标记不一定解码成空白或 NUL，所以带文件名的目录
       // 必须紧跟 URL 分隔符（或什么都没跟）才算官方路径。
