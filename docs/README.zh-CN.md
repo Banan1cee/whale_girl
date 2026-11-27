@@ -35,7 +35,7 @@
 - 一个已登录的微信 4.x 账号，建议使用小号
 - 一个模型 API Key：DeepSeek、智谱 GLM、硅基流动、通义千问、豆包、OpenCode，或任何 OpenAI 兼容接口
 - 可选：Ollama 或其他本地 OpenAI 兼容服务
-- 微信 UI 自动化需要管理员权限
+- 微信和鲸鲸需以同一级别权限运行。使用手机控制时，双击正常打开两个程序。
 - **安装到纯英文路径**，例如 `D:\whale-girl`；路径里有中文可能导致微信自动化失败
 
 ## 安装与首次启动
@@ -159,6 +159,8 @@ whale-girl/                        # 与仓库一致，运行数据不入库
 安装包只从 **GitHub Releases** 下载：<https://github.com/Banan1cee/whale_girl/releases>。校验值与验证命令见 [`DOWNLOAD.md`](DOWNLOAD.md)。
 
 ## 代码签名
+
+4.2.0 预览版的 Windows 启动器和安装包已通过 SignPath 测试签名及安装验证。正式发行签名尚未启用。[查看 GitHub Actions 验证结果](https://github.com/Banan1cee/whale_girl/actions/runs/45573742923)
 
 当前发行包**尚未签名**，Windows 可能提示「未知发布者」；安装前请核对 Release 里的 `SHA256SUMS.txt`。签名策略见 [`CODE_SIGNING_POLICY.md`](CODE_SIGNING_POLICY.md)，隐私政策见 [`PRIVACY.md`](PRIVACY.md)。
 

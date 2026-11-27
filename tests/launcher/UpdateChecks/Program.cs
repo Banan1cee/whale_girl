@@ -107,3 +107,97 @@ try
     Check(UpdateManifestService.LocalVersion(versionDir) == fallback, "T22 LocalVersion missing fallback");
 }
 finally { Directory.Delete(versionDir, true); }
+
+// ── 公告：字段过滤、配置本地钳制、链接白名单、kill 与坏 JSON ──────────
+var feedJson = """
+{
+  "manifest_version": 7,
+  "config": { "popups_enabled": false, "max_popups_per_launch": 999, "popup_delay_ms": 999999 },
+  "announcements": [
+    { "id": "low", "title": "低优先", "body": "正文", "priority": 1 },
+    { "id": "crit", "title": "重要", "body": "正文", "level": "critical", "priority": 9 },
+    { "id": "newest", "title": "新版才有", "body": "正文", "min_version": "9.0.0", "priority": 99 },
+    { "id": "oldest", "title": "旧版才有", "body": "正文", "max_version": "1.0.0", "priority": 99 },
+    { "id": "epoch2", "title": "新代才有", "body": "正文", "epoch": 2, "priority": 99 },
+    { "id": "bad-id!", "title": "坏 id", "body": "正文" },
+    { "id": "bad-url", "title": "坏链接", "body": "正文", "action": "open_url", "url": "https://evil.example/x" },
+    { "id": "good-url", "title": "好链接", "body": "正文", "action": "open_url", "url": "https://github.com/Banan1cee/whale_girl" },
+    { "id": "clean", "title": "A\u202EB", "body": "第一行\u0000第二行" }
+  ]
+}
+""";
+
+bool HasId(AnnouncementFeedResult value, string id)
+{
+    foreach (var item in value.All) if (item.Id == id) return true;
+    return false;
+}
+
+Announcement Find(AnnouncementFeedResult value, string id)
+{
+    foreach (var item in value.All) if (item.Id == id) return item;
+    return null;
+}
+
+int Unread(AnnouncementFeedResult value) => value.UnreadCount;
+
+var feed = AnnouncementFeed.ApplyFeed(feedJson, "4.2.0", 1);
+Check(feed.Config.PopupsEnabled == false, "公告 config 可远端关闭弹窗");
+Check(feed.Config.MaxPopupsPerLaunch == NoticeConfig.MaxPopupsLimit, "公告弹窗数本地钳到 20");
+Check(feed.Config.PopupDelayMs == NoticeConfig.MaxDelayMs, "公告延迟本地钳到 10 秒");
+Check(feed.All.Count == 5, "公告过滤后只留合规条目：" + feed.All.Count);
+Check(feed.All[0].Id == "crit" && feed.All[1].Id == "low", "公告按 priority 降序");
+Check(!HasId(feed, "newest") && !HasId(feed, "oldest"), "公告按版本区间过滤");
+Check(!HasId(feed, "epoch2"), "公告按代次过滤");
+Check(!HasId(feed, "bad-id!"), "公告 id 不合规直接跳过");
+
+var badUrl = Find(feed, "bad-url");
+Check(badUrl != null && badUrl.Action == "none" && badUrl.Url.Length == 0, "公告链接不在白名单时降级为纯文本");
+var goodUrl = Find(feed, "good-url");
+Check(goodUrl != null && goodUrl.Action == "open_url" && goodUrl.Url.StartsWith("https://github.com/", StringComparison.Ordinal),
+    "公告白名单链接保留跳转");
+var cleaned = Find(feed, "clean");
+Check(cleaned != null && !cleaned.Title.Contains('\u202E') && !cleaned.Body.Contains('\u0000'),
+    "公告文本清掉双向标记与控制字符");
+Check(AnnouncementFeed.IsAllowedUrl("https://raw.githubusercontent.com/a/b"), "公告允许 raw 域名");
+Check(AnnouncementFeed.IsAllowedUrl("https://www.github.com/a"), "公告允许白名单子域名");
+Check(!AnnouncementFeed.IsAllowedUrl("http://github.com/x"), "公告拒绝 http 链接");
+Check(!AnnouncementFeed.IsAllowedUrl("https://github.com@evil.example/x"), "公告拒绝 userinfo 伪装域名");
+Check(!AnnouncementFeed.IsAllowedUrl("javascript:alert(1)"), "公告拒绝非 https scheme");
+
+var killed = AnnouncementFeed.ApplyFeed("{\"kill\":true,\"announcements\":[{\"id\":\"a\",\"title\":\"t\",\"body\":\"b\"}]}", "4.2.0", 0);
+Check(killed.All.Count == 0, "kill 撤下全部公告");
+
+var broken = AnnouncementFeed.ApplyFeed("{ broken", "4.2.0", 0);
+Check(broken.All.Count == 0 && broken.Config.MaxPopupsPerLaunch == NoticeConfig.DefaultMaxPopups,
+    "公告 JSON 写坏按空处理并回默认配置");
+
+var readState = new System.Collections.Generic.Dictionary<string, string> { ["crit"] = "2026-11-24T00:00:00Z" };
+var withRead = AnnouncementFeed.ApplyFeed(feedJson, "4.2.0", 1, readState);
+Check(Unread(withRead) == 4, "已读公告不再计入未读");
+
+// ── 公告：安装目录本地文件覆盖（发布前预览）────────────────────
+var localDir = Path.Combine(Path.GetTempPath(), "whale-announce-local-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(Path.Combine(localDir, "data"));
+try
+{
+    Check(AnnouncementFeed.ReadLocalFeed(localDir) == null, "本地没有公告文件时回落到远端");
+
+    var localFile = Path.Combine(localDir, "data", "announcements.json");
+    File.WriteAllText(localFile,
+        "{\"schema\":1,\"manifest_version\":3,\"updated_at\":\"2026-11-25T00:00:00Z\",\"kill\":false,\"config\":{}," +
+        "\"announcements\":[{\"id\":\"local\",\"title\":\"本地\",\"body\":\"正文\"}]}");
+    var localRaw = AnnouncementFeed.ReadLocalFeed(localDir);
+    Check(localRaw != null && localRaw.Contains("\"local\""), "安装目录 data\\announcements.json 优先作为公告源");
+    var localFeed = AnnouncementFeed.ApplyFeed(localRaw, "4.2.0", 1);
+    Check(localFeed.All.Count == 1 && localFeed.All[0].Id == "local", "本地公告同样过字段校验");
+
+    File.WriteAllText(localFile, "{ broken");
+    Check(AnnouncementFeed.ReadLocalFeed(localDir) == null, "本地文件写坏时不影响远端读取");
+    File.Delete(localFile);
+
+    File.WriteAllText(Path.Combine(localDir, "announcements.json"), "{\"manifest_version\":4,\"announcements\":[]}");
+    Check(AnnouncementFeed.ReadLocalFeed(localDir) != null, "安装目录根 announcements.json 也认");
+}
+finally { Directory.Delete(localDir, true); }
+

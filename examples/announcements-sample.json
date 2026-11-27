@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "manifest_version": 2,
+  "updated_at": "2026-11-25T12:00:00Z",
+  "kill": false,
+  "config": {
+    "popups_enabled": true,
+    "max_popups_per_launch": 3,
+    "popup_delay_ms": 1200
+  },
+  "announcements": [
+    {
+      "id": "sample-2026-11-welcome",
+      "title": "公告功能示例",
+      "body": "这是一条示例公告，用来确认启动器能不能读到远端公告。\n看到这个弹窗说明整条链路是通的。",
+      "level": "info",
+      "action": "none",
+      "published_at": "2026-11-25T12:00:00Z",
+      "priority": 10
+    },
+    {
+      "id": "sample-2026-11-link",
+      "title": "带链接的示例",
+      "body": "这条按钮会打开 GitHub 的 Releases 页面。链接只允许官方白名单域名。",
+      "level": "warn",
+      "action": "open_url",
+      "url": "https://github.com/Banan1cee/whale_girl/releases",
+      "published_at": "2026-11-25T11:00:00Z",
+      "priority": 5
+    },
+    {
+      "id": "sample-2026-11-update",
+      "title": "带更新按钮的示例",
+      "body": "点「检查更新」会走启动器原有的更新流程；点「知道了」就只关闭这条公告。",
+      "level": "critical",
+      "action": "check_update",
+      "published_at": "2026-11-25T10:00:00Z",
+      "priority": 1
+    }
+  ]
+}
