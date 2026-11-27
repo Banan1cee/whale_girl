@@ -96,8 +96,10 @@ namespace WhaleLauncher
                 Nav.SelectedIndex = 0;
                 try
                 {
-                    if (File.Exists(Path.Combine(dir, "手机远程控制", "server.js")) ||
-                        File.Exists(Path.Combine(dir, "tools", "remote-console", "server.js")))
+                    // 管理员实例可在桌面维护高权限微信，但不能接收普通用户控制台的命令。
+                    if (PhoneControl.IsStandardUser() &&
+                        (File.Exists(Path.Combine(dir, "手机远程控制", "server.js")) ||
+                         File.Exists(Path.Combine(dir, "tools", "remote-console", "server.js"))))
                     {
                         _phoneControl ??= new PhoneControl(dir, (action, payload) =>
                             Dispatcher.InvokeAsync(() => RunPhoneActionAsync(action, payload)).Task.Unwrap());
@@ -124,9 +126,8 @@ namespace WhaleLauncher
             // 主机电源 / 会话状态不碰内核和微信，必须在进程动作守卫之前分发：
             // 否则管理员模式下手机连「电脑锁没锁」都问不了。
             if (HostPower.Handles(action)) return await _hostPower.RunAsync(action, payload);
-            if ((action is "start" or "restart" or "restart-bridge" or "restart-wechat" or "voice-install-driver") &&
-                !PhoneControl.AllowsProcessLaunch() && !_hostPower.RemoteProcessLaunch)
-                return new { ok = false, error = "启动器正以管理员权限运行。请在电脑上启动，或先在『主机』里打开『允许手机启动内核』。" };
+            if ((action is "start" or "restart" or "restart-bridge" or "restart-wechat") && !_hostPower.ProcessLaunchAllowed)
+                return new { ok = false, error = "请在电脑端的「主机」里打开「允许手机启动内核」。" };
             if (PhoneFeatures.Handles(action)) return await _phoneFeatures.RunAsync(action, payload);
             if (action == "configuration-read" || action == "configuration-save")
             {
@@ -163,7 +164,7 @@ namespace WhaleLauncher
                     bridgeOnline = current.BrOnline,
                     wechatAccountVerified = current.BrAccountOk,
                     updateBlocked = _sup.UpdateBlocked,
-                    processLaunchAllowed = PhoneControl.AllowsProcessLaunch(),
+                    processLaunchAllowed = _hostPower.ProcessLaunchAllowed,
                     logs = _sup.History(120).Select(line => new
                     {
                         time = line.At.ToString("HH:mm:ss"),

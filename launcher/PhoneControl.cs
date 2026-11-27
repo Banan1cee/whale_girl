@@ -13,7 +13,7 @@ namespace WhaleLauncher
 {
     internal sealed class PhoneControl : IDisposable
     {
-        internal static bool AllowsProcessLaunch()
+        internal static bool IsStandardUser()
         {
             using var identity = WindowsIdentity.GetCurrent();
             return !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);

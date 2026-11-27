@@ -399,7 +399,6 @@ test('主机状态卡与主机操作', async t => {
         return { ok: true, message: '已发送关屏指令。' };
       }
       if (action === 'host-config') {
-        if (typeof payload.remoteProcessLaunch === 'boolean') hostState.remoteProcessLaunch = payload.remoteProcessLaunch;
         if (typeof payload.autoStart === 'boolean') hostState.autoStart = payload.autoStart;
         if (typeof payload.displayControl === 'boolean') hostState.displayControl = payload.displayControl;
         return { ok: true, data: { remoteProcessLaunch: hostState.remoteProcessLaunch, autoStart: hostState.autoStart, displayControl: hostState.displayControl } };
@@ -476,12 +475,22 @@ test('主机状态卡与主机操作', async t => {
     assert.equal(missing.status, 400);
     assert.equal((await missing.json()).error, '这个操作需要二次确认。');
     assert.equal((await post('/console/host-command', { action: 'keep-awake', value: 'always', confirm: true })).status, 400);
-    assert.equal((await post('/console/host-command', { action: 'remote-process-launch', value: 'yes', confirm: true })).status, 400);
     assert.equal((await post('/console/host-command', { action: 'auto-start', value: 1, confirm: true })).status, 400);
     assert.equal((await post('/console/host-command', { action: 'keep-awake', value: 'system' }, {})).status, 401);
   });
 
-  await t.test('保活、点亮/关闭屏幕和两个开关映射到启动器动作', async () => {
+  await t.test('手机不能授予启动权限，桌面授权状态可以从手机读取', async () => {
+    const before = commands.length;
+    const response = await post('/console/host-command', { action: 'remote-process-launch', value: true, confirm: true });
+    assert.equal(response.status, 403);
+    assert.match((await response.json()).error, /电脑端/);
+    assert.equal(commands.length, before);
+    hostState.remoteProcessLaunch = true;
+    assert.equal((await (await get('/console/host')).json()).data.remoteProcessLaunch, true);
+    hostState.remoteProcessLaunch = false;
+  });
+
+  await t.test('保活、点亮/关闭屏幕和开机自启映射到启动器动作', async () => {
     let response = await post('/console/host-command', { action: 'keep-awake', value: 'display', confirm: true });
     assert.equal(response.status, 200);
     assert.ok(commands.some(([action, payload]) => action === 'host-keep-awake' && payload.mode === 'display'));
@@ -496,15 +505,12 @@ test('主机状态卡与主机操作', async t => {
     assert.equal(response.status, 200);
     assert.equal((await response.json()).message, '已发送关屏指令。');
     assert.ok(commands.some(([action]) => action === 'host-display-off'));
-    response = await post('/console/host-command', { action: 'remote-process-launch', value: true, confirm: true });
-    assert.equal(response.status, 200);
-    assert.ok(commands.some(([action, payload]) => action === 'host-config' && payload.remoteProcessLaunch === true));
     response = await post('/console/host-command', { action: 'auto-start', value: true, confirm: true });
     assert.equal(response.status, 200);
     assert.ok(commands.some(([action, payload]) => action === 'host-config' && payload.autoStart === true));
     const hostAfter = (await (await get('/console/host')).json()).data;
     assert.equal(hostAfter.keepAwake, 'display');
-    assert.equal(hostAfter.remoteProcessLaunch, true);
+    assert.equal(hostAfter.remoteProcessLaunch, false);
     assert.equal(hostAfter.autoStart, true);
   });
 

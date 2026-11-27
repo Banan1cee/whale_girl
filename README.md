@@ -33,7 +33,7 @@ Everything is controlled from one Windows launcher. There is no browser UI; `127
 - A logged-in WeChat 4.x account (a secondary account is recommended)
 - One model API key: DeepSeek, Zhipu GLM, SiliconFlow, Qwen, Doubao, OpenCode, or any OpenAI-compatible endpoint
 - Optional: Ollama or another local OpenAI-compatible server
-- Administrator rights for WeChat UI automation
+- Run WeChat and Whale Girl at the same privilege level. Use ordinary Windows permissions for mobile control.
 - Install into an **ASCII-only path** such as `D:\whale-girl`; Chinese characters in the path can break WeChat automation
 
 ## Install and first run
