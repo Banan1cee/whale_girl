@@ -15,7 +15,7 @@ using System.Windows.Threading;
 
 namespace WhaleLauncher.Views
 {
-    public partial class StickerPage : UserControl, IRefreshable
+    public partial class StickerPage : UserControl, IRefreshable, IPendingSettings
     {
         // 格子 120px + DPI 余量。160 时单张解码量比 132 多 47%，肉眼分不出。
         private const int ThumbWidth = 132;
@@ -47,7 +47,8 @@ namespace WhaleLauncher.Views
         private bool _dirDirty;
         private long _dirRevision;
         private bool _demandDirty;
-        private bool _savingDemand;
+        private readonly SemaphoreSlim _demandSaveGate = new(1);
+        private bool _savingDemand => _demandSaveGate.CurrentCount == 0;
         private int _demandRevision;
         private bool _importingPresets;
         private bool _loaded;
@@ -316,16 +317,20 @@ namespace WhaleLauncher.Views
             _demandRevision++;
         }
 
-        private async void OnSaveDemand(object sender, RoutedEventArgs e)
+        private async void OnSaveDemand(object sender, RoutedEventArgs e) => await SaveDemandAsync();
+
+        public Task<bool> SavePendingSettingsAsync() => SaveDemandAsync(onlyIfChanged: true);
+
+        private async Task<bool> SaveDemandAsync(bool onlyIfChanged = false)
         {
-            if (_loading || _savingDemand) return;
-            var revision = _demandRevision;
-            var chance = Math.Round(Math.Clamp(SldDemand.Value / 100.0, 0, 1), 2);
-            var ensure = ChkEnsure.IsChecked == true;
-            _savingDemand = true;
-            BtnSaveDemand.IsEnabled = false;
+            await _demandSaveGate.WaitAsync();
             try
             {
+                if (_loading || (onlyIfChanged && !_demandDirty)) return true;
+                var revision = _demandRevision;
+                var chance = Math.Round(Math.Clamp(SldDemand.Value / 100.0, 0, 1), 2);
+                var ensure = ChkEnsure.IsChecked == true;
+                BtnSaveDemand.IsEnabled = false;
                 var res = await _sup.PatchConfigurationAsync(new Dictionary<string, object>
                 {
                     ["sticker.demandChance"] = chance,
@@ -339,9 +344,18 @@ namespace WhaleLauncher.Views
                 StatusText.Text = res.Ok
                     ? $"表情包频率已保存：{Math.Round(chance * 100)}%" + (ensure ? "，必发已开" : "")
                     : "保存失败：" + Api.Message(res);
+                return res.Ok;
             }
-            catch (Exception ex) { StatusText.Text = "保存失败：" + Api.FriendlyError(ex); }
-            finally { _savingDemand = false; BtnSaveDemand.IsEnabled = true; }
+            catch (Exception ex)
+            {
+                StatusText.Text = "保存失败：" + Api.FriendlyError(ex);
+                return false;
+            }
+            finally
+            {
+                BtnSaveDemand.IsEnabled = true;
+                _demandSaveGate.Release();
+            }
         }
 
         /* ── 页签 ──────────────────────────────────────────────── */

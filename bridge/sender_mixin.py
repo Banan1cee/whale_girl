@@ -1080,7 +1080,7 @@ class SenderMixin:
             if sent_at is None:
                 sent_at = self.PAT_SENT = {}
             sent_at[key] = _time.time()
-            G.log('[delivery] stage=pat result=sent target=%s' % G.safe_name(resolved))
+            G.log('[delivery] stage=pat result=submitted reason=wechat_unverified target=%s' % G.safe_name(resolved))
             return True, 'sent'
         self._pat_note_skip(key, resolved, fail_reason)
         return False, fail_reason

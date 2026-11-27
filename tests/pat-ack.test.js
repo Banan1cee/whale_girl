@@ -131,7 +131,7 @@ test('端到端：内核占额度 → 桥接回执失败 → 额度回滚 + 动�
   assert.ok(events[0].event.detail.includes('chat_not_opened'));
 });
 
-test('端到端：回执成功 → 额度保留 + 动作账本写 confirmed', async () => {
+test('端到端：回执成功 → 额度保留 + 动作账本记为已尝试', async () => {
   const { bot, events } = fakeStoreBot();
   const early = { platform: 'wechat', chatType: 'private', chatId: 'wxid_b', senderName: '测试好友' };
   const patId = bot.reservePat(early, Date.now());
@@ -141,7 +141,7 @@ test('端到端：回执成功 → 额度保留 + 动作账本写 confirmed', as
   });
   assert.strictEqual(out.json.settled, true);
   assert.strictEqual(bot._patBudget.get('wxid_b').count, 1);
-  assert.strictEqual(events[0].event.status, 'confirmed');
+  assert.strictEqual(events[0].event.status, 'submitted');
   assert.strictEqual(events[0].event.detail, '测试好友');
 });
 
@@ -197,7 +197,8 @@ test('动作账本认识 pat 类型，并渲染成一行事实', () => {
   const block = actionEvents.formatBlock([{ ts: Date.now(), type: 'pat', detail: '测试好友', status: 'confirmed' }]);
   assert.ok(block.includes('拍一拍'));
   assert.ok(block.includes('测试好友'));
-  assert.ok(block.includes('桥接确认发出'));
+  assert.ok(block.includes('微信结果未确认'));
+  assert.ok(!block.includes('桥接确认发出'), '旧版点击回执不能被当成真正发出');
 
   const failed = actionEvents.formatBlock([{ ts: Date.now(), type: 'pat', detail: '测试好友（no_friend_row）', status: 'failed' }]);
   assert.ok(failed.includes('失败'), '没拍到要照实写失败，不能写成拍到了');

@@ -7,4 +7,9 @@ namespace WhaleLauncher
     {
         Task RefreshAsync();
     }
+
+    public interface IPendingSettings
+    {
+        Task<bool> SavePendingSettingsAsync();
+    }
 }

@@ -34,7 +34,7 @@
                     <CheckBox x:Name="ChkPublish" Content="定时自动发表" Margin="0,0,16,0" />
                     <CheckBox x:Name="ChkPublishImage" Content="按情绪配一张图片" />
                 </WrapPanel>
-                <TextBlock Text="开启并保存后，微信消息一律前台发送。关闭朋友圈发表后恢复原发送方式。"
+                <TextBlock Text="设置可手动保存，切换页面或退出时也会保存。启用发表后，微信消息会改用前台发送。"
                            Style="{StaticResource Small}" TextWrapping="Wrap" Margin="0,6,0,0" />
                 <WrapPanel Margin="0,8,0,0">
                     <TextBlock Text="每隔（小时）" Style="{StaticResource Label}" VerticalAlignment="Center" />

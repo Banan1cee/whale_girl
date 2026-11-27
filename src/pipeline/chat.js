@@ -54,7 +54,7 @@ const { MessagePlugins } = require('../services/messagePlugins');
 const { JavaScriptPlugins, PluginRuntime } = require('../services/javascriptPlugins');
 const SEPARATE_REPLY_RE = /(?:^|[，。！？\s])(?:请|麻烦|能不能|可以|记得)?\s*你?\s*(?:要|给我)?\s*(?:分[条段开](?:来)?(?:发(?:送)?|回(?:复)?|说)|(?:一条一条|一句一句)地?[发回]|每(?:条|句|段)(?:话)?单独[发回]|分(?:成)?[两二三四五六七八九十\d]+[条段](?:气泡|发|回)?)(?:一下)?(?=$|[\s，。！？?!吧嘛哦啊,])/;
 // 私聊「拍拍我」：只有整句就是这个请求才直接回拍，避免误伤正常聊天。
-const PAT_COMMAND_RE = /^(?:快|来|给我|再)?\s*(?:拍一拍|拍拍|拍|戳一戳|戳戳)\s*我(?:一下|一下下|嘛|呗|吧|呀|啊)?[\s。！!？?~～]*$/u;
+const PAT_COMMAND_RE = /^(?:请\s*)?(?:你(?:能不能|可不可以|也可以|能|可以)?\s*)?(?:快|来|给我|再)?\s*(?:拍一拍|拍拍|拍|戳一戳|戳戳)\s*(?:我(?:一下下?)?|一下下?我)(?:可以吗|好吗|吗|嘛|呗|吧|呀|啊)?[\s。！!？?~～]*$/u;
 // 拍一拍回执最多等多久：桥接的硬截止是 9 秒，30 秒还没回执就当「没拍到」把额度还回去。
 const PAT_ACK_WAIT_MS = 30000;
 
@@ -431,7 +431,8 @@ class Bot {
         rec.last = Number(pending.prevLast || 0);
       }
     }
-    this.notePatEvent(pending, ok ? 'confirmed' : 'failed', reason, now);
+    // 回执只证明桥接点了菜单，微信有没有生成拍一拍提示仍未知。
+    this.notePatEvent(pending, ok ? 'submitted' : 'failed', reason, now);
     return true;
   }
 

@@ -44,7 +44,7 @@ namespace WhaleLauncher.Views
         public override string ToString() => Label ?? Key ?? "";
     }
 
-    public partial class SettingsPage : UserControl, IRefreshable
+    public partial class SettingsPage : UserControl, IRefreshable, IPendingSettings
     {
         private readonly RuntimeSupervisor _sup;
         private readonly ConfigSaver _saver;
@@ -53,6 +53,7 @@ namespace WhaleLauncher.Views
         private long _configurationRevision;
         private readonly Dictionary<string, Action<JsonElement>> _loaders = new Dictionary<string, Action<JsonElement>>();
         private readonly Dictionary<string, Func<Task<bool>>> _apiFieldSaves = new Dictionary<string, Func<Task<bool>>>();
+        private readonly List<Func<Task<bool>>> _pendingFormSaves = new List<Func<Task<bool>>>();
         private readonly HashSet<string> _dirtyFields = new HashSet<string>();
         private readonly Dictionary<string, Action<string>> _secretMaskLoaders = new Dictionary<string, Action<string>>();
         private static string MaskApiKey(string value)
@@ -83,6 +84,16 @@ namespace WhaleLauncher.Views
                     foreach (var refresh in _refreshBudgetHints) refresh();
             };
             Unloaded += (_, __) => _pageLifetime.Deactivate();
+        }
+
+        public async Task<bool> SavePendingSettingsAsync()
+        {
+            await _saver.FlushAsync();
+            foreach (var save in _apiFieldSaves.Values)
+                if (!await save()) return false;
+            foreach (var save in _pendingFormSaves)
+                if (!await save()) return false;
+            return true;
         }
 
         // ── 全部设置清单（启动器是唯一界面）────────────────────────
@@ -838,11 +849,11 @@ namespace WhaleLauncher.Views
                 {
                     var box = new TextBox { AcceptsReturn = true, MinHeight = 56, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
                     box.TextChanged += (s, e) => { if (!_loading) { _dirtyFields.Add(f.Path); _configurationRevision++; } };
+                    _apiFieldSaves[f.Path] = async () => !_dirtyFields.Contains(f.Path) ||
+                        await PatchAsync(f.Path, (box.Text ?? "").Split('\n').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray());
                     box.LostFocus += async (s, e) =>
                     {
-                        if (_loading) return;
-                        var lines = (box.Text ?? "").Split('\n').Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
-                        await PatchAsync(f.Path, lines);
+                        if (!_loading) await _apiFieldSaves[f.Path]();
                     };
                     _loaders[f.Path] = v =>
                     {
@@ -1221,6 +1232,11 @@ namespace WhaleLauncher.Views
                         if (e.Key == System.Windows.Input.Key.Enter) System.Windows.Input.Keyboard.ClearFocus();
                     };
 
+                    _pendingFormSaves.Add(async () =>
+                    {
+                        saveTimer.Stop();
+                        return !saves.HasPendingChanges || (await saves.SaveAsync()).Ok;
+                    });
                     saveTimer.Tick += async (s, e) =>
                     {
                         saveTimer.Stop();
@@ -1870,6 +1886,9 @@ namespace WhaleLauncher.Views
                     }
                     if (!result.Ok) visionResult.Text = "保存失败：" + Api.Message(result);
                 });
+            _pendingFormSaves.Add(async () => !chatSaves.HasPendingChanges || (await chatSaves.SaveAsync()).Ok);
+            _pendingFormSaves.Add(async () => !visionSaves.HasPendingChanges || (await visionSaves.SaveAsync()).Ok);
+
             void Edited(bool vision)
             {
                 if (suppressAuto || _loading || !_configLoaded) return;

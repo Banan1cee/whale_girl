@@ -72,10 +72,11 @@ test('拍一拍开关默认开，显式关掉生效', () => {
 });
 
 test('私聊拍一拍命令只认整句', () => {
-  for (const text of ['拍拍我', '拍一拍我', '拍我一下', '快拍我', '戳戳我', '拍拍我呀']) {
+  for (const text of ['拍拍我', '拍一拍我', '拍我一下', '快拍我', '戳戳我', '拍拍我呀',
+    '你拍我一下', '你能拍我一下吗？', '请你拍一拍我吧', '你也可以拍我', '拍一下我', '拍我一下可以吗']) {
     assert.strictEqual(PAT_COMMAND_RE.test(text), true, text);
   }
-  for (const text of ['他拍了拍我的头', '拍拍我然后呢', '拍了拍你', '别拍我']) {
+  for (const text of ['他拍了拍我的头', '拍拍我然后呢', '拍了拍你', '别拍我', '你不可以拍我', '你刚刚拍我了吗', '为什么不拍我']) {
     assert.strictEqual(PAT_COMMAND_RE.test(text), false, text);
   }
 });
@@ -87,7 +88,7 @@ test('私聊「拍拍我」走拍一拍动作，关闭开关后不走', async ()
   });
   const raw = {
     platform: 'wechat', chatType: 'private', chatId: 'wxid_a',
-    senderId: 'wxid_a', senderName: '测试好友', text: '拍拍我',
+    senderId: 'wxid_a', senderName: '测试好友', text: '你也可以拍我',
   };
   const out = await Bot.prototype._handleOnce.call(fake(), raw, { localWechat: true });
   assert.strictEqual(out.action, 'pat');
@@ -274,7 +275,7 @@ test('回执成功保留额度，回执失败把额度还回去', () => {
   assert.strictEqual(bot.settlePat(okId, true, 'sent', t0 + 500), true);
   assert.strictEqual(bot._patBudget.get('wxid_a').count, 1, '拍到了就留着这次额度');
   assert.strictEqual(events[0].event.type, 'pat');
-  assert.strictEqual(events[0].event.status, 'confirmed');
+  assert.strictEqual(events[0].event.status, 'submitted');
   assert.ok(bot._patPending.size === 0);
 
   const failId = bot.reservePat(early, t0 + 1000);
