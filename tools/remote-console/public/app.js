@@ -114,10 +114,8 @@ function renderHost() {
   byId('host-auto-start-state').textContent = host.autoStart ? '开' : '关';
   byId('host-remote-launch-state').textContent = host.remoteProcessLaunch ? '开' : '关';
   byId('host-keep-awake').value = ['off', 'system', 'display'].includes(host.keepAwake) ? host.keepAwake : 'off';
-  byId('host-remote-launch').checked = host.remoteProcessLaunch === true;
   byId('host-auto-start').checked = host.autoStart === true;
-  // 管理员模式下启动器默认拒绝启动内核；只有「允许手机启动内核」才放行，与后端判断保持一致。
-  byId('host-hint').hidden = !(host.processLaunchAllowed === false && host.remoteProcessLaunch !== true);
+  byId('host-hint').hidden = host.processLaunchAllowed !== false;
   // 远程开关屏幕：笔记本没有这个能力（开关也不显示）；台式机打开开关后，桌面和手机才出现亮屏/关屏按钮。
   const desktop = host.isLaptop !== true;
   const displayControl = host.displayControl === true;
@@ -431,7 +429,7 @@ async function loadDiagnostics() {
     result.bridgeOnline ? '微信桥接在线' : result.bridgeRunning ? '正在连接微信' : '桥接已停止',
     result.wechatAccountVerified ? '微信账号已核验' : '',
     result.updateBlocked ? '启动器正在检查或等待更新' : '',
-    result.processLaunchAllowed === false ? '管理员模式下请在电脑上启动或重启程序' : '',
+    result.processLaunchAllowed === false ? '请在电脑端的「主机」里打开「允许手机启动内核」' : '',
   ];
   byId('diagnostic-status').textContent = lines.filter(Boolean).join(' · ');
   diagnosticLines = Array.isArray(result.logs) ? result.logs : [];
@@ -1247,7 +1245,6 @@ function bindHostToggle(id, action, question) {
     run(() => hostCommand({ action, value: enabled, confirm: true }, enabled ? '已开启。' : '已关闭。'));
   });
 }
-bindHostToggle('host-remote-launch', 'remote-process-launch', '允许手机启动或重启电脑上的内核？');
 bindHostToggle('host-auto-start', 'auto-start', '更改鲸鲸的开机自启设置？');
 bindHostToggle('host-display-control', 'display-control', '允许从手机远程点亮或关闭电脑屏幕？');
 

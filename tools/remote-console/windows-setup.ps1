@@ -14,6 +14,7 @@ if ($ConsolePort) { $port = $ConsolePort }
 if ($port -lt 1 -or $port -gt 65535) { throw '无效的控制台端口。' }
 
 $consoleUrl = "http://127.0.0.1:$port"
+$consoleFolder = $PSScriptRoot
 $privateDir = Join-Path $env:LOCALAPPDATA 'WhaleGirlRemoteConsole'
 $keyFile = Join-Path $privateDir "saved-pairing-$port.xml"
 $legacyKeyFile = Join-Path $privateDir "pairing-$port.xml"
@@ -32,14 +33,45 @@ function Read-SavedPairingKey {
     } catch { return }
 }
 
-function Read-RunningPairingKey {
+function Read-RunningPairingKey([int]$WaitSeconds = 8) {
     $key = Read-SavedPairingKey
-    if (-not $key) { return }
+    if (-not $key) { throw '当前 Windows 用户的配对信息不可用。请用同一个 Windows 账号打开第 2 步和第 3 步。' }
+    $sha = [Security.Cryptography.SHA256]::Create()
     try {
-        $headers = @{ Authorization = 'Bearer ' + $key }
-        $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 -Method Head -Uri "$consoleUrl/console/pairing" -Headers $headers
-        if ($response.StatusCode -eq 204) { return $key }
-    } catch { return }
+        $folder = [IO.Path]::GetFullPath($consoleFolder).TrimEnd('\').ToUpperInvariant()
+        $hash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($folder))).Replace('-', '')
+    } finally { $sha.Dispose() }
+
+    $wait = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        # 只直连本机。系统代理或重定向不能接收配对 Key，也不能代答健康检查。
+        $request = [Net.HttpWebRequest][Net.WebRequest]::Create("$consoleUrl/console/pairing")
+        $request.Proxy = $null
+        $request.AllowAutoRedirect = $false
+        $request.Timeout = 1200
+        $request.Method = 'HEAD'
+        $request.Headers['Authorization'] = 'Bearer ' + $key
+        $response = $null
+        try {
+            try { $response = $request.GetResponse() }
+            catch [Net.WebException] {
+                if ($_.Exception.Response) { $response = $_.Exception.Response }
+                elseif ($_.Exception.Status -notin @('ConnectFailure', 'Timeout', 'ReceiveFailure', 'ConnectionClosed')) { throw }
+            }
+            if ($response) {
+                $status = [int]$response.StatusCode
+                if ($status -eq 204 -and $response.Headers['X-Whale-Console-Instance'] -eq $hash) { return $key }
+                Write-PhoneAccessLog "Local console did not match (HTTP $status)."
+                if ($status -eq 401) {
+                    throw '本机端口上的控制台拒绝了当前配对 Key。请关闭旧的第 2 步窗口，再从这个文件夹启动第 2 步。'
+                }
+                throw "端口 $port 上运行的不是这个文件夹里的新版控制台。请关闭其他版本的第 2 步窗口，再打开本文件夹的第 2 步。"
+            }
+        } finally { if ($response) { $response.Dispose() } }
+        if ($wait.Elapsed.TotalSeconds -lt $WaitSeconds) { Start-Sleep -Milliseconds 350 }
+    } while ($wait.Elapsed.TotalSeconds -lt $WaitSeconds)
+    Write-PhoneAccessLog "Local console did not respond on port $port."
+    throw "本机端口 $port 没有收到控制台响应。请看第 2 步窗口是否已显示配对 Key 或启动错误，并保持窗口开启。"
 }
 
 function Get-OrCreatePairingKey {
@@ -251,7 +283,7 @@ if ($Step -eq 3) {
         Write-Host '第 3 步：正在检查控制台和 Tailscale……' -ForegroundColor Cyan
         if (-not $Elevated) {
             Write-PhoneAccessLog 'Step 3 started.'
-            if (-not (Read-RunningPairingKey)) { throw '请先用第 2 步启动控制台，并保持它的窗口开启。' }
+            Read-RunningPairingKey | Out-Null
         }
         $address = Get-PhoneAccessAddress
         if ($address -cnotmatch '^https://[a-z0-9][a-z0-9.-]+\.ts\.net(?::8443)?/$') {
@@ -320,7 +352,6 @@ try {
     try { $locked = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $locked = $true }
     if (-not $locked) {
         $runningKey = Read-RunningPairingKey
-        if (-not $runningKey) { throw '控制台正在启动，请稍后再试。' }
         Start-Process $consoleUrl
         Write-Host "控制台已在运行：$consoleUrl"
         Write-Host "配对 Key：$runningKey" -ForegroundColor Cyan
@@ -329,6 +360,7 @@ try {
     }
 
     $env:WHALE_CONSOLE_PAIRING_KEY = Get-OrCreatePairingKey
+    $env:WHALE_CONSOLE_PORT = [string]$port
     & $node (Join-Path $PSScriptRoot 'server.js') --windows-guide
     if ($LASTEXITCODE) { exit $LASTEXITCODE }
 } finally {

@@ -229,9 +229,11 @@ namespace WhaleLauncher.Views
                     + " · 会话 " + h.SessionId + " · 启动器已运行 " + Short(h.UptimeSeconds);
                 HostConfigLine.Text = "保活 " + ModeLabel(h.KeepAwake)
                     + "   ·   开机自启 " + (h.AutoStart ? "已开" : "已关")
-                    + "   ·   手机启动内核 " + (h.RemoteProcessLaunch ? "允许" : "不允许");
+                    + "   ·   手机启动内核 " + (h.ProcessLaunchAllowed ? "允许" : "不允许");
                 HostKeepAwake.SelectedIndex = ModeIndex(h.KeepAwake);
                 ChkRemoteProcess.IsChecked = h.RemoteProcessLaunch;
+                ChkRemoteProcess.IsEnabled = PhoneControl.IsStandardUser();
+                ChkRemoteProcess.ToolTip = ChkRemoteProcess.IsEnabled ? null : "请退出管理员实例并双击启动器。";
                 ChkAutoStart.IsChecked = h.AutoStart;
                 ChkDisplayControl.IsChecked = h.DisplayControl;
                 // 笔记本上不提供远程开关屏幕，开关本身也不显示；台式机上打开开关才出现关屏按钮。

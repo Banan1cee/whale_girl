@@ -33,7 +33,7 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
             import ctypes
             if not ctypes.windll.shell32.IsUserAnAdmin():
                 G.log_warn('[!] 当前不是管理员：如果微信也是管理员运行的，零焦点发送会用不了（UIPI）。')
-                G.log('    启动器本身以管理员运行，桥接继承同一权限；命令行手动跑请用管理员终端。')
+                G.log('    桥接继承启动器权限。微信以普通权限运行时，双击启动器即可。')
         except Exception:
             pass
         if any((ord(ch) > 127 for ch in G.ROOT)):
