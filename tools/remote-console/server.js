@@ -2,10 +2,11 @@
 
 const http = require('node:http');
 const { spawn } = require('node:child_process');
-const { randomBytes, timingSafeEqual } = require('node:crypto');
+const { createHash, randomBytes, timingSafeEqual } = require('node:crypto');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const { actions, appRoot, launcherControl } = require('./launcher-control');
+const consoleInstance = createHash('sha256').update(path.resolve(__dirname).toUpperCase()).digest('hex');
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -844,7 +845,7 @@ function createConsole({ token, whalePort = 8787, controlLauncher = launcherCont
       return json(res, 401, { error: '配对密钥无效。请复制电脑端当前显示的密钥。' });
     }
     if (isPairingCheck) {
-      res.writeHead(204);
+      res.writeHead(204, { 'X-Whale-Console-Instance': consoleInstance });
       return res.end();
     }
     (async () => {

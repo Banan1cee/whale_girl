@@ -146,7 +146,9 @@ test('配对、数据白名单、指定操作和内核离线', async t => {
     assert.equal((await get('/console/status', {})).status, 401);
     assert.equal((await get('/console/settings', {})).status, 401);
     assert.equal((await fetch(consoleUrl + '/console/pairing', { method: 'HEAD' })).status, 401);
-    assert.equal((await fetch(consoleUrl + '/console/pairing', { method: 'HEAD', headers: auth })).status, 204);
+    const pairing = await fetch(consoleUrl + '/console/pairing', { method: 'HEAD', headers: auth });
+    assert.equal(pairing.status, 204);
+    assert.match(pairing.headers.get('x-whale-console-instance'), /^[0-9a-f]{64}$/);
     assert.equal((await post('/console/setting', { key: 'freeChat', value: true }, {})).status, 401);
     assert.equal((await get('/console/status', { ...auth, 'Sec-Fetch-Site': 'cross-site' })).status, 401);
     assert.equal(calls.length, 0);
