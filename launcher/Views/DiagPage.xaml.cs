@@ -465,13 +465,14 @@ namespace WhaleLauncher.Views
             try
             {
                 await LoadVersionsAsync();                       // node / python 版本，内部有缓存
+                var snapshotAt = DateTimeOffset.UtcNow;
                 var probe = await _sup.ProbeAsync();             // 内核/桥接在线情况
                 var status = await Api.Get(_sup.Url, "/api/status");
                 var settings = await Api.Get(_sup.Url, "/api/settings");
                 var doctor = await RunDoctorAsync();             // 15 秒超时，失败只写原因
 
                 var includeRaw = ChkIncludeRaw.IsChecked == true;
-                var path = await Task.Run(() => WritePackage(probe, status, settings, doctor, includeRaw));
+                var path = await Task.Run(() => WritePackage(probe, status, settings, doctor, includeRaw, snapshotAt));
                 Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
             }
             catch (Exception ex)
@@ -487,7 +488,7 @@ namespace WhaleLauncher.Views
         }
 
         /// <summary>在后台线程组装 zip。返回 zip 的绝对路径。</summary>
-        private string WritePackage(Snapshot probe, ApiResult status, ApiResult settings, string doctor, bool includeRaw)
+        private string WritePackage(Snapshot probe, ApiResult status, ApiResult settings, string doctor, bool includeRaw, DateTimeOffset snapshotAt)
         {
             var name = "logs-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip";
             var path = Path.Combine(_sup.DataDir, name);
@@ -510,6 +511,26 @@ namespace WhaleLauncher.Views
                 AddText(zip, "README.txt", BuildReadme(includeRaw));
                 AddText(zip, "info.txt", MaskSecrets(BuildInfo(probe, skipped, includeRaw)));
                 AddText(zip, "status.json", BuildStatus(status, settings));
+                AgentDiagnosticReport.Package agent = null;
+                try
+                {
+                    agent = AgentDiagnosticReport.Build(snapshotAt, AgentSnapshot(probe, status, settings, config), logs);
+                }
+                catch (Exception ex)
+                {
+                    // 可选诊断项异常不能拖垮原有导出，也不能将异常的原始路径写进摘要。
+                    AddText(zip, "agent-report.json", JsonSerializer.Serialize(new
+                    {
+                        schemaVersion = 1, capturedAt = snapshotAt, status = "collection_failed",
+                        errorType = ex.GetType().Name, fallbackPath = "info.txt",
+                    }));
+                }
+                if (agent != null)
+                {
+                    AddText(zip, "agent-report.json", agent.Report);
+                    AddText(zip, "events.jsonl", agent.Events);
+                    AddText(zip, "诊断摘要.txt", agent.Summary);
+                }
                 AddText(zip, "doctor.txt", MaskSecrets(doctor));
                 if (config != null) AddText(zip, "config.redacted.json", config);
                 if (settingsRedacted != null) AddText(zip, "settings.redacted.json", settingsRedacted);
@@ -531,7 +552,7 @@ namespace WhaleLauncher.Views
                         if (!string.IsNullOrEmpty(text) && !LooksBinary(text))
                             AddText(zip, "wechatauto_logs/" + Path.GetFileName(f), MaskSecrets(text));
                         else
-                            zip.CreateEntryFromFile(f, "wechatauto_logs/" + Path.GetFileName(f), CompressionLevel.Optimal);
+                            skipped.Add(Path.GetFileName(f) + "：无法脱敏，未导出");
                     }
                     catch (Exception ex) { skipped.Add(Path.GetFileName(f) + "：" + ex.Message); }
                 }
@@ -718,7 +739,10 @@ namespace WhaleLauncher.Views
             sb.AppendLine("  info.txt              运行环境、微信窗口/账号现场、消息统计、各项大小与磁盘剩余");
             sb.AppendLine("  config.redacted.json  config.json 的完整副本，敏感值已脱敏");
             sb.AppendLine("  settings.redacted.json data/settings.json 的副本，敏感值已脱敏");
-            sb.AppendLine("  status.json           /api/status 与 /api/settings 的原始返回");
+            sb.AppendLine("  agent-report.json     Agent 入口：先读问题、证据引用和快照");
+            sb.AppendLine("  events.jsonl          结构化事件，flowId 串联同一轮回复");
+            sb.AppendLine("  诊断摘要.txt          供人快速核对的近期问题");
+            sb.AppendLine("  status.json           已脱敏的 /api/status 与 /api/settings 返回");
             sb.AppendLine("  doctor.txt            node server.js --doctor 的输出（尽力而为）");
             sb.AppendLine("  logs/                 各日志文件（logs/current/ 是这一次，logs/run-*/ 是历史启动）");
             sb.AppendLine("                        含 crash.log / bridge-crash.log / bridge-hang.log /");
@@ -817,6 +841,129 @@ namespace WhaleLauncher.Views
                 foreach (var s in skipped.Distinct()) sb.AppendLine("  - " + s);
             }
             return sb.ToString();
+        }
+
+        private object AgentSnapshot(Snapshot probe, ApiResult status, ApiResult settings, string redactedConfig)
+        {
+            bool? stickers = null;
+            if (!string.IsNullOrEmpty(redactedConfig))
+            {
+                try
+                {
+                    using var json = JsonDocument.Parse(redactedConfig);
+                    stickers = KnownBool(JsonRead.Prop(json.RootElement, "features"), "stickers");
+                }
+                catch (JsonException) { /* 旧配置可能只能按文本脱敏，继续导出其他来源。 */ }
+            }
+            var voice = AgentDiagnosticReport.ReadVoice(_sup.DataDir,
+                id =>
+                {
+                    try { return !string.IsNullOrWhiteSpace(BreezeSpeech.LoadKey(SpeechProviders.KeyFile(_sup.BaseDir, id))); }
+                    catch { return null; }
+                },
+                id =>
+                {
+                    try
+                    {
+                        using var devices = new NAudio.CoreAudioApi.MMDeviceEnumerator();
+                        using var device = devices.GetDevice(id);
+                        return device.State == NAudio.CoreAudioApi.DeviceState.Active &&
+                            device.DataFlow == NAudio.CoreAudioApi.DataFlow.Render;
+                    }
+                    catch { return null; }
+                });
+            var gateways = status?.Prop("gateways") ?? default;
+            var bridge = gateways.ValueKind == JsonValueKind.Array
+                ? JsonRead.Prop(gateways.EnumerateArray().FirstOrDefault(g => JsonRead.Str(g, "platform") == "wechat"), "bridge")
+                : default;
+            var online = KnownBool(bridge, "online") ?? (probe?.BrOnline == true ? true : null);
+            return new
+            {
+                versions = new
+                {
+                    application = AgentDiagnosticReport.Version(LauncherVersion().TrimStart('v')),
+                    kernel = AgentDiagnosticReport.Version(status?.Str("version")),
+                    launcher = typeof(DiagPage).Assembly.GetName().Version?.ToString(),
+                    windows = Environment.OSVersion.Version.ToString(),
+                    wechat = AgentWechatProcesses(),
+                },
+                kernelReady = probe?.NodeReady,
+                bridge = new
+                {
+                    running = probe?.BridgeUp, online,
+                    uiaReadable = online == true ? KnownBool(bridge, "uia") : null,
+                    accountVerified = online == true ? KnownBool(bridge, "accountOk") : null,
+                    accountGuard = KnownBool(bridge, "accountGuard"),
+                    bindingEvidence = online == true ? BindingEvidence(JsonRead.Str(bridge, "accountWhy")) : "unknown",
+                    windowState = online == true ? WindowState(JsonRead.Str(bridge, "window")) : "unknown",
+                    launcherElevated = IsAdmin(),
+                },
+                voiceRecognitionEnabled = KnownBool(settings?.Prop("voice") ?? default, "enabled"),
+                voiceSendFile = voice,
+                stickersConfigured = stickers,
+                missingEvidence = new[]
+                {
+                    online == true ? null : "liveBridgeHeartbeat",
+                    voice.ReadStatus == "loaded" ? null : "voiceSendConfig",
+                    voice.Enabled == true && voice.PlaybackDeviceReady == null ? "selectedPlaybackDeviceStatus" : null,
+                    stickers == null ? "stickerConfig" : null,
+                }.Where(item => item != null).ToArray(),
+            };
+        }
+
+        private static bool? KnownBool(JsonElement value, string key) => JsonRead.Prop(value, key).ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => null,
+        };
+
+        private static string WindowState(string value) => value switch
+        {
+            "可见" => "visible",
+            "已最小化" => "minimized",
+            "在托盘（窗口隐藏）" => "hidden",
+            _ when value.StartsWith("等待确认", StringComparison.Ordinal) => "awaiting_account",
+            _ when value.StartsWith("主窗句柄失效", StringComparison.Ordinal) => "window_lost",
+            _ when value.StartsWith("没有微信主窗", StringComparison.Ordinal) => "no_window",
+            _ => "unknown",
+        };
+
+        private static string BindingEvidence(string reason) => reason switch
+        {
+            "微信进程持有该账号数据库" => "process_owns_account_database",
+            "config.wechat.windowHwnd" => "configured_window",
+            "已锁定窗口" => "existing_binding",
+            "本机只登了一个号" => "single_account",
+            "锁定窗口已失效" => "window_lost",
+            _ when reason.StartsWith("命中最近会话", StringComparison.Ordinal) => "matching_recent_sessions",
+            _ when reason.Contains("多个", StringComparison.Ordinal) => "ambiguous_windows",
+            _ when reason.Contains("没登录", StringComparison.Ordinal) => "selected_account_not_logged_in",
+            _ when reason.Contains("读不到会话列表", StringComparison.Ordinal) => "session_list_unreadable",
+            _ => "unknown",
+        };
+
+        private static object AgentWechatProcesses()
+        {
+            try
+            {
+                var versions = new SortedSet<string>(StringComparer.Ordinal);
+                int count = 0;
+                foreach (var name in new[] { "Weixin", "WeChat" })
+                    foreach (var process in Process.GetProcessesByName(name))
+                        using (process)
+                        {
+                            count++;
+                            try
+                            {
+                                var version = AgentDiagnosticReport.Version(process.MainModule?.FileVersionInfo.FileVersion);
+                                if (version != null) versions.Add(version);
+                            }
+                            catch { /* 读取不到版本不代表微信没有运行。 */ }
+                        }
+                return new { processCount = count, versions };
+            }
+            catch { return new { readStatus = "read_failed" }; }
         }
 
         private string BuildStatus(ApiResult status, ApiResult settings)

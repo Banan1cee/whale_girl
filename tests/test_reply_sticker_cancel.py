@@ -1,11 +1,13 @@
 """Execute actual reply delivery branches with fake HTTP and no WeChat/UI."""
 import ast
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
 from bridge_ast import init, load_function
+from agent_diagnostics import Flow
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,7 +22,7 @@ class ReplyStickerCancelTests(unittest.TestCase):
                         sticker_base='http://test.invalid', sticker_headers={'x-bot-token': 'test-only'},
                         log=Mock(), time=SimpleNamespace(sleep=Mock()),
                         data={'sticker': self.item}, username='peer-test', target='测试会话',
-                        first=True, mention=None, is_group=False,
+                        first=True, mention=None, is_group=False, flow=None, voice_options={},
                         bubbles=['first', 'second'], send_text=Mock(return_value=False))
         init(self.env)
         load_function('cancel_reply_sticker', self.env)
@@ -54,6 +56,17 @@ class ReplyStickerCancelTests(unittest.TestCase):
         self.http.assert_called_once_with('http://test.invalid/api/stickers/cancel',
             json={'id': 'reply-job', 'generation': 'generation-one', 'chatUsername': 'peer-test'},
             headers=self.env['sticker_headers'], timeout=3)
+
+    def test_failed_text_and_sticker_cancellation_share_diagnostic_flow(self):
+        lines = []
+        self.env['flow'] = Flow(lines.append)
+        self.run_branch('text')
+        failed, cancelled = [json.loads(line.removeprefix('[agent_diag] ')) for line in lines]
+        self.assertEqual(failed['code'], 'TEXT_SEND_FAILED')
+        self.assertEqual(cancelled['status'], 'cancelled')
+        self.assertEqual(cancelled['causedBy'], failed['eventId'])
+        self.assertEqual(cancelled['flowId'], failed['flowId'])
+        self.assertNotIn('peer-test', ''.join(lines))
 
     def test_voice_handled_reply_also_releases_unused_sticker(self):
         self.env.update(send_voice_reply=Mock(return_value=True), spoken='test voice')

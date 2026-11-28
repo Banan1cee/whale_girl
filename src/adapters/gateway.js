@@ -12,6 +12,7 @@ const { tagName, textMeta } = require('../infra/privacy');
  * 发消息：POST {gateway.outboundUrl}  JSON:
  *   { platform, chat_id, chat_type, text, bubbles, reply_to, bot }
  */
+const { randomUUID } = require('node:crypto');
 const http = require('node:http');
 const https = require('node:https');
 const { URL } = require('node:url');
@@ -202,7 +203,16 @@ class Gateway {
         `[${this.platform}] 收到 ${msg.chatType === 'group' ? '群' : '私聊'}消息 sender=${tagName(msg.senderName)} ${textMeta(msg.text)}`
       );
     const localWechat = local && this.platform === 'wechat';
+    const started = Date.now();
     const result = await this.bot.handle(msg, { localWechat });
+    if (localWechat && typeof payload?.diagnosticFlowId === 'string' && /^[a-f0-9]{32}$/.test(payload.diagnosticFlowId)) {
+      const status = result.error ? 'failed' : result.action === 'reply' ? 'ready' : 'skipped';
+      const code = { failed: 'KERNEL_REPLY_ERROR', ready: 'KERNEL_REPLY_READY', skipped: 'KERNEL_NO_TEXT_REPLY' }[status];
+      this.logger?.info?.('[agent_diag] ' + JSON.stringify({
+        eventId: randomUUID().replaceAll('-', ''), flowId: payload.diagnosticFlowId, at: new Date().toISOString(),
+        component: 'kernel', subject: 'reply', stage: 'generate', status, code, durationMs: Math.max(0, Date.now() - started),
+      }));
+    }
     this.logger?.debug?.(`[${this.platform}] event=gateway.result action=${result.action || '-'} reason=${result.reason || '-'} bubbles=${(result.bubbles || []).length}`);
     // 拍一拍：只有本地微信桥接能执行 UIA 右键头像；外部 outboundUrl 网关不支持。
     const wantsPat = localWechat && result.pat === true;

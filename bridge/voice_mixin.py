@@ -5,8 +5,10 @@ import engine as G
 
 class VoiceMixin:
 
-    def send_voice_reply(self, text, who, username, cancelled=None, outcome=None):
+    def send_voice_reply(self, text, who, username, cancelled=None, outcome=None, diagnostic=None):
         if not self.group_is_alive(username) or not self.account_send_allowed('自动语音'):
+            if diagnostic is not None:
+                diagnostic('voice', 'resolve_target', 'failed', 'VOICE_ACCOUNT_OR_CHAT_NOT_READY')
             return False
         if not self.send_policy_allows(username, who):
             return False
@@ -37,7 +39,9 @@ class VoiceMixin:
                 if current not in keys:
                     return ''
                 return current
-        return G.voice_reply.deliver(G.ROOT, text, hwnd, prepare, G.log, cancelled=cancelled, outcome=outcome, send_lock=self.send_lock)
+        kwargs = {'diagnostic': diagnostic} if diagnostic is not None else {}
+        return G.voice_reply.deliver(G.ROOT, text, hwnd, prepare, G.log, cancelled=cancelled,
+                                     outcome=outcome, send_lock=self.send_lock, **kwargs)
 
     def voice_test_loop(self):
         while True:
