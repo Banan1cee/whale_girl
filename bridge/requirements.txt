@@ -15,6 +15,11 @@ Pillow==13.0.0
 pyperclip==1.11.0
 cryptography==50.0.2
 winsdk==1.0.0b10
+winrt-runtime==3.2.1
+winrt-Windows.Media.Ocr==3.2.1
+winrt-Windows.Graphics.Imaging==3.2.1
+winrt-Windows.Storage==3.2.1
+typing-extensions==4.15.0
 imageio-ffmpeg==0.8.1
 zstandard==0.25.0
 opencv-python==5.0.0.93

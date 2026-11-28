@@ -88,7 +88,7 @@ test('dist-info 齐全：METADATA 有 Version，licenses 非空', () => {
   assert.ok(fs.existsSync(metadata), '缺少 dist-info/METADATA');
   const text = fs.readFileSync(metadata, 'utf8');
   assert.match(text, /^Name: wechatauto-replica$/m, 'METADATA 的包名不对');
-  assert.match(text, /^Version: 1\.2\.10$/m, 'METADATA 的版本应是 1.2.10');
+  assert.match(text, /^Version: 1\.3\.0\.2$/m, 'METADATA 的版本应是 1.3.0.2');
   for (const f of ['WHEEL', 'RECORD', 'entry_points.txt', 'top_level.txt']) {
     assert.ok(fs.existsSync(path.join(distInfo, f)), '缺少 dist-info/' + f);
   }
