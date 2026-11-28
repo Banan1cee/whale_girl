@@ -2,6 +2,10 @@
 
 const root = document.documentElement;
 
+// 已发行的桌面端和手机控制台都使用这个旧地址。
+const phoneHelp = document.querySelector('#phone-control');
+if (phoneHelp && window.location?.hash === '#phone-control') window.location.replace(phoneHelp.href);
+
 const dialog = document.querySelector('#article-dialog');
 function toggleReport(open) {
   if (window.WhaleSiteMotion) window.WhaleSiteMotion.dialog(dialog, open);

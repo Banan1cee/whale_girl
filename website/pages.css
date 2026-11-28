@@ -84,6 +84,7 @@ code{overflow-wrap:anywhere}
 .metadata-panel>p{font-size:14px}
 .prose{max-width:850px}
 .prose h2{font-size:29px}
+.guide-content a{text-decoration:underline;text-underline-offset:.18em}
 .prose details{border-bottom:1px solid var(--line);padding:18px 0}
 .prose summary{cursor:pointer;font-size:17px;min-height:30px}
 .prose details p{margin:18px 0 8px}

@@ -42,7 +42,18 @@ async function main() {
     const home = read('index.html');
     const archive = read('downloads/index.html');
     const oldPage = read('downloads/v3.60/index.html');
-    for (const file of ['downloads/index.html', 'downloads/v3.60/index.html', 'plugins/index.html',
+    const guide = read('guide/index.html');
+    assert.match(guide, /href="https:\/\/bot\.zyyc\.cc\/guide\/"/);
+    assert.match(guide, /href="\.\.\/guide\/" aria-current="page"/);
+    const topics = ['install', 'model', 'wechat-bridge', 'first-reply', 'troubleshooting', 'phone-control', 'plugins', 'data'];
+    for (const topic of topics) {
+      assert.ok(guide.includes(`href="#${topic}"`), `目录缺少 ${topic}`);
+      assert.ok(guide.includes(`id="${topic}"`), `教程缺少章节锚点 ${topic}`);
+    }
+    assert.match(home, /id="phone-control" href="\.\/guide\/#phone-control"/);
+    assert.match(archive, /href="\.\.\/guide\/#install"/);
+    assert.match(read('sitemap.xml'), /<loc>https:\/\/bot\.zyyc\.cc\/guide\/<\/loc>/);
+    for (const file of ['downloads/index.html', 'downloads/v3.60/index.html', 'guide/index.html', 'plugins/index.html',
       'plugins/text-counter/index.html', 'support/index.html', 'support/transparency/index.html', 'team/index.html']) {
       assert.doesNotMatch(read(file), /class="page-brand-line"|class="page-brand-location"/,
         '子页面不再显示重复的品牌及页面名称横栏');
