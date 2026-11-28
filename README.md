@@ -177,6 +177,18 @@ Current release builds are **not signed yet**, so Windows may show "Unknown publ
 - **我在微信里养了个 AI 群友：零焦点 UIA 收发、本地数据、可换人设** — how the bridge talks to WeChat without stealing focus, the UIA/WM_CHAR version traps, and the personas system.
   - Zhihu: <https://zhuanlan.zhihu.com/p/2103852627175986683>
   - Copy in this repo: [`docs/articles/wechat-ai-companion.md`](docs/articles/wechat-ai-companion.md)
+
+## Star History
+
+<a href="https://star-history.com/#Banan1cee/whale_girl&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Banan1cee/whale_girl&type=Date&theme=dark" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Banan1cee/whale_girl&type=Date" width="800" />
+  </picture>
+</a>
+
+Rendered on demand by [star-history.com](https://star-history.com/#Banan1cee/whale_girl&Date). The chart follows the current star count by itself — nothing needs to be rebuilt or re-committed.
+
 ## Acknowledgements
 
 - **Character author 上善无形** — the Whale Girl icon is a derivative work based on their original character. See [`docs/NOTICE.md`](docs/NOTICE.md).
