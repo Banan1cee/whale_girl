@@ -40,11 +40,16 @@ internal static class AgentDiagnosticChecks
             ("logs/current/bridge.log", "首行\n" + failed + "\n" + cancelled),
             ("logs/current/wechat-bridge-4x.log", failed + "\n" + cancelled),
             ("logs/current/kernel.log", "12:34:56 [sticker] stage=cancel result=cancelled reason=reply_delivery_stopped"),
+            ("logs/run-20200101-000000/kernel.log",
+                "\n\n23:59:59 [sticker] stage=cancel result=cancelled reason=reply_delivery_stopped"),
             ("trace/raw/private.json", Record(new string('d', 32), "bridge", "text", "failed", "TEXT_SEND_FAILED")),
         });
         using var json = JsonDocument.Parse(pack.Report);
         var findings = json.RootElement.GetProperty("findings").EnumerateArray().ToArray();
         check(findings.Length == 3, "归档可离线分析、去重并排除原文目录");
+        var legacy = findings.Single(x => x.GetProperty("certainty").GetString() == "legacy_observation");
+        check(legacy.GetProperty("evidence").GetProperty("path").GetString() == "logs/current/kernel.log",
+            "旧日志有同类证据时优先展示当前运行，避免拿旧故障解释本次反馈");
         var item = findings.Single(x => x.TryGetProperty("causedBy", out _));
         check(item.GetProperty("causedBy").GetString() == faultId && item.GetProperty("flowId").GetString() == flow &&
               item.GetProperty("evidence").GetProperty("line").GetInt32() == 3, "取消准确引用同轮前置失败和导出行号");

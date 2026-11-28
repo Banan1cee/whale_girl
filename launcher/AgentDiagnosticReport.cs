@@ -165,6 +165,13 @@ internal static class AgentDiagnosticReport
             ? "kernel" : "bridge", subject, stage, status, code, null, null, evidence);
     }
 
+    private static string LegacyRunOrder(string path)
+    {
+        var run = path.Split('/')[1];
+        if (run == "current") return path.EndsWith(".1", StringComparison.Ordinal) ? "z-0" : "z-1";
+        return run + (path.EndsWith(".1", StringComparison.Ordinal) ? "-0" : "-1");
+    }
+
     internal static Package Build(DateTimeOffset capturedAt, object snapshot,
         IEnumerable<(string Entry, string Text)> logs)
     {
@@ -190,7 +197,11 @@ internal static class AgentDiagnosticReport
             candidates.AddRange(tail.Where(row => row.EventId == null || seen.Add(row.EventId)));
         }
         var rows = candidates.Where(e => e.At == null || e.At >= capturedAt.AddHours(-24))
-            .OrderBy(e => e.At ?? DateTimeOffset.MinValue).TakeLast(MaxEvents).ToArray();
+            .OrderBy(e => e.At ?? DateTimeOffset.MinValue)
+            // 旧日志只有本地时分秒。按归档批次和文件内行号选证据，别跨文件拼时间顺序。
+            .ThenBy(e => e.At == null ? LegacyRunOrder(e.Evidence.Path) : "", StringComparer.Ordinal)
+            .ThenBy(e => e.At == null ? e.Evidence.Line : 0)
+            .TakeLast(MaxEvents).ToArray();
         var exported = rows.Where(x => x.EventId != null).ToDictionary(x => x.EventId);
         rows = rows.Select(e => e.CausedBy != null &&
             (!exported.TryGetValue(e.CausedBy, out var cause) || cause.FlowId != e.FlowId)
