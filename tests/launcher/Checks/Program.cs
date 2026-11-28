@@ -267,6 +267,7 @@ process.stdin.on('data',b=>{if(String(b).includes('shutdown'))s.close(()=>proces
 File.WriteAllText(Path.Combine(root,"server.js"),externalServer);
 void Check(bool ok,string message) { if(!ok) throw new Exception(message); Console.WriteLine("PASS: "+message); }
 try {
+ AgentDiagnosticChecks.Run(root, Check);
  File.WriteAllText(Path.Combine(root,"config.json"),"{\"marker\":\"offline-untouched\",\"apiKey\":\"fixture-arbitrary-7f1c/+=:\"}");
  File.WriteAllText(Path.Combine(root,"data","external-config.json"),"{\"marker\":\"external-before\",\"gets\":0,\"writes\":0}");
  Check(Api.Detail(null)=="", "联系人摘要兼容空响应");

@@ -170,6 +170,7 @@ class BridgeRuntime(AccountMixin, WindowMixin, SenderMixin, StickerMixin, VoiceM
             hit = G.resolve_account_dir(self.db_dir, self.acct) if self.db_dir else ''
             if not hit:
                 G.log('')
+                G.agent_diagnostics.Flow(G.log).record('wechat', 'startup', 'failed', 'WECHAT_SELECTED_ACCOUNT_NOT_FOUND')
                 G.log('✗ 找不到微信账号 %s。' % G.safe_id(self.acct))
                 G.log('  这台机器上现有账号：%s' % ('、'.join(G.safe_id(x) for x in self.acct_dirs) or '（一个都没有）'))
                 G.log('  去启动器「微信桥接」页点一下账号卡，或把 config.json 的')

@@ -872,6 +872,10 @@ class ReceiverMixin:
                     G.log('引用图片读取：%s' % ('已识别' if description else '未取到或未识别'))
                 content = quote_content_text(quote, description)
             payload = {'chat_id': username, 'chat_type': 'group' if is_group else 'private', 'user_id': sender or 'unknown', 'senderId': sender or 'unknown', 'sender_id': sender or 'unknown', 'senderName': nickname, 'nickname': nickname, 'text': content, 'msg_id': '%s:%s:%s' % (username, msg.get('shard') or '', msg.get('local_id')), 'at_me': addressed, 'mentioned_names': _mentioned_names, 'self_names': _payload_names, 'chat_title': self.display_name(username) if is_group else ''}
+            diag_module = getattr(G, 'agent_diagnostics', None)
+            flow = diag_module.Flow(G.log) if diag_module else None
+            if flow:
+                payload['diagnosticFlowId'] = flow.id
             if at_me_pat:
                 payload['pat'] = True
                 payload['at_me'] = True
@@ -882,6 +886,8 @@ class ReceiverMixin:
                 # 模型生成耗时由内核控制，桥接不再用 120 秒读超时截断本轮回复。
                 r = G.LOCAL_HTTP.post(self.bot_url, json=payload, headers=headers, timeout=(10, None))
                 if r.status_code != 200:
+                    if flow:
+                        flow.record('reply', 'webhook', 'failed', 'KERNEL_HTTP_ERROR')
                     G.CONN_STATE['ok'] = False
                     hint = '桥接 token 不匹配，请核对配置并重启桥接' if r.status_code in (401, 403) else '请查看内核诊断日志'
                     G.log_throttled('webhook-http:' + str(r.status_code), '鲸鲸接口返回 HTTP %s：%s' % (r.status_code, hint))
@@ -948,7 +954,9 @@ class ReceiverMixin:
             if data.get('stickerOnly') is True:
                 sticker = data.get('sticker')
                 if G.STICKER_TEST_ON and isinstance(sticker, dict):
-                    self.claim_and_send_sticker(sticker, expected_chat=target, expected_username=username)
+                    result = self.claim_and_send_sticker(sticker, expected_chat=target, expected_username=username)
+                    if flow:
+                        flow.sticker(result)
                 return
             G.log('[delivery] stage=reply chatType=%s bubbles=%d chars=%d' % ('group' if is_group else 'private', len(bubbles), sum((len(x or '') for x in bubbles))))
             first = True
@@ -956,14 +964,19 @@ class ReceiverMixin:
                 G.log('[voice] stage=decision result=skip reason=error_or_command_reply')
             elif data.get('separateText'):
                 G.log('[voice] stage=decision result=skip reason=separate_text_requested')
-            elif G.voice_reply.choose(G.voice_reply.settings(G.ROOT), content, is_group, G.random.random, log=G.log):
-                spoken = '\n'.join((line.strip() for line in bubbles if line.strip()))
-                if self.send_voice_reply(spoken, target, username):
-                    if isinstance(data.get('sticker'), dict):
-                        self.cancel_reply_sticker(data['sticker'], username)
-                    G.log('[delivery] stage=voice result=handled textFallback=false stickerFallback=false reason=voice_may_have_sent')
-                    return
-                G.log('[voice] stage=delivery result=text_fallback reason=prepare_or_synthesis_failed')
+            else:
+                voice_config, voice_state = G.voice_reply.read_settings(G.ROOT)
+                if flow:
+                    flow.record('voice', 'configuration', 'ready' if voice_state == 'VOICE_ENABLED' else 'skipped', voice_state)
+                voice_options = {'diagnostic': flow.record} if flow else {}
+                if G.voice_reply.choose(voice_config, content, is_group, G.random.random, log=G.log, **voice_options):
+                    spoken = '\n'.join((line.strip() for line in bubbles if line.strip()))
+                    if self.send_voice_reply(spoken, target, username, **voice_options):
+                        if isinstance(data.get('sticker'), dict):
+                            self.cancel_reply_sticker(data['sticker'], username)
+                        G.log('[delivery] stage=voice result=handled textFallback=false stickerFallback=false reason=voice_may_have_sent')
+                        return
+                    G.log('[voice] stage=delivery result=text_fallback reason=prepare_or_synthesis_failed')
             for line in bubbles:
                 if not line:
                     continue
@@ -981,15 +994,21 @@ class ReceiverMixin:
                     if not line.startswith('@'):
                         line = '@%s %s' % (mention, line)
                 if not self.send_text(line, target, username):
+                    failure = flow.record('text', 'dispatch', 'failed', 'TEXT_SEND_FAILED') if flow else None
                     if isinstance(data.get('sticker'), dict):
-                        self.cancel_reply_sticker(data['sticker'], username)
+                        cancelled = self.cancel_reply_sticker(data['sticker'], username)
+                        if flow:
+                            flow.record('sticker', 'dispatch', 'cancelled' if cancelled else 'unconfirmed',
+                                        'STICKER_STOPPED_AFTER_TEXT_FAILURE', caused_by=failure)
                     G.log('[delivery] stage=text result=failed reason=send_failed remainingBubbles=cancelled stickers=cancelled')
                     return
                 first = False
                 G.time.sleep(0.6)
             _stk = data.get('sticker') or None
             if G.STICKER_TEST_ON and isinstance(_stk, dict):
-                self.claim_and_send_sticker(_stk, expected_chat=target, expected_username=username)
+                result = self.claim_and_send_sticker(_stk, expected_chat=target, expected_username=username)
+                if flow:
+                    flow.sticker(result)
             elif G.STICKER_TEST_ON:
                 G.log('[sticker] stage=delivery result=skip reason=no_job_in_reply')
         except Exception as e:
