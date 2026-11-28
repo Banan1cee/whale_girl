@@ -79,8 +79,12 @@ test('明确让她提醒时才认（提醒我 / 叫我 / 别忘）', () => {
 });
 
 test('自然语言撤回能提取目标，而不是当成新提醒', () => {
-  assert.deepEqual(reminder.parseReminderCancellation('第三天的事情取消'), {
-    query: '', day: '第三天', vague: true,
+  for (const text of ['第三天的事情取消', '明天不用上班', '别说这个了', '后天不要去了',
+    '明天别忘了带伞', '不要取消明天买菜的提醒', '他说取消明天的提醒']) {
+    assert.equal(reminder.parseReminderCancellation(text), null, text);
+  }
+  assert.deepEqual(reminder.parseReminderCancellation('取消明天买菜的提醒'), {
+    query: '买菜', day: '明天', vague: false,
   });
   assert.deepEqual(reminder.parseReminderCancellation('明天别提醒我买菜'), {
     query: '买菜', day: '明天', vague: false,
@@ -329,14 +333,17 @@ test('「取消提醒」和「提醒列表」都能用', async (t) => {
   assert.equal(bot.reminders.pendingFor('wxid_a').length, 0);
 });
 
-test('第二天说「第三天的事情取消」不会在第三天继续提醒', async (t) => {
+test('明确撤回指定的待办，普通聊天不取消提醒', async (t) => {
   const { config } = fixture(t);
   const now = new Date(NOW);
   const { bot } = makeBot(t, config, now);
   const msg = (text) => ({ platform: 'wechat', chatId: 'wxid_a', chatType: 'private', senderId: 'u1', senderName: '阿螈', text });
   await bot.decide(msg('后天八点提醒我提交报告'));
   now.setDate(now.getDate() + 1);
-  const cancel = await bot.decide(msg('第三天的事情取消'));
+  const casual = await bot.decide(msg('明天不用提交报告了'));
+  assert.notEqual(casual.reason, 'reminder_cancel');
+  assert.equal(bot.reminders.pendingFor('wxid_a').length, 1);
+  const cancel = await bot.decide(msg('取消明天提交报告的提醒'));
   assert.equal(cancel.reason, 'reminder_cancel');
   assert.match(cancel.canned, /已经取消 1 条/);
   now.setDate(now.getDate() + 1);
@@ -360,8 +367,18 @@ test('聊天取消提醒按实际取消数回复，并说明正在发送的任�
   bot.reminders.add({ wxid: 'wxid_a', text: '正在发', at: NOW.getTime() + 1000 });
   bot.reminders.add({ wxid: 'wxid_a', text: '稍后发', at: NOW.getTime() + 10000 });
   bot.reminders.due(NOW.getTime() + 2000);
-  const result = await bot.decide({ platform: 'wechat', chatId: 'wxid_a', chatType: 'private',
-    senderId: 'u1', senderName: '阿螈', text: '取消提醒' });
+  const msg = (text, senderId = 'u1') => ({ platform: 'wechat', chatId: 'wxid_a', chatType: 'private',
+    senderId, senderName: '阿螈', text });
+  const ambiguous = await bot.decide(msg('取消提醒'));
+  assert.equal(ambiguous.reason, 'reminder_cancel_ambiguous');
+  const confirmation = await bot.decide(msg('取消全部提醒'));
+  assert.equal(confirmation.reason, 'reminder_cancel_confirm');
+  assert.equal(bot.reminders.pendingFor('wxid_a').length, 2);
+  await bot.decide(msg('确认取消全部提醒', 'u2'));
+  assert.equal(bot.reminders.pendingFor('wxid_a').length, 2);
+  bot.reminders.add({ wxid: 'wxid_a', text: '确认前新建', at: NOW.getTime() + 20000 });
+  const result = await bot.decide(msg('确认取消全部提醒'));
+  assert.equal(bot.reminders.pendingFor('wxid_a').some(it => it.text === '确认前新建'), true);
   assert.match(result.canned, /取消了 1 条/);
   assert.match(result.canned, /另有 1 条正在发送/);
   assert.equal(bot.reminders.list().find(it => it.text === '正在发').status, 'sending');

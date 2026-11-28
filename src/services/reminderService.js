@@ -464,17 +464,16 @@ class ReminderService {
       })
       : [];
 
-    if (!candidates.length && day) {
+    if (day) {
       const direct = { 今天: 0, 明天: 1, 后天: 2, 大后天: 3 };
       if (Object.prototype.hasOwnProperty.call(direct, day)) {
         const tz = time.resolveTimeZone(this.config);
         const target = time.dayKeyOf(time.addDays(time.parts(this.now(), tz), direct[day]));
-        candidates = active.filter((item) => time.dayKey(item.dueAt, tz) === target);
+        candidates = (q ? candidates : active).filter((item) => time.dayKey(item.dueAt, tz) === target);
       }
     }
 
-    // 「第三天的事情取消」没有固定日历含义；只有唯一待办时才可安全撤回。
-    if (!candidates.length && !q && active.length === 1) candidates = active;
+    if (!q && !day) candidates = active;
     if (candidates.length > 1) return { cancelled: 0, ambiguous: true, candidates: candidates.map((item) => ({ ...item })) };
     let cancelled = 0;
     for (const item of candidates) if (this.cancel(item.id).ok) cancelled += 1;
