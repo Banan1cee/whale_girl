@@ -77,7 +77,7 @@ def image_key_note(db, downloader=None):
         cached = False
     if cfg:
         return 'cfgDword 可用（能离线派生）'
-    return 'cfgDword 不可用（只能扫微信进程内存；密钥缓存%s）' % ('有' if cached else '没有')
+    return 'cfgDword 不可用（会尝试新版微信取图兼容路径，必要时限时扫描；密钥缓存%s）' % ('有' if cached else '没有')
 
 
 def image_dir_note(db, path):

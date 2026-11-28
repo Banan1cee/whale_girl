@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: wechatauto-replica
-Version: 1.2.10
+Version: 1.3.0.2
 Summary: 微信 4.x Windows 客户端自动化库（wxauto 复刻版）：SQLCipher 数据库解密读取 + UIA/坐标-OCR 混合发送，支持消息监听、媒体下载、朋友圈读取
 Author: wechatauto-replica
 License: Apache-2.0
@@ -29,7 +29,11 @@ Requires-Dist: Pillow>=9.0.0
 Requires-Dist: psutil>=5.9.0
 Requires-Dist: colorama>=0.4.6
 Requires-Dist: cryptography>=41.0.0
-Requires-Dist: winsdk>=1.0.0b10
+Requires-Dist: winsdk>=1.0.0b10; sys_platform == "win32" and python_version < "3.11"
+Requires-Dist: winrt-runtime>=3.1.0; sys_platform == "win32" and python_version >= "3.11"
+Requires-Dist: winrt-Windows.Media.Ocr>=3.1.0; sys_platform == "win32" and python_version >= "3.11"
+Requires-Dist: winrt-Windows.Graphics.Imaging>=3.1.0; sys_platform == "win32" and python_version >= "3.11"
+Requires-Dist: winrt-Windows.Storage>=3.1.0; sys_platform == "win32" and python_version >= "3.11"
 Requires-Dist: imageio-ffmpeg>=0.4.9
 Requires-Dist: zstandard>=0.19.0
 Requires-Dist: pyautogui>=0.9.53
@@ -38,11 +42,15 @@ Provides-Extra: moments
 Requires-Dist: pyautogui>=0.9.53; extra == "moments"
 Requires-Dist: opencv-python>=4.8.0; extra == "moments"
 Provides-Extra: guia
-Requires-Dist: winsdk>=1.0.0b10; extra == "guia"
+Requires-Dist: winsdk>=1.0.0b10; (sys_platform == "win32" and python_version < "3.11") and extra == "guia"
+Requires-Dist: winrt-runtime>=3.1.0; (sys_platform == "win32" and python_version >= "3.11") and extra == "guia"
+Requires-Dist: winrt-Windows.Media.Ocr>=3.1.0; (sys_platform == "win32" and python_version >= "3.11") and extra == "guia"
+Requires-Dist: winrt-Windows.Graphics.Imaging>=3.1.0; (sys_platform == "win32" and python_version >= "3.11") and extra == "guia"
+Requires-Dist: winrt-Windows.Storage>=3.1.0; (sys_platform == "win32" and python_version >= "3.11") and extra == "guia"
 Requires-Dist: pypinyin>=0.48.0; extra == "guia"
 Dynamic: license-file
 
-﻿# wechatauto-replica — 微信 4.x Windows 自动化 / WeChat 4.x Automation
+# wechatauto-replica — 微信 4.x Windows 自动化 / WeChat 4.x Automation
 
 > **中文版** 在下方 · **English version below**
 
@@ -93,9 +101,9 @@ discovery still selects main windows, with existing HWND/PID checks preserved.
 本项目复刻上游 wxauto 项目，目标是实现对当前微信 4.x Windows 客户端的自动化
 （读取消息、发送消息、媒体下载、朋友圈），非网页版，直接操作本机客户端。
 
-> 当前版本：1.2.10
+> 当前版本：1.3.0.2
 >
-> **兼容范围**：Windows 10/11 ｜ Python 3.9+（已在 3.12 验证）｜ 微信 **4.1.12+**（已在 4.1.15.53 / 4.2.0.11 验证）
+> **兼容范围**：Windows 10/11 ｜ Python 3.9+（已在 3.12 验证）｜ 微信 **4.1.12+**（已在 4.1.15.53 / 4.2.0.11 / 4.2.0.53 验证）
 > （数据库读取路线对微信版本不敏感；坐标+OCR 发送路线依赖 4.1.12+ 自绘渲染
 > 布局，UIA 控件树随小版本变化——4.1.15 起搜索入口改为收起式，已适配；
 > 其它小版本可能需校准 `guia.py` 布局常量与 gate RVA 表）。
@@ -158,6 +166,26 @@ wechatauto 朋友圈 --me              # 看自己发的朋友圈
 ---
 
 ## 版本记录
+
+### v1.3.0.2（2026-11-24）
+
+- ⚠️ **修复：微信 4.2.0.53 原图下载的保存链路。** 旧代码只扫桌面直接子节点，认不出嵌在预览窗下的 Windows 另存框；随后可能把只读「名称」属性框当成文件名框，或因保存按钮没有 `InvokePattern` 而假成功。现在会等待真实文件名框与保存按钮就绪，并把文件写到调用方指定的 `save_dir`。
+- **修复：恢复 `labels.CHECKBOX_INSET_PX` 常量。** 11-08 的标签成员选择改造误删了这个仍被转发/收藏转发导入的 70px 实测锚点，导致两个模块无法导入；本次加回并纳入发版门。
+- **预览窗稳健性**：忽略最小化残留窗口；修正当前 `uiautomation` 不支持 `WalkControl(max_depth=...)` 导致工具栏被误判退化的问题；预览窗保存按钮与另存框按钮均保留拟人坐标点击兜底。
+- 判定：微信 4.2.0.53 真机，文件传输助手一张仅有压缩档的图片 20.9 秒完成，指定目录产出 202,409 字节 JPEG（本机压缩档解密后 27,222 字节），PIL 校验通过；`image` 回归 206/206；完整 `selftest` 567/1，唯一红项为无关的实时 OCR 会话定位抖动（本次 `定时任务`，前次 `WorkBuddy`）。
+
+### v1.3.0.1（2026-11-22）
+
+- **新增：合并转发聊天记录中的文件导出 `download_forward_files(user, local_id, save_dir=None, shard=None, max_depth=3)`**——合并转发是复合 `local_type=(19<<32)|49`（此前不被媒体链路识别）；解析 recordinfo（CDATA 转义）收集 datatype=8 文件项，已落盘的按名复制并二次校验（fullmd5/datasize），datatype=17 嵌套记录递归；未落盘项返回 manifest['missing'] 清单（不虚构成功）。实测 241 条→257 文件项+7 嵌套全收集，docx 端到端导出 md5 过。
+
+### v1.3.0（2026-11-21）
+
+- ⚠️ **重要修复：微信 4.2.0.53 图片密钥适配（`extract_image_key_seed`）。** 旧 `global_config` 地标 + 0x138 链失效，新被动只读链（dll+0xBB6B788 单例 → account → cfgDword/掩码摘要），派生公式未变（`MD5(str(N)+wxid)` hex 前 16 字符）；全程 ReadProcessMemory。真机 probe 解 PNG 头。回应 #23。
+- **新增：原图获取离线快路**——XML `length` 判定本机 .dat 即原件，多数图免界面直接落盘；timeout 30→60s。回应 #30。
+- **新增：文件自动下载监听器 `AutoFileDownloader`**——只读 DB 轮询（水位持久化、全量监听+新会话发现），未落盘挂待办重试，CLI `python -m wechatauto.auto_download`。绝不驱动界面。
+- **新增：语音解码器随库分发 + `download_voice(to_wav=True)`**——语音为明文 SILK v3（与密钥体系无关），`silkdec.exe` 随 PyPI 分发直出 24kHz WAV。
+- **社区 PR 合并**：#59 密钥扫描超时+预览保存；#54 复合文件类型+身份核验（#53）；#56 标签移出成员定位（#55）；#58 数据库自动探测；#61 INPUT 结构修复（#62）；#60 群聊机器人示例；ChatWindow 4.2.0.53 右键回退；OCR 兼容 Python 3.11+（winsdk/winrt 双后端）；免责声明强化。
+- 判定：`tests/` 7 文件 unittest 全过；`tools/selftest.py` 562/0；真机 4.2.0.53 验证（图片密钥/原图快路/语音解码/自动下载）。
 
 ### v1.2.10（2026-11-08）
 
@@ -473,7 +501,7 @@ wechatauto 朋友圈 --me              # 看自己发的朋友圈
 ### v1.2.1（2026-09-06）
 
 - **新增「引用消息并发送」（测试版）**：`WeChatGUI.quote_msg(text, who, target_text=None, verify=False)` 右键定位消息 → 弹出菜单选择「引用」→ 输入内容并发送；`target_text` 省略时引用最近一条。`quick_quote()` 提供一行式入口，示例脚本 `wechatauto/demo_quote.py`。
-  - **测试版说明**：引用功能走「坐标 + OCR + SendInput」模拟点击路线，依赖微信 4.1.x 自绘渲染布局；随窗口尺寸/DPI/会话内容不同可能存在定位偏差。右键采用 `SendInput` 注入（微信渲染窗口对 `mouse_event` 右键不响应），光标先 `SetCursorPos` 移至目标再注入，避免“只移动不点击 / 只点击不移动”的错位。使用中发现定位不准时请调整会话内消息布局后重试。
+  - **测试版说明**：引用功能走「坐标 + OCR + SendInput」模拟点击路线，依赖微信 4.1.x 自绘渲染布局；随窗口尺寸/DPI/会话内容不同可能存在定位偏差。右键采用 `SendInput` 投递（微信渲染窗口对 `mouse_event` 右键不响应），光标先 `SetCursorPos` 移至目标再投递，避免“只移动不点击 / 只点击不移动”的错位。使用中发现定位不准时请调整会话内消息布局后重试。
 - **移除 `desktop_available()` 桌面白屏判定**：控件定位已全面走 UIA，不再依赖整窗截图白色占比采样——该判定在微信窗口正常时曾误报「窗口不可见」。`ensure_visible()` 现以窗口句柄存活判定可见性，保留「最小化遮挡窗口 + 置顶微信」的前置动作。
 
 ### v1.2.0.3（2026-08-31）
@@ -821,10 +849,22 @@ D:\微信文件\xwechat_files\<wxid>_xxxx\db_storage\
 - **AES 密钥**：16 字节 ASCII，账户级稳定密钥，但仅在微信查看图片时驻留
   进程内存。`MediaDownloader` 通过内存扫描反测（AES 解首块后校验 JPEG/PNG
   魔数）获取，**命中后持久化到 `image_keys.json`**；也支持 `image_key=` 参数
-  显式注入。本机实测：单一密钥稳定解密 35/40 张随机图片（其余为微信动画
+  显式传入。本机实测：单一密钥稳定解密 35/40 张随机图片（其余为微信动画
   表情容器 `wxgf`）。
 - **XOR 密钥**：单字节，从同图缩略图 `<md5>_t.dat` 尾部 JPEG 结束标记
   `FF D9` 反推（`key = tail[0] ^ 0xFF`）。
+
+### 2.6 为什么这不是 hook / 注入
+
+本库不使用、也不需要下面这三类技术，源码可审计验证（`grep` 即可复核）：
+
+| 常见误解 | 事实 |
+|---|---|
+| 「往微信里注入了 DLL/代码」 | 全库**没有** `CreateRemoteThread` / `LoadLibrary` / `VirtualAllocEx` / `SetWindowsHookEx` 中任何一个——从未让微信执行过任何非微信自身的代码 |
+| 「挂钩了微信的消息回调」 | 全库**没有** `SetWindowsHookEx`；消息读取靠轮询解密**落盘的本地数据库文件**，不走任何进程内回调 |
+| 「跨进程写 = 注入」 | 唯一的跨进程写入是 `WriteProcessMemory` 写 **1 个字节**（打开微信自带的 Qt accessibility 开关，候选地址不对时写回原值）——是「拨开关」，不是写入可执行内容 |
+
+三条真实的技术路线：**读** = 解密本机 SQLite/SQLCipher 文件（`ReadProcessMemory` 仅用于从你自己已登录的会话里读取 32 字节解密密钥）；**写** = 系统标准自动化接口（UIA + `SendInput` + 剪贴板 + OCR）；**开关** = 上述 1 字节 accessibility 标志。所有数据留在本机，没有上传通道。
 
 ---
 
@@ -867,7 +907,7 @@ for m in db.get_messages(who, limit=10):      # 最近消息
 from wechatauto import WeChatDB, MediaDownloader
 
 db = WeChatDB()
-md = MediaDownloader(db)                      # 可传 image_key="..." 注入图片密钥
+md = MediaDownloader(db)                      # 可传 image_key="..." 手动指定图片密钥
 key = md.detect_image_key()                   # 内存扫描/缓存取 AES+XOR 密钥
 print(key)
 
@@ -1103,10 +1143,15 @@ quick_send_file(r'D:\资料\报告.pdf', '文件传输助手')
 └── pyproject.toml
 ```
 
-## 九、免责声明
+## 九、免责声明与使用边界
 
-本项目仅用于个人学习与自动化研究，请遵守微信软件许可协议及当地法律法规，
-勿用于任何违反规定的用途。
+本项目仅用于**个人学习与自动化研究**，请遵守《腾讯微信软件许可及服务协议》及当地法律法规。
+
+**使用边界（硬性限定）：**
+
+1. **仅限操作用户本人已登录的微信账号**——不提供、也不应被用于操作任何他人账号或未经同意采集他人信息。
+2. **禁止用于批量营销、群控多账号、自动加好友营销、未经他人同意收集他人个人信息**等场景——这些用途既违反微信个人账号使用规范，也可能触犯《反不正当竞争法》《个人信息保护法》乃至《刑法》第二百八十五/二百八十六条（已有群控工具被判赔 260 万、获客工具提供者被追刑责的先例）。
+3. 使用本库即表示你已理解：**使用第三方自动化工具违反微信用户协议**，账号可能被风控、限制或封禁，全部后果由使用者自担。
 
 
 注：本库完全由AI（opencode+deepseek-v4-flash）生成
@@ -1131,7 +1176,7 @@ quick_send_file(r'D:\资料\报告.pdf', '文件传输助手')
 
 Automate the **WeChat 4.x Windows desktop client** (not the web version): read messages, listen in real time, download media, export full history, read Moments (朋友圈), and send messages — by driving the local client directly.
 
-> **Current version:** 1.2.10 · Windows 10/11 · Python 3.9+ (verified on 3.12) · WeChat **4.1.12+** (verified on 4.1.15.13 / 4.2.0.13)
+> **Current version:** 1.3.0.2 · Windows 10/11 · Python 3.9+ (verified on 3.12) · WeChat **4.1.12+** (verified on 4.1.15.13 / 4.2.0.13 / 4.2.0.53)
 >
 > **Why this project exists:** the classic [wxauto](https://github.com/cluic/wxauto) relies on the UI Automation tree, which WeChat 4.x broke with self-drawn rendering (no accessibility nodes). wechatauto-replica is a drop-in-style replacement: messages are read through **local database decryption** (SQLCipher 4), and sending uses a **UIA + OCR hybrid** driver that auto-falls back between engines.
 
@@ -1293,6 +1338,18 @@ Runnable demo: `python -m wechatauto.demo_moments_interact [--like N | --unlike 
 - **Sending** — WeChat 4.x chat UI is self-drawn (no accessibility nodes), so sending uses a hybrid driver: hot-activate the **Qt accessibility gate** inside Weixin.dll (RVA scan, writes the screen-reader flag) to materialize the `mmui::*` UIA tree — search box, `chat_input_field`, etc. Sending is **UIA-first, coordinate + OCR fallback**: auto-calibrating layout (`~/.wechatauto/layout-<machine>.json`), zoomed OCR (3x) with multi-round voting for rare Chinese characters, clipboard + Ctrl+V input to dodge IME interception.
 - **Media** — image `.dat` files are `[6B sig][4B aes_size][4B xor_size] + AES-ECB + plaintext + xor` chunks. The account-level AES key is transient (only resident in memory while viewing an image); `MediaDownloader` scans for it, validates via JPEG/PNG magic, and **persists it to `image_keys.json`** so later runs need no scanning (or pass `image_key=` explicitly). Voice is plain SILK read from `media_0.db`; files are read from `msg/file/` with original names resolved from `message_resource.db`.
 
+### Why this is not a hook / injection
+
+None of the following techniques are used or needed — verifiable by grepping the source:
+
+| Common assumption | Fact |
+|---|---|
+| "It injects a DLL / code into WeChat" | The codebase contains **zero** occurrences of `CreateRemoteThread` / `LoadLibrary` / `VirtualAllocEx` / `SetWindowsHookEx` — WeChat never executes any non-WeChat code |
+| "It hooks WeChat's message callbacks" | Zero occurrences of `SetWindowsHookEx`; messages are read by polling the **decrypted on-disk database files**, never via in-process callbacks |
+| "Cross-process write = injection" | The only cross-process write is a `WriteProcessMemory` of **one single byte** (turning on WeChat's built-in Qt accessibility flag, original value restored on a wrong candidate) — flipping a switch, not writing executable content |
+
+Three real technical routes: **read** = decrypt local SQLite/SQLCipher files (`ReadProcessMemory` is used only to fetch the 32-byte decryption key from your own logged-in session); **send** = standard system automation interfaces (UIA + `SendInput` + clipboard + OCR); **switch** = that single accessibility byte. All data stays on the local machine — there is no upload path.
+
 ## ⚖️ vs wxauto
 
 | | wxauto | wechatauto-replica |
@@ -1322,6 +1379,26 @@ Runnable demo: `python -m wechatauto.demo_moments_interact [--like N | --unlike 
 - Performance: parallel export / first-scan, incremental memory-scan cache
 
 ## 📝 Changelog
+
+### v1.3.0.2 (2026-11-24)
+
+- ⚠️ **Fix: the original-image save chain on WeChat 4.2.0.53.** The old code only scanned direct desktop children, so it missed the Windows save dialog nested under the preview window; it could then mistake the read-only “名称” property field for the filename box or report a false success when the save button had no `InvokePattern`. It now waits for the real filename field and save button, then writes to the caller's `save_dir`.
+- **Fix: restore `labels.CHECKBOX_INSET_PX`.** The 11-08 label-member selection change removed this measured 70px anchor even though message/favorite forwarding still imports it, making both modules unimportable; it is restored and covered by the release gate.
+- **Preview-window robustness:** minimized stale windows are ignored; the unsupported `WalkControl(max_depth=...)` call that falsely marked a healthy toolbar as degraded is removed; preview save buttons and dialog buttons keep a rhythm-aware coordinate-click fallback.
+- Verdict: live on WeChat 4.2.0.53, an image with only a compressed local tier completed in 20.9 s and produced a 202,409-byte JPEG in the requested directory (the decrypted compressed tier is 27,222 bytes); Pillow verification passed; image regressions 206/206; full selftest 567/1, with the sole failure being an unrelated live-OCR session-location flake (`定时任务` this run, `WorkBuddy` previously).
+
+### v1.3.0.1 (2026-11-22)
+
+- **New: export files inside merged-forward chat records — `download_forward_files(user, local_id)`.** Merged-forward messages are composite `local_type=(19<<32)|49` and were invisible to the media pipeline; the parser reads recordinfo (CDATA-escaped) and copies datatype=8 file items WeChat already stored (with size/md5 re-check), recursing into nested records; un-stored files are listed with reasons instead of faking success. Live: 241 records → 257 file items + 7 nested collected; docx end-to-end export passes fullmd5.
+
+### v1.3.0 (2026-11-21)
+
+- ⚠️ **Important fix: WeChat 4.2.0.53 image-key adaptation — `extract_image_key_seed`.** The old `global_config`+0x138 chain broke; new read-only chain walks a manager singleton (dll+0xBB6B788 → mgr+0x68 → account+0x40 cfgDword / +0x2B8 masked digest). Derivation formula unchanged — `MD5(str(N)+wxid)` hex[:16]; the “1e8 brute-force miss ⇒ algorithm changed” conclusion was wrong (real N≈1.37e9). ReadProcessMemory only. (#23)
+- **New: original-image offline fast path** — XML `length` == decrypted .dat size ⇒ it IS the original; most images return with zero UI interaction; timeout 30→60s. (#30)
+- **New: `AutoFileDownloader`** — read-only DB-polling listener (persisted watermark, discovers new chats), auto-copies files with pending-retry; CLI `python -m wechatauto.auto_download`.
+- **New: bundled SILK decoder + `download_voice(to_wav=True)`** — voices are plaintext SILK v3 (unrelated to the image-key system); `silkdec.exe` ships with the package, yields 24kHz WAV.
+- **Merged community PRs:** #59 key-scan timeout + preview-save; #54 composite file types + identity checks (#53); #56 label-removal geometry (#55); #58 DB auto-detect; #61 INPUT union fix (#62); #60 chatbot example; ChatWindow 4.2.0.53 fallback; OCR deps compatible with Python 3.11+ (winsdk/winrt); hardened disclaimer.
+- Validation: `tests/` 7 unittest files all green; `tools/selftest.py` 562/0; live-verified on 4.2.0.53.
 
 ### v1.2.10 (2026-11-08)
 
@@ -1681,9 +1758,15 @@ Thanks to [dhz1145](https://github.com/dhz1145) for the fix round spanning [issu
 
 ## 📄 License & Disclaimer
 
-Apache-2.0. This project is for personal learning and automation research only — please respect the WeChat software license agreement and applicable laws.
+Apache-2.0. This project is for **personal learning and automation research** only — please respect the WeChat software license agreement and applicable laws.
+
+**Hard usage boundaries:**
+
+1. **Operate only your own logged-in WeChat account.** No operating anyone else's account, no collecting other people's information without consent.
+2. **No bulk marketing, multi-account cluster control, automated friend-adding for marketing, or scraping other people's personal data.** Those uses violate WeChat's personal account policy and can trigger the PRC Anti-Unfair Competition Law, the Personal Information Protection Law, or Articles 285/286 of the PRC Criminal Law (a WeChat cluster-control tool was fined ¥2.6M for unfair competition; providers of harvesting tools have been prosecuted).
+3. By using this library you acknowledge that **automating WeChat violates its user agreement**; your account may be rate-limited, restricted, or banned, and all consequences are on you.
 
 > [!WARNING]
-> **用就别怕。** 本库驱动的是微信官方客户端的本地接口（数据库解密 + UI 自动化），从 1.0.0 到现在没有任何账号被封的先例，但风险自担：**这个仓库随时可能消失**（被 DMCA、被限流、被作者删库都可能）。用就珍惜——装版本前把 wheel/sdist 留一份本地副本，更新前先看完 changelog。
+> **Risk is yours.** This library drives the local interfaces of the official WeChat client (database decryption + UI automation); a risk-control forced re-login has occurred during development, and account restriction is always possible. **This repository may disappear at any time** (DMCA, throttling, or the author deleting it). Keep a local copy of the wheel/sdist before installing, and read the changelog before updating.
 
 Contact: fanyuantaier@163.com

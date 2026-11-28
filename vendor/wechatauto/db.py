@@ -62,6 +62,7 @@ MASTER_DLL_PATTERN = bytes.fromhex(
 MASTER_DLL_VERIFY = (b"488944242048b8", b"488944242848b8", b"488944243048b8")
 CFG_LANDMARK = b"global_config"   # cfg 对象地标字符串(SSO 内联)
 CFG_PTR_BACK = 0x138              # 地标前指针链回退偏移(版本敏感: 4.1.10.31=0x130)
+MGR_SINGLETON_RVA = 0xBB6B788      # 4.2.0.53: 管理器单例槽 RVA（版本敏感，静态重采）
 CFG_OFFSET = 0x68                 # v18 → cfg 指针偏移(版本敏感)
 CFG_DWORD_OFF = 0x40              # cfgDword(图片密钥派生源)
 CFG_WXID_OFF = 0x48               # wxId std::string
@@ -396,6 +397,83 @@ def extract_master_key_from_cfg(pid: int) -> Optional[Tuple[str, int, str]]:
         _k32.CloseHandle(h)
 
 
+
+
+def extract_image_key_seed(pid: int) -> Optional[Tuple[int, Optional[str]]]:
+    """被动只读提取图片密钥派生种子 (cfgDword, imageDigestHex32|None)。
+
+    4.2.0.53 适配（global_config+CFG_PTR_BACK 旧链失效后的新链）::
+
+        mgr      = *(weixin.dll + MGR_SINGLETON_RVA)
+        account  = *(mgr + 0x68)
+        cfgDword = *(account + 0x40)
+        digest   = XOR(*(account+0x2B8 掩码串), movabs 材料)   # MD5hex32
+
+    全程 ReadProcessMemory 只读；无注入、无写、无调试器。
+    老版本（4.1.x / 4.2.0.11）MGR 单例槽无效时回退旧 cfg 链
+    （extract_master_key_from_cfg）。
+    """
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    h = k32.OpenProcess(0x0010 | 0x0400, False, pid)
+    if not h:
+        return None
+    try:
+        mod = _find_weixin_module(pid)
+        if not mod:
+            return None
+        dll_base, dll_size, dll_path = mod
+
+        def _read(addr: int, n: int) -> Optional[bytes]:
+            buf = ctypes.create_string_buffer(n)
+            br = ctypes.c_size_t(0)
+            ok = k32.ReadProcessMemory(h, ctypes.c_void_p(addr),
+                                       buf, n, ctypes.byref(br))
+            if ok and br.value == n:
+                return buf.raw[:n]
+            return None
+
+        def _read_q(addr: int) -> Optional[int]:
+            raw = _read(addr, 8)
+            return struct.unpack("<Q", raw)[0] if raw else None
+
+        cfg_dword = None
+        digest_hex = None
+
+        # ── 新链（4.2.0.53）：mgr 单例 → account → seed ──
+        mgr = _read_q(dll_base + MGR_SINGLETON_RVA)
+        if mgr and 0x10000 < mgr < 0x7FFFFFFFFFFF:
+            account = _read_q(mgr + 0x68)
+            if account and 0x10000 < account < 0x7FFFFFFFFFFF:
+                n_val = _read_q(account + 0x40)
+                if n_val is not None and 0 < n_val < 0xFFFFFFFF:
+                    cfg_dword = n_val
+                sb = _read(account + 0x2B8, 48)
+                if sb:
+                    sptr = struct.unpack_from("<Q", sb, 0)[0]
+                    slen = struct.unpack_from("<Q", sb, 16)[0]  # 4.2.0.53: string 字段 16B 对齐（ptr/len/cap 间有填充）
+                    if sptr and 0 < slen <= 256:
+                        masked = _read(sptr, min(slen, 64))
+                        xor_mat = _extract_movabs_xor_key(dll_path)
+                        if masked and xor_mat:
+                            digest_hex = bytes(
+                                b ^ xor_mat[i % 32]
+                                for i, b in enumerate(masked)
+                            ).decode("ascii", errors="replace")
+                            if not re.fullmatch(r"[0-9a-f]{32}", digest_hex):
+                                digest_hex = None
+
+        # ── 旧链回退（4.1.x / 4.2.0.11）：global_config 地标 + CFG_PTR_BACK ──
+        if cfg_dword is None:
+            auto = extract_master_key_from_cfg(pid)
+            if auto:
+                cfg_dword = auto[1]
+
+        if cfg_dword is None:
+            return None
+        return cfg_dword, (digest_hex or None)
+    finally:
+        k32.CloseHandle(h)
+
 def _decrypt_page(enc_key: bytes, page: bytes, pgno: int) -> bytes:
     iv = page[PAGE_SZ - RESERVE_SZ: PAGE_SZ - RESERVE_SZ + 16]
     if pgno == 1:
@@ -711,10 +789,12 @@ class WeChatDB:
             self._keys.update(self.derive_keys_from_master(master_key))
             self.master_key = master_key
             self.cfg_dword = None
+            self.image_digest = None
             self._save_keys()
         else:
             self.master_key = None
             self.cfg_dword = None
+            self.image_digest = None
             
             # 优先级1: 尝试已保存的密钥——多位置合并（稳定副本 > 工作缓存 > .bak >
             # 其它账号缓存），全部经页1 HMAC 校验，只保留真能用的
@@ -774,6 +854,12 @@ class WeChatDB:
                 self._save_keys()
             
             # 尝试提取cfg_dword用于图片密钥派生
+            if self.cfg_dword is None:
+                wx_pids = self._find_weixin_pids()
+                if wx_pids:
+                    seed = extract_image_key_seed(wx_pids[0])
+                    if seed:
+                        self.cfg_dword, self.image_digest = seed
             if self.cfg_dword is None:
                 auto = self.extract_master_key()
                 if auto:
@@ -3332,13 +3418,26 @@ def _locate_account_root(root: Optional[str]) -> Optional[str]:
     return None
 
 
+def _windows_documents_dir() -> Optional[str]:
+    """读取 Windows 当前「文档」目录，兼容共享盘及文件夹重定向。"""
+    try:
+        from pywintypes import error as ShellError
+        from win32com.shell import shell
+    except ImportError:
+        return None
+    try:
+        return shell.SHGetKnownFolderPath(shell.FOLDERID_Documents)
+    except (ShellError, OSError):
+        return None
+
+
 def auto_detect_db_dir() -> Optional[str]:
     """自动定位微信 4.x 数据目录（不同电脑存储位置不同）。
 
     探测顺序：
       1. 微信配置文件（%APPDATA%/%LOCALAPPDATA%，支持 JSON/纯路径/任意文本）；
       2. 注册表；
-      3. 常见默认目录（Documents / 用户主目录）。
+      3. Windows 当前「文档」目录，再回退到用户目录下的 Documents 和用户主目录。
     """
     # 1) 配置文件
     for cfg_dir in _config_candidates():
@@ -3367,7 +3466,8 @@ def auto_detect_db_dir() -> Optional[str]:
             return hit
     # 3) 常见默认目录兜底
     userprofile = os.environ.get("USERPROFILE", "")
-    for base in (os.path.join(userprofile, "Documents"), userprofile):
+    documents = _windows_documents_dir()
+    for base in (documents, os.path.join(userprofile, "Documents"), userprofile):
         hit = _locate_account_root(base)
         if hit:
             return hit

@@ -9,8 +9,8 @@ server_id、packed_info），本模块负责把媒体内容从本地取回/解�
     local_type 3   图片     → 会话目录 msg/attach/<会话md5>/<YYYY-MM>/Img/<md5>.dat
     local_type 34  语音     → message/media_0.db VoiceInfo.voice_data（SILK 二进制）
     local_type 43  视频     → msg/video/<YYYY-MM>/<id>.mp4（未落地时返回 None）
-    local_type 49  文件     → msg/file/<YYYY-MM>/<原文件名>，原名取自
-                            message_resource.db MessageResourceDetail.packed_info
+    local_type 49 / (6<<32)|49 文件 → msg/file/<YYYY-MM>/<原文件名>，原名优先取
+                            文件消息 XML，兼容资源库中的旧版纯文件名
 
 图片加密（v2 格式，本库已在本机验证）::
 
@@ -38,12 +38,17 @@ from __future__ import annotations
 import ctypes
 import glob
 import hashlib
+import html
 import json
 import os
 import re
+import shutil
 import struct
+import subprocess
 import tempfile
 import time
+import wave
+import xml.etree.ElementTree as ET
 from typing import List, Optional, Tuple
 from wechatauto.logger import wxlog
 
@@ -52,6 +57,12 @@ V2_MAGIC = b"\x07\x08\x56\x32\x08\x07"
 V1_HEADER_SZ = 22  # 6B sig + 16B xor key
 AES16_RE = re.compile(rb"[0-9a-zA-Z]{16,32}")
 DEFAULT_SAVE_PATH = os.path.join(os.path.expanduser("~"), "Documents", "wechatauto_media")
+# 49 是旧版文件码；复合应用消息只接受 subtype=6，不能把链接/引用也当文件。
+_FILE_TYPES = (49, (6 << 32) | 49)
+# 合并转发（聊天记录卡片）：appmsg subtype 19。内嵌 recordinfo 里 datatype=8 的
+# 文件项带原文件名（datatitle）与 fullmd5/datasize，微信打开过即落在
+# msg/file/<YYYY-MM>/<原文件名>（与普通文件同构），可按名导出。
+FORWARD_TYPE = (19 << 32) | 49
 
 
 def _jpeg_like(pt: bytes) -> bool:
@@ -89,12 +100,33 @@ def strip_container_footer(plain: bytes) -> Tuple[bytes, int]:
     return plain, 0
 
 
+class ImageKeyUnavailable(RuntimeError):
+    """本次没有找到可验证的图片密钥。"""
+
+
+def _find_silkdec() -> Optional[str]:
+    """定位 SILK 解码器 silkdec.exe（微信语音转 PCM 用）。
+
+    查找顺序：环境变量 WECHATAUTO_SILKDEC → 包内 wechatauto/bin/silkdec.exe → PATH。
+    找不到返回 None（调用方退回 .silk 原文件）。二进制来源与重建见
+    wechatauto/bin/README.md。
+    """
+    env = os.environ.get("WECHATAUTO_SILKDEC")
+    if env and os.path.isfile(env):
+        return env
+    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "silkdec.exe")
+    if os.path.isfile(bundled):
+        return bundled
+    return shutil.which("silkdec") or shutil.which("silkdec.exe")
+
+
 class MediaDownloader:
     """微信 4.x 媒体下载器"""
 
     def __init__(self, db, save_dir: Optional[str] = None,
                  image_key: Optional[str] = None,
-                 cfg_dword: Optional[int] = None):
+                 cfg_dword: Optional[int] = None, *,
+                  image_key_scan_timeout: Optional[float] = None):
         self.db = db
         self.save_dir = save_dir or DEFAULT_SAVE_PATH
         self._image_key = image_key  # 显式注入的图片 AES 密钥
@@ -102,6 +134,8 @@ class MediaDownloader:
         self._xor_key: Optional[int] = None
         self._img_key: Optional[Tuple[str, int]] = None
         self._key_probe: Optional[bytes] = None
+        self._image_key_scan_timeout = image_key_scan_timeout
+        self._image_key_scan_deadline: Optional[float] = None
 
     @staticmethod
     def derive_image_keys(cfg_dword: int, wxid: str) -> Tuple[str, int]:
@@ -120,6 +154,14 @@ class MediaDownloader:
         cfg_dword = self._cfg_dword
         if cfg_dword is None:
             cfg_dword = getattr(self.db, "cfg_dword", None)
+        # 4.2.0.53：db.extract_image_key_seed 已解出 MD5hex32（image_digest）——
+        # 存储摘要前 16 字符就是 ASCII AES key，优先于复算（复算依赖 cfgDword 精确值）。
+        digest = getattr(self.db, "image_digest", None)
+        if digest and re.fullmatch(r"[0-9a-f]{32}", digest):
+            aes_key = digest[:16]
+            xor_key = cfg_dword & 0xFF if cfg_dword else None
+            if self._validate_key(aes_key, probe):
+                return aes_key, (xor_key or 0)
         if not cfg_dword:
             return None
         aes_key, xor_key = self.derive_image_keys(cfg_dword, self.db.wxid)
@@ -283,6 +325,11 @@ class MediaDownloader:
         pids = self.db._find_weixin_pids()
         if not pids:
             return None
+        deadline = time.monotonic() + max(0.0, monitor_timeout)
+        if self._image_key_scan_timeout is not None:
+            if self._image_key_scan_deadline is None:
+                self._image_key_scan_deadline = time.monotonic() + self._image_key_scan_timeout
+            deadline = min(deadline, self._image_key_scan_deadline)
         from . import db as _dbmod
         k32 = _dbmod._k32
         MBI = _dbmod._MBI
@@ -318,12 +365,14 @@ class MediaDownloader:
         def _scan_once() -> Optional[str]:
             # 保持微信进程原顺序扫描(主进程靠前, 命中率高)
             for pid in pids:
+                if time.monotonic() >= deadline:
+                    return None
                 h = k32.OpenProcess(0x0010 | 0x0400, False, pid)
                 if not h:
                     continue
                 try:
                     addr = 0
-                    while True:
+                    while time.monotonic() < deadline:
                         mbi = MBI()
                         r = k32.VirtualQueryEx(h, ctypes.c_void_p(addr), ctypes.byref(mbi), ctypes.sizeof(mbi))
                         if r == 0:
@@ -337,6 +386,8 @@ class MediaDownloader:
                             buf = read_mem(h, mbi.BaseAddress or 0, mbi.RegionSize)
                             if buf:
                                 for key in _candidates(buf):
+                                    if time.monotonic() >= deadline:
+                                        return None
                                     if _try_key(key):
                                         return key.decode("ascii", "replace")
                         addr = (mbi.BaseAddress or 0) + mbi.RegionSize
@@ -345,17 +396,16 @@ class MediaDownloader:
             return None
 
         found = _scan_once()
-        if found or not monitor:
+        if found or not monitor or time.monotonic() >= deadline:
             return found
 
         print(
             "未在微信进程内存中找到图片 AES 密钥。\n"
             "请现在打开微信，进入任意聊天，点击一张图片查看大图，\n"
-            f"本程序将在 {monitor_timeout:.0f} 秒内自动捕获密钥..."
+            f"本程序将再等待最多 {max(0, deadline - time.monotonic()):.0f} 秒..."
         )
-        start = time.time()
-        while time.time() - start < monitor_timeout:
-            time.sleep(2.0)
+        while (remaining := deadline - time.monotonic()) > 0:
+            time.sleep(min(2.0, remaining))
             found = _scan_once()
             if found:
                 return found
@@ -459,7 +509,7 @@ class MediaDownloader:
         if aes_key is None:
             aes_key = self._resolve_aes_key(probe)
             if not aes_key:
-                raise RuntimeError(
+                raise ImageKeyUnavailable(
                     "无法获取图片 AES 密钥：请保持微信登录，并先在微信聊天中"
                     "打开（点击查看大图）任意一张图片，再重试 detect_image_key()；"
                     "或通过 MediaDownloader(image_key='...') 手动传入密钥。"
@@ -847,6 +897,19 @@ class MediaDownloader:
     _PREVIEW_TITLES = ("图片和视频",)
 
     @staticmethod
+    def _window_available(h) -> bool:
+        """真实窗口才过滤最小化/离屏残留；测试用的假句柄原样保留。"""
+        if not h:
+            return True
+        try:
+            u = ctypes.windll.user32
+            if u.IsWindow(h):
+                return bool(u.IsWindowVisible(h)) and not bool(u.IsIconic(h))
+        except Exception:
+            pass
+        return True
+
+    @staticmethod
     def _preview_windows(recheck: bool = True):
         """当前所有预览窗 ``[(窗口句柄, 控件), ...]``。
 
@@ -884,22 +947,14 @@ class MediaDownloader:
                 h = w.NativeWindowHandle or id(w)
             except Exception:
                 h = id(w)
+            if not MediaDownloader._window_available(h):
+                continue
             out.append((h, inner))
         if out and recheck:
             # 4.2.0 退化检测：控件存在但整棵树只剩壳（没有任何命名按钮）
             import uiautomation as auto
-            dead = True
-            for _h, ctrl in out:
-                try:
-                    for _c, _d in auto.WalkControl(ctrl, max_depth=8):
-                        if "Button" in (_c.ControlTypeName or "") \
-                                and (_c.Name or "").strip():
-                            dead = False
-                            break
-                except Exception:
-                    pass
-                if not dead:
-                    break
+            dead = not any(MediaDownloader._has_named_button(ctrl)
+                           for _h, ctrl in out)
             if dead:
                 try:
                     from wechatauto.uia_driver import WeChatUIA
@@ -1211,6 +1266,155 @@ class MediaDownloader:
         data = self.decrypt_image(pick[0], aes_key, xor_key)
         return self._write_decrypted(data, "%s_%s%s" % (user, local_id, suffix), save_dir)
 
+    def save_visible_image(self, user: str, local_id: int, display: str,
+                           save_dir: Optional[str] = None,
+                           shard: Optional[str] = None) -> Optional[str]:
+        """通过微信的保存对话框导出当前会话里能唯一定位的图片。"""
+        import win32api
+        import win32con
+        import win32gui
+        import win32process
+        from comtypes import COMError
+        from .guia import WeChatGUI
+        from .uia_driver import WeChatUIA
+
+        names = (display, "文件传输助手", "File Transfer") if user == "filehelper" else (display,)
+        try:
+            gui = WeChatGUI()
+            hwnd = gui.main_hwnd
+            uia = WeChatUIA(hwnd=hwnd)
+            if not uia.ensure_window(wake=False) or uia.current_chat() not in names:
+                return None
+            if gui._get_db().account != self.db.account:
+                return None
+            if self._preview_windows(recheck=False) or not gui.bring_to_front():
+                return None
+            lst = uia._message_list()
+            if lst is None or uia.current_chat() not in names:
+                return None
+            visible = self._visible_rows(lst)
+        except (COMError, OSError, RuntimeError, win32gui.error) as exc:
+            wxlog.debug("无法定位当前微信会话：%s", type(exc).__name__)
+            return None
+        recent = self.db.get_messages(user, limit=400)
+        db_rows = [{"kind": self._DB_ROW_KIND[r["type"]], "content": r["content"],
+                    "local_id": (r["local_id"], r["shard"])}
+                   for r in reversed(recent) if r["type"] in self._DB_ROW_KIND]
+        index = self._align_index(visible, db_rows, (local_id, shard), min_score=1.0)
+        if index is None:
+            return None
+        row = self.db.get_message_row(user, local_id, local_type=3, shard=shard)
+        if not row:
+            return None
+        shard_suffix = "_" + hashlib.sha256(shard.encode()).hexdigest()[:12] if shard else ""
+        stem = "%s_%s%s_preview" % (user, local_id, shard_suffix)
+        rect = visible[index][2].BoundingRectangle
+        y = (rect.top + rect.bottom) // 2
+        cursor = win32gui.GetCursorPos()
+        try:
+            for x in self._bubble_click_xs(rect, self._sent_by_self(row)):
+                if win32gui.GetForegroundWindow() != hwnd or not gui.point_belongs_to_wechat(x, y):
+                    break
+                gui.wx_click(x, y)
+                until = time.monotonic() + 2.0
+                while time.monotonic() < until:
+                    for preview, control in self._preview_windows(recheck=False):
+                        if win32process.GetWindowThreadProcessId(preview)[1] != gui.pid:
+                            continue
+                        try:
+                            return self._save_visible_preview(gui, preview, control, stem, save_dir)
+                        finally:
+                            if win32gui.IsWindow(preview):
+                                win32gui.PostMessage(preview, win32con.WM_CLOSE, 0, 0)
+                    time.sleep(.15)
+        except (COMError, OSError, win32gui.error) as exc:
+            wxlog.debug("微信图片预览失败：%s", type(exc).__name__)
+        finally:
+            win32api.SetCursorPos(cursor)
+        return None
+
+    def _save_visible_preview(self, gui, preview, control, stem, save_dir):
+        import uiautomation as auto
+        from comtypes import COMError
+        import win32con
+        import win32gui
+        from PIL import Image
+
+        def click(rect, owner):
+            x = (rect.left + rect.right) // 2
+            y = (rect.top + rect.bottom) // 2
+            point_window = win32gui.WindowFromPoint((x, y))
+            if (win32gui.GetForegroundWindow() != owner or not point_window
+                    or win32gui.GetAncestor(point_window, 2) != owner):
+                return False
+            gui._input.real_click(x, y)
+            return True
+
+        save = self._find_preview_button(control, ("保存", "Save"))
+        if save is None or not click(save.BoundingRectangle, preview):
+            return None
+        until = time.monotonic() + 4.0
+        dialog = 0
+        while time.monotonic() < until:
+            fg = win32gui.GetForegroundWindow()
+            if (fg and win32gui.GetClassName(fg) == "#32770"
+                    and win32gui.GetWindow(fg, win32con.GW_OWNER) == preview):
+                dialog = fg
+                break
+            time.sleep(.15)
+        if not dialog:
+            return None
+
+        output_dir = os.path.abspath(save_dir or self.save_dir)
+        os.makedirs(output_dir, exist_ok=True)
+        try:
+            dlg = auto.ControlFromHandle(dialog)
+            edit = dlg.EditControl(AutomationId="1001", searchDepth=8)
+            if not edit.Exists(1.0):
+                return None
+            ok = win32gui.GetDlgItem(dialog, 1)
+            value = edit.GetValuePattern()
+            with tempfile.TemporaryDirectory(prefix=".wa-image-", dir=output_dir) as directory:
+                suffix = os.path.splitext(value.Value or "")[1]
+                target = os.path.join(directory, "image" + (suffix if suffix.lower() in self._SAVE_EXT else ".jpg"))
+                edit_handle = edit.NativeWindowHandle
+                if not edit_handle or win32gui.GetAncestor(edit_handle, win32con.GA_ROOT) != dialog:
+                    return None
+                edit.SetFocus()
+                if win32gui.GetForegroundWindow() != dialog or not edit.HasKeyboardFocus:
+                    return None
+                win32gui.SendMessage(edit_handle, win32con.EM_SETSEL, 0, -1)
+                win32gui.SendMessage(edit_handle, win32con.EM_REPLACESEL, 0, target)
+                if value.Value != target:
+                    wxlog.debug("微信保存对话框未接受目标文件名")
+                    return None
+                if not click(auto.ControlFromHandle(ok).BoundingRectangle, dialog):
+                    return None
+                until = time.monotonic() + 6.0
+                while time.monotonic() < until:
+                    if os.path.isfile(target) and not win32gui.IsWindowVisible(dialog):
+                        with Image.open(target) as image:
+                            image.load()
+                            extension = {"JPEG": ".jpg", "PNG": ".png", "GIF": ".gif",
+                                         "WEBP": ".webp", "BMP": ".bmp"}.get(image.format)
+                        if extension:
+                            out = os.path.join(output_dir, stem + extension)
+                            os.replace(target, out)
+                            return out
+                        return None
+                    fg = win32gui.GetForegroundWindow()
+                    if fg and win32gui.GetWindow(fg, win32con.GW_OWNER) == dialog:
+                        # 新路径无需确认覆盖；有二级弹窗时退出，不确认未知操作。
+                        win32gui.PostMessage(fg, win32con.WM_CLOSE, 0, 0)
+                        return None
+                    time.sleep(.15)
+        except (COMError, OSError, win32gui.error) as exc:
+            wxlog.debug("微信预览保存失败：%s", type(exc).__name__)
+        finally:
+            if win32gui.IsWindow(dialog):
+                win32gui.PostMessage(dialog, win32con.WM_CLOSE, 0, 0)
+        return None
+
     @staticmethod
     def _scroll_list(lst, delta: int, times: int, uia, hwnd, pid) -> bool:
         """在消息列表中央滚 ``times`` 格；落点不属于微信或置不上前台就**不滚**。
@@ -1340,30 +1544,50 @@ class MediaDownloader:
     def _save_dialog():
         """找微信「保存」弹出的 Windows 通用另存为对话框。
 
-        实机结构：顶层类名 ``#32770``，但**标题是「保存」而不是「另存为」**——
-        按标题里有没有「另存」去匹配会认不出。判据改成「``#32770`` + 里面有以
-        「保存」开头的按钮」，标题只当辅助。
+        实机结构：类名 ``#32770``，但**标题是「保存」而不是「另存为」**——
+        4.2.0 起它可能嵌在预览窗下面，不再是桌面的直接子节点；判据是「``#32770``
+        + 里面有以「保存」开头的按钮」，并在预览窗子树里继续找。
         """
         import uiautomation as auto
         try:
             tops = auto.GetRootControl().GetChildren()
         except Exception:
             return None
+
+        def find_dialog(ctrl, depth=0):
+            if depth > 3:
+                return None
+            try:
+                if (ctrl.ClassName or "") == "#32770":
+                    if MediaDownloader._window_available(
+                            getattr(ctrl, "NativeWindowHandle", 0)) and \
+                            MediaDownloader._find_button(
+                                ctrl, lambda n: n.startswith("保存")) is not None:
+                        return ctrl
+                    return None
+                for kid in ctrl.GetChildren():
+                    got = find_dialog(kid, depth + 1)
+                    if got is not None:
+                        return got
+            except Exception:
+                pass
+            return None
+
         for w in tops:
             try:
-                if (w.ClassName or "") != "#32770":
-                    continue
-                if MediaDownloader._find_button(
-                        w, lambda n: n.startswith("保存")) is None:
-                    continue
-                return w
+                cls, name = w.ClassName or "", (w.Name or "").strip()
+                if cls == "#32770" or "PreviewWindow" in cls or (
+                        name in MediaDownloader._PREVIEW_TITLES and cls.startswith("Qt")):
+                    got = find_dialog(w)
+                    if got is not None:
+                        return got
             except Exception:
                 continue
         return None
 
     # 「保存」对话框里**不能往里写值**的那几颗 Edit：文件格式选择器（保存类型:）里面
     # 也有一颗 Edit，实机就把目标路径写进过那儿；右上角搜索栏也是 Edit。
-    _BAD_EDIT_WORDS = ("类型", "格式", "搜索")
+    _BAD_EDIT_WORDS = ("类型", "格式", "搜索", "地址")
 
     @staticmethod
     def _find_button(ctrl, pred, max_depth=14, _d=0):
@@ -1396,6 +1620,40 @@ class MediaDownloader:
                                for x in names))
 
     @staticmethod
+    def _activate_control(ctrl) -> bool:
+        if ctrl is None:
+            return False
+        try:
+            pattern = ctrl.GetInvokePattern()
+            if pattern is not None:
+                pattern.Invoke()
+                return True
+        except Exception:
+            pass
+        try:
+            pattern = ctrl.GetLegacyIAccessiblePattern()
+            if pattern is not None:
+                pattern.DoDefaultAction()
+                return True
+        except Exception:
+            pass
+        try:
+            r = ctrl.BoundingRectangle
+            if r.right - r.left >= 8 and r.bottom - r.top >= 8:
+                try:
+                    ctrl.SetFocus()
+                except Exception:
+                    pass
+                from .guia import WinInput
+                from . import rhythm
+                x, y = rhythm.point((r.left, r.top, r.right, r.bottom))
+                WinInput().real_click(x, y)
+                return True
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
     def _first_edit(root, max_depth=14):
         """子树里第一个**能用**的 Edit：跳过「搜索框」和「保存类型」那两颗假的。
 
@@ -1423,12 +1681,22 @@ class MediaDownloader:
         walk(root)
         for e in found:
             try:
-                blob = (e.Name or "") + " " + (e.ClassName or "")
+                cls = e.ClassName or ""
+            except Exception:
+                cls = ""
+            if cls == "UIProperty":
+                continue
+            try:
+                blob = (e.Name or "") + " " + cls
             except Exception:
                 blob = ""
             if any(w in blob for w in MediaDownloader._BAD_EDIT_WORDS):
                 # 「保存类型」那颗下拉框里也有一颗 Edit（当前格式就显示在那儿）。
                 # 实机撞到过：文件名框没认出来、值写进了格式选择器，保存当然没发生。
+                continue
+            try:
+                e.GetValuePattern()
+            except Exception:
                 continue
             return e
         return None
@@ -1460,13 +1728,13 @@ class MediaDownloader:
             return False
         try:
             edit.GetValuePattern().SetValue(target)
-        except Exception:
+        except Exception as e:
+            wxlog.debug("另存框写入文件名失败：%s: %s", type(e).__name__, str(e)[:160])
             return False
-        try:
-            btn.GetInvokePattern().Invoke()
-            return True
-        except Exception:
+        if not MediaDownloader._activate_control(btn):
+            wxlog.debug("另存框点击保存失败：Invoke/默认动作/坐标点击都不可用")
             return False
+        return True
 
     @staticmethod
     def _cancel_save_dialog(dlg):
@@ -1474,11 +1742,7 @@ class MediaDownloader:
         btn = MediaDownloader._dialog_button(dlg, ("取消", "Cancel"))
         if btn is None:
             return False
-        try:
-            btn.GetInvokePattern().Invoke()
-            return True
-        except Exception:
-            return False
+        return MediaDownloader._activate_control(btn)
 
     @staticmethod
     def _looks_preview(size, ref_thumb=None, ref_mid=None):
@@ -1603,14 +1867,37 @@ class MediaDownloader:
         before = {}
         for r in roots:
             before.update(self._recent_images(r, since))
-        # 4.2.0 预览窗：Click() 不抛异常但**事件被吞、永远无效**（假成功），
-        # 所以主通道直接用 accDoDefaultAction；Click 降级为异常兜底。
+        # 4.2.0 的 accDoDefaultAction 会假成功（不抛异常但另存框没出来）；预览窗按钮
+        # 的 UIA 矩形是真实可点击区域，优先走带拟人轨迹的坐标点击。
         sent = False
         try:
-            btn.GetLegacyIAccessiblePattern().DoDefaultAction()
-            sent = True
+            r = btn.BoundingRectangle
+            if r.right - r.left >= 8 and r.bottom - r.top >= 8:
+                preview_h = getattr(win, "NativeWindowHandle", 0)
+                try:
+                    btn.SetFocus()
+                except Exception:
+                    pass
+                if preview_h:
+                    user32 = ctypes.windll.user32
+                    if user32.GetForegroundWindow() != preview_h:
+                        user32.SetForegroundWindow(preview_h)
+                        time.sleep(0.2)
+                    if user32.GetForegroundWindow() != preview_h:
+                        raise RuntimeError("预览窗没有获得前台，跳过坐标点击")
+                from .guia import WinInput
+                from . import rhythm
+                x, y = rhythm.point((r.left, r.top, r.right, r.bottom))
+                WinInput().real_click(x, y)
+                sent = True
         except Exception:
             pass
+        if not sent:
+            try:
+                btn.GetLegacyIAccessiblePattern().DoDefaultAction()
+                sent = True
+            except Exception:
+                pass
         if not sent:
             try:
                 btn.Click()
@@ -1639,9 +1926,27 @@ class MediaDownloader:
             dlg = self._save_dialog()
             if dlg is not None:
                 dialog_seen = True
+                ready_until = min(deadline, time.time() + 4.0)
+                while True:
+                    dlg = self._save_dialog()
+                    if dlg is None:
+                        break
+                    if self._file_name_edit(dlg) is not None and \
+                            self._dialog_button(dlg, ("保存", "Save")) is not None:
+                        break
+                    if time.time() >= ready_until:
+                        break
+                    time.sleep(0.2)
+                if dlg is None:
+                    continue
+                if self._file_name_edit(dlg) is None or \
+                        self._dialog_button(dlg, ("保存", "Save")) is None:
+                    wxlog.warning("「保存」对话框已出现，但文件名框/保存按钮一直没渲染出来")
+                    self._cancel_save_dialog(self._save_dialog() or dlg)
+                    return None
                 if not self._fill_save_dialog(dlg, target):
                     wxlog.warning("「保存」对话框里找不到可写的「文件名:」框或「保存」按钮")
-                    self._cancel_save_dialog(dlg)
+                    self._cancel_save_dialog(self._save_dialog() or dlg)
                     return None
                 # 点完「保存」，对话框**必须关掉**——这是唯一能证明那一下点中的是按钮的
                 # 信号。实机就点到过旁边那颗「选择文件格式」下拉框：模态框还开着、文件
@@ -1816,12 +2121,55 @@ class MediaDownloader:
                 "download_status": ds, "available": reason == "ok",
                 "bytes": size, "reason": reason}
 
+    def silk_to_wav(self, silk_path: str, wav_path: Optional[str] = None,
+                    rate: int = 24000) -> Optional[str]:
+        """SILK → WAV（默认 24kHz 单声道 16bit），需 silkdec.exe（见 wechatauto/bin/README.md）。
+
+        解码器查找顺序见 :func:`_find_silkdec`；不可用时返回 None（调用方退回 .silk）。
+        WAV 封装用标准库 wave（PCM 由 silkdec 解出，16bit 小端）。
+        """
+        exe = _find_silkdec()
+        if not exe:
+            return None
+        wav_path = wav_path or (os.path.splitext(silk_path)[0] + ".wav")
+        fd, pcm_path = tempfile.mkstemp(suffix=".pcm")
+        os.close(fd)
+        try:
+            proc = subprocess.run([exe, silk_path, pcm_path, str(rate)],
+                                  capture_output=True, timeout=60)
+            if proc.returncode != 0 or not os.path.exists(pcm_path) \
+                    or os.path.getsize(pcm_path) == 0:
+                wxlog.debug("silk→wav 失败：%s"
+                            % (proc.stderr or b"").decode("utf-8", "ignore")[:160])
+                return None
+            with open(pcm_path, "rb") as f:
+                pcm = f.read()
+            with wave.open(wav_path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(rate)
+                wf.writeframes(pcm)
+            return wav_path
+        except Exception as e:
+            wxlog.debug("silk→wav 异常：%s: %s" % (type(e).__name__, str(e)[:120]))
+            return None
+        finally:
+            try:
+                os.remove(pcm_path)
+            except OSError:
+                pass
+
     def download_voice(self, user: str, local_id: int, save_dir: Optional[str] = None,
-                       shard: Optional[str] = None) -> Optional[str]:
+                       shard: Optional[str] = None, to_wav: bool = False) -> Optional[str]:
         """语音：media_*.db VoiceInfo.voice_data（SILK 二进制），落盘 .silk
 
         ``shard``：把消息行里的 ``shard``（分片库文件名）原样传回，用于跨分片
             同号时锁定那一条；不传则按 ``sort_seq`` 取最新并告警。
+
+        ``to_wav``：True 时用 silkdec.exe（包内 ``wechatauto/bin/silkdec.exe``，
+            2026-11-21 起随库分发）把 .silk 解码成 24kHz 单声道 WAV 并返回 .wav
+            路径（.silk 仍保留）；解码器不可用时退回 .silk。SILK 为明文流，
+            与图片密钥体系无关。
 
         微信按账号/时间把语音分片存到多个 media_*.db，逐个搜索直到找到。
 
@@ -1857,6 +2205,12 @@ class MediaDownloader:
                 out_path = self._out(save_dir, "%s_%s.silk" % (user, local_id))
                 with open(out_path, "wb") as f:
                     f.write(v["voice_data"])
+                if to_wav:
+                    wav = self.silk_to_wav(out_path)
+                    if wav:
+                        return wav
+                    wxlog.debug("语音 %s/%s silk→wav 不可用（找不到 silkdec.exe），返回 .silk"
+                                % (user, local_id))
                 return out_path
         st = self.voice_status(user, local_id)
         wxlog.debug("语音 %s/%s 取不到音频，原因=%s（download_status=%s）"
@@ -1889,7 +2243,57 @@ class MediaDownloader:
                     return out
         return None
 
-    def _file_name(self, row: dict) -> Optional[str]:
+    def _file_info(self, row: dict) -> Optional[Tuple[str, Optional[int], Optional[str]]]:
+        """同一文件消息的原名、长度和摘要；非法元数据不能降级为按名猜测。"""
+        def text(parent, tag, required=False):
+            nodes = parent.findall(tag)
+            if len(nodes) > 1 or (required and not nodes):
+                raise ValueError(tag)
+            if not nodes:
+                return None
+            value = nodes[0].text or ""
+            if not value.strip() or len(nodes[0]):
+                raise ValueError(tag)
+            return value if tag == "title" else value.strip()
+
+        for field in ("content", "compress_content"):
+            content = row.get(field)
+            if isinstance(content, bytes):
+                content = self.db._friendly_content(content, "文件")
+            if not isinstance(content, str) or not content:
+                continue
+            # 只剥离群发送者前缀，不从引用卡片内部寻找另一个 msg。
+            match = re.fullmatch(r"(?:[^<\r\n]+:\s*)?(<.*)", content.strip(), re.S)
+            if not match:
+                continue
+            content = match.group(1)
+            if len(content) > 2 * 1024 * 1024 or re.search(r"<!\s*(?:DOCTYPE|ENTITY)", content, re.I):
+                return None
+            try:
+                root = ET.fromstring(content)
+            except ET.ParseError:
+                continue
+            apps = [root] if root.tag == "appmsg" else root.findall("appmsg") if root.tag == "msg" else []
+            try:
+                if len(apps) != 1 or text(apps[0], "type", True) != "6":
+                    return None
+                appmsg = apps[0]
+                name = text(appmsg, "title", True).split("/")[-1].split("\\")[-1]
+                if name in ("", ".", "..") or any(ord(char) < 32 for char in name):
+                    return None
+                attachments = appmsg.findall("appattach")
+                if len(attachments) > 1:
+                    return None
+                size = text(attachments[0], "totallen") if attachments else None
+                md5 = text(appmsg, "md5")
+                if size is not None and not re.fullmatch(r"[0-9]+", size):
+                    return None
+                if md5 is not None and not re.fullmatch(r"[0-9a-fA-F]{32}", md5):
+                    return None
+                return name, int(size) if size is not None else None, md5.lower() if md5 else None
+            except ValueError:
+                return None
+        # 旧库可直接保存纯文件名；protobuf 的字段标签不能当文件名。
         if not row["server_id"]:
             return None
         for rel, path, _ in self.db._db_files:
@@ -1906,37 +2310,225 @@ class MediaDownloader:
             finally:
                 conn.close()
             if r and r["packed_info"]:
-                name = r["packed_info"].decode("utf-8", "replace").strip()
+                try:
+                    name = r["packed_info"].decode("utf-8").strip()
+                except UnicodeDecodeError:
+                    return None
                 name = re.sub(r"[\r\n\x00]+", "", name)
+                if any(ord(char) < 32 for char in name):
+                    return None
                 if "/" in name or "\\" in name:
                     name = name.split("/")[-1].split("\\")[-1]
-                return name or None
+                return (name, None, None) if name and name not in (".", "..") else None
             break
         return None
 
+    def _file_name(self, row: dict) -> Optional[str]:
+        info = self._file_info(row)
+        return info[0] if info else None
+
+    @staticmethod
+    def _file_matches(path, size, md5):
+        try:
+            if size is not None and os.path.getsize(path) != size:
+                return False
+            if md5:
+                digest = hashlib.md5()
+                with open(path, "rb") as source:
+                    for block in iter(lambda: source.read(1024 * 1024), b""):
+                        digest.update(block)
+                return digest.hexdigest() == md5
+            return True
+        except OSError:
+            return False
+
     def download_file(self, user: str, local_id: int, save_dir: Optional[str] = None,
                       shard: Optional[str] = None) -> Optional[str]:
-        """文件：msg/file/<YYYY-MM>/<原文件名>，原文件名来自 message_resource
+        """文件：msg/file/<YYYY-MM>/<原文件名>，原名取自文件 XML 或旧版资源库。
 
         ``shard``：把消息行里的 ``shard``（分片库文件名）原样传回，用于跨分片
             同号时锁定那一条；不传则按 ``sort_seq`` 取最新并告警。
         """
-        row = self.db.get_message_row(user, local_id, local_type=49, shard=shard)
-        if not row or row["local_type"] != 49:
+        rows = [r for r in self.db.get_message_rows_for_media(user, local_id)
+                if r["local_type"] in _FILE_TYPES and (not shard or r.get("shard") == shard)]
+        if not rows:
             return None
-        name = self._file_name(row)
-        if not name:
+        row = rows[0]  # 公开候选接口已按 sort_seq 降序排列。
+        if not shard and len({r["local_type"] for r in rows}) > 1:
+            # 精确类型查询看不到跨类型冲突；候选已齐全，直接用最新行且只告警一次。
+            wxlog.warning("文件 local_id=%s（会话 %s）在 %d 个分片命中不同文件类型，"
+                          "取 sort_seq 最新的一条；要精确请带 shard=", local_id, user, len(rows))
+        else:
+            # 同类型冲突仍由 DB 负责排序与歧义告警。
+            row = self.db.get_message_row(user, local_id, local_type=row["local_type"], shard=shard)
+        if not row:
             return None
+        info = self._file_info(row)
+        if not info:
+            wxlog.warning("文件 local_id=%s 元数据缺失或非法，未导出", local_id)
+            return None
+        name, size, md5 = info
         base = os.path.join(self.db.account_dir, "msg", "file")
+        stem, extension = os.path.splitext(name)
+        family = re.compile(r"%s(?:\([1-9][0-9]*\))?%s" % (re.escape(stem), re.escape(extension)))
+        candidates = []
         for root, _, files in os.walk(base):
             for f in files:
-                if f == name:
-                    out = self._out(save_dir, "%s_%s_%s" % (user, local_id, name))
-                    with open(out, "wb") as w:
-                        with open(os.path.join(root, f), "rb") as r:
-                            w.write(r.read())
-                    return out
-        return None
+                if family.fullmatch(f):
+                    candidates.append(os.path.join(root, f))
+        # 无摘要的旧消息仅保留唯一精确原名兼容，不能凭大小/时间猜数字后缀。
+        if not md5 and (len(candidates) != 1 or os.path.basename(candidates[0]) != name):
+            wxlog.warning("文件 local_id=%s 无摘要且缓存缺失或有歧义，未导出", local_id)
+            return None
+        source = next((p for p in candidates if self._file_matches(p, size, md5)), None)
+        if not source:
+            wxlog.warning("文件 local_id=%s 缓存与消息长度/摘要不符或不存在，未导出", local_id)
+            return None
+        import shutil
+        # 内容目录隔离跨分片同号；basename 仍保留消息原名。
+        directory = os.path.join(save_dir or self.save_dir, md5) if md5 else save_dir
+        out = self._out(directory, "%s_%s_%s" % (user, local_id, name))
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=os.path.dirname(out), delete=False) as destination:
+                temporary = destination.name
+                with open(source, "rb") as original:
+                    shutil.copyfileobj(original, destination)
+            # 缓存可能在读取期间变化；只发布实际复制后仍通过校验的完整文件。
+            if not self._file_matches(temporary, size, md5):
+                wxlog.warning("文件 local_id=%s 复制后校验失败，未导出", local_id)
+                return None
+            os.replace(temporary, out)
+            return out
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.remove(temporary)
+
+    def download_forward_files(self, user: str, local_id: int,
+                               save_dir: Optional[str] = None,
+                               shard: Optional[str] = None,
+                               max_depth: int = 3) -> Optional[dict]:
+        """导出合并转发（聊天记录卡片，local_type=(19<<32)|49）内嵌的文件。
+
+        解析消息 XML 的 recordinfo（CDATA 转义，需 html.unescape），收集 datatype=8
+        的文件项（datatitle=完整原文件名、fullmd5/datasize 可核验）；微信打开过/
+        下载过的文件落在 ``msg/file/<YYYY-MM>/<原文件名>``（与普通文件同构），
+        按名查找并复制到 ``<save_dir>``，复制后重新校验大小/摘要。datatype=17
+        的嵌套聊天记录递归展开（depth 限 max_depth）。
+
+        CDN 侧只有无 URL 的 filekey blob（离线直下不可行），未落盘的文件只能列清单
+        报原因（与 voice_status 同口径）。
+
+        Returns:
+            manifest dict：``files``（已导出，含 title/path/size/md5_ok）、
+            ``missing``（微信未落盘，含 reason）、``nested_records``（嵌套记录数）、
+            ``total``（记录内文件总数）；该 local_id 不是合并转发时返回 ``None``。
+            文件名冲突用序号消歧：``<user>_<local_id>_<序号>_<原文件名>``。
+        """
+        rows = [r for r in self.db.get_message_rows_for_media(user, local_id)
+                if r["local_type"] == FORWARD_TYPE and (not shard or r.get("shard") == shard)]
+        if not rows:
+            return None
+        row = self.db.get_message_row(user, local_id, local_type=FORWARD_TYPE, shard=shard) or rows[0]
+        text = self.db._friendly_content(row["content"], "文件")
+        if not text or "<recorditem>" not in text:
+            wxlog.warning("合并转发 %s/%s 解不出 recorditem（content %d 字符）"
+                          % (user, local_id, len(row.get("content") or "")))
+            return None
+        files, nested = [], []
+        self._collect_forward_files(text, files, nested, 0, max_depth)
+        if not files and not nested:
+            wxlog.info("合并转发 %s/%s 内没有文件项（纯文本/图片等），无需导出"
+                       % (user, local_id))
+
+        base = os.path.join(self.db.account_dir, "msg", "file")
+        index = {}
+        if os.path.isdir(base):
+            for root, _, fs in os.walk(base):
+                for f in fs:
+                    index.setdefault(f, []).append(os.path.join(root, f))
+
+        saved, missing, seq = [], [], 0
+        for info in files:
+            seq += 1
+            candidates = index.get(info["title"], [])
+            candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+            source = next((p for p in candidates
+                           if self._file_matches(p, info["datasize"], info["fullmd5"])), None)
+            if source is None:
+                missing.append(dict(info, reason="not_downloaded" if not candidates
+                                    else "size_md5_mismatch"))
+                wxlog.debug("合并转发内文件未导出：%s（%s）"
+                            % (info["title"], missing[-1]["reason"]))
+                continue
+            out = self._out(save_dir or self.save_dir,
+                            "%s_%s_%d_%s" % (user, local_id, seq, info["title"]))
+            shutil.copyfile(source, out)
+            md5_ok = self._file_matches(out, info["datasize"], info["fullmd5"])
+            saved.append({"title": info["title"], "path": out,
+                          "size": os.path.getsize(out), "md5_ok": md5_ok})
+            wxlog.info("合并转发文件已导出：%s%s", out,
+                       "" if md5_ok else "（摘要与 fullmd5 不符）")
+        return {"files": saved, "missing": missing,
+                "nested_records": len(nested), "total": len(files)}
+
+    def _collect_forward_files(self, content: str, files: List[dict], nested: List[str],
+                               depth: int, max_depth: int) -> None:
+        """从消息 XML 里取 recorditem → 解转义/剥 CDATA → 递归收集文件项。"""
+        ri = re.search(r"<recorditem>(.*?)</recorditem>", content, re.S)
+        if not ri:
+            return
+        inner = html.unescape(ri.group(1))
+        inner = inner.replace("<![CDATA[", "").replace("]]>", "")
+        self._collect_forward_dataitems(inner, files, nested, depth, max_depth)
+
+    def _collect_forward_dataitems(self, inner: str, files: List[dict], nested: List[str],
+                                   depth: int, max_depth: int) -> None:
+        """遍历 recordinfo 下的 dataitem：datatype 8 收集文件、17 递归嵌套记录。"""
+        for it in re.findall(r"<dataitem[^>]*>.*?</dataitem>", inner, re.S):
+            dt = re.search(r'<dataitem[^>]*\bdatatype="(\d+)"', it)
+            k = dt.group(1) if dt else ""
+            if k == "8":
+                title = re.search(r"<datatitle>(.*?)</datatitle>", it, re.S)
+                name = (title.group(1).strip() if title else "").replace("\\", "/").split("/")[-1]
+                if not name:
+                    continue
+                fmt = re.search(r"<datafmt>(.*?)</datafmt>", it, re.S)
+                if fmt and "." not in name:
+                    name = name + "." + fmt.group(1).strip().lstrip(".")
+                md5m = re.search(r"<fullmd5>(.*?)</fullmd5>", it, re.S)
+                szm = re.search(r"<datasize>(\d+)</datasize>", it, re.S)
+                files.append({
+                    "title": name,
+                    "fullmd5": md5m.group(1).lower() if md5m else None,
+                    "datasize": int(szm.group(1)) if szm else None,
+                })
+            elif k == "17" and depth < max_depth:
+                nested.append(it[:120])
+                if "<recorditem>" in it:
+                    self._collect_forward_files(it, files, nested, depth + 1, max_depth)
+                elif "<recordinfo>" in it:
+                    sub = re.search(r"<recordinfo>.*?</recordinfo>", it, re.S)
+                    if sub:
+                        self._collect_forward_dataitems(sub.group(0), files, nested,
+                                                        depth + 1, max_depth)
+
+    @staticmethod
+    def _has_named_button(ctrl, max_depth=8, _d=0):
+        if _d > max_depth:
+            return False
+        try:
+            for kid in ctrl.GetChildren():
+                try:
+                    if "Button" in (kid.ControlTypeName or "") and (kid.Name or "").strip():
+                        return True
+                except Exception:
+                    pass
+                if MediaDownloader._has_named_button(kid, max_depth, _d + 1):
+                    return True
+        except Exception:
+            pass
+        return False
 
     @staticmethod
     def _find_preview_button(ctrl, name, max_depth=8):
@@ -1948,7 +2540,8 @@ class MediaDownloader:
         names = (name,) if isinstance(name, str) else tuple(name or ())
         for kid in ctrl.GetChildren():
             try:
-                if (kid.Name or "").strip() in names:
+                if "Button" in (kid.ControlTypeName or "") \
+                        and (kid.Name or "").strip() in names:
                     return kid
                 found = MediaDownloader._find_preview_button(kid, name, max_depth - 1)
                 if found:
@@ -1991,9 +2584,37 @@ class MediaDownloader:
                    len(data) // 1024, note, hit[0])
         return self._write_decrypted(data, "%s_%s" % (user, local_id), save_dir)
 
+    def _xml_image_meta(self, row: dict) -> dict:
+        """从图片消息 content 的 XML 提取元数据：length/md5/aeskey/hevc_mid_size。
+
+        ``content`` 在 4.x 是 zstd 压缩的 XML（走 db 的 ``_friendly_content`` 解压）。
+        ``length`` 是**原件字节数**（与 cdnthumblength/hevc_mid_size 区分）。
+        解析失败返回空 dict。
+        """
+        raw = row.get("content")
+        text = None
+        if isinstance(raw, bytes):
+            friendly = getattr(self.db, "_friendly_content", None)
+            if friendly is not None:
+                text = friendly(raw, "图片")
+        elif isinstance(raw, str):
+            text = raw
+        if not text or "<img" not in text:
+            return {}
+        out = {}
+        for key in ("length", "hevc_mid_size"):
+            m = re.search(r'\b%s="(\d+)"' % key, text)
+            if m:
+                out[key] = int(m.group(1))
+        for key in ("md5", "originsourcemd5", "aeskey"):
+            m = re.search(r'\b%s="([0-9a-fA-F]{32})"' % key, text)
+            if m:
+                out[key] = m.group(1).lower()
+        return out
+
     def download_image_original(self, user: str, local_id: int, save_dir: Optional[str] = None,
                               aes_key: Optional[str] = None, xor_key: Optional[int] = None,
-                              timeout: float = 30.0, chat_name: Optional[str] = None,
+                              timeout: float = 60.0, chat_name: Optional[str] = None,
                               min_bytes: int = 1024, scroll: bool = True,
                               max_scrolls: int = 6,
                               shard: Optional[str] = None) -> Optional[str]:
@@ -2014,7 +2635,9 @@ class MediaDownloader:
 
         Args:
             timeout: 点击之后等 ``_h.dat`` 出现并下完的**总**上限（秒）。
-                以前这个参数是摆设（代码里只 ``sleep(3)`` 一次就判失败）。
+                以前这个参数是摆设（代码里只 ``sleep(3)`` 一次就判失败）；
+                默认 30→60（2026-11-21）：实测多个气泡逐个点击时 30s 会截断在
+                「还剩 N 个气泡没试」。
             min_bytes: ``_h.dat`` 的下限字节数（挡空壳）；「下完没」看的是
                 :meth:`original_ready`（非空 + 不小于 ``min_bytes``）加上大小不再变化，
                 **不拿它和别的档比大小**（那条比例判据被实测否掉了）。
@@ -2062,6 +2685,35 @@ class MediaDownloader:
             wxlog.info("这条图是自己发出去的，本机只有 .dat（实测 554 条自发图片里只有 "
                        "19 条有 _h.dat）；仍然走点击路径确认一下 —— .dat 有时本身就是"
                        "预览版。只想拿本机那份的话用 download_image(tier='full')。")
+
+        # 离线快路（2026-11-21 新增）：消息 XML 的 ``length`` 是**原件字节数**。
+        # 把本机 .dat 解出来，尺寸与它一致（XML 带 md5 时再核 md5）就说明这份
+        # .dat 本来就是完整原件——这类图（小图/未压缩场景）根本不用碰界面。
+        # CDN blob（cdnmidimgurl）在 4.x 是无 URL 的 filekey，凭证只在客户端
+        # 内部，直下不可行（2026-11-21 实测），界面仍是拿不到原件时的唯一出路。
+        try:
+            meta = self._xml_image_meta(row)
+        except Exception as e:
+            meta = {}
+            wxlog.debug("图片 XML 元数据解析失败：%s: %s", type(e).__name__, str(e)[:120])
+        want_len = meta.get("length")
+        if want_len and files.get('mid'):
+            try:
+                data = self.decrypt_image(files['mid'][0], aes_key, xor_key)
+            except Exception as e:
+                data = b""
+                wxlog.debug("离线快路解密失败：%s: %s", type(e).__name__, str(e)[:120])
+            if data and len(data) == want_len and _jpeg_like(data):
+                xmd5 = meta.get("md5")
+                if xmd5 and hashlib.md5(data).hexdigest() != xmd5:
+                    # wxgf/动图容器场景：XML md5 非容器 md5（实测 2026-11-21），
+                    # 尺寸一致 + 文件头合法已足以判定，不否决
+                    wxlog.info("本机 .dat 即原件（解密 %dB == XML length；md5 与 XML "
+                               "不符——wxgf 等容器场景属正常，按尺寸+文件头判定）", len(data))
+                else:
+                    wxlog.info("本机 .dat 即原件（解密 %dB == XML length%s），免界面",
+                               len(data), "，md5 一致" if xmd5 else "，XML 无 md5")
+                return self._write_decrypted(data, "%s_%s" % (user, local_id), save_dir)
 
         from .uia_driver import WeChatUIA
         from .guia import WinInput
@@ -2331,7 +2983,7 @@ class MediaDownloader:
                                      "%s_%s" % (user, local_id), save_dir)
 
     def download_media(self, user: str, local_id: int, save_dir: Optional[str] = None) -> Optional[str]:
-        """按消息类型自动分发：3 图片 / 34 语音 / 43 视频 / 49 文件。
+        """按消息类型自动分发：3 图片 / 34 语音 / 43 视频 / 49 或复合 subtype=6 文件。
 
         跨分片下 local_id 可能对应多类型，逐个尝试下载直到成功。
         分发时会带上候选行的 ``shard``，所以拿到的是候选行本身而不是别的分片的同号行。
@@ -2347,6 +2999,6 @@ class MediaDownloader:
                 return self.download_voice(user, local_id, save_dir, shard=sd)
             if t == 43:
                 return self.download_video(user, local_id, save_dir, shard=sd)
-            if t == 49:
+            if t in _FILE_TYPES:
                 return self.download_file(user, local_id, save_dir, shard=sd)
         return None

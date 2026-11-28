@@ -1,14 +1,15 @@
-# vendored wechatauto（上游 PyPI 包 wechatauto-replica 1.2.10）
+# vendored wechatauto（上游 PyPI 包 wechatauto-replica 1.3.0.2）
 
 这个目录是**上游源码树的逐字节副本**，不是本项目写的代码；本项目不在这里打补丁。
 
 ## 上游与版本
 
 - 包名：`wechatauto-replica`
-- 版本：`1.2.10`
-- 来源：PyPI（wheel 名 `wechatauto_replica-1.2.10-py3-none-any.whl`）
-- 落库日期：2026-11-11
-- 内容：`wechatauto/` 是包本体（76 个文件，含 `.py`、资源与 `py.typed`），
+- 版本：`1.3.0.2`
+- 来源：PyPI（wheel 名 `wechatauto_replica-1.3.0.2-py3-none-any.whl`）
+- wheel SHA-256：`1271f0db8c5259cee3b0650e79d7399fdc041104e57a06cc98537ad070a29cc3`
+- 落库日期：2026-11-28
+- 内容：`wechatauto/` 是包本体（82 个文件，含 `.py`、资源与 `py.typed`），
   `wechatauto/dist-info/` 是从 wheel 里带出来的 `dist-info`（METADATA / WHEEL / RECORD /
   entry_points.txt / top_level.txt / licenses/LICENSE），用于许可证合规与来源追溯。
 
