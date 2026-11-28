@@ -87,7 +87,7 @@ function notes(body) {
 }
 
 function header(prefix, current) {
-  const nav = [['', '首页'], ['downloads/', '下载中心'], ['plugins/', '插件市场'], ['support/', '支持我们'], ['team/', '团队']];
+  const nav = [['', '首页'], ['downloads/', '下载中心'], ['guide/', '使用教程'], ['plugins/', '插件市场'], ['support/', '支持我们'], ['team/', '团队']];
   return `<a class="skip" href="#main">跳转到主要内容</a><header class="header"><nav class="nav wrap" aria-label="主导航">
     <a class="brand" href="${prefix}" aria-label="鲸鲸首页"><img class="brand-icon" src="${prefix}images/launcher-icon.png" alt="" width="256" height="256"><span>鲸鲸 <span class="brand-en">Whale Girl</span></span></a>
     <button class="menu-toggle icon-button" aria-label="打开导航" aria-expanded="false" aria-controls="nav-links"><span></span><span></span></button>
@@ -119,6 +119,83 @@ function intro(kicker, title, description) {
   return `<div class="page-intro"><div><p class="eyebrow">${e(kicker)}</p><h1>${title}</h1></div><p class="page-lead">${description}</p></div>`;
 }
 
+function guidePage() {
+  return intro('使用教程', '让鲸鲸回你第一条微信', '从下载、配置模型到微信里收到回复。已装好的用户也可以直接跳到对应功能。') + `
+  <article class="guide-content prose">
+    <nav class="info-panel" aria-label="本页教程目录">
+      <h2>本页目录</h2>
+      <div class="inline-links"><a href="#install">下载与安装</a><a href="#model">配置模型</a><a href="#wechat-bridge">接入微信</a><a href="#first-reply">测试第一条回复</a><a href="#troubleshooting">常见问题</a><a href="#phone-control">手机远程控制</a><a href="#plugins">安装插件</a><a href="#data">备份与隐私</a></div>
+    </nav>
+
+    <section class="page-section" aria-labelledby="install">
+      <h2 id="install">下载与安装</h2>
+      <p>准备一台 Windows 10 或 11 电脑、已登录的微信 4.x 桌面版，以及一个可用的模型 API Key。第一次建议用微信小号和测试群。</p>
+      <ol class="steps">
+        <li>打开<a href="../downloads/">下载中心</a>，选择最新正式发行，在发行文件里下载以 <code>-setup.exe</code> 结尾的 Windows 安装包。</li>
+        <li>运行安装包。安装路径建议使用英文，例如 <code>D:\\whale-girl</code>。安装包自带运行环境。</li>
+        <li>从桌面打开「鲸鲸」。已有旧版的用户可先阅读<a href="#data">备份与更新说明</a>。</li>
+      </ol>
+    </section>
+
+    <section class="page-section" aria-labelledby="model">
+      <h2 id="model">配置模型</h2>
+      <ol class="steps">
+        <li>以 DeepSeek 为例，在<a href="https://api-docs.deepseek.com/zh-cn/">DeepSeek 官方 API 文档</a>点「申请一个 API key」，登录平台创建并复制 Key。</li>
+        <li>打开「设置 → API 接入 → 聊天」，在「服务商」选择 DeepSeek，填入 API Key，选择可用的模型。使用其他服务商时，选择对应的预设并填写它的 Key。</li>
+        <li>保存设置。模型调用按你选择的服务商规则计费，分享截图或日志前请遮住 Key。</li>
+      </ol>
+    </section>
+
+    <section class="page-section" aria-labelledby="wechat-bridge">
+      <h2 id="wechat-bridge">接入微信</h2>
+      <ol class="steps">
+        <li>在同一台电脑登录要让鲸鲸使用的微信账号。微信和鲸鲸以同一级别的权限运行，通常双击正常打开两个程序即可。</li>
+        <li>在鲸鲸的「微信桥接」页选择刚登录的账号，点右上角「启动」。</li>
+        <li>打开「状态」，确认内核和桥接均已运行。回到「设置」点「测试连通」，看到「模型调用成功」后，再测试微信回复。首次测试时保持微信窗口可用，避免最小化。</li>
+      </ol>
+    </section>
+
+    <section class="page-section" aria-labelledby="first-reply">
+      <h2 id="first-reply">测试第一条回复</h2>
+      <p>把机器人账号和另一个微信号放进同一个测试群。用另一个号在群里实际选中并 <strong>@ 机器人账号</strong>，发一句「在吗？」。看到机器人账号在群里发出回复，就完成了第一次配置。</p>
+      <p>想先限制发言范围，可在「微信桥接 → 发言范围」把测试群加入白名单，并开启仅允许白名单会话发言。暂停时在启动器点「停止」。</p>
+    </section>
+
+    <section class="page-section" aria-labelledby="troubleshooting">
+      <h2 id="troubleshooting">常见问题</h2>
+      <details><summary>微信账号没识别，或者桥接起不来</summary><p>先确认微信已在同一台电脑登录，微信和鲸鲸以同一级别权限运行。回到「微信桥接」检查账号选择和日志，再启动一次。</p></details>
+      <details><summary>桥接在运行，但鲸鲸没回复</summary><p>先从另一个微信号在测试群实际 @ 机器人账号，确认测试群在允许发言范围内。再看日志有没有收到这条消息，以及模型请求是否报错。鉴权报错时核对服务商与 Key，余额或限流报错时检查服务商账户。</p></details>
+      <details><summary>日志显示生成了回复，微信里没有消息</summary><p>确认电脑没有锁屏、微信窗口没有最小化，且桥接绑定的是测试群里的机器人账号。查看「微信桥接」日志里的发送结果。</p></details>
+      <p>还卡住时，打开「诊断 → 导出日志」，提交鲸鲸版本、微信版本和复现步骤。发送前检查日志及截图里的账号、Key 和聊天原文。<a href="${APP}/issues">去 GitHub 反馈</a></p>
+    </section>
+
+    <section class="page-section" aria-labelledby="phone-control">
+      <h2 id="phone-control">手机远程控制</h2>
+      <p>适用于包含手机控制台的鲸鲸版本，例如 4.2.0。使用普通权限启动微信和鲸鲸，电脑与手机要能加入同一个 Tailscale 网络。</p>
+      <ol class="steps">
+        <li>安装时保留「安装手机远程控制」。打开安装目录中的「手机远程控制」文件夹。如果希望让手机启动内核，在鲸鲸「状态 → 主机」勾选「允许手机启动内核」。</li>
+        <li>在电脑双击「1 - 下载或安装 Tailscale」。手机也安装 Tailscale，确认两台设备已连接到同一个网络。</li>
+        <li>双击「2 - 一键打开控制台」，记下配对 Key，保持窗口开启。再双击「3 - 一键复制手机访问地址」，按提示完成首次授权。</li>
+        <li>在手机浏览器打开复制的地址，输入配对 Key。能看到「主机」状态，就完成配对。配对 Key 只在自己的设备上使用。</li>
+      </ol>
+      <details><summary>手机打不开地址，或电脑显示离线</summary><p>检查手机的 Tailscale 已连接，并确认电脑在线且第 2 步窗口仍开着。遇到 DNS 错误时核对手机的 Tailscale DNS 设置。电脑睡眠或断网会让控制台离线，锁屏也会影响依赖截图的功能。</p></details>
+      <p><a href="${APP}/blob/main/tools/remote-console/README.md">查看手机控制的完整排障说明</a></p>
+    </section>
+
+    <section class="page-section" aria-labelledby="plugins">
+      <h2 id="plugins">安装插件</h2>
+      <p>在<a href="../plugins/">插件市场</a>查看插件用途、权限和最低客户端版本。然后在鲸鲸启动器的「插件市场」安装，也可以下载 ZIP 后选择「从本地安装」。根据插件卡片提示启用并配置。</p>
+      <p>完整系统权限的 JavaScript 插件需要单独授权。授权前核对作者和用途。</p>
+    </section>
+
+    <section class="page-section" aria-labelledby="data">
+      <h2 id="data">备份、更新与隐私</h2>
+      <p>更新前可备份安装目录里的 <code>data</code> 和 <code>config.json</code>。常规更新可在启动器里点「检查更新」。备份可能包含记忆、配置和密钥，请保存在自己的设备上。</p>
+      <p>记忆保存在本机。调用配置好的云模型时，模型请求会发往对应服务商。详见<a href="${APP}/blob/main/docs/PRIVACY.md">鲸鲸隐私政策</a>。</p>
+    </section>
+  </article>`;
+}
+
 function searchFilters(label, placeholder, selects = '') {
   return `<div class="filter-bar" data-filters hidden><label class="search-field">${e(label)}<input type="search" placeholder="${e(placeholder)}" autocomplete="off"></label>${selects}</div><p class="filter-status" id="filter-status" role="status" aria-live="polite"></p>`;
 }
@@ -135,7 +212,7 @@ function downloads(releases, latest) {
   const years = [...new Set(releases.map(item => date(item.published_at).slice(0, 4)))].sort().reverse();
   return intro('DOWNLOAD / RELEASE ARCHIVE', '把鲸鲸带回你的日常。', '最新正式版、完整更新记录与历史安装文件，都在这里。')
     + starPrompt()
-    + `<div class="download-overview"><section class="highlight-panel"><div><span class="tag"><span class="live-dot"></span>最新正式发行</span><h2>${e(releaseTitle(latest))}</h2><p>发布于 ${date(latest.published_at)} · Windows · ${latest.assets?.length || 0} 个发行文件</p><a class="button" href="./${releaseSlug(latest.tag_name)}/">查看下载与更新说明 <span aria-hidden="true">↗</span></a></div><span class="release-mark" aria-hidden="true">${e(latest.tag_name.replace(/^v/, ''))}</span></section><aside class="install-brief info-panel"><p class="eyebrow">FIRST HELLO</p><h2>三步，开始相处。</h2><ol><li>下载对应版本的安装文件</li><li>准备微信账号与模型 API Key</li><li>在桌面启动器中配置并启动</li></ol>${link(`${APP}#install-and-first-run`, '阅读安装指南')}</aside></div>`
+    + `<div class="download-overview"><section class="highlight-panel"><div><span class="tag"><span class="live-dot"></span>最新正式发行</span><h2>${e(releaseTitle(latest))}</h2><p>发布于 ${date(latest.published_at)} · Windows · ${latest.assets?.length || 0} 个发行文件</p><a class="button" href="./${releaseSlug(latest.tag_name)}/">查看下载与更新说明 <span aria-hidden="true">↗</span></a></div><span class="release-mark" aria-hidden="true">${e(latest.tag_name.replace(/^v/, ''))}</span></section><aside class="install-brief info-panel"><p class="eyebrow">FIRST HELLO</p><h2>三步，开始相处。</h2><ol><li>下载对应版本的安装文件</li><li>准备微信账号与模型 API Key</li><li>在桌面启动器中配置并启动</li></ol><a class="text-link" href="../guide/#install">阅读安装教程 <span aria-hidden="true">↗</span></a></aside></div>`
     + `<section class="page-section" aria-labelledby="history-heading"><div class="section-heading"><div><p class="eyebrow">RELEASE ARCHIVE</p><h2 id="history-heading">下载历史</h2></div>${link(`${APP}/releases`, 'GitHub 发行记录')}</div>`
     + searchFilters('搜索版本', '版本号或更新标题', selectFilter('发布年份', 'year', years.map(year => [year, year])) + selectFilter('发行类型', 'kind', [['stable', '正式版'], ['preview', '预览版']]))
     + `<div class="archive-list">${releases.map(item => `<article class="archive-row" data-filter-item data-search="${e(item.tag_name + ' ' + releaseTitle(item))}" data-year="${date(item.published_at).slice(0, 4)}" data-kind="${item.prerelease ? 'preview' : 'stable'}"><div class="archive-version"><span class="timeline-dot"></span><strong>${e(item.tag_name)}</strong><span>${item.prerelease ? '预览版' : item.tag_name === latest.tag_name ? '最新正式版' : '正式版'}</span></div><div class="archive-description"><h3><a href="./${releaseSlug(item.tag_name)}/">${e(releaseTitle(item))}</a></h3><span>${item.assets?.length || 0} 个发行文件</span></div><time datetime="${date(item.published_at)}">${date(item.published_at)}</time><a class="text-link" href="./${releaseSlug(item.tag_name)}/" aria-label="查看 ${e(item.tag_name)} 下载页面">版本详情 <span aria-hidden="true">↗</span></a></article>`).join('')}</div><p class="empty-state" id="filter-empty" hidden>没有找到符合条件的版本，试试其他关键词。</p></section>`;
@@ -346,12 +423,13 @@ function buildSite({ root = path.resolve(__dirname, '..'), output, data, tips: s
   fs.writeFileSync(path.join(target, 'index.html'), withGitHub(home, data));
   write('downloads/', '下载中心与历史版本', '鲸鲸 Windows 下载与完整发行历史，每个版本都有独立下载页。', downloads(releases, data.latest), 'downloads/');
   for (const item of releases) write(`downloads/${releaseSlug(item.tag_name)}/`, releaseTitle(item), '查看这个版本的更新说明与官方发行文件。', releasePage(item, data.latest), 'downloads/');
+  write('guide/', '使用教程', '安装鲸鲸、配置模型、接入微信、测试第一条回复并设置手机远程控制。', guidePage(), 'guide/');
   write('plugins/', '插件市场', '浏览鲸鲸社区插件，了解来源、权限与兼容范围。', pluginsPage(plugins, data), 'plugins/');
   for (const item of plugins) write(`plugins/${item.Id}/`, item.Name, item.Description, pluginDetail(item, data), 'plugins/');
   write('support/', '支持团队创作', support.lead, supportPage(support), 'support/');
   write('support/transparency/', '打赏公示', '查看鲸鲸团队已核对发布的各渠道打赏记录。', tipsPage(tips, support), 'support/');
   write('team/', '团队成员与致谢', '认识鲸鲸背后的三位开发者与贡献者。', teamPage(team), 'team/');
-  const routes = ['', 'downloads/', 'plugins/', 'support/', 'support/transparency/', 'team/', ...releases.map(item => `downloads/${releaseSlug(item.tag_name)}/`), ...plugins.map(item => `plugins/${item.Id}/`)];
+  const routes = ['', 'downloads/', 'guide/', 'plugins/', 'support/', 'support/transparency/', 'team/', ...releases.map(item => `downloads/${releaseSlug(item.tag_name)}/`), ...plugins.map(item => `plugins/${item.Id}/`)];
   fs.writeFileSync(path.join(target, 'sitemap.xml'), `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${routes.map(route => `<url><loc>${e(ORIGIN + route)}</loc></url>`).join('')}</urlset>\n`);
   fs.writeFileSync(path.join(target, 'robots.txt'), `User-agent: *\nAllow: /\nSitemap: ${ORIGIN}sitemap.xml\n`);
   return { releases: releases.length, plugins: plugins.length, pages: routes.length };
