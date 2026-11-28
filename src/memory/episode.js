@@ -192,7 +192,8 @@ async function closeEpisode({ chat, chatStore, llm = null, logger = null, now = 
         personCard.addTrait(card, {
           text: trait.text,
           confidence: trait.confidence,
-          evidence: (trait.evidence && trait.evidence.length ? trait.evidence : messageIds).slice(-8),
+          // 不能拿整段用户消息顶替缺失的证据，那样任何性格都能凑够条数
+          evidence: trait.evidence.slice(-8),
         }, { chatId: chat.chatId, now });
       }
       const personThreads = extracted.threads.filter((t) => !t.uid || t.uid === speaker.uid);
