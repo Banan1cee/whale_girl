@@ -125,9 +125,21 @@ test('网关兼容：默认 token 仅本机可用，空 token 本机同样拒绝
  assert.equal(new Gateway({platform:'wechat'}).verifyToken({headers:{},socket:{remoteAddress:'127.0.0.1'}},null),false);
 });
 for(const text of ['取消提醒','删除所有提醒','清空全部提醒'])test(`群提醒攻击：群友 ${text} 不得删除其他人的待办`,async t=>{
- const f=fixture(t);let cancelled=0;f.bot.reminders={pendingFor(){return [{id:'test-other-person',text:'他人的测试待办'}];},cancel(){cancelled++;return {ok:true};}};
+ const f=fixture(t);let cancelled=0;f.bot.reminders={
+  pendingFor(){return [{id:'test-other-person',text:'他人的测试待办'}];},
+  cancel(){cancelled++;return {ok:true};},
+  cancelMatching(){cancelled++;return {cancelled:1};},
+ };
  const d=await f.bot.decide(f.msg(text));assert.equal(d.reason,'not_owner');assert.equal(cancelled,0);
- const ok=await f.bot.decide(f.msg(text,{senderId:'wxid_test_owner'}));assert.equal(ok.reason,'reminder_cancel');assert.equal(cancelled,1);
+ const owner={senderId:'wxid_test_owner'};
+ const ok=await f.bot.decide(f.msg(text,owner));
+ if(text!=='取消提醒'){
+  assert.equal(ok.reason,'reminder_cancel_confirm');assert.equal(cancelled,0);
+  const foreign=await f.bot.decide(f.msg('确认取消全部提醒'));assert.equal(foreign.reason,'not_owner');
+  assert.equal(cancelled,0);
+  await f.bot.decide(f.msg('确认取消全部提醒',owner));
+ }else assert.equal(ok.reason,'reminder_cancel');
+ assert.equal(cancelled,1);
 });
 test('跨会话攻击：提示词和特殊 ID 不能读取其他群的测试笔记',async t=>{
  const f=fixture(t);const secret=await f.bot.decide(f.msg('在吗',{chatId:'private-test-room'}));f.store.addNote(secret.key,'wxid_test_owner','隔离哨兵-735192',{explicit:true});

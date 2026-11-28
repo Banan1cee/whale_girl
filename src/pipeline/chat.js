@@ -191,13 +191,29 @@ class Bot {
     const text = String((clean && clean.text) || '').trim();
     if (!text || text.length > 120) return null;
 
-    // 取消 / 查看：既支持整句「取消提醒」，也支持指向某一条待办的自然语言撤回。
-    if (/^(?:取消|删除|清空)(?:所有|全部)?提醒[。.!！~～]*$/.test(text)) {
+    // 批量确认锁定请求时的提醒，避免把随后新建的提醒一起取消。
+    const cancelAll = /^(?:取消|删除|清空)(?:所有|全部)提醒[。.!！~～]*$/.test(text);
+    const confirmAll = /^确认取消全部提醒[。.!！~～]*$/.test(text);
+    if (cancelAll || confirmAll) {
       if (isGroup && !isVerifiedOwner(this.config, msg)) {
         return { action: 'reply', key, msg, atMe, canned: '群里的提醒统一由已绑定 ID 的主人取消，避免误删其他人的提醒。', reason: 'not_owner' };
       }
-      const pending = service.pendingFor(msg.chatId);
-      if (!pending.length) return { action: 'reply', key, msg, atMe, canned: '这个会话没有待发的提醒。', reason: 'reminder_cancel' };
+      const requests = this._reminderCancelConfirmations ??= new Map();
+      const requestKey = JSON.stringify([key, msg.senderId]);
+      const nowMs = Number(now);
+      for (const [id, request] of requests) if (request.expires <= nowMs) requests.delete(id);
+      let pending = service.pendingFor(msg.chatId);
+      if (cancelAll) {
+        requests.delete(requestKey);
+        if (!pending.length) return { action: 'reply', key, msg, atMe, canned: '这个会话没有待发的提醒。', reason: 'reminder_cancel' };
+        requests.set(requestKey, { expires: nowMs + 60000, ids: new Set(pending.map(item => item.id)) });
+        if (requests.size > 100) requests.delete(requests.keys().next().value);
+        return { action: 'reply', key, msg, atMe, canned: `将取消当前的 ${pending.length} 条待发提醒。请在一分钟内回复「确认取消全部提醒」。`, reason: 'reminder_cancel_confirm' };
+      }
+      const request = requests.get(requestKey);
+      requests.delete(requestKey);
+      if (!request) return { action: 'reply', key, msg, atMe, canned: '没有待确认的批量取消。请先发「取消全部提醒」。', reason: 'reminder_cancel' };
+      pending = pending.filter(item => request.ids.has(item.id));
       let cancelled = 0;
       for (const item of pending) if (service.cancel(item.id).ok) cancelled += 1;
       const sending = pending.length - cancelled;

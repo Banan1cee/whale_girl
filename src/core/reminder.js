@@ -173,21 +173,24 @@ function looksLikeReminder(text) {
 const TAIL_RE = /\s*(记得|哦|啊|呀|嘛|吧|谢谢|谢了|辛苦了)[。.!！~～]*\s*$/;
 
 /**
- * 解析对已有提醒的自然语言撤回，例如「第三天的事情取消」「明天别提醒我买菜」。
+ * 解析对已有提醒的自然语言撤回，例如「取消明天买菜的提醒」「明天别提醒我买菜」。
  * 只负责提取意图和可选查询词，具体候选筛选仍由提醒服务按会话完成。
  */
 function parseReminderCancellation(text) {
   const raw = String(text || '').trim();
   if (!raw || raw.length > 120) return null;
-  const verb = /(?:取消|撤销|删除|不用|别|不要)\s*(?:提醒)?/.exec(raw);
-  if (!verb) return null;
-  const hasTarget = /(?:提醒|事情|那件事|这个|那个|明天|后天|大后天|第[一二两三四五六七八九十\d]+天)/.test(raw);
-  if (!hasTarget) return null;
-  let query = raw.slice(0, verb.index) + raw.slice(verb.index + verb[0].length);
+  // 日期和代词只用于定位，不能作为取消提醒的依据。
+  const command = raw.replace(/^(?:请\s*)?(?:帮我\s*|麻烦你?\s*)?/, '')
+    .replace(/[。.!！~～]+$/, '').trim();
+  const body = command.replace(/^(?:(?:今天|明天|大后天|后天)(?:的)?\s*)?/, '');
+  const before = /^(?:取消|撤销|删除)(?:掉)?\s*(?:提醒(?:我.*)?|[^，,。！？?；;]+提醒)$/;
+  const refusal = /^(?:不用|别|不要)\s*提醒(?:我.*)?$/;
+  if (!before.test(body) && !refusal.test(body)) return null;
+  let query = command.replace(/(?:取消|撤销|删除)(?:掉)?|(?:不用|别|不要)\s*(?=提醒)/, '');
   query = query
     .replace(/第[一二两三四五六七八九十\d]+天(?:的)?(?:事情|事|提醒)?/g, '')
     .replace(/(?:今天|明天|后天|大后天)(?:的)?(?:事情|事|提醒)?/g, '')
-    .replace(/(?:那件事|这个提醒|那个提醒|提醒我|提醒|事情|事)/g, '')
+    .replace(/(?:这个提醒|那个提醒|提醒我|的提醒|提醒)/g, '')
     .replace(/^我/, '')
     .replace(/[，,。.!！?？：:、\s]+/g, '')
     .trim();
