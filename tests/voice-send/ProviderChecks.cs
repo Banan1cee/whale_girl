@@ -184,6 +184,13 @@ static class ProviderChecks
                 check(BreezeSpeech.LoadKey(SpeechProviders.KeyFile(root,"minimax"))=="fake-minimax-key");
                 check(!File.Exists(SpeechProviders.KeyFile(root,"breezeblue")));
                 check(!File.ReadAllText(Path.Combine(root,"data","voice-send.json")).Contains("fake-minimax-key"));
+                var instructions=Field<TextBox>("instructions");
+                instructions.Text="温和地说";
+                check(((IPendingSettings)page).SavePendingSettingsAsync().GetAwaiter().GetResult());
+                check(AutoVoiceSettings.Load(root).Instructions=="温和地说");
+                instructions.Clear();
+                check(((IPendingSettings)page).SavePendingSettingsAsync().GetAwaiter().GetResult());
+                check(AutoVoiceSettings.Load(root).Instructions=="");
                 typeof(VoiceSendPage).GetMethod("Load",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(page,null);
                 check(((SpeechProviders.Provider)pick.SelectedItem).Id=="minimax"&&key.Password=="");
                 pick.SelectedItem=SpeechProviders.Get("breezeblue");check(voice.Text=="voc_saved"&&model.Text=="breeze-custom"&&key.Password=="");

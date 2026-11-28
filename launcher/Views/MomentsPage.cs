@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -9,7 +10,7 @@ using System.Windows.Controls;
 namespace WhaleLauncher.Views;
 
 // 读取只查本地缓存；互动会操作微信窗口，执行后必须由用户在微信里确认。
-public sealed partial class MomentsPage : UserControl
+public sealed partial class MomentsPage : UserControl, IPendingSettings
 {
     static readonly (string Value, string Label)[] Actions = {
         ("like", "点赞"), ("unlike", "取消点赞"), ("comment", "评论"), ("reply", "回复评论"),
@@ -20,6 +21,9 @@ public sealed partial class MomentsPage : UserControl
     bool reading;
     bool loadingSettings;
     bool publishSettingsLoaded;
+    readonly SemaphoreSlim publishSaveGate = new(1);
+    sealed record PublishForm(bool FeatureEnabled, bool Enabled, bool WithImage, string Interval, string Limit);
+    PublishForm savedPublishForm;
     int viewGeneration;
     bool loadingPage;
     bool settingsLoaded;
@@ -290,33 +294,52 @@ public sealed partial class MomentsPage : UserControl
                 TxtPublishInterval.Text = res.Prop("interval").ToString();
                 TxtPublishLimit.Text = res.Long("maxPerDay").ToString();
                 publishSettingsLoaded = true;
+                savedPublishForm = ReadPublishForm();
             }
             ShowPublishStatus(res);
         }
         finally { if (generation == viewGeneration) BtnRefreshPublish.IsEnabled = true; }
     }
 
-    async Task SavePublishAsync()
+    PublishForm ReadPublishForm() => new(ChkPublishFeature.IsChecked == true,
+        ChkPublish.IsChecked == true, ChkPublishImage.IsChecked == true, TxtPublishInterval.Text, TxtPublishLimit.Text);
+
+    public Task<bool> SavePendingSettingsAsync() => SavePublishAsync(onlyIfChanged: true);
+
+    async Task<bool> SavePublishAsync(bool onlyIfChanged = false)
     {
-        if (!double.TryParse(TxtPublishInterval.Text, out var interval) || !double.IsFinite(interval) || interval <= 0
-            || !int.TryParse(TxtPublishLimit.Text, out var maxPerDay) || maxPerDay < 0)
-        {
-            PublishStatus.Text = "间隔请填大于 0 的小时数（可填小数），每日上限填非负整数，0 表示不限。";
-            return;
-        }
-        var featureEnabled = ChkPublishFeature.IsChecked == true;
-        var enabled = featureEnabled && ChkPublish.IsChecked == true;
-        BtnSavePublish.IsEnabled = false;
+        await publishSaveGate.WaitAsync();
         try
         {
-            var res = await sup.SaveConfigurationAsync("/api/moments/publish-settings",
-                new { featureEnabled, enabled, withImage = ChkPublishImage.IsChecked == true, interval, maxPerDay });
-            if (!res.Ok) { PublishStatus.Text = Api.Message(res); return; }
+            var form = ReadPublishForm();
+            if (onlyIfChanged && (!publishSettingsLoaded || form == savedPublishForm)) return true;
+            if (!double.TryParse(form.Interval, out var interval) || !double.IsFinite(interval) || interval <= 0
+                || !int.TryParse(form.Limit, out var maxPerDay) || maxPerDay < 0)
+            {
+                PublishStatus.Text = "间隔请填大于 0 的小时数（可填小数），每日上限填非负整数，0 表示不限。";
+                return false;
+            }
+            BtnSavePublish.IsEnabled = false;
+            var res = await sup.SaveConfigurationAsync("/api/moments/publish-settings", new
+            {
+                featureEnabled = form.FeatureEnabled,
+                enabled = form.FeatureEnabled && form.Enabled,
+                withImage = form.WithImage,
+                interval,
+                maxPerDay,
+            });
+            if (!res.Ok) { PublishStatus.Text = "保存失败：" + Api.Message(res); return false; }
             publishSettingsLoaded = true;
-            ChkPublish.IsChecked = res.Bool("enabled");
+            savedPublishForm = form with { Enabled = res.Bool("enabled") };
+            if (ReadPublishForm() == form) ChkPublish.IsChecked = savedPublishForm.Enabled;
             ShowPublishStatus(res);
+            return true;
         }
-        finally { BtnSavePublish.IsEnabled = true; }
+        finally
+        {
+            BtnSavePublish.IsEnabled = true;
+            publishSaveGate.Release();
+        }
     }
 
     async Task TestPublishAsync()

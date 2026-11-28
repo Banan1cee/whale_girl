@@ -35,7 +35,7 @@ namespace WhaleLauncher.Views
         public string Tip { get; set; } = "";
     }
 
-    public partial class BridgePage : UserControl, IRefreshable
+    public partial class BridgePage : UserControl, IRefreshable, IPendingSettings
     {
         private readonly RuntimeSupervisor _sup;
         private readonly ConfigSaver _saver;
@@ -471,17 +471,15 @@ namespace WhaleLauncher.Views
                 // 拍一拍：开关在 features.pat，概率与频率在 pat.*；配置里存 0~1，界面显示 0~100。
                 ChkPat.IsChecked = JsonRead.Bool(JsonRead.Prop(cfg, "features"), "pat");
                 var pat = JsonRead.Prop(cfg, "pat");
-                if (pat.ValueKind == JsonValueKind.Object)
-                {
-                    if (!TxtPatReply.IsKeyboardFocusWithin)
-                        TxtPatReply.Text = Math.Round(JsonRead.Double(pat, "replyChance", 1) * 100).ToString("0");
-                    if (!TxtPatBack.IsKeyboardFocusWithin)
-                        TxtPatBack.Text = Math.Round(JsonRead.Double(pat, "backChance", 1) * 100).ToString("0");
-                    if (!TxtPatCooldown.IsKeyboardFocusWithin)
-                        TxtPatCooldown.Text = JsonRead.Int(pat, "cooldownSec", 8).ToString();
-                    if (!TxtPatMaxHour.IsKeyboardFocusWithin)
-                        TxtPatMaxHour.Text = JsonRead.Int(pat, "maxPerHour", 0).ToString();
-                }
+                // 旧配置快照缺少 pat 字段时也要显示内核使用的默认值。
+                if (!TxtPatReply.IsKeyboardFocusWithin)
+                    TxtPatReply.Text = Math.Round(JsonRead.Double(pat, "replyChance", 1) * 100).ToString("0");
+                if (!TxtPatBack.IsKeyboardFocusWithin)
+                    TxtPatBack.Text = Math.Round(JsonRead.Double(pat, "backChance", 1) * 100).ToString("0");
+                if (!TxtPatCooldown.IsKeyboardFocusWithin)
+                    TxtPatCooldown.Text = JsonRead.Int(pat, "cooldownSec", 8).ToString();
+                if (!TxtPatMaxHour.IsKeyboardFocusWithin)
+                    TxtPatMaxHour.Text = JsonRead.Int(pat, "maxPerHour", 0).ToString();
                 _configLoaded = true;
             }
             catch { /* 内核没起 */ }
@@ -489,6 +487,12 @@ namespace WhaleLauncher.Views
             {
                 _loading = false;
             }
+        }
+
+        public async Task<bool> SavePendingSettingsAsync()
+        {
+            await _saver.FlushAsync();
+            return true;
         }
 
         private async Task PatchAsync(IDictionary<string, object> patch)

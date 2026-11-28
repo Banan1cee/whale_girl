@@ -13,7 +13,7 @@ using NAudio.CoreAudioApi;
 
 namespace WhaleLauncher.Views;
 
-public sealed class VoiceSendPage : UserControl
+public sealed class VoiceSendPage : UserControl, IPendingSettings
 {
     readonly CheckBox experimental=new(){Content="启用语音发送（实验性）",IsChecked=false};
     readonly StackPanel panel=new(){Visibility=Visibility.Collapsed};
@@ -39,6 +39,7 @@ public sealed class VoiceSendPage : UserControl
     CancellationTokenSource requests=new();
     bool loading;
     bool testing;
+    bool dirty;
     sealed record Device(string Id,string Name){public override string ToString()=>Name;}
 
     public VoiceSendPage(RuntimeSupervisor sup)
@@ -60,7 +61,12 @@ public sealed class VoiceSendPage : UserControl
         DockPanel.SetDock(actions,Dock.Right);header.Children.Add(actions);
         var reload=new Button{Content="⟳ 刷新"};
         reload.SetResourceReference(StyleProperty,"Ghost");
-        reload.Click+=(_,_)=>{Load();status.Text="已重新读取本机配置。";};
+        reload.Click += async (_, _) =>
+        {
+            if (!await SavePendingSettingsAsync()) return;
+            Load();
+            status.Text = "已重新读取本机配置。";
+        };
         actions.Children.Add(reload);
         Grid.SetRow(header,0);page.Children.Add(header);
 
@@ -175,6 +181,7 @@ public sealed class VoiceSendPage : UserControl
             finally{testing=false;}
         },testStatus,flat:true));
         current.Children.Add(saveRow);
+        current.Children.Add(Note("可以手动保存，切换页面或退出启动器时也会保存。"));
         current.Children.Add(Note("测试会先保存当前配置，再给文件传输助手发送「"+VoiceSendTest.Text+"」；排队不代表送达，结果未确认时别重复发。"));
         current.Children.Add(testStatus);
 
@@ -197,12 +204,13 @@ public sealed class VoiceSendPage : UserControl
             if(loading||provider.SelectedItem is not SpeechProviders.Provider p||p.Id==providerId)return;
             if(testing){loading=true;provider.SelectedItem=SpeechProviders.Get(providerId);loading=false;status.Text="请等待语音测试结束后再切换厂商。";return;}
             RememberProfile();draftKeys[providerId]=key.Password;
+            dirty = true;
             requests.Cancel();requests.Dispose();requests=new();
             loading=true;
             try {
                 providerId=p.Id;key.Password=draftKeys.GetValueOrDefault(providerId,"");
                 search.Clear();ApplyProfile();keyStatus.Visibility=Visibility.Collapsed;testStatus.Visibility=Visibility.Collapsed;
-                status.Text="已切换到 "+p.Name+"，请测试连接并保存配置后生效。";
+                status.Text = "已选择 " + p.Name + "，保存后生效。";
             } finally {loading=false;}
         };
         key.PasswordChanged+=(_,_)=>{
@@ -211,6 +219,18 @@ public sealed class VoiceSendPage : UserControl
             BindChoices(voices,voices.Items.Cast<BreezeSpeech.Choice>().ToArray(),voice,true);
             ShowResult(keyStatus,"Key 已填写，模型和音色已就绪。请点击「测试 API Key 连接」确认可用后保存。","Muted");
         };
+        void MarkEdited()
+        {
+            if (!loading && experimental.IsChecked == true) dirty = true;
+        }
+        foreach (var box in new TextBox[] { probability, synthTimeout, model, voice, instructions })
+            box.TextChanged += (_, _) => MarkEdited();
+        shortcut.AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((_, _) => MarkEdited()));
+        shortcut.SelectionChanged += (_, _) => MarkEdited();
+        devices.SelectionChanged += (_, _) => MarkEdited();
+        key.PasswordChanged += (_, _) => MarkEdited();
+        groups.Click += (_, _) => MarkEdited();
+        privates.Click += (_, _) => MarkEdited();
         Unloaded+=(_,_)=>requests.Cancel();
         Loaded+=(_,_)=>{if(requests.IsCancellationRequested){requests.Dispose();requests=new();}};
 
@@ -368,8 +388,24 @@ public sealed class VoiceSendPage : UserControl
             if(saved.Enabled){RefreshDevices();devices.SelectedItem=devices.Items.Cast<Device>().FirstOrDefault(d=>d.Id==saved.Device);}
         }
         catch{saved=new();experimental.IsChecked=false;panel.Visibility=Visibility.Collapsed;}
-        finally{loading=false;}
+        finally { loading = false; dirty = false; }
     }
+
+    public Task<bool> SavePendingSettingsAsync()
+    {
+        if (!dirty || experimental.IsChecked != true) return Task.FromResult(true);
+        try
+        {
+            Save();
+            return Task.FromResult(true);
+        }
+        catch (Exception ex)
+        {
+            ShowResult(status, "语音配置未保存：" + ex.Message, "Bad");
+            return Task.FromResult(false);
+        }
+    }
+
     void Save()
     {
         if(experimental.IsChecked!=true || !AutoVoiceSettings.IsEnabled(root))throw new Exception("请先打开实验开关，或刷新读取手机上的设置");
@@ -382,6 +418,7 @@ public sealed class VoiceSendPage : UserControl
         var value=new AutoVoiceSettings{Enabled=true,Provider=providerId,Address=SpeechProviders.Get(providerId).BaseUrl,Profiles=new(profiles),Probability=chance,Groups=groups.IsChecked==true,Private=privates.IsChecked==true,Model=model.Text.Trim(),Voice=voice.Text.Trim(),Instructions=instructions.Text.Trim(),Device=d.Id,RecordingHotkey=hotkey.Label};
         value.SynthTimeoutSec=seconds;
         value.Save(root);saved=value;shortcut.Text=hotkey.Label;
+        dirty = false;
         status.Text="已保存，微信录音快捷键："+hotkey.Label+"。关闭实验开关立即停止后续语音任务。";
     }
 }

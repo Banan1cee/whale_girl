@@ -119,19 +119,23 @@
                               VerticalAlignment="Center" Click="OnTogglePat" Margin="0,0,16,0"
                               ToolTip="关闭后不识别拍一拍、不回应，私聊说「拍拍我」也不会拍" />
                     <TextBlock Text="回话概率" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <ui:NumberField x:Name="TxtPatReply" Width="44" VerticalAlignment="Center" LostFocus="OnSavePat"
+                    <ui:NumberField x:Name="TxtPatReply" Width="68" Padding="6,4" TextAlignment="Center"
+                                    VerticalAlignment="Center" AutomationProperties.Name="回话概率" LostFocus="OnSavePat"
                                     Minimum="0" Maximum="100" Fallback="100" Label="回话概率" />
                     <TextBlock Text="%" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="4,0,14,0" />
                     <TextBlock Text="回拍概率" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <ui:NumberField x:Name="TxtPatBack" Width="44" VerticalAlignment="Center" LostFocus="OnSavePat"
+                    <ui:NumberField x:Name="TxtPatBack" Width="68" Padding="6,4" TextAlignment="Center"
+                                    VerticalAlignment="Center" AutomationProperties.Name="回拍概率" LostFocus="OnSavePat"
                                     Minimum="0" Maximum="100" Fallback="100" Label="回拍概率" />
                     <TextBlock Text="%" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="4,0,14,0" />
                     <TextBlock Text="间隔" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <ui:NumberField x:Name="TxtPatCooldown" Width="48" VerticalAlignment="Center" LostFocus="OnSavePat"
+                    <ui:NumberField x:Name="TxtPatCooldown" Width="68" Padding="6,4" TextAlignment="Center"
+                                    VerticalAlignment="Center" AutomationProperties.Name="回拍间隔" LostFocus="OnSavePat"
                                     Minimum="0" Maximum="3600" Fallback="8" Label="回拍间隔" />
                     <TextBlock Text="秒" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="4,0,14,0" />
                     <TextBlock Text="每小时" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <ui:NumberField x:Name="TxtPatMaxHour" Width="44" VerticalAlignment="Center" LostFocus="OnSavePat"
+                    <ui:NumberField x:Name="TxtPatMaxHour" Width="68" Padding="6,4" TextAlignment="Center"
+                                    VerticalAlignment="Center" AutomationProperties.Name="每小时次数" LostFocus="OnSavePat"
                                     Minimum="0" Maximum="200" Fallback="0" Label="每小时次数" />
                     <TextBlock Text="次（0=不限）" Style="{StaticResource Small}" VerticalAlignment="Center" Margin="4,0,0,0" />
                 </WrapPanel>

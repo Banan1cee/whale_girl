@@ -26,7 +26,7 @@ namespace WhaleLauncher.Views
     }
 
     /// <summary>提醒列表：只读展示 + 删除（取消）一条提醒。</summary>
-    public partial class ReminderPage : UserControl, IRefreshable
+    public partial class ReminderPage : UserControl, IRefreshable, IPendingSettings
     {
         private readonly RuntimeSupervisor _sup;
         private readonly ConfigSaver _saver;
@@ -59,6 +59,12 @@ namespace WhaleLauncher.Views
 
         /// <summary>周期刷新（MainWindow 2 秒定时器驱动）：只刷提醒列表和状态行，不动表单（M30）。</summary>
         public Task RefreshAsync() => RefreshAsync(false);
+
+        public async Task<bool> SavePendingSettingsAsync()
+        {
+            await _saver.FlushAsync();
+            return true;
+        }
 
         /// <summary>full = 全量回填：页面载入/手动刷新时把「提醒规则」「主动搭话」表单也刷回服务端的值。</summary>
         private async Task RefreshAsync(bool full)

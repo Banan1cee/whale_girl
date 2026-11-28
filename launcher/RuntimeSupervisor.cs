@@ -153,6 +153,12 @@ namespace WhaleLauncher
             finally { _configurationWrites.Release(); }
         }
 
+        internal async Task FlushConfigurationWritesAsync()
+        {
+            await _configurationWrites.WaitAsync();
+            _configurationWrites.Release();
+        }
+
         public Task<ApiResult> PatchConfigurationAsync(System.Collections.Generic.IDictionary<string, object> patch)
             => SaveConfigurationAsync("/api/config", new { patch });
 

@@ -27,6 +27,7 @@ const STATUS_LABEL = new Map([
   ['queued', '已排队，还没发出去'],
   ['sending', '正在发'],
   ['confirmed', '桥接确认发出'],
+  ['submitted', '桥接已操作，微信结果未确认'],
   ['unconfirmed', '桥接没回执，不确定是否发出'],
   ['failed', '失败'],
   ['cancelled', '已取消'],
@@ -86,7 +87,9 @@ function relativeLabel(ts, now = Date.now()) {
 
 /** 单条记录 → 一行事实，例：`14:02（2 分钟前） 发表情包「开心/wave.gif」—— 桥接确认发出` */
 function describe(event, now = Date.now(), timeZone = '') {
-  const status = STATUS_LABEL.get(event.status) || '完成';
+  // 兼容旧记录：拍一拍原来的 confirmed 也只代表菜单被点击。
+  const key = event.type === 'pat' && event.status === 'confirmed' ? 'submitted' : event.status;
+  const status = STATUS_LABEL.get(key) || '完成';
   return `${timeLabel(event.ts, timeZone)}（${relativeLabel(event.ts, now)}）${TYPE_LABEL.get(event.type)}「${event.detail}」—— ${status}`;
 }
 
@@ -103,6 +106,9 @@ function formatBlock(events, { max = 12, now = Date.now(), timeZone = '' } = {})
   return [
     '【最近做过的事（系统记录，不是你说的话）】',
     ...list.map((e) => '- ' + describe(e, now, timeZone)),
+    ...(list.some((e) => e.type === 'pat') ? [
+      '- 拍一拍写着「微信结果未确认」时，只能说尝试过。旧的拍一拍记录不能用来回答另一次请求。',
+    ] : []),
     '- 这些是程序记下的真实结果，和你嘴上说什么无关。',
     '- 括号里是距今多久：写着「刚刚」「几分钟前」的就是刚发生的事，被问起时照实承认即可；几小时前、几天前的别当成刚做的。',
     '- 记录里写着发出/完成的，可以顺着承认（「给你发了」「刚发了张图」），但别添油加醋描述画面内容。',

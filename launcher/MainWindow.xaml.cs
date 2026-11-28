@@ -32,6 +32,11 @@ namespace WhaleLauncher
         private readonly PluginMarket _pluginMarket;
         private readonly DispatcherTimer _timer;
         private readonly Dictionary<string, UserControl> _pages = new Dictionary<string, UserControl>();
+        private NavEntry _currentNav;
+        private bool _navigating;
+        private bool _closingAfterSave;
+        private bool _closingSettings;
+        private Task<bool> _savingOutgoingSettings;
         private bool _busy;
         private bool _refreshing;
         private bool _memoryNoticeChecked;
@@ -111,6 +116,7 @@ namespace WhaleLauncher
                 await RefreshAsync();
             };
             Closing += OnClosingDuringUpdate;
+            Closing += OnClosingWithSettings;
             Closed += (_, __) =>
             {
                 Appearance.Changed -= OnAppearanceChanged;
@@ -667,7 +673,7 @@ namespace WhaleLauncher
         /// <summary>更新中关窗口：说清楚关掉也不会中断，让用户自己决定。</summary>
         private void OnClosingDuringUpdate(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            if (!_updating) return;
+            if (!_updating || _closingAfterSave) return;
             if (!AppDialog.Confirm(this,
                 "更新还在进行。\n\n" +
                 "关掉窗口不会中断更新：下载和安装会在后台继续，装完会自动把启动器重新打开。\n\n现在关吗？",
@@ -781,11 +787,87 @@ namespace WhaleLauncher
         private static extern bool ChangeWindowMessageFilterEx(IntPtr hwnd, uint msg, uint action, IntPtr changeInfo);
 
         // ── 导航 ────────────────────────────────────────────────
-        private void OnNavChanged(object sender, SelectionChangedEventArgs e)
+        private async void OnNavChanged(object sender, SelectionChangedEventArgs e)
         {
-            var key = (Nav.SelectedItem as NavEntry)?.Key;
-            if (string.IsNullOrEmpty(key)) return;
+            if (e.Source != Nav || _navigating || _closingSettings ||
+                Nav.SelectedItem is not NavEntry target || target == _currentNav) return;
 
+            _navigating = true;
+            try
+            {
+                if (_currentNav != null && !await SaveOutgoingSettingsAsync())
+                {
+                    Nav.SelectedItem = _currentNav;
+                    return;
+                }
+
+                if (!_closingSettings && Nav.SelectedItem is NavEntry latest)
+                    ShowPage(latest);
+            }
+            finally { _navigating = false; }
+        }
+
+        private Task<bool> SaveOutgoingSettingsAsync()
+        {
+            if (_savingOutgoingSettings is { IsCompleted: false }) return _savingOutgoingSettings;
+            return _savingOutgoingSettings = SaveCurrentPageAsync();
+        }
+
+        private async Task<bool> SaveCurrentPageAsync()
+        {
+            var content = Host.Content as UserControl;
+            if (content == null) return true;
+            // 把焦点移出表单，让已有的失焦保存先入队，仍在当前页时等待结果。
+            if (content.IsKeyboardFocusWithin) Nav.Focus();
+            var wasEnabled = Host.IsEnabled;
+            Host.IsEnabled = false;
+            try
+            {
+                if (content is IPendingSettings settings && !await settings.SavePendingSettingsAsync())
+                {
+                    StatusLine.Text = "当前设置未保存，请检查本页提示。";
+                    return false;
+                }
+                await _sup.FlushConfigurationWritesAsync();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                StatusLine.Text = "保存设置失败：" + Api.FriendlyError(ex);
+                return false;
+            }
+            finally { Host.IsEnabled = wasEnabled; }
+        }
+
+        private async void OnClosingWithSettings(object sender, System.ComponentModel.CancelEventArgs e)
+        {
+            if (e.Cancel || _closingAfterSave) return;
+            e.Cancel = true;
+            if (_closingSettings) return;
+            _closingSettings = true;
+            try
+            {
+                var saved = await SaveOutgoingSettingsAsync();
+                if (!saved && !AppDialog.Confirm(this, "当前页还有未保存的修改。可以返回检查后再保存。",
+                    "设置未保存", danger: true, okText: "放弃修改并退出", cancelText: "返回检查")) return;
+
+                // Closing 必须先返回，不能在同一轮关闭事件里再次调用 Close。
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                _closingAfterSave = true;
+                Close();
+            }
+            finally
+            {
+                _closingSettings = false;
+                _closingAfterSave = false;
+                if (IsLoaded && _currentNav != null && Nav.SelectedItem != _currentNav)
+                    Nav.SelectedItem = _currentNav;
+            }
+        }
+
+        private void ShowPage(NavEntry target)
+        {
+            var key = target.Key;
             if (!_pages.TryGetValue(key, out var page))
             {
                 try
@@ -799,6 +881,7 @@ namespace WhaleLauncher
                 }
                 _pages[key] = page;
             }
+            _currentNav = target;
             Host.Content = page;
             if (page is IRefreshable r) _ = r.RefreshAsync();
         }

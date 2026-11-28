@@ -21,7 +21,7 @@ namespace WhaleLauncher.Views
         public override string ToString() => Label ?? Id ?? "";
     }
 
-    public partial class PersonaPage : UserControl, IRefreshable
+    public partial class PersonaPage : UserControl, IRefreshable, IPendingSettings
     {
         private readonly RuntimeSupervisor _sup;
         private readonly DispatcherTimer _saveTimer;
@@ -771,6 +771,8 @@ namespace WhaleLauncher.Views
             if (!await FlushEditsAsync()) return;
             OnSavePreset(sender, e);
         }
+
+        public Task<bool> SavePendingSettingsAsync() => FlushEditsAsync();
 
         private async Task<bool> FlushEditsAsync()
         {
