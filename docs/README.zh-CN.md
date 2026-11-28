@@ -164,6 +164,17 @@ whale-girl/                        # 与仓库一致，运行数据不入库
 
 当前发行包**尚未签名**，Windows 可能提示「未知发布者」；安装前请核对 Release 里的 `SHA256SUMS.txt`。签名策略见 [`CODE_SIGNING_POLICY.md`](CODE_SIGNING_POLICY.md)，隐私政策见 [`PRIVACY.md`](PRIVACY.md)。
 
+## Star 增长曲线
+
+<a href="https://star-history.com/#Banan1cee/whale_girl&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Banan1cee/whale_girl&type=Date&theme=dark" />
+    <img alt="Star 增长曲线" src="https://api.star-history.com/svg?repos=Banan1cee/whale_girl&type=Date" width="800" />
+  </picture>
+</a>
+
+图由 [star-history.com](https://star-history.com/#Banan1cee/whale_girl&Date) 按需渲染，随 star 数自动更新，不用重新提交图片；加载不出来时点开站点看同一张曲线。
+
 ## 致谢
 
 - **图标原创角色作者：上善无形**。本项目使用的鲸鲸图标是在其原创角色基础上的二创作品，详见 [`NOTICE.md`](NOTICE.md)。
